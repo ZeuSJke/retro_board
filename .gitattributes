@@ -1,0 +1,25 @@
+# Normalize line endings
+* text=auto
+
+# Shell scripts must use LF
+*.sh text eol=lf
+
+# Docker and config files must use LF
+Dockerfile text eol=lf
+docker-compose*.yml text eol=lf
+nginx.conf text eol=lf
+.env* text eol=lf
+
+# Python files must use LF
+*.py text eol=lf
+
+# JS/JSX/CSS files must use LF
+*.js text eol=lf
+*.jsx text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+
+# Windows-specific files can use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf

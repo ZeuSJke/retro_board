@@ -27,7 +27,7 @@
 cp .env.example .env
 ```
 
-Отредактируй `.env` — обязательно смени пароль перед деплоем на продакшн:
+Отредактируй `.env`:
 
 ```env
 POSTGRES_DB=retroboard
@@ -37,7 +37,7 @@ POSTGRES_PASSWORD=your_secure_password
 CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
 
-### 2. Запусти всё одной командой
+### 2. Запусти
 
 ```bash
 docker compose up --build
@@ -47,7 +47,7 @@ docker compose up --build
 
 | Адрес | Назначение |
 |---|---|
-| http://localhost | Приложение |
+| http://localhost:3080 | Приложение |
 | http://localhost:8000/docs | Swagger UI (API) |
 | http://localhost:8000/redoc | ReDoc (API) |
 
@@ -75,7 +75,7 @@ pip install -r requirements.txt
 
 # Настрой переменные окружения
 cp .env.example .env
-# Отредактируй backend/.env: укажи DATABASE_URL для localhost
+# Укажи DATABASE_URL для localhost в backend/.env
 
 # Запусти с hot reload
 uvicorn main:app --reload
@@ -100,21 +100,23 @@ npm run dev
 
 ```
 retro_board/
-├── .env.example              # Шаблон переменных окружения
-├── .env                      # Локальные переменные (не в git!)
-├── docker-compose.yml
+├── .env.example                  # Шаблон переменных окружения
+├── .env                          # Локальные переменные (не в git!)
+├── .gitattributes                # Принудительные LF-переносы для sh/yml/py
+├── docker-compose.yml            # Основной compose (dev + prod)
+├── docker-compose.prod.yml       # Prod-оверрайд: без --reload, лимиты памяти
 │
 ├── backend/
-│   ├── .env.example          # Шаблон для локальной разработки
+│   ├── .env.example              # Шаблон для локальной разработки
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── main.py               # FastAPI app, CORS, роутеры
+│   ├── main.py                   # FastAPI app, CORS, роутеры
 │   └── app/
-│       ├── config.py         # Pydantic Settings (читает .env)
-│       ├── database.py       # SQLAlchemy engine + сессия
-│       ├── models.py         # ORM-модели: Board, Column, Card
-│       ├── schemas.py        # Pydantic схемы (In/Out)
-│       ├── ws_manager.py     # WebSocket connection manager
+│       ├── config.py             # Pydantic Settings (читает .env)
+│       ├── database.py           # SQLAlchemy engine + сессия
+│       ├── models.py             # ORM-модели: Board, Column, Card
+│       ├── schemas.py            # Pydantic схемы (In/Out)
+│       ├── ws_manager.py         # WebSocket connection manager
 │       └── routers/
 │           ├── boards.py
 │           ├── columns.py
@@ -122,24 +124,24 @@ retro_board/
 │           └── websocket.py
 │
 └── frontend/
-    ├── Dockerfile            # Multi-stage: builder → nginx
-    ├── nginx.conf            # Proxy /api и /ws на backend
+    ├── Dockerfile                # Multi-stage: builder → nginx
+    ├── nginx.conf                # Proxy /api и /ws на backend
     ├── vite.config.js
     ├── index.html
     └── src/
         ├── main.jsx
         ├── App.jsx
-        ├── index.css         # CSS-переменные MD3, глобальные стили
-        ├── api/              # Axios-клиент для всех эндпоинтов
+        ├── index.css             # CSS-переменные MD3, глобальные стили
+        ├── api/                  # Axios-клиент для всех эндпоинтов
         ├── components/
         │   ├── BoardsPanel.jsx   # Боковая панель со списком досок
         │   ├── CardWidget.jsx    # Карточка заметки с DnD
         │   ├── Column.jsx        # Колонка с карточками
-        │   ├── Dialog.jsx        # Переиспользуемый диалог (+ danger)
+        │   ├── Dialog.jsx        # Переиспользуемый диалог (+ danger-режим)
         │   ├── ThemePanel.jsx    # Панель смены темы
         │   └── Topbar.jsx        # Верхняя панель навигации
         ├── hooks/
-        │   └── useWebSocket.js   # WS с автореконнектом
+        │   └── useWebSocket.js   # WS с автореконнектом и защитой от StrictMode
         ├── pages/
         │   └── BoardPage.jsx     # Доска с DnD-контекстом
         ├── store/
@@ -186,7 +188,7 @@ retro_board/
 ws://localhost/ws/{board_id}
 ```
 
-Клиент подключается к каналу доски. Все изменения, сделанные через REST API, транслируются всем подключённым клиентам в формате:
+Клиент подключается к каналу доски. Все изменения транслируются всем подключённым клиентам:
 
 ```json
 { "event": "card_created", "data": { ...card } }
@@ -213,9 +215,9 @@ ws://localhost/ws/{board_id}
 | `POSTGRES_DB` | Имя базы данных | `retroboard` |
 | `POSTGRES_USER` | Пользователь PostgreSQL | `retro` |
 | `POSTGRES_PASSWORD` | Пароль PostgreSQL | `super_secret` |
-| `CORS_ORIGINS` | Разрешённые CORS-источники (через запятую) | `http://localhost:3000` |
+| `CORS_ORIGINS` | Разрешённые CORS-источники (через запятую) | `http://localhost:3080` |
 
-### `backend/.env` (для локальной разработки)
+### `backend/.env` (для локальной разработки без Docker)
 
 | Переменная | Описание | Пример |
 |---|---|---|
@@ -236,18 +238,51 @@ docker compose up --build
 # Посмотреть логи бэкенда
 docker compose logs -f backend
 
-# Остановить всё и удалить контейнеры
+# Остановить все контейнеры
 docker compose down
 
-# Остановить и удалить данные БД (полный сброс)
+# Полный сброс (включая данные БД)
 docker compose down -v
+
+# Бэкап базы данных
+docker compose exec db pg_dump -U retro retroboard > backup_$(date +%Y%m%d).sql
 ```
+
+---
+
+## 🏠 Деплой на домашний сервер (TrueNAS + Nginx Proxy Manager)
+
+Проект содержит `docker-compose.prod.yml` — оверрайд для запуска поверх основного compose:
+убирает `--reload`, ограничивает память контейнеров.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Также в репозитории есть `deploy.sh` — вспомогательный скрипт, написанный **под конкретную
+конфигурацию с TrueNAS + Nginx Proxy Manager** (frontend на порту `3080`, NPM проксирует
+трафик с 80/443). Для других окружений скрипт нужно адаптировать под себя.
+
+```bash
+# Исправить переносы строк после копирования с Windows
+sed -i 's/\r$//' deploy.sh
+chmod +x deploy.sh
+
+./deploy.sh            # запустить
+./deploy.sh update     # git pull + пересборка
+./deploy.sh logs       # логи
+./deploy.sh stop       # остановить
+```
+
+Приложение будет доступно на `http://<IP-сервера>:3080`. NPM настраивается
+на проксирование к этому порту с включённой поддержкой WebSocket.
 
 ---
 
 ## 🔒 Безопасность
 
 - Файл `.env` добавлен в `.gitignore` — секреты не попадут в репозиторий
+- `.env.example` показывает структуру без реальных значений — его можно и нужно коммитить
 - Смени `POSTGRES_PASSWORD` перед деплоем на продакшн
-- В продакшне убери `--reload` из команды бэкенда (в `docker-compose.yml`)
 - Настрой `CORS_ORIGINS` на реальный домен фронтенда
+- В продакшне порт `5432` (PostgreSQL) не проброшен наружу

@@ -12,8 +12,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    ports:
-      - "5432:5432"
+    restart: unless-stopped
 
   backend:
     build: ./backend
@@ -35,7 +34,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "80:80"
+      - "3080:80"
     restart: unless-stopped
 
 volumes:
