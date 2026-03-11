@@ -1,0 +1,112 @@
+:root {
+    --md-primary: #6750a4;
+    --md-on-primary: #ffffff;
+    --md-primary-container: #eaddff;
+    --md-on-primary-container: #21005d;
+    --md-secondary: #625b71;
+    --md-secondary-container: #e8def8;
+    --md-on-secondary-container: #1d192b;
+    --md-surface: #fef7ff;
+    --md-surface-variant: #e7e0ec;
+    --md-on-surface: #1c1b1f;
+    --md-on-surface-variant: #49454f;
+    --md-outline: #79747e;
+    --md-outline-variant: #cac4d0;
+    --md-background: #fef7ff;
+    --md-error: #b3261e;
+    --md-error-container: #f9dedc;
+    --md-surface-1: color-mix(in srgb, var(--md-primary) 5%, var(--md-surface));
+    --md-surface-2: color-mix(in srgb, var(--md-primary) 8%, var(--md-surface));
+    --transition: 0.2s cubic-bezier(0.2, 0, 0, 1);
+    --elevation-1:
+        0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px 1px rgba(0, 0, 0, 0.15);
+    --elevation-2:
+        0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 6px 2px rgba(0, 0, 0, 0.15);
+    --elevation-3:
+        0 4px 8px 3px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: "Roboto", sans-serif;
+    background: var(--md-background);
+    color: var(--md-on-surface);
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--md-outline-variant);
+    border-radius: 3px;
+}
+
+.material-symbols-rounded {
+    font-family: "Material Symbols Rounded";
+    font-weight: normal;
+    font-style: normal;
+    font-size: 20px;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    direction: ltr;
+    font-variation-settings:
+        "FILL" 0,
+        "wght" 400,
+        "GRAD" 0,
+        "opsz" 20;
+    user-select: none;
+}
+.material-symbols-rounded.filled {
+    font-variation-settings:
+        "FILL" 1,
+        "wght" 400,
+        "GRAD" 0,
+        "opsz" 20;
+}
+
+/* Card hover actions */
+.card-widget:hover {
+    box-shadow: var(--elevation-2) !important;
+}
+
+/* Column delete button */
+.col-del-btn {
+    opacity: 0;
+    transition: var(--transition);
+}
+.column:hover .col-del-btn {
+    opacity: 1;
+}
+
+/* Board list item */
+.board-item:hover {
+    background: var(--md-surface-variant) !important;
+}
+
+/* Spinner animation */
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Input/textarea focus */
+input:focus,
+textarea:focus {
+    border-color: var(--md-primary) !important;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-primary) 20%, transparent);
+}
