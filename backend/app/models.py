@@ -50,6 +50,25 @@ class Column(Base):
         cascade="all, delete-orphan",
         order_by="Card.position",
     )
+    groups: Mapped[list["CardGroup"]] = relationship(
+        "CardGroup",
+        back_populates="column",
+        cascade="all, delete-orphan",
+        order_by="CardGroup.position",
+    )
+
+
+class CardGroup(Base):
+    __tablename__ = "card_groups"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    column_id: Mapped[str] = mapped_column(
+        String, ForeignKey("columns.id", ondelete="CASCADE")
+    )
+    title: Mapped[str] = mapped_column(String(120), nullable=False, default="Группа")
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+    column: Mapped["Column"] = relationship("Column", back_populates="groups")
 
 
 class Card(Base):
@@ -58,6 +77,9 @@ class Card(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     column_id: Mapped[str] = mapped_column(
         String, ForeignKey("columns.id", ondelete="CASCADE")
+    )
+    group_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("card_groups.id", ondelete="SET NULL"), nullable=True
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
     author: Mapped[str] = mapped_column(String(60), default="Аноним")

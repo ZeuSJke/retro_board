@@ -5,8 +5,10 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import CardWidget from "./CardWidget";
+import CardGroupWidget from "./CardGroupWidget";
 import Dialog from "./Dialog";
-import { updateColumn, deleteColumn, createCard } from "../api";
+import { updateColumn, deleteColumn, createCard, createGroup, addCardToGroup } from "../api";
+
 import { useAppStore } from "../store";
 import { CARD_COLORS } from "../utils/theme";
 
@@ -17,6 +19,10 @@ export default function Column({
   onCardCreated,
   onCardUpdated,
   onCardDeleted,
+  onGroupCreated,
+  onGroupUpdated,
+  onGroupDeleted,
+  groupTargetId,
 }) {
   const { username } = useAppStore();
   const [addOpen, setAddOpen] = useState(false);
@@ -26,6 +32,11 @@ export default function Column({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleVal, setTitleVal] = useState(column.title);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
+
+  // Group assignment dialog
+  const [groupAssignOpen, setGroupAssignOpen] = useState(false);
+  const [assigningCardId, setAssigningCardId] = useState(null);
+  const [newGroupTitle, setNewGroupTitle] = useState("");
 
   const { setNodeRef, isOver } = useDroppable({
     id: `col-${column.id}`,
@@ -66,7 +77,36 @@ export default function Column({
     setAddOpen(false);
   };
 
-  const cardIds = column.cards.map((c) => c.id);
+  const handleAssignToGroup = async (groupId) => {
+    setGroupAssignOpen(false);
+    if (!assigningCardId) return;
+    const updated = await addCardToGroup(groupId, assigningCardId);
+    onCardUpdated(column.id, updated);
+    setAssigningCardId(null);
+    setNewGroupTitle("");
+  };
+
+  const handleCreateAndAssign = async () => {
+    if (!assigningCardId) return;
+    const title = newGroupTitle.trim() || "Новая группа";
+    setGroupAssignOpen(false);
+    const group = await createGroup({ column_id: column.id, title });
+    // Don't call onGroupCreated here — WS broadcast + dedup handles it
+    const updated = await addCardToGroup(group.id, assigningCardId);
+    onCardUpdated(column.id, updated);
+    setAssigningCardId(null);
+    setNewGroupTitle("");
+  };
+
+  const openGroupAssign = (cardId) => {
+    setNewGroupTitle("");
+    setAssigningCardId(cardId);
+    setGroupAssignOpen(true);
+  };
+
+  const groups = column.groups || [];
+  const ungroupedCards = (column.cards || []).filter((c) => !c.group_id);
+  const cardIds = ungroupedCards.map((c) => c.id);
 
   return (
     <>
@@ -107,7 +147,7 @@ export default function Column({
               {column.title}
             </span>
           )}
-          <span style={styles.count}>{column.cards.length}</span>
+          <span style={styles.count}>{(column.cards || []).length}</span>
           <button
             style={styles.iconBtn}
             onClick={() => setDeleteOpen(true)}
@@ -120,22 +160,40 @@ export default function Column({
           </button>
         </div>
 
-        {/* Cards */}
+        {/* Cards + Groups */}
         <div ref={setNodeRef} style={styles.cards}>
+          {/* Groups */}
+          {groups.map((group) => (
+            <CardGroupWidget
+              key={group.id}
+              group={group}
+              cards={(column.cards || []).filter((c) => c.group_id === group.id)}
+              onGroupUpdated={(updated) => onGroupUpdated(column.id, updated)}
+              onGroupDeleted={(id) => onGroupDeleted(column.id, id)}
+              onCardUpdated={(updated) => onCardUpdated(column.id, updated)}
+              onCardDeleted={(id) => onCardDeleted(column.id, id)}
+            />
+          ))}
+
+          {/* Ungrouped cards */}
           <SortableContext
             items={cardIds}
             strategy={verticalListSortingStrategy}
           >
-            {column.cards.map((card) => (
+            {ungroupedCards.map((card) => (
               <CardWidget
                 key={card.id}
                 card={card}
                 onUpdate={(updated) => onCardUpdated(column.id, updated)}
                 onDelete={(id) => onCardDeleted(column.id, id)}
+                groups={groups}
+                onAssignGroup={openGroupAssign}
+                isGroupTarget={card.id === groupTargetId}
               />
             ))}
           </SortableContext>
-          {column.cards.length === 0 && (
+
+          {ungroupedCards.length === 0 && groups.length === 0 && (
             <div style={styles.emptyDrop}>Перетащи карточку сюда</div>
           )}
         </div>
@@ -271,9 +329,59 @@ export default function Column({
           <strong style={{ color: "var(--md-on-surface)" }}>
             «{column.title}»
           </strong>{" "}
-          и все её заметки ({column.cards.length}) будут удалены без возможности
+          и все её заметки ({(column.cards || []).length}) будут удалены без возможности
           восстановления.
         </p>
+      </Dialog>
+
+      {/* Assign card to group dialog */}
+      <Dialog
+        open={groupAssignOpen}
+        title="Добавить в группу"
+        icon="folder"
+        onClose={() => {
+          setGroupAssignOpen(false);
+          setAssigningCardId(null);
+          setNewGroupTitle("");
+        }}
+        onConfirm={null}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* Existing groups */}
+          {groups.map((g) => (
+            <button
+              key={g.id}
+              style={styles.groupPickBtn}
+              onClick={() => handleAssignToGroup(g.id)}
+            >
+              <span className="material-symbols-rounded" style={{ fontSize: 16, color: "var(--md-primary)" }}>
+                folder
+              </span>
+              {g.title}
+            </button>
+          ))}
+
+          {/* Divider */}
+          {groups.length > 0 && (
+            <div style={{ height: 1, background: "var(--md-outline-variant)", margin: "4px 0" }} />
+          )}
+
+          {/* Create new group inline */}
+          <div style={styles.newGroupRow}>
+            <input
+              style={styles.newGroupInput}
+              value={newGroupTitle}
+              onChange={(e) => setNewGroupTitle(e.target.value)}
+              placeholder="Название новой группы"
+              maxLength={120}
+              onKeyDown={(e) => e.key === "Enter" && handleCreateAndAssign()}
+            />
+            <button style={styles.newGroupBtn} onClick={handleCreateAndAssign}>
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>add</span>
+              Создать
+            </button>
+          </div>
+        </div>
       </Dialog>
     </>
   );
@@ -367,6 +475,7 @@ const styles = {
   footer: { padding: "0 12px 12px" },
   addBtn: {
     width: "100%",
+    boxSizing: "border-box",
     height: 40,
     borderRadius: 20,
     border: "2px dashed var(--md-outline-variant)",
@@ -380,6 +489,7 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
+    whiteSpace: "nowrap",
     transition: "var(--transition)",
   },
   textarea: {
@@ -430,5 +540,55 @@ const styles = {
     cursor: "pointer",
     border: "2px solid transparent",
     transition: "transform 0.1s",
+  },
+  groupPickBtn: {
+    width: "100%",
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1.5px solid var(--md-outline-variant)",
+    background: "var(--md-surface-variant)",
+    color: "var(--md-on-surface)",
+    fontFamily: "'Roboto', sans-serif",
+    fontSize: 14,
+    fontWeight: 500,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    textAlign: "left",
+    transition: "background 0.15s",
+  },
+  newGroupRow: {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+  },
+  newGroupInput: {
+    flex: 1,
+    border: "1.5px solid var(--md-outline-variant)",
+    borderRadius: 12,
+    padding: "9px 12px",
+    fontFamily: "'Roboto', sans-serif",
+    fontSize: 14,
+    color: "var(--md-on-surface)",
+    background: "var(--md-surface-variant)",
+    outline: "none",
+  },
+  newGroupBtn: {
+    height: 40,
+    padding: "0 14px",
+    borderRadius: 20,
+    border: "none",
+    background: "var(--md-primary)",
+    color: "var(--md-on-primary)",
+    fontFamily: "'Roboto', sans-serif",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    flexShrink: 0,
+    transition: "opacity 0.15s",
   },
 };

@@ -2,14 +2,24 @@ import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useAppStore } from "../store";
-import { toggleLike, deleteCard } from "../api";
+import { toggleLike, deleteCard, removeCardFromGroup } from "../api";
 import { userColor, initials } from "../utils/theme";
 import Dialog from "./Dialog";
 
-export default function CardWidget({ card, onUpdate, onDelete }) {
+export default function CardWidget({
+  card,
+  onUpdate,
+  onDelete,
+  // Group support
+  groups = [],
+  onAssignGroup,
+  groupId,
+  isGroupTarget = false,
+}) {
   const { username } = useAppStore();
   const liked = (card.likes || []).includes(username);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const inGroup = !!groupId;
 
   const {
     attributes,
@@ -21,6 +31,7 @@ export default function CardWidget({ card, onUpdate, onDelete }) {
   } = useSortable({
     id: card.id,
     data: { type: "card", card },
+    disabled: inGroup, // cards inside groups are not draggable
   });
 
   const style = {
@@ -35,6 +46,12 @@ export default function CardWidget({ card, onUpdate, onDelete }) {
     onUpdate(updated);
   };
 
+  const handleRemoveFromGroup = async (e) => {
+    e.stopPropagation();
+    const updated = await removeCardFromGroup(groupId, card.id);
+    onUpdate(updated);
+  };
+
   const confirmDelete = async () => {
     setDeleteOpen(false);
     await deleteCard(card.id);
@@ -42,6 +59,7 @@ export default function CardWidget({ card, onUpdate, onDelete }) {
   };
 
   const isLight = (hex) => {
+    if (!hex || hex === "#FFFFFF") return true;
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
@@ -52,6 +70,7 @@ export default function CardWidget({ card, onUpdate, onDelete }) {
   const textColor = isLight(cardBg) ? "#1C1B1F" : "#FFFFFF";
   const subtleColor = isLight(cardBg) ? "#49454F" : "rgba(255,255,255,0.7)";
   const btnBg = isLight(cardBg) ? "rgba(0,0,0,0.07)" : "rgba(255,255,255,0.15)";
+  const showGroupBtn = !inGroup && !!onAssignGroup;
 
   return (
     <>
@@ -64,17 +83,20 @@ export default function CardWidget({ card, onUpdate, onDelete }) {
           color: textColor,
           borderLeftColor:
             card.color && card.color !== "#FFFFFF" ? card.color : "transparent",
+          cursor: inGroup ? "default" : undefined,
+          ...(isGroupTarget
+            ? { boxShadow: "0 0 0 3px var(--md-primary), var(--elevation-1)", outline: "none" }
+            : {}),
         }}
         className="card-widget"
       >
-        {/* Drag handle area */}
+        {/* Drag handle area (disabled for grouped cards) */}
         <div
-          {...attributes}
-          {...listeners}
+          {...(inGroup ? {} : { ...attributes, ...listeners })}
           style={{
-            cursor: isDragging ? "grabbing" : "grab",
+            cursor: inGroup ? "default" : isDragging ? "grabbing" : "grab",
             marginBottom: 8,
-            touchAction: "none",
+            touchAction: inGroup ? "auto" : "none",
           }}
         >
           <div style={{ ...styles.author, color: subtleColor }}>
@@ -88,7 +110,7 @@ export default function CardWidget({ card, onUpdate, onDelete }) {
           <div style={{ ...styles.text, color: textColor }}>{card.text}</div>
         </div>
 
-        {/* Actions — always visible */}
+        {/* Actions */}
         <div style={styles.actions}>
           <button
             style={{
@@ -113,6 +135,32 @@ export default function CardWidget({ card, onUpdate, onDelete }) {
             </span>
             <span style={styles.likeCount}>{(card.likes || []).length}</span>
           </button>
+
+          {/* Add to group button */}
+          {showGroupBtn && (
+            <button
+              style={{ ...styles.iconBtn, background: btnBg, color: textColor }}
+              onClick={() => onAssignGroup(card.id)}
+              title="Добавить в группу"
+            >
+              <span className="material-symbols-rounded" style={{ fontSize: 15 }}>
+                folder
+              </span>
+            </button>
+          )}
+
+          {/* Remove from group button */}
+          {inGroup && (
+            <button
+              style={{ ...styles.iconBtn, background: btnBg, color: textColor }}
+              onClick={handleRemoveFromGroup}
+              title="Убрать из группы"
+            >
+              <span className="material-symbols-rounded" style={{ fontSize: 15 }}>
+                folder_off
+              </span>
+            </button>
+          )}
 
           <button
             style={{ ...styles.iconBtn, background: btnBg, color: textColor }}

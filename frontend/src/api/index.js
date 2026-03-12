@@ -21,3 +21,12 @@ export const moveCard = (id, data) => api.post(`/cards/${id}/move`, data).then(r
 export const toggleLike = (id, username) =>
   api.post(`/cards/${id}/like`, null, { params: { username } }).then(r => r.data)
 export const deleteCard = (id) => api.delete(`/cards/${id}`)
+
+// ── Groups ───────────────────────────────────────────────────────────────────
+export const createGroup = (data) => api.post('/groups/', data).then(r => r.data)
+export const updateGroup = (id, data) => api.patch(`/groups/${id}`, data).then(r => r.data)
+export const deleteGroup = (id) => api.delete(`/groups/${id}`)
+export const addCardToGroup = (groupId, cardId) =>
+  api.post(`/groups/${groupId}/set_card/${cardId}`).then(r => r.data)
+export const removeCardFromGroup = (groupId, cardId) =>
+  api.delete(`/groups/${groupId}/remove_card/${cardId}`).then(r => r.data)

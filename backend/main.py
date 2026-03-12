@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import boards, cards, columns, websocket
+from app.routers import boards, cards, columns, groups, websocket
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -31,6 +31,7 @@ app.add_middleware(
 app.include_router(boards.router, prefix="/api/boards", tags=["boards"])
 app.include_router(columns.router, prefix="/api/columns", tags=["columns"])
 app.include_router(cards.router, prefix="/api/cards", tags=["cards"])
+app.include_router(groups.router, prefix="/api/groups", tags=["groups"])
 app.include_router(websocket.router, tags=["websocket"])
 
 
