@@ -1,10 +1,16 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 export function useWebSocket(boardId, onMessage) {
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
   const wsRef = useRef(null);
+
+  const sendMessage = useCallback((msg) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg));
+    }
+  }, []);
 
   useEffect(() => {
     if (!boardId) return;
@@ -49,4 +55,6 @@ export function useWebSocket(boardId, onMessage) {
       wsRef.current = null;
     };
   }, [boardId]);
+
+  return { sendMessage };
 }
