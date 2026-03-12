@@ -17,41 +17,59 @@
 #   ./deploy.sh logs       — логи в реальном времени
 #   ./deploy.sh status     — статус контейнеров
 #   ./deploy.sh update     — git pull + пересборка
+#
+# Если docker требует sudo:
+#   sudo ./deploy.sh
+#   При этом git pull выполнится от имени исходного пользователя
+#   (через $SUDO_USER), а не от root.
+#
+# Чтобы убрать необходимость в sudo навсегда:
+#   sudo usermod -aG docker $USER && newgrp docker
 # =============================================================================
-
-set -e
 
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
 
+# Определяем, от чьего имени выполнять git pull:
+# - если запущено через sudo — используем $SUDO_USER (оригинальный пользователь)
+# - если запущено напрямую — используем текущего пользователя
+git_pull() {
+    if [ -n "$SUDO_USER" ]; then
+        echo "  git pull от пользователя: $SUDO_USER"
+        sudo -u "$SUDO_USER" git pull
+    else
+        git pull
+    fi
+}
+
 case "${1:-up}" in
-  up)
-    echo "▶ Запуск RetroBoard..."
-    $COMPOSE up -d --build
-    echo "✔ Готово. Приложение доступно на http://$(hostname -I | awk '{print $1}'):3080"
-    ;;
-  stop)
-    echo "■ Остановка..."
-    $COMPOSE down
-    ;;
-  restart)
-    echo "↺ Перезапуск..."
-    $COMPOSE restart
-    ;;
-  logs)
-    $COMPOSE logs -f
-    ;;
-  status)
-    $COMPOSE ps
-    ;;
-  update)
-    echo "⟳ Обновление из git..."
-    git pull
-    echo "▶ Пересборка и запуск..."
-    $COMPOSE up -d --build
-    echo "✔ Обновление завершено."
-    ;;
-  *)
-    echo "Использование: $0 {up|stop|restart|logs|status|update}"
-    exit 1
-    ;;
+    up)
+        echo "▶ Запуск RetroBoard..."
+        $COMPOSE up -d --build
+        echo "✔ Готово. Приложение доступно на http://$(hostname -I | awk '{print $1}'):3080"
+        ;;
+    stop)
+        echo "■ Остановка..."
+        $COMPOSE down
+        ;;
+    restart)
+        echo "↺ Перезапуск..."
+        $COMPOSE restart
+        ;;
+    logs)
+        $COMPOSE logs -f
+        ;;
+    status)
+        $COMPOSE ps
+        ;;
+    update)
+        echo "⟳ Получение обновлений из git..."
+        git_pull
+        echo "▶ Пересборка и запуск..."
+        $COMPOSE up -d --build
+        echo "✔ Обновление завершено."
+        ;;
+    *)
+        echo "Использование: $0 {up|stop|restart|logs|status|update}"
+        exit 1
+        ;;
 esac
