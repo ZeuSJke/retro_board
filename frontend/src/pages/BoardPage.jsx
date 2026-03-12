@@ -304,9 +304,18 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
     const isOverCol = String(overId).startsWith("col-");
     const overColId = isOverCol ? overId.slice(4) : findCard(overId)?.colId;
 
-    // Hovering over a different ungrouped card → show group-target indicator
-    // Works for same-column and cross-column drags
-    if (!isOverCol && overId !== active.id && !activeFound.card.group_id && overColId) {
+    // Look up target card to decide if a group action applies
+    const overCard = !isOverCol
+      ? (() => { for (const col of columns) { const c = col.cards.find((x) => x.id === overId); if (c) return c; } return null; })()
+      : null;
+    const targetGroupId = overCard?.group_id;
+    const activeGroupId = activeFound.card.group_id;
+
+    // Show group-target highlight when:
+    //   - target card is in a group (we'll join it), OR
+    //   - both cards are ungrouped (we'll create a new group)
+    // Don't highlight when active is grouped but target is not (that's just an ungroup/move)
+    if (!isOverCol && overId !== active.id && overColId && (targetGroupId || !activeGroupId)) {
       setGroupTargetId(overId);
       // Cross-column: also do optimistic move so the card appears in the target column
       if (overColId !== activeFound.colId) {
@@ -415,50 +424,88 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
     const overColId = isOverCol ? overId.slice(4) : findCard(overId)?.colId;
     if (!overColId) return;
 
-    // Dropped on a different ungrouped card → create group (same or different column)
-    if (!isOverCol && overId !== active.id && !activeFound.card.group_id) {
-      // Find original column (pre-drag) to detect cross-column move
+    // Dropped on a card → group action (join existing group, or create new one)
+    if (!isOverCol && overId !== active.id) {
+      // Find target card's group membership
+      const targetCard = (() => {
+        for (const col of columns) { const c = col.cards.find((x) => x.id === overId); if (c) return c; }
+        return null;
+      })();
+      const targetGroupId = targetCard?.group_id;
+      const activeGroupId = activeFound.card.group_id;
+
+      // Find original column from pre-drag snapshot (for cross-column detection)
       let origColId = null;
       for (const col of (savedColumnsRef.current || [])) {
         if (col.cards.find((c) => c.id === active.id)) { origColId = col.id; break; }
       }
-      try {
-        // Cross-column: move card to target column in DB first so group assignment works
-        if (origColId && origColId !== overColId) {
-          const dstCards = (savedColumnsRef.current || []).find((c) => c.id === overColId)?.cards || [];
-          await moveCard(active.id, { column_id: overColId, position: dstCards.length });
+
+      if (targetGroupId) {
+        // Target is in a group → add active card to that group
+        try {
+          if (origColId && origColId !== overColId) {
+            // Cross-column: move card first (backend clears old group automatically)
+            const dstCards = (savedColumnsRef.current || []).find((c) => c.id === overColId)?.cards || [];
+            await moveCard(active.id, { column_id: overColId, position: dstCards.length });
+          } else if (activeGroupId) {
+            // Same-column: was in a group → remove first so old group can auto-delete
+            await removeCardFromGroup(activeGroupId, active.id);
+          }
+          const updatedActive = await addCardToGroup(targetGroupId, active.id);
+          setColumns((prev) =>
+            prev.map((c) => ({
+              ...c,
+              cards: c.cards.map((card) => (card.id === active.id ? updatedActive : card)),
+            })),
+          );
+        } catch (e) {
+          console.error("Join group failed", e);
+          if (savedColumnsRef.current) setColumns(savedColumnsRef.current);
         }
-        const group = await createGroup({ column_id: overColId, title: "Группа" });
-        setColumns((prev) =>
-          prev.map((c) =>
-            c.id === overColId
-              ? { ...c, groups: [...(c.groups || []).filter((g) => g.id !== group.id), group] }
-              : c,
-          ),
-        );
-        const [updatedOver, updatedActive] = await Promise.all([
-          addCardToGroup(group.id, overId),
-          addCardToGroup(group.id, active.id),
-        ]);
-        setColumns((prev) =>
-          prev.map((c) =>
-            c.id === overColId
-              ? {
-                  ...c,
-                  cards: c.cards.map((card) => {
-                    if (card.id === overId) return updatedOver;
-                    if (card.id === active.id) return updatedActive;
-                    return card;
-                  }),
-                }
-              : c,
-          ),
-        );
-      } catch (e) {
-        console.error("Group creation from drag failed", e);
-        if (savedColumnsRef.current) setColumns(savedColumnsRef.current);
+        return;
       }
-      return;
+
+      if (!activeGroupId) {
+        // Both ungrouped → create a new group
+        try {
+          if (origColId && origColId !== overColId) {
+            const dstCards = (savedColumnsRef.current || []).find((c) => c.id === overColId)?.cards || [];
+            await moveCard(active.id, { column_id: overColId, position: dstCards.length });
+          }
+          const group = await createGroup({ column_id: overColId, title: "Группа" });
+          setColumns((prev) =>
+            prev.map((c) =>
+              c.id === overColId
+                ? { ...c, groups: [...(c.groups || []).filter((g) => g.id !== group.id), group] }
+                : c,
+            ),
+          );
+          const [updatedOver, updatedActive] = await Promise.all([
+            addCardToGroup(group.id, overId),
+            addCardToGroup(group.id, active.id),
+          ]);
+          setColumns((prev) =>
+            prev.map((c) =>
+              c.id === overColId
+                ? {
+                    ...c,
+                    cards: c.cards.map((card) => {
+                      if (card.id === overId) return updatedOver;
+                      if (card.id === active.id) return updatedActive;
+                      return card;
+                    }),
+                  }
+                : c,
+            ),
+          );
+        } catch (e) {
+          console.error("Group creation from drag failed", e);
+          if (savedColumnsRef.current) setColumns(savedColumnsRef.current);
+        }
+        return;
+      }
+
+      // Active is grouped, target is ungrouped → fall through to normal move (ungroup)
     }
 
     // Normal card move
