@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useDroppable } from "@dnd-kit/core";
+import { useDroppable, useDndContext } from "@dnd-kit/core";
 import {
   SortableContext,
   verticalListSortingStrategy,
@@ -38,10 +38,12 @@ export default function Column({
   const [assigningCardId, setAssigningCardId] = useState(null);
   const [newGroupTitle, setNewGroupTitle] = useState("");
 
-  const { setNodeRef, isOver } = useDroppable({
+const { setNodeRef, isOver } = useDroppable({
     id: `col-${column.id}`,
     data: { type: "column", columnId: column.id },
   });
+
+  const { active } = useDndContext();
 
   const saveTitle = async () => {
     setEditingTitle(false);
@@ -117,6 +119,8 @@ export default function Column({
           background: isOver
             ? "color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))"
             : "var(--md-surface-variant)",
+          maxHeight: active ? "90vh" : "calc(100vh - 120px)",
+          transition: "max-height 0.2s ease, background 0.15s",
         }}
       >
         {/* Header */}
@@ -395,8 +399,6 @@ const styles = {
     borderRadius: 16,
     display: "flex",
     flexDirection: "column",
-    maxHeight: "calc(100vh - 120px)",
-    transition: "background 0.15s",
   },
   header: {
     padding: 14,

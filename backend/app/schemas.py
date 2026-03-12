@@ -109,3 +109,9 @@ class MoveCard(BaseModel):
 
 class SetCardGroup(BaseModel):
     group_id: Optional[str] = None
+
+
+# ── Move group ────────────────────────────────────────────────────────────────
+
+class GroupMove(BaseModel):
+    column_id: str
