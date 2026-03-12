@@ -3,18 +3,25 @@ import Topbar from "./components/Topbar";
 import BoardsPanel from "./components/BoardsPanel";
 import ThemePanel from "./components/ThemePanel";
 import BoardPage from "./pages/BoardPage";
+import WelcomeDialog from "./components/WelcomeDialog";
 import { useAppStore } from "./store";
 import { applyTheme } from "./utils/theme";
 import { getBoards, getBoard, updateBoard, createBoard } from "./api";
 
 export default function App() {
-  const { theme, currentBoardId, setCurrentBoard } = useAppStore();
+  const { theme, currentBoardId, setCurrentBoard, setUsername } = useAppStore();
   const [boards, setBoards] = useState([]);
   const [currentBoard, setCurrentBoardData] = useState(null);
   const [boardsPanelOpen, setBoardsPanelOpen] = useState(false);
   const [themePanelOpen, setThemePanelOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showWelcome, setShowWelcome] = useState(true);
+
+  const handleWelcomeConfirm = (name) => {
+    setUsername(name);
+    setShowWelcome(false);
+  };
 
   // Apply theme on mount & changes
   useEffect(() => {
@@ -121,6 +128,10 @@ export default function App() {
         </button>
       </div>
     );
+
+  if (showWelcome) {
+    return <WelcomeDialog onConfirm={handleWelcomeConfirm} />;
+  }
 
   return (
     <>

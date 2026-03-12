@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -13,6 +13,8 @@ import CardWidget from "../components/CardWidget";
 import Dialog from "../components/Dialog";
 import { createColumn, moveCard } from "../api";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { useAppStore } from "../store";
+import { userColor, initials } from "../utils/theme";
 
 const COLUMN_COLORS = [
   "#6750A4",
@@ -27,7 +29,69 @@ const COLUMN_COLORS = [
   "#1B6CA8",
 ];
 
+// ── Cursor marker ─────────────────────────────────────────────────────────────
+
+function CursorMarker({ username, x, y }) {
+  const color = userColor(username);
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: x,
+        top: y,
+        pointerEvents: "none",
+        zIndex: 500,
+        transition: "left 0.08s linear, top 0.08s linear",
+        userSelect: "none",
+      }}
+    >
+      {/* Arrow SVG */}
+      <svg
+        width="20"
+        height="24"
+        viewBox="0 0 20 24"
+        fill="none"
+        style={{
+          display: "block",
+          filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.35))",
+        }}
+      >
+        <path
+          d="M2 2L2 18L6.5 13L11 22L13.5 20.8L9 12L15 12L2 2Z"
+          fill={color}
+          stroke="white"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+        />
+      </svg>
+      {/* Name badge */}
+      <div
+        style={{
+          position: "absolute",
+          top: 18,
+          left: 14,
+          background: color,
+          color: "white",
+          borderRadius: 10,
+          padding: "2px 8px",
+          fontSize: 11,
+          fontWeight: 700,
+          fontFamily: "'Roboto', sans-serif",
+          whiteSpace: "nowrap",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.25)",
+          letterSpacing: 0.2,
+        }}
+      >
+        {username}
+      </div>
+    </div>
+  );
+}
+
+// ── BoardPage ─────────────────────────────────────────────────────────────────
+
 export default function BoardPage({ board, onBoardUpdate }) {
+  const { username } = useAppStore();
   const [columns, setColumns] = useState(board.columns || []);
   const [activeCard, setActiveCard] = useState(null);
 
@@ -35,16 +99,61 @@ export default function BoardPage({ board, onBoardUpdate }) {
   const [newColTitle, setNewColTitle] = useState("");
   const [newColColor, setNewColColor] = useState("#6750A4");
 
-  // Keep columns in sync when board prop changes (e.g. board switch)
+  // Cursors: { username → { x, y } }
+  const [cursors, setCursors] = useState({});
+  const cursorTimeouts = useRef({});
+  const boardRef = useRef(null);
+  const lastSentRef = useRef(0);
+
+  // Keep columns in sync when board prop changes
   useState(() => {
     setColumns(board.columns || []);
   });
 
-  // WebSocket real-time sync
-  useWebSocket(
+  // Cleanup cursor timeouts on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(cursorTimeouts.current).forEach(clearTimeout);
+    };
+  }, []);
+
+  // Send cursor_leave when switching boards or unmounting
+  const { sendMessage } = useWebSocket(
     board.id,
     useCallback((msg) => {
       const { event, data } = msg;
+
+      // ── Cursor events ──────────────────────────────────────────────────
+      if (event === "cursor_move") {
+        const { username: u, x, y } = data;
+        if (!u) return;
+        setCursors((prev) => ({ ...prev, [u]: { x, y } }));
+
+        // Auto-remove cursor after 6s of inactivity
+        clearTimeout(cursorTimeouts.current[u]);
+        cursorTimeouts.current[u] = setTimeout(() => {
+          setCursors((prev) => {
+            const next = { ...prev };
+            delete next[u];
+            return next;
+          });
+        }, 6000);
+        return;
+      }
+
+      if (event === "cursor_leave") {
+        const { username: u } = data;
+        if (!u) return;
+        clearTimeout(cursorTimeouts.current[u]);
+        setCursors((prev) => {
+          const next = { ...prev };
+          delete next[u];
+          return next;
+        });
+        return;
+      }
+
+      // ── Board events ───────────────────────────────────────────────────
       setColumns((prev) => {
         switch (event) {
           case "column_created":
@@ -75,7 +184,10 @@ export default function BoardPage({ board, onBoardUpdate }) {
             const { card, old_column_id } = data;
             return prev.map((c) => {
               if (c.id === old_column_id)
-                return { ...c, cards: c.cards.filter((x) => x.id !== card.id) };
+                return {
+                  ...c,
+                  cards: c.cards.filter((x) => x.id !== card.id),
+                };
               if (c.id === card.column_id) {
                 const cards = [
                   ...c.cards.filter((x) => x.id !== card.id),
@@ -97,6 +209,32 @@ export default function BoardPage({ board, onBoardUpdate }) {
       });
     }, []),
   );
+
+  // ── Cursor tracking ──────────────────────────────────────────────────────
+
+  const handleMouseMove = useCallback(
+    (e) => {
+      const now = Date.now();
+      if (now - lastSentRef.current < 50) return; // throttle ~20fps
+      lastSentRef.current = now;
+
+      const board = boardRef.current;
+      if (!board) return;
+
+      const rect = board.getBoundingClientRect();
+      const x = e.clientX - rect.left + board.scrollLeft;
+      const y = e.clientY - rect.top + board.scrollTop;
+
+      sendMessage({ event: "cursor_move", data: { username, x, y } });
+    },
+    [username, sendMessage],
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    sendMessage({ event: "cursor_leave", data: { username } });
+  }, [username, sendMessage]);
+
+  // ── DnD ─────────────────────────────────────────────────────────────────
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -175,6 +313,8 @@ export default function BoardPage({ board, onBoardUpdate }) {
     }
   };
 
+  // ── Add column ───────────────────────────────────────────────────────────
+
   const openAddCol = () => {
     setNewColTitle("");
     setNewColColor("#6750A4");
@@ -196,6 +336,8 @@ export default function BoardPage({ board, onBoardUpdate }) {
     );
   };
 
+  // ── Render ───────────────────────────────────────────────────────────────
+
   return (
     <DndContext
       sensors={sensors}
@@ -204,7 +346,12 @@ export default function BoardPage({ board, onBoardUpdate }) {
       onDragOver={onDragOver}
       onDragEnd={onDragEnd}
     >
-      <div style={styles.board}>
+      <div
+        ref={boardRef}
+        style={styles.board}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      >
         {columns.map((col) => (
           <Column
             key={col.id}
@@ -258,6 +405,11 @@ export default function BoardPage({ board, onBoardUpdate }) {
           <span className="material-symbols-rounded">add</span>
           Новая колонка
         </button>
+
+        {/* Other users' cursors */}
+        {Object.entries(cursors).map(([u, pos]) => (
+          <CursorMarker key={u} username={u} x={pos.x} y={pos.y} />
+        ))}
       </div>
 
       {/* Add Column Dialog */}
@@ -307,12 +459,7 @@ export default function BoardPage({ board, onBoardUpdate }) {
 
         {/* Preview */}
         <div style={{ ...styles.preview, borderLeftColor: newColColor }}>
-          <div
-            style={{
-              ...styles.previewDot,
-              background: newColColor,
-            }}
-          />
+          <div style={{ ...styles.previewDot, background: newColColor }} />
           <span style={styles.previewTitle}>
             {newColTitle.trim() || "Название колонки"}
           </span>
@@ -337,6 +484,7 @@ export default function BoardPage({ board, onBoardUpdate }) {
 
 const styles = {
   board: {
+    position: "relative",
     display: "flex",
     gap: 16,
     alignItems: "flex-start",
@@ -367,7 +515,6 @@ const styles = {
     alignSelf: "flex-start",
     transition: "var(--transition)",
   },
-  // Dialog form styles
   field: {
     marginBottom: 18,
   },
