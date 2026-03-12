@@ -61,6 +61,8 @@ async def move_card(card_id: str, body: schemas.MoveCard, db: Session = Depends(
     if not new_col:
         raise HTTPException(404, "Target column not found")
 
+    old_group_id = card.group_id if old_col.id != new_col.id else None
+
     # Re-order old column
     if old_col.id != new_col.id:
         old_cards = sorted([c for c in old_col.cards if c.id != card_id], key=lambda c: c.position)
@@ -84,6 +86,18 @@ async def move_card(card_id: str, body: schemas.MoveCard, db: Session = Depends(
         "card": out.model_dump(mode="json"),
         "old_column_id": old_col.id,
     })
+
+    # Auto-delete old group if it became empty after cross-column move
+    if old_group_id:
+        remaining = db.query(models.Card).filter(models.Card.group_id == old_group_id).count()
+        if remaining == 0:
+            group = db.get(models.CardGroup, old_group_id)
+            if group:
+                col_id = group.column_id
+                db.delete(group)
+                db.commit()
+                await manager.broadcast(new_col.board_id, "group_deleted", {"id": old_group_id, "column_id": col_id, "card_ids": []})
+
     return out
 
 
@@ -113,6 +127,18 @@ async def delete_card(card_id: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Card not found")
     col = db.get(models.Column, card.column_id)
     board_id = col.board_id
+    group_id = card.group_id
     db.delete(card)
     db.commit()
     await manager.broadcast(board_id, "card_deleted", {"id": card_id, "column_id": col.id})
+
+    # Auto-delete group if it became empty after card deletion
+    if group_id:
+        remaining = db.query(models.Card).filter(models.Card.group_id == group_id).count()
+        if remaining == 0:
+            group = db.get(models.CardGroup, group_id)
+            if group:
+                col_id = group.column_id
+                db.delete(group)
+                db.commit()
+                await manager.broadcast(board_id, "group_deleted", {"id": group_id, "column_id": col_id, "card_ids": []})

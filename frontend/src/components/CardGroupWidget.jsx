@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useDraggable } from "@dnd-kit/core";
 import CardWidget from "./CardWidget";
 import Dialog from "./Dialog";
 import { updateGroup, deleteGroup } from "../api";
@@ -16,6 +17,11 @@ export default function CardGroupWidget({
   const [titleVal, setTitleVal] = useState(group.title);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
+    id: `group-${group.id}`,
+    data: { type: "group", group },
+  });
+
   const saveTitle = async () => {
     setEditingTitle(false);
     if (titleVal.trim() && titleVal !== group.title) {
@@ -32,9 +38,23 @@ export default function CardGroupWidget({
 
   return (
     <>
-      <div style={styles.container}>
+      <div style={{ ...styles.container, opacity: isDragging ? 0.4 : 1 }}>
         {/* Group header */}
         <div style={styles.header}>
+          {/* Drag handle */}
+          <button
+            ref={setDragRef}
+            {...attributes}
+            {...listeners}
+            style={styles.dragHandle}
+            title="Перетащить группу в другую колонку"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span className="material-symbols-rounded" style={{ fontSize: 14 }}>
+              drag_indicator
+            </span>
+          </button>
+
           <button
             style={styles.collapseBtn}
             onClick={() => setCollapsed((v) => !v)}
@@ -148,6 +168,21 @@ const styles = {
     padding: "8px 10px",
     borderBottom: "1px solid var(--md-outline-variant)",
     background: "color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))",
+  },
+  dragHandle: {
+    width: 22,
+    height: 22,
+    borderRadius: "50%",
+    border: "none",
+    background: "transparent",
+    color: "var(--md-on-surface-variant)",
+    cursor: "grab",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    padding: 0,
+    touchAction: "none",
   },
   collapseBtn: {
     width: 22,

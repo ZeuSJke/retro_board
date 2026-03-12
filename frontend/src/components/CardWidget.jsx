@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useAppStore } from "../store";
-import { toggleLike, deleteCard, removeCardFromGroup } from "../api";
+import { toggleLike, deleteCard, removeCardFromGroup, updateCard } from "../api";
 import { userColor, initials } from "../utils/theme";
 import Dialog from "./Dialog";
 
@@ -15,10 +15,13 @@ export default function CardWidget({
   onAssignGroup,
   groupId,
   isGroupTarget = false,
+  dragOverlay = false,
 }) {
   const { username } = useAppStore();
   const liked = (card.likes || []).includes(username);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(card.text);
   const inGroup = !!groupId;
 
   const {
@@ -31,13 +34,13 @@ export default function CardWidget({
   } = useSortable({
     id: card.id,
     data: { type: "card", card },
-    disabled: inGroup, // cards inside groups are not draggable
+    disabled: dragOverlay,
   });
 
   const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.4 : 1,
+    transform: dragOverlay ? undefined : CSS.Transform.toString(transform),
+    transition: dragOverlay ? undefined : transition,
+    opacity: isDragging && !dragOverlay ? 0.4 : 1,
   };
 
   const handleLike = async (e) => {
@@ -50,6 +53,19 @@ export default function CardWidget({
     e.stopPropagation();
     const updated = await removeCardFromGroup(groupId, card.id);
     onUpdate(updated);
+  };
+
+  const handleEditSave = async () => {
+    setEditing(false);
+    const trimmed = editText.trim();
+    if (!trimmed || trimmed === card.text) { setEditText(card.text); return; }
+    const updated = await updateCard(card.id, { text: trimmed });
+    onUpdate(updated);
+  };
+
+  const handleEditKeyDown = (e) => {
+    if (e.key === "Enter" && e.ctrlKey) handleEditSave();
+    if (e.key === "Escape") { setEditing(false); setEditText(card.text); }
   };
 
   const confirmDelete = async () => {
@@ -72,6 +88,22 @@ export default function CardWidget({
   const btnBg = isLight(cardBg) ? "rgba(0,0,0,0.07)" : "rgba(255,255,255,0.15)";
   const showGroupBtn = !inGroup && !!onAssignGroup;
 
+  // Show drop-zone placeholder while dragging
+  if (isDragging && !dragOverlay) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={{
+          ...style,
+          minHeight: 72,
+          borderRadius: 12,
+          border: "2px dashed var(--md-primary)",
+          background: "color-mix(in srgb, var(--md-primary) 10%, transparent)",
+        }}
+      />
+    );
+  }
+
   return (
     <>
       <div
@@ -92,11 +124,11 @@ export default function CardWidget({
       >
         {/* Drag handle area (disabled for grouped cards) */}
         <div
-          {...(inGroup ? {} : { ...attributes, ...listeners })}
+          {...(dragOverlay ? {} : { ...attributes, ...listeners })}
           style={{
-            cursor: inGroup ? "default" : isDragging ? "grabbing" : "grab",
+            cursor: dragOverlay ? "grabbing" : isDragging ? "grabbing" : "grab",
             marginBottom: 8,
-            touchAction: inGroup ? "auto" : "none",
+            touchAction: dragOverlay ? "auto" : "none",
           }}
         >
           <div style={{ ...styles.author, color: subtleColor }}>
@@ -107,7 +139,25 @@ export default function CardWidget({
             </div>
             {card.author}
           </div>
-          <div style={{ ...styles.text, color: textColor }}>{card.text}</div>
+          {editing ? (
+            <textarea
+              style={{ ...styles.editTextarea, color: textColor, background: cardBg }}
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              onBlur={handleEditSave}
+              onKeyDown={handleEditKeyDown}
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <div
+              style={{ ...styles.text, color: textColor, cursor: "text" }}
+              onDoubleClick={(e) => { e.stopPropagation(); setEditText(card.text); setEditing(true); }}
+              title="Двойной клик чтобы редактировать"
+            >
+              {card.text}
+            </div>
+          )}
         </div>
 
         {/* Actions */}
@@ -236,6 +286,19 @@ const styles = {
     fontSize: 14,
     lineHeight: 1.55,
     wordBreak: "break-word",
+  },
+  editTextarea: {
+    width: "100%",
+    boxSizing: "border-box",
+    fontSize: 14,
+    lineHeight: 1.55,
+    fontFamily: "'Roboto', sans-serif",
+    border: "none",
+    outline: "2px solid var(--md-primary)",
+    borderRadius: 6,
+    padding: "2px 4px",
+    resize: "vertical",
+    minHeight: 56,
   },
   actions: {
     display: "flex",

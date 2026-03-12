@@ -30,3 +30,4 @@ export const addCardToGroup = (groupId, cardId) =>
   api.post(`/groups/${groupId}/set_card/${cardId}`).then(r => r.data)
 export const removeCardFromGroup = (groupId, cardId) =>
   api.delete(`/groups/${groupId}/remove_card/${cardId}`).then(r => r.data)
+export const moveGroup = (id, data) => api.patch(`/groups/${id}/move`, data).then(r => r.data)
