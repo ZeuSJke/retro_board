@@ -41,6 +41,8 @@ async def update_card(card_id: str, body: schemas.CardUpdate, db: Session = Depe
         card.text = body.text
     if body.color is not None:
         card.color = body.color
+    if "group_id" in body.model_fields_set:
+        card.group_id = body.group_id
     db.commit()
     db.refresh(card)
     col = db.get(models.Column, card.column_id)
@@ -71,6 +73,9 @@ async def move_card(card_id: str, body: schemas.MoveCard, db: Session = Depends(
     for i, c in enumerate(new_cards):
         c.position = i
     card.column_id = body.column_id
+    # Moving to another column always ungroups the card
+    if old_col.id != new_col.id:
+        card.group_id = None
 
     db.commit()
     db.refresh(card)

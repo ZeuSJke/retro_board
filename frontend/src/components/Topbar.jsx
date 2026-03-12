@@ -1,12 +1,18 @@
 import { useState } from "react";
 import { useAppStore } from "../store";
 import Dialog from "./Dialog";
+import TimerWidget from "./TimerWidget";
 
 export default function Topbar({
   boardName,
   onBoardsToggle,
   onThemeToggle,
   onRename,
+  onExport,
+  timerState,
+  onTimerStart,
+  onTimerPause,
+  onTimerReset,
 }) {
   const { username, setUsername } = useAppStore();
   const [usernameOpen, setUsernameOpen] = useState(false);
@@ -32,6 +38,27 @@ export default function Topbar({
           {boardName}
         </button>
         <div style={styles.actions}>
+          {/* Timer widget */}
+          {timerState && (
+            <TimerWidget
+              timerState={timerState}
+              onStart={onTimerStart}
+              onPause={onTimerPause}
+              onReset={onTimerReset}
+            />
+          )}
+
+          {/* Export to PDF */}
+          {onExport && (
+            <button
+              style={styles.iconBtn}
+              onClick={onExport}
+              title="Экспорт в PDF"
+            >
+              <span className="material-symbols-rounded">picture_as_pdf</span>
+            </button>
+          )}
+
           <button
             style={styles.chip}
             onClick={() => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Topbar from "./components/Topbar";
 import BoardsPanel from "./components/BoardsPanel";
 import ThemePanel from "./components/ThemePanel";
@@ -18,20 +18,30 @@ export default function App() {
   const [error, setError] = useState(null);
   const [showWelcome, setShowWelcome] = useState(true);
 
+  // Export ref — BoardPage sets this to the current export function
+  const exportRef = useRef(null);
+
+  // Timer state — managed here so it persists across board navigation
+  const [timer, setTimer] = useState({ duration: 300, remaining: 300, running: false });
+  const timerIntervalRef = useRef(null);
+  // sendTimerRef — BoardPage sets this to { start, pause, reset } WS senders
+  const sendTimerRef = useRef(null);
+
   const handleWelcomeConfirm = (name) => {
     setUsername(name);
     setShowWelcome(false);
   };
 
   // Apply theme on mount & changes
+  useEffect(() => { applyTheme(theme); }, [theme]);
+
+  // Cleanup timer on unmount
   useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+    return () => clearInterval(timerIntervalRef.current);
+  }, []);
 
   // Load boards
-  useEffect(() => {
-    loadBoards();
-  }, []);
+  useEffect(() => { loadBoards(); }, []);
 
   const loadBoards = async () => {
     try {
@@ -43,17 +53,13 @@ export default function App() {
         list = [board];
       }
       setBoards(list);
-
       const targetId =
         currentBoardId && list.find((b) => b.id === currentBoardId)
           ? currentBoardId
           : list[0].id;
-
       await loadBoard(targetId);
     } catch (e) {
-      setError(
-        "Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен.",
-      );
+      setError("Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен.");
     } finally {
       setLoading(false);
     }
@@ -99,6 +105,59 @@ export default function App() {
     setThemePanelOpen(false);
   };
 
+  // ── Timer management ──────────────────────────────────────────────────────
+
+  const startCountdown = useCallback((remaining) => {
+    clearInterval(timerIntervalRef.current);
+    timerIntervalRef.current = setInterval(() => {
+      setTimer((prev) => {
+        const next = Math.max(0, prev.remaining - 1);
+        if (next <= 0) {
+          clearInterval(timerIntervalRef.current);
+          return { ...prev, remaining: 0, running: false };
+        }
+        return { ...prev, remaining: next };
+      });
+    }, 1000);
+  }, []);
+
+  // Called by BoardPage when a timer WS event arrives from server
+  const handleTimerWsEvent = useCallback(
+    (event, data) => {
+      if (event === "timer_start") {
+        const networkDelay = (Date.now() - (data.ts || Date.now())) / 1000;
+        const adjusted = Math.max(0, Math.round(data.remaining - networkDelay));
+        setTimer({ duration: data.duration, remaining: adjusted, running: true });
+        startCountdown(adjusted);
+      } else if (event === "timer_pause") {
+        clearInterval(timerIntervalRef.current);
+        setTimer((prev) => ({ ...prev, remaining: data.remaining, running: false }));
+      } else if (event === "timer_reset") {
+        clearInterval(timerIntervalRef.current);
+        setTimer({ duration: data.duration, remaining: data.duration, running: false });
+      }
+    },
+    [startCountdown],
+  );
+
+  // Called from TimerWidget via Topbar
+  const handleTimerStart = useCallback(
+    (duration, remaining) => {
+      sendTimerRef.current?.start(duration, remaining);
+    },
+    [],
+  );
+
+  const handleTimerPause = useCallback(() => {
+    sendTimerRef.current?.pause(timer.remaining);
+  }, [timer.remaining]);
+
+  const handleTimerReset = useCallback((duration) => {
+    sendTimerRef.current?.reset(duration);
+  }, []);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
   if (loading)
     return (
       <div style={styles.centered}>
@@ -118,9 +177,7 @@ export default function App() {
         >
           error
         </span>
-        <p
-          style={{ color: "var(--md-error)", fontWeight: 600, marginBottom: 8 }}
-        >
+        <p style={{ color: "var(--md-error)", fontWeight: 600, marginBottom: 8 }}>
           {error}
         </p>
         <button style={styles.retryBtn} onClick={loadBoards}>
@@ -146,6 +203,11 @@ export default function App() {
           setThemePanelOpen((v) => !v);
         }}
         onRename={handleRename}
+        onExport={() => exportRef.current?.()}
+        timerState={currentBoard ? timer : null}
+        onTimerStart={handleTimerStart}
+        onTimerPause={handleTimerPause}
+        onTimerReset={handleTimerReset}
       />
 
       {/* Overlay */}
@@ -170,6 +232,9 @@ export default function App() {
             key={currentBoard.id}
             board={currentBoard}
             onBoardUpdate={setCurrentBoardData}
+            exportRef={exportRef}
+            onTimerWsEvent={handleTimerWsEvent}
+            sendTimerRef={sendTimerRef}
           />
         )}
       </main>

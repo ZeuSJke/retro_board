@@ -17,15 +17,35 @@ class CardCreate(CardBase):
 class CardUpdate(BaseModel):
     text: Optional[str] = None
     color: Optional[str] = None
+    group_id: Optional[str] = None
     column_id: Optional[str] = None
     position: Optional[int] = None
 
 class CardOut(CardBase):
     id: str
     column_id: str
+    group_id: Optional[str] = None
     position: int
     likes: list[str] = []
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── CardGroup ─────────────────────────────────────────────────────────────────
+
+class CardGroupCreate(BaseModel):
+    column_id: str
+    title: str = Field(default="Группа", min_length=1, max_length=120)
+
+class CardGroupUpdate(BaseModel):
+    title: Optional[str] = None
+
+class CardGroupOut(BaseModel):
+    id: str
+    column_id: str
+    title: str
+    position: int
 
     model_config = {"from_attributes": True}
 
@@ -49,6 +69,7 @@ class ColumnOut(ColumnBase):
     board_id: str
     position: int
     cards: list[CardOut] = []
+    groups: list[CardGroupOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -82,3 +103,9 @@ class BoardListItem(BoardBase):
 class MoveCard(BaseModel):
     column_id: str
     position: int
+
+
+# ── Set card group ─────────────────────────────────────────────────────────────
+
+class SetCardGroup(BaseModel):
+    group_id: Optional[str] = None
