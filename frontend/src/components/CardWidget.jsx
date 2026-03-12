@@ -71,7 +71,11 @@ export default function CardWidget({ card, onUpdate, onDelete }) {
         <div
           {...attributes}
           {...listeners}
-          style={{ cursor: isDragging ? "grabbing" : "grab", marginBottom: 8 }}
+          style={{
+            cursor: isDragging ? "grabbing" : "grab",
+            marginBottom: 8,
+            touchAction: "none",
+          }}
         >
           <div style={{ ...styles.author, color: subtleColor }}>
             <div
