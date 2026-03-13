@@ -7,12 +7,13 @@ import { updateGroup, deleteGroup } from "../api";
 export default function CardGroupWidget({
   group,
   cards,
+  collapsed,
+  onToggleCollapse,
   onGroupUpdated,
   onGroupDeleted,
   onCardUpdated,
   onCardDeleted,
 }) {
-  const [collapsed, setCollapsed] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleVal, setTitleVal] = useState(group.title);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -57,7 +58,7 @@ export default function CardGroupWidget({
 
           <button
             style={styles.collapseBtn}
-            onClick={() => setCollapsed((v) => !v)}
+            onClick={() => onToggleCollapse?.()}
             title={collapsed ? "Развернуть" : "Свернуть"}
           >
             <span
