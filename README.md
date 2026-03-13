@@ -11,9 +11,13 @@
 - 📋 **Несколько досок** — создавай, переключайся, удаляй; новая доска создаётся с тремя колонками по умолчанию
 - 🗂️ **Колонки** — добавляй любое количество, меняй название (двойной клик) и цвет метки
 - 🗒️ **Заметки** — с именем автора, цветом фона, лайками и drag & drop
+- 🗃️ **Группы карточек** — объединяй карточки в именованные группы, перемещай группу целиком в другую колонку
 - 🖱️ **Drag & Drop** — перетаскивай карточки между колонками (@dnd-kit)
+- ⏱️ **Таймер** — обратный отсчёт для временных слотов ретро (старт / пауза / сброс), синхронизируется через WebSocket
 - 🔄 **Real-time** — все участники видят изменения мгновенно через WebSocket
+- 👆 **Курсоры участников** — позиции курсоров транслируются в реальном времени
 - 🎨 **Тема** — Material Design 3, меняй акцентный цвет и тёмный/светлый режим
+- 📤 **Экспорт в PDF** — сохрани содержимое доски одним кликом
 - 💾 **Персистентность** — данные хранятся в PostgreSQL
 - 📱 **Адаптивность** — колонки масштабируются под размер экрана
 
@@ -114,13 +118,14 @@ retro_board/
 │   └── app/
 │       ├── config.py             # Pydantic Settings (читает .env)
 │       ├── database.py           # SQLAlchemy engine + сессия
-│       ├── models.py             # ORM-модели: Board, Column, Card
+│       ├── models.py             # ORM-модели: Board, Column, Card, CardGroup
 │       ├── schemas.py            # Pydantic схемы (In/Out)
 │       ├── ws_manager.py         # WebSocket connection manager
 │       └── routers/
 │           ├── boards.py
 │           ├── columns.py
 │           ├── cards.py
+│           ├── groups.py         # CRUD групп карточек
 │           └── websocket.py
 │
 └── frontend/
@@ -135,11 +140,14 @@ retro_board/
         ├── api/                  # Axios-клиент для всех эндпоинтов
         ├── components/
         │   ├── BoardsPanel.jsx   # Боковая панель со списком досок
+        │   ├── CardGroupWidget.jsx # Группа карточек с DnD
         │   ├── CardWidget.jsx    # Карточка заметки с DnD
         │   ├── Column.jsx        # Колонка с карточками
         │   ├── Dialog.jsx        # Переиспользуемый диалог (+ danger-режим)
         │   ├── ThemePanel.jsx    # Панель смены темы
-        │   └── Topbar.jsx        # Верхняя панель навигации
+        │   ├── TimerWidget.jsx   # Таймер обратного отсчёта
+        │   ├── Topbar.jsx        # Верхняя панель навигации
+        │   └── WelcomeDialog.jsx # Диалог ввода имени при первом входе
         ├── hooks/
         │   └── useWebSocket.js   # WS с автореконнектом и защитой от StrictMode
         ├── pages/
@@ -147,6 +155,7 @@ retro_board/
         ├── store/
         │   └── index.js          # Zustand: username, theme, currentBoard
         └── utils/
+            ├── exportPDF.js      # Экспорт доски в PDF
             └── theme.js          # Цвета, applyTheme, initials
 ```
 
@@ -182,6 +191,17 @@ retro_board/
 | `POST` | `/api/cards/{id}/like` | Добавить / убрать лайк |
 | `DELETE` | `/api/cards/{id}` | Удалить карточку |
 
+### Groups
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/api/groups/` | Создать группу карточек |
+| `PATCH` | `/api/groups/{id}` | Переименовать группу |
+| `DELETE` | `/api/groups/{id}` | Удалить группу |
+| `POST` | `/api/groups/{id}/set_card/{card_id}` | Добавить карточку в группу |
+| `DELETE` | `/api/groups/{id}/remove_card/{card_id}` | Убрать карточку из группы |
+| `PATCH` | `/api/groups/{id}/move` | Переместить группу в другую колонку |
+
 ### WebSocket
 
 ```
@@ -203,6 +223,16 @@ ws://localhost/ws/{board_id}
 | `card_updated` | Изменён текст, цвет или лайки |
 | `card_moved` | Карточка перемещена |
 | `card_deleted` | Карточка удалена |
+| `group_created` | Создана группа карточек |
+| `group_updated` | Переименована группа |
+| `group_moved` | Группа перемещена в другую колонку |
+| `group_deleted` | Группа удалена |
+| `group_collapse` | Группа свёрнута / развёрнута |
+| `cursor_move` | Обновлена позиция курсора участника |
+| `cursor_leave` | Участник покинул доску |
+| `timer_start` | Таймер запущен |
+| `timer_pause` | Таймер приостановлен |
+| `timer_reset` | Таймер сброшен |
 
 ---
 
