@@ -54,6 +54,7 @@ async def delete_group(group_id: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Group not found")
     col = db.get(models.Column, group.column_id)
     board_id = col.board_id
+    col_id = group.column_id  # capture before deletion
 
     # Ungroup all cards in this group
     card_ids = []
@@ -66,7 +67,7 @@ async def delete_group(group_id: str, db: Session = Depends(get_db)):
     await manager.broadcast(
         board_id,
         "group_deleted",
-        {"id": group_id, "column_id": group.column_id, "card_ids": card_ids},
+        {"id": group_id, "column_id": col_id, "card_ids": card_ids},
     )
 
 

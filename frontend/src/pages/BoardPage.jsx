@@ -70,11 +70,16 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
   const [newColTitle, setNewColTitle] = useState("");
   const [newColColor, setNewColColor] = useState("#6750A4");
 
+  // Collapsed groups: { groupId → bool }
+  const [collapsedGroups, setCollapsedGroups] = useState({});
+
   // Cursors: { username → { x, y } }
   const [cursors, setCursors] = useState({});
   const cursorTimeouts = useRef({});
   const boardRef = useRef(null);
   const lastSentRef = useRef(0);
+  const lastCursorRef = useRef(null);
+  const sendMessageRef = useRef(null);
   const savedColumnsRef = useRef(null);
   const [groupTargetId, setGroupTargetId] = useState(null);
 
@@ -115,6 +120,12 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
     board.id,
     useCallback((msg) => {
       const { event, data } = msg;
+
+      if (event === "group_collapse") {
+        const { group_id, collapsed } = data;
+        setCollapsedGroups((prev) => ({ ...prev, [group_id]: collapsed }));
+        return;
+      }
 
       if (event === "cursor_move") {
         const { username: u, x, y } = data;
@@ -230,7 +241,13 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
         }
       });
     }, [onTimerWsEvent]),
+    useCallback(() => {
+      // On reconnect, re-send last cursor position so other users see it
+      const pos = lastCursorRef.current;
+      if (pos) sendMessageRef.current?.({ event: "cursor_move", data: { username, ...pos } });
+    }, [username]),
   );
+  sendMessageRef.current = sendMessage;
 
   // ── Cursor tracking ──────────────────────────────────────────────────────
 
@@ -241,7 +258,9 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
     const b = boardRef.current;
     if (!b) return;
     const rect = b.getBoundingClientRect();
-    sendMessage({ event: "cursor_move", data: { username, x: e.clientX - rect.left + b.scrollLeft, y: e.clientY - rect.top + b.scrollTop } });
+    const pos = { x: e.clientX - rect.left + b.scrollLeft, y: e.clientY - rect.top + b.scrollTop };
+    lastCursorRef.current = pos;
+    sendMessage({ event: "cursor_move", data: { username, ...pos } });
   }, [username, sendMessage]);
 
   const handleMouseLeave = useCallback(() => {
@@ -549,6 +568,11 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
             key={col.id}
             column={col}
             groupTargetId={groupTargetId}
+            collapsedGroups={collapsedGroups}
+            onToggleCollapse={(groupId) => {
+              const newCollapsed = !collapsedGroups[groupId];
+              sendMessage({ event: "group_collapse", data: { group_id: groupId, collapsed: newCollapsed } });
+            }}
             onUpdate={(updated) =>
               setColumns((prev) => prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)))
             }

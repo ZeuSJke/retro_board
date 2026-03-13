@@ -23,6 +23,8 @@ export default function Column({
   onGroupUpdated,
   onGroupDeleted,
   groupTargetId,
+  collapsedGroups,
+  onToggleCollapse,
 }) {
   const { username } = useAppStore();
   const [addOpen, setAddOpen] = useState(false);
@@ -172,6 +174,8 @@ const { setNodeRef, isOver } = useDroppable({
               key={group.id}
               group={group}
               cards={(column.cards || []).filter((c) => c.group_id === group.id)}
+              collapsed={collapsedGroups?.[group.id] || false}
+              onToggleCollapse={() => onToggleCollapse?.(group.id)}
               onGroupUpdated={(updated) => onGroupUpdated(column.id, updated)}
               onGroupDeleted={(id) => onGroupDeleted(column.id, id)}
               onCardUpdated={(updated) => onCardUpdated(column.id, updated)}

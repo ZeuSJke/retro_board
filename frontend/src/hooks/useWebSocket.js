@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef } from "react";
 
-export function useWebSocket(boardId, onMessage) {
+export function useWebSocket(boardId, onMessage, onOpen) {
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
+  const onOpenRef = useRef(onOpen);
+  onOpenRef.current = onOpen;
 
   const wsRef = useRef(null);
 
@@ -23,6 +25,10 @@ export function useWebSocket(boardId, onMessage) {
 
       const protocol = location.protocol === "https:" ? "wss" : "ws";
       const ws = new WebSocket(`${protocol}://${location.host}/ws/${boardId}`);
+
+      ws.onopen = () => {
+        onOpenRef.current?.();
+      };
 
       ws.onmessage = (e) => {
         try {

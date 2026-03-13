@@ -35,6 +35,10 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                         board_id, "cursor_leave", payload, exclude=websocket
                     )
 
+                elif event == "group_collapse":
+                    # Broadcast to ALL (including sender) for sync
+                    await manager.broadcast(board_id, "group_collapse", payload)
+
                 elif event in ("timer_start", "timer_pause", "timer_reset"):
                     # Broadcast to ALL (including sender) for sync confirmation
                     await manager.broadcast(board_id, event, payload)

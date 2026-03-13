@@ -27,6 +27,17 @@ export default function App() {
   // sendTimerRef — BoardPage sets this to { start, pause, reset } WS senders
   const sendTimerRef = useRef(null);
 
+  // Persist timer to localStorage on every change (fires on each countdown tick too, which is fine)
+  useEffect(() => {
+    if (!currentBoardId) return;
+    localStorage.setItem(`retro_timer_${currentBoardId}`, JSON.stringify({
+      duration: timer.duration,
+      remaining: timer.remaining,
+      running: timer.running,
+      savedAt: Date.now(),
+    }));
+  }, [timer.duration, timer.remaining, timer.running, currentBoardId]);
+
   const handleWelcomeConfirm = (name) => {
     setUsername(name);
     setShowWelcome(false);
@@ -69,6 +80,23 @@ export default function App() {
     const board = await getBoard(id);
     setCurrentBoardData(board);
     setCurrentBoard(id);
+
+    // Restore timer state from localStorage
+    try {
+      const saved = localStorage.getItem(`retro_timer_${id}`);
+      if (saved) {
+        const { duration, remaining, running, savedAt } = JSON.parse(saved);
+        clearInterval(timerIntervalRef.current);
+        if (running) {
+          const elapsed = Math.floor((Date.now() - savedAt) / 1000);
+          const adjusted = Math.max(0, remaining - elapsed);
+          setTimer({ duration, remaining: adjusted, running: adjusted > 0 });
+          if (adjusted > 0) startCountdown(adjusted);
+        } else {
+          setTimer({ duration, remaining, running: false });
+        }
+      }
+    } catch {}
   };
 
   const handleSelectBoard = async (id) => {
