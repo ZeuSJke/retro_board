@@ -63,11 +63,19 @@ export default function TimerWidget({ timerState, onStart, onPause, onReset }) {
               ? "color-mix(in srgb, #BA1A1A 12%, var(--md-surface-variant))"
               : "var(--md-surface-variant)",
           color: running ? color : "var(--md-on-surface-variant)",
+          animation: flash ? "pillGlow 0.45s ease-in-out 4" : "none",
         }}
         onClick={() => setExpanded((v) => !v)}
         title="Таймер"
       >
-        <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
+        <span
+          className="material-symbols-rounded"
+          style={{
+            fontSize: 16,
+            animation: flash ? "iconRing 0.45s ease-in-out 4" : "none",
+            display: "inline-block",
+          }}
+        >
           {running ? "timer" : finished ? "alarm_on" : "timer"}
         </span>
         <span style={styles.pillTime}>{fmt(remaining)}</span>
@@ -181,6 +189,14 @@ export default function TimerWidget({ timerState, onStart, onPause, onReset }) {
 
       <style>{`
         @keyframes blink { 50% { opacity: 0; } }
+        @keyframes iconRing {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.5); color: #BA1A1A; }
+        }
+        @keyframes pillGlow {
+          0%, 100% { box-shadow: none; }
+          50% { box-shadow: 0 0 0 3px rgba(186, 26, 26, 0.35); }
+        }
       `}</style>
     </div>
   );
@@ -191,9 +207,7 @@ const styles = {
     position: "relative",
     transition: "background 0.3s",
   },
-  wrapperFlash: {
-    animation: "none",
-  },
+  wrapperFlash: {},
   pill: {
     display: "flex",
     alignItems: "center",

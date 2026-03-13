@@ -9,14 +9,14 @@ import { applyTheme } from "./utils/theme";
 import { getBoards, getBoard, updateBoard, createBoard } from "./api";
 
 export default function App() {
-  const { theme, currentBoardId, setCurrentBoard, setUsername } = useAppStore();
+  const { theme, currentBoardId, setCurrentBoard, setUsername, username } = useAppStore();
   const [boards, setBoards] = useState([]);
   const [currentBoard, setCurrentBoardData] = useState(null);
   const [boardsPanelOpen, setBoardsPanelOpen] = useState(false);
   const [themePanelOpen, setThemePanelOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [showWelcome, setShowWelcome] = useState(true);
+  const [showWelcome, setShowWelcome] = useState(username === "Аноним");
 
   // Export ref — BoardPage sets this to the current export function
   const exportRef = useRef(null);
@@ -26,10 +26,12 @@ export default function App() {
   const timerIntervalRef = useRef(null);
   // sendTimerRef — BoardPage sets this to { start, pause, reset } WS senders
   const sendTimerRef = useRef(null);
+  // Guard: don't overwrite localStorage with default state before the board is loaded
+  const timerRestoredRef = useRef(false);
 
   // Persist timer to localStorage on every change (fires on each countdown tick too, which is fine)
   useEffect(() => {
-    if (!currentBoardId) return;
+    if (!currentBoardId || !timerRestoredRef.current) return;
     localStorage.setItem(`retro_timer_${currentBoardId}`, JSON.stringify({
       duration: timer.duration,
       remaining: timer.remaining,
@@ -97,6 +99,7 @@ export default function App() {
         }
       }
     } catch {}
+    timerRestoredRef.current = true;
   };
 
   const handleSelectBoard = async (id) => {
