@@ -7,7 +7,13 @@ import {
 import CardWidget from "./CardWidget";
 import CardGroupWidget from "./CardGroupWidget";
 import Dialog from "./Dialog";
-import { updateColumn, deleteColumn, createCard, createGroup, addCardToGroup } from "../api";
+import {
+  updateColumn,
+  deleteColumn,
+  createCard,
+  createGroup,
+  addCardToGroup,
+} from "../api";
 
 import { useAppStore } from "../store";
 import { CARD_COLORS } from "../utils/theme";
@@ -40,7 +46,7 @@ export default function Column({
   const [assigningCardId, setAssigningCardId] = useState(null);
   const [newGroupTitle, setNewGroupTitle] = useState("");
 
-const { setNodeRef, isOver } = useDroppable({
+  const { setNodeRef, isOver } = useDroppable({
     id: `col-${column.id}`,
     data: { type: "column", columnId: column.id },
   });
@@ -173,7 +179,10 @@ const { setNodeRef, isOver } = useDroppable({
             <CardGroupWidget
               key={group.id}
               group={group}
-              cards={(column.cards || []).filter((c) => c.group_id === group.id)}
+              columnId={column.id}
+              cards={(column.cards || []).filter(
+                (c) => c.group_id === group.id,
+              )}
               collapsed={collapsedGroups?.[group.id] || false}
               onToggleCollapse={() => onToggleCollapse?.(group.id)}
               onGroupUpdated={(updated) => onGroupUpdated(column.id, updated)}
@@ -337,8 +346,8 @@ const { setNodeRef, isOver } = useDroppable({
           <strong style={{ color: "var(--md-on-surface)" }}>
             «{column.title}»
           </strong>{" "}
-          и все её заметки ({(column.cards || []).length}) будут удалены без возможности
-          восстановления.
+          и все её заметки ({(column.cards || []).length}) будут удалены без
+          возможности восстановления.
         </p>
       </Dialog>
 
@@ -362,7 +371,10 @@ const { setNodeRef, isOver } = useDroppable({
               style={styles.groupPickBtn}
               onClick={() => handleAssignToGroup(g.id)}
             >
-              <span className="material-symbols-rounded" style={{ fontSize: 16, color: "var(--md-primary)" }}>
+              <span
+                className="material-symbols-rounded"
+                style={{ fontSize: 16, color: "var(--md-primary)" }}
+              >
                 folder
               </span>
               {g.title}
@@ -371,7 +383,13 @@ const { setNodeRef, isOver } = useDroppable({
 
           {/* Divider */}
           {groups.length > 0 && (
-            <div style={{ height: 1, background: "var(--md-outline-variant)", margin: "4px 0" }} />
+            <div
+              style={{
+                height: 1,
+                background: "var(--md-outline-variant)",
+                margin: "4px 0",
+              }}
+            />
           )}
 
           {/* Create new group inline */}
@@ -385,7 +403,12 @@ const { setNodeRef, isOver } = useDroppable({
               onKeyDown={(e) => e.key === "Enter" && handleCreateAndAssign()}
             />
             <button style={styles.newGroupBtn} onClick={handleCreateAndAssign}>
-              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>add</span>
+              <span
+                className="material-symbols-rounded"
+                style={{ fontSize: 16 }}
+              >
+                add
+              </span>
               Создать
             </button>
           </div>
