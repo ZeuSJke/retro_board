@@ -8,6 +8,7 @@ export default function CardGroupWidget({
   group,
   cards,
   collapsed,
+  columnId,
   onToggleCollapse,
   onGroupUpdated,
   onGroupDeleted,
@@ -18,7 +19,12 @@ export default function CardGroupWidget({
   const [titleVal, setTitleVal] = useState(group.title);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
     id: `group-${group.id}`,
     data: { type: "group", group },
   });
@@ -34,7 +40,7 @@ export default function CardGroupWidget({
   const confirmDelete = async () => {
     setDeleteOpen(false);
     await deleteGroup(group.id);
-    onGroupDeleted(group.id);
+    onGroupDeleted(columnId, group.id);
   };
 
   return (
@@ -130,6 +136,7 @@ export default function CardGroupWidget({
                   onDelete={onCardDeleted}
                   groupId={group.id}
                   onRemoveFromGroup={onCardUpdated}
+                  onGroupDeleted={onGroupDeleted}
                 />
               ))
             )}
@@ -146,9 +153,19 @@ export default function CardGroupWidget({
         onConfirm={confirmDelete}
         confirmLabel="Удалить"
       >
-        <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--md-on-surface-variant)" }}>
-          Группа <strong style={{ color: "var(--md-on-surface)" }}>«{group.title}»</strong> будет удалена,
-          карточки ({cards.length}) останутся в колонке без группы.
+        <p
+          style={{
+            fontSize: 14,
+            lineHeight: 1.6,
+            color: "var(--md-on-surface-variant)",
+          }}
+        >
+          Группа{" "}
+          <strong style={{ color: "var(--md-on-surface)" }}>
+            «{group.title}»
+          </strong>{" "}
+          будет удалена, карточки ({cards.length}) останутся в колонке без
+          группы.
         </p>
       </Dialog>
     </>
@@ -160,7 +177,8 @@ const styles = {
     border: "1.5px solid var(--md-outline-variant)",
     borderRadius: 12,
     overflow: "hidden",
-    background: "color-mix(in srgb, var(--md-primary) 4%, var(--md-surface-variant))",
+    background:
+      "color-mix(in srgb, var(--md-primary) 4%, var(--md-surface-variant))",
   },
   header: {
     display: "flex",
@@ -168,7 +186,8 @@ const styles = {
     gap: 6,
     padding: "8px 10px",
     borderBottom: "1px solid var(--md-outline-variant)",
-    background: "color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))",
+    background:
+      "color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))",
   },
   dragHandle: {
     width: 22,

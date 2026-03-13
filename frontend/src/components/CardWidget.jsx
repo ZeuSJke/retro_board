@@ -2,7 +2,12 @@ import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useAppStore } from "../store";
-import { toggleLike, deleteCard, removeCardFromGroup, updateCard } from "../api";
+import {
+  toggleLike,
+  deleteCard,
+  removeCardFromGroup,
+  updateCard,
+} from "../api";
 import { userColor, initials } from "../utils/theme";
 import Dialog from "./Dialog";
 
@@ -16,6 +21,7 @@ export default function CardWidget({
   groupId,
   isGroupTarget = false,
   dragOverlay = false,
+  onGroupDeleted,
 }) {
   const { username } = useAppStore();
   const liked = (card.likes || []).includes(username);
@@ -52,20 +58,32 @@ export default function CardWidget({
   const handleRemoveFromGroup = async (e) => {
     e.stopPropagation();
     const updated = await removeCardFromGroup(groupId, card.id);
+    // Если группа стала пустой после удаления карточки - удаляем группу
+    // Backend отправляет group_deleted событие, но продублируем локально для согласованности
+    if (updated.group_id === null && onGroupDeleted) {
+      // card.column_id содержит ID колонки
+      onGroupDeleted(updated.column_id, groupId);
+    }
     onUpdate(updated);
   };
 
   const handleEditSave = async () => {
     setEditing(false);
     const trimmed = editText.trim();
-    if (!trimmed || trimmed === card.text) { setEditText(card.text); return; }
+    if (!trimmed || trimmed === card.text) {
+      setEditText(card.text);
+      return;
+    }
     const updated = await updateCard(card.id, { text: trimmed });
     onUpdate(updated);
   };
 
   const handleEditKeyDown = (e) => {
     if (e.key === "Enter" && e.ctrlKey) handleEditSave();
-    if (e.key === "Escape") { setEditing(false); setEditText(card.text); }
+    if (e.key === "Escape") {
+      setEditing(false);
+      setEditText(card.text);
+    }
   };
 
   const confirmDelete = async () => {
@@ -117,7 +135,10 @@ export default function CardWidget({
             card.color && card.color !== "#FFFFFF" ? card.color : "transparent",
           cursor: inGroup ? "default" : undefined,
           ...(isGroupTarget
-            ? { boxShadow: "0 0 0 3px var(--md-primary), var(--elevation-1)", outline: "none" }
+            ? {
+                boxShadow: "0 0 0 3px var(--md-primary), var(--elevation-1)",
+                outline: "none",
+              }
             : {}),
         }}
         className="card-widget"
@@ -141,7 +162,11 @@ export default function CardWidget({
           </div>
           {editing ? (
             <textarea
-              style={{ ...styles.editTextarea, color: textColor, background: cardBg }}
+              style={{
+                ...styles.editTextarea,
+                color: textColor,
+                background: cardBg,
+              }}
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
               onBlur={handleEditSave}
@@ -152,7 +177,11 @@ export default function CardWidget({
           ) : (
             <div
               style={{ ...styles.text, color: textColor, cursor: "text" }}
-              onDoubleClick={(e) => { e.stopPropagation(); setEditText(card.text); setEditing(true); }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setEditText(card.text);
+                setEditing(true);
+              }}
               title="Двойной клик чтобы редактировать"
             >
               {card.text}
@@ -193,7 +222,10 @@ export default function CardWidget({
               onClick={() => onAssignGroup(card.id)}
               title="Добавить в группу"
             >
-              <span className="material-symbols-rounded" style={{ fontSize: 15 }}>
+              <span
+                className="material-symbols-rounded"
+                style={{ fontSize: 15 }}
+              >
                 folder
               </span>
             </button>
@@ -206,7 +238,10 @@ export default function CardWidget({
               onClick={handleRemoveFromGroup}
               title="Убрать из группы"
             >
-              <span className="material-symbols-rounded" style={{ fontSize: 15 }}>
+              <span
+                className="material-symbols-rounded"
+                style={{ fontSize: 15 }}
+              >
                 folder_off
               </span>
             </button>

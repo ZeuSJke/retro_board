@@ -12,15 +12,30 @@ import {
 import Column from "../components/Column";
 import CardWidget from "../components/CardWidget";
 import Dialog from "../components/Dialog";
-import { createColumn, moveCard, createGroup, addCardToGroup, removeCardFromGroup, moveGroup } from "../api";
+import {
+  createColumn,
+  moveCard,
+  createGroup,
+  addCardToGroup,
+  removeCardFromGroup,
+  moveGroup,
+} from "../api";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useAppStore } from "../store";
 import { userColor } from "../utils/theme";
 import { exportBoardToPDF } from "../utils/exportPDF";
 
 const COLUMN_COLORS = [
-  "#6750A4", "#0061A4", "#006E1C", "#BA1A1A", "#E8760A",
-  "#006A60", "#7D5260", "#FF6D00", "#43A047", "#1B6CA8",
+  "#6750A4",
+  "#0061A4",
+  "#006E1C",
+  "#BA1A1A",
+  "#E8760A",
+  "#006A60",
+  "#7D5260",
+  "#FF6D00",
+  "#43A047",
+  "#1B6CA8",
 ];
 
 // ── Cursor marker ─────────────────────────────────────────────────────────────
@@ -39,20 +54,41 @@ function CursorMarker({ username, x, y }) {
         userSelect: "none",
       }}
     >
-      <svg width="20" height="24" viewBox="0 0 20 24" fill="none"
-        style={{ display: "block", filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.35))" }}
+      <svg
+        width="20"
+        height="24"
+        viewBox="0 0 20 24"
+        fill="none"
+        style={{
+          display: "block",
+          filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.35))",
+        }}
       >
         <path
           d="M2 2L2 18L6.5 13L11 22L13.5 20.8L9 12L15 12L2 2Z"
-          fill={color} stroke="white" strokeWidth="1.5" strokeLinejoin="round"
+          fill={color}
+          stroke="white"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
         />
       </svg>
-      <div style={{
-        position: "absolute", top: 18, left: 14, background: color, color: "white",
-        borderRadius: 10, padding: "2px 8px", fontSize: 11, fontWeight: 700,
-        fontFamily: "'Roboto', sans-serif", whiteSpace: "nowrap",
-        boxShadow: "0 2px 6px rgba(0,0,0,0.25)", letterSpacing: 0.2,
-      }}>
+      <div
+        style={{
+          position: "absolute",
+          top: 18,
+          left: 14,
+          background: color,
+          color: "white",
+          borderRadius: 10,
+          padding: "2px 8px",
+          fontSize: 11,
+          fontWeight: 700,
+          fontFamily: "'Roboto', sans-serif",
+          whiteSpace: "nowrap",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.25)",
+          letterSpacing: 0.2,
+        }}
+      >
         {username}
       </div>
     </div>
@@ -61,7 +97,13 @@ function CursorMarker({ username, x, y }) {
 
 // ── BoardPage ─────────────────────────────────────────────────────────────────
 
-export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEvent, sendTimerRef }) {
+export default function BoardPage({
+  board,
+  onBoardUpdate,
+  exportRef,
+  onTimerWsEvent,
+  sendTimerRef,
+}) {
   const { username } = useAppStore();
   const [columns, setColumns] = useState(board.columns || []);
   const [activeCard, setActiveCard] = useState(null);
@@ -84,7 +126,9 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
   const [groupTargetId, setGroupTargetId] = useState(null);
 
   // Keep columns in sync when board prop changes
-  useState(() => { setColumns(board.columns || []); });
+  useState(() => {
+    setColumns(board.columns || []);
+  });
 
   // Expose export function via ref
   useEffect(() => {
@@ -98,7 +142,10 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
     if (sendTimerRef) {
       sendTimerRef.current = {
         start: (duration, remaining) =>
-          sendMessage({ event: "timer_start", data: { duration, remaining, ts: Date.now() } }),
+          sendMessage({
+            event: "timer_start",
+            data: { duration, remaining, ts: Date.now() },
+          }),
         pause: (remaining) =>
           sendMessage({ event: "timer_pause", data: { remaining } }),
         reset: (duration) =>
@@ -118,150 +165,216 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
 
   const { sendMessage } = useWebSocket(
     board.id,
-    useCallback((msg) => {
-      const { event, data } = msg;
+    useCallback(
+      (msg) => {
+        const { event, data } = msg;
 
-      if (event === "group_collapse") {
-        const { group_id, collapsed } = data;
-        setCollapsedGroups((prev) => ({ ...prev, [group_id]: collapsed }));
-        return;
-      }
-
-      if (event === "cursor_move") {
-        const { username: u, x, y } = data;
-        if (!u) return;
-        setCursors((prev) => ({ ...prev, [u]: { x, y } }));
-        clearTimeout(cursorTimeouts.current[u]);
-        cursorTimeouts.current[u] = setTimeout(() => {
-          setCursors((prev) => { const n = { ...prev }; delete n[u]; return n; });
-        }, 6000);
-        return;
-      }
-
-      if (event === "cursor_leave") {
-        const { username: u } = data;
-        if (!u) return;
-        clearTimeout(cursorTimeouts.current[u]);
-        setCursors((prev) => { const n = { ...prev }; delete n[u]; return n; });
-        return;
-      }
-
-      // Timer events: forward to App for state management
-      if (event === "timer_start" || event === "timer_pause" || event === "timer_reset") {
-        onTimerWsEvent?.(event, data);
-        return;
-      }
-
-      setColumns((prev) => {
-        switch (event) {
-          case "column_created":
-            if (prev.find((c) => c.id === data.id)) return prev;
-            return [...prev, { ...data, cards: [], groups: [] }];
-          case "column_updated":
-            return prev.map((c) => (c.id === data.id ? { ...c, ...data } : c));
-          case "column_deleted":
-            return prev.filter((c) => c.id !== data.id);
-          case "card_created":
-            return prev.map((c) =>
-              c.id === data.column_id
-                ? { ...c, cards: [...c.cards.filter((x) => x.id !== data.id), data].sort((a, b) => a.position - b.position) }
-                : c,
-            );
-          case "card_updated":
-            return prev.map((c) => ({
-              ...c,
-              cards: c.cards.map((x) => (x.id === data.id ? data : x)),
-            }));
-          case "card_moved": {
-            const { card, old_column_id } = data;
-            return prev.map((c) => {
-              if (c.id === old_column_id && c.id === card.column_id) {
-                // Same-column reorder: remove and re-insert with updated position
-                const cards = [...c.cards.filter((x) => x.id !== card.id), card].sort((a, b) => a.position - b.position);
-                return { ...c, cards };
-              }
-              if (c.id === old_column_id) return { ...c, cards: c.cards.filter((x) => x.id !== card.id) };
-              if (c.id === card.column_id) {
-                const cards = [...c.cards.filter((x) => x.id !== card.id), card].sort((a, b) => a.position - b.position);
-                return { ...c, cards };
-              }
-              return c;
-            });
-          }
-          case "card_deleted":
-            return prev.map((c) => ({ ...c, cards: c.cards.filter((x) => x.id !== data.id) }));
-          case "group_created":
-            return prev.map((c) =>
-              c.id === data.column_id
-                ? { ...c, groups: [...(c.groups || []).filter((g) => g.id !== data.id), data] }
-                : c,
-            );
-          case "group_updated":
-            return prev.map((c) => ({
-              ...c,
-              groups: (c.groups || []).map((g) => (g.id === data.id ? data : g)),
-            }));
-          case "group_deleted": {
-            const { id, column_id, card_ids } = data;
-            return prev.map((c) =>
-              c.id === column_id
-                ? {
-                    ...c,
-                    groups: (c.groups || []).filter((g) => g.id !== id),
-                    cards: c.cards.map((card) =>
-                      (card_ids || []).includes(card.id) ? { ...card, group_id: null } : card,
-                    ),
-                  }
-                : c,
-            );
-          }
-          case "group_moved": {
-            const { group, old_column_id, cards } = data;
-            const movedCardIds = cards.map((c) => c.id);
-            return prev.map((c) => {
-              if (c.id === old_column_id) {
-                return {
-                  ...c,
-                  groups: (c.groups || []).filter((g) => g.id !== group.id),
-                  cards: c.cards.filter((card) => !movedCardIds.includes(card.id)),
-                };
-              }
-              if (c.id === group.column_id) {
-                return {
-                  ...c,
-                  groups: [...(c.groups || []).filter((g) => g.id !== group.id), group],
-                  cards: [...c.cards.filter((card) => !movedCardIds.includes(card.id)), ...cards],
-                };
-              }
-              return c;
-            });
-          }
-          default:
-            return prev;
+        if (event === "group_collapse") {
+          const { group_id, collapsed } = data;
+          setCollapsedGroups((prev) => ({ ...prev, [group_id]: collapsed }));
+          return;
         }
-      });
-    }, [onTimerWsEvent]),
+
+        if (event === "cursor_move") {
+          const { username: u, x, y } = data;
+          if (!u) return;
+          setCursors((prev) => ({ ...prev, [u]: { x, y } }));
+          clearTimeout(cursorTimeouts.current[u]);
+          cursorTimeouts.current[u] = setTimeout(() => {
+            setCursors((prev) => {
+              const n = { ...prev };
+              delete n[u];
+              return n;
+            });
+          }, 6000);
+          return;
+        }
+
+        if (event === "cursor_leave") {
+          const { username: u } = data;
+          if (!u) return;
+          clearTimeout(cursorTimeouts.current[u]);
+          setCursors((prev) => {
+            const n = { ...prev };
+            delete n[u];
+            return n;
+          });
+          return;
+        }
+
+        // Timer events: forward to App for state management
+        if (
+          event === "timer_start" ||
+          event === "timer_pause" ||
+          event === "timer_reset"
+        ) {
+          onTimerWsEvent?.(event, data);
+          return;
+        }
+
+        setColumns((prev) => {
+          switch (event) {
+            case "column_created":
+              if (prev.find((c) => c.id === data.id)) return prev;
+              return [...prev, { ...data, cards: [], groups: [] }];
+            case "column_updated":
+              return prev.map((c) =>
+                c.id === data.id ? { ...c, ...data } : c,
+              );
+            case "column_deleted":
+              return prev.filter((c) => c.id !== data.id);
+            case "card_created":
+              return prev.map((c) =>
+                c.id === data.column_id
+                  ? {
+                      ...c,
+                      cards: [
+                        ...c.cards.filter((x) => x.id !== data.id),
+                        data,
+                      ].sort((a, b) => a.position - b.position),
+                    }
+                  : c,
+              );
+            case "card_updated":
+              return prev.map((c) => ({
+                ...c,
+                cards: c.cards.map((x) => (x.id === data.id ? data : x)),
+              }));
+            case "card_moved": {
+              const { card, old_column_id } = data;
+              return prev.map((c) => {
+                if (c.id === old_column_id && c.id === card.column_id) {
+                  // Same-column reorder: remove and re-insert with updated position
+                  const cards = [
+                    ...c.cards.filter((x) => x.id !== card.id),
+                    card,
+                  ].sort((a, b) => a.position - b.position);
+                  return { ...c, cards };
+                }
+                if (c.id === old_column_id)
+                  return {
+                    ...c,
+                    cards: c.cards.filter((x) => x.id !== card.id),
+                  };
+                if (c.id === card.column_id) {
+                  const cards = [
+                    ...c.cards.filter((x) => x.id !== card.id),
+                    card,
+                  ].sort((a, b) => a.position - b.position);
+                  return { ...c, cards };
+                }
+                return c;
+              });
+            }
+            case "card_deleted":
+              return prev.map((c) => ({
+                ...c,
+                cards: c.cards.filter((x) => x.id !== data.id),
+              }));
+            case "group_created":
+              return prev.map((c) =>
+                c.id === data.column_id
+                  ? {
+                      ...c,
+                      groups: [
+                        ...(c.groups || []).filter((g) => g.id !== data.id),
+                        data,
+                      ],
+                    }
+                  : c,
+              );
+            case "group_updated":
+              return prev.map((c) => ({
+                ...c,
+                groups: (c.groups || []).map((g) =>
+                  g.id === data.id ? data : g,
+                ),
+              }));
+            case "group_deleted": {
+              const { id, column_id, card_ids } = data;
+              return prev.map((c) =>
+                c.id === column_id
+                  ? {
+                      ...c,
+                      groups: (c.groups || []).filter((g) => g.id !== id),
+                      cards: c.cards.map((card) =>
+                        (card_ids || []).includes(card.id)
+                          ? { ...card, group_id: null }
+                          : card,
+                      ),
+                    }
+                  : c,
+              );
+            }
+            case "group_moved": {
+              const { group, old_column_id, cards } = data;
+              const movedCardIds = cards.map((c) => c.id);
+              return prev.map((c) => {
+                if (c.id === old_column_id) {
+                  return {
+                    ...c,
+                    groups: (c.groups || []).filter((g) => g.id !== group.id),
+                    cards: c.cards.filter(
+                      (card) => !movedCardIds.includes(card.id),
+                    ),
+                  };
+                }
+                if (c.id === group.column_id) {
+                  return {
+                    ...c,
+                    groups: [
+                      ...(c.groups || []).filter((g) => g.id !== group.id),
+                      group,
+                    ],
+                    cards: [
+                      ...c.cards.filter(
+                        (card) => !movedCardIds.includes(card.id),
+                      ),
+                      ...cards,
+                    ],
+                  };
+                }
+                return c;
+              });
+            }
+            default:
+              return prev;
+          }
+        });
+      },
+      [onTimerWsEvent],
+    ),
     useCallback(() => {
       // On reconnect, re-send last cursor position so other users see it
       const pos = lastCursorRef.current;
-      if (pos) sendMessageRef.current?.({ event: "cursor_move", data: { username, ...pos } });
+      if (pos)
+        sendMessageRef.current?.({
+          event: "cursor_move",
+          data: { username, ...pos },
+        });
     }, [username]),
   );
   sendMessageRef.current = sendMessage;
 
   // ── Cursor tracking ──────────────────────────────────────────────────────
 
-  const handleMouseMove = useCallback((e) => {
-    const now = Date.now();
-    if (now - lastSentRef.current < 50) return;
-    lastSentRef.current = now;
-    const b = boardRef.current;
-    if (!b) return;
-    const rect = b.getBoundingClientRect();
-    const pos = { x: e.clientX - rect.left + b.scrollLeft, y: e.clientY - rect.top + b.scrollTop };
-    lastCursorRef.current = pos;
-    sendMessage({ event: "cursor_move", data: { username, ...pos } });
-  }, [username, sendMessage]);
+  const handleMouseMove = useCallback(
+    (e) => {
+      const now = Date.now();
+      if (now - lastSentRef.current < 50) return;
+      lastSentRef.current = now;
+      const b = boardRef.current;
+      if (!b) return;
+      const rect = b.getBoundingClientRect();
+      const pos = {
+        x: e.clientX - rect.left + b.scrollLeft,
+        y: e.clientY - rect.top + b.scrollTop,
+      };
+      lastCursorRef.current = pos;
+      sendMessage({ event: "cursor_move", data: { username, ...pos } });
+    },
+    [username, sendMessage],
+  );
 
   const handleMouseLeave = useCallback(() => {
     sendMessage({ event: "cursor_leave", data: { username } });
@@ -271,7 +384,9 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 250, tolerance: 5 },
+    }),
   );
 
   const collisionDetection = useCallback((args) => {
@@ -304,7 +419,10 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
       const groupId = String(active.id).slice(6);
       for (const col of columns) {
         const g = (col.groups || []).find((g) => g.id === groupId);
-        if (g) { setActiveGroup(g); break; }
+        if (g) {
+          setActiveGroup(g);
+          break;
+        }
       }
       return;
     }
@@ -313,7 +431,10 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
   };
 
   const onDragOver = ({ active, over }) => {
-    if (!over) { setGroupTargetId(null); return; }
+    if (!over) {
+      setGroupTargetId(null);
+      return;
+    }
     // Group drags don't need optimistic moves; column isOver handles visual feedback
     if (String(active.id).startsWith("group-")) return;
 
@@ -325,7 +446,13 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
 
     // Look up target card to decide if a group action applies
     const overCard = !isOverCol
-      ? (() => { for (const col of columns) { const c = col.cards.find((x) => x.id === overId); if (c) return c; } return null; })()
+      ? (() => {
+          for (const col of columns) {
+            const c = col.cards.find((x) => x.id === overId);
+            if (c) return c;
+          }
+          return null;
+        })()
       : null;
     const targetGroupId = overCard?.group_id;
     const activeGroupId = activeFound.card.group_id;
@@ -334,7 +461,12 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
     //   - target card is in a group (we'll join it), OR
     //   - both cards are ungrouped (we'll create a new group)
     // Don't highlight when active is grouped but target is not (that's just an ungroup/move)
-    if (!isOverCol && overId !== active.id && overColId && (targetGroupId || !activeGroupId)) {
+    if (
+      !isOverCol &&
+      overId !== active.id &&
+      overColId &&
+      (targetGroupId || !activeGroupId)
+    ) {
       setGroupTargetId(overId);
       // Cross-column: also do optimistic move so the card appears in the target column
       if (overColId !== activeFound.colId) {
@@ -343,10 +475,17 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
           const dstCol = prev.find((c) => c.id === overColId);
           if (!srcCol || !dstCol) return prev;
           const card = srcCol.cards.find((c) => c.id === active.id);
-          const newSrc = { ...srcCol, cards: srcCol.cards.filter((c) => c.id !== active.id) };
+          const newSrc = {
+            ...srcCol,
+            cards: srcCol.cards.filter((c) => c.id !== active.id),
+          };
           const overCardIdx = dstCol.cards.findIndex((c) => c.id === overId);
           const newCards = [...dstCol.cards];
-          newCards.splice(overCardIdx >= 0 ? overCardIdx : newCards.length, 0, { ...card, column_id: overColId, group_id: null });
+          newCards.splice(overCardIdx >= 0 ? overCardIdx : newCards.length, 0, {
+            ...card,
+            column_id: overColId,
+            group_id: null,
+          });
           return prev.map((c) => {
             if (c.id === activeFound.colId) return newSrc;
             if (c.id === overColId) return { ...dstCol, cards: newCards };
@@ -365,8 +504,14 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
       const dstCol = prev.find((c) => c.id === overColId);
       if (!srcCol || !dstCol) return prev;
       const card = srcCol.cards.find((c) => c.id === active.id);
-      const newSrc = { ...srcCol, cards: srcCol.cards.filter((c) => c.id !== active.id) };
-      const newCards = [...dstCol.cards, { ...card, column_id: overColId, group_id: null }];
+      const newSrc = {
+        ...srcCol,
+        cards: srcCol.cards.filter((c) => c.id !== active.id),
+      };
+      const newCards = [
+        ...dstCol.cards,
+        { ...card, column_id: overColId, group_id: null },
+      ];
       return prev.map((c) => {
         if (c.id === activeFound.colId) return newSrc;
         if (c.id === overColId) return { ...dstCol, cards: newCards };
@@ -396,16 +541,21 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
       // Find group in saved state
       let srcColId = null;
       let groupData = null;
-      for (const col of (savedColumnsRef.current || [])) {
+      for (const col of savedColumnsRef.current || []) {
         const g = (col.groups || []).find((g) => g.id === groupId);
-        if (g) { srcColId = col.id; groupData = g; break; }
+        if (g) {
+          srcColId = col.id;
+          groupData = g;
+          break;
+        }
       }
       if (!groupData || targetColId === srcColId) return;
 
       // Optimistic update
-      const groupCards = (savedColumnsRef.current || [])
-        .find((c) => c.id === srcColId)?.cards
-        .filter((card) => card.group_id === groupId) || [];
+      const groupCards =
+        (savedColumnsRef.current || [])
+          .find((c) => c.id === srcColId)
+          ?.cards.filter((card) => card.group_id === groupId) || [];
       setColumns((prev) =>
         prev.map((c) => {
           if (c.id === srcColId) {
@@ -418,8 +568,17 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
           if (c.id === targetColId) {
             return {
               ...c,
-              groups: [...(c.groups || []).filter((g) => g.id !== groupId), { ...groupData, column_id: targetColId }],
-              cards: [...c.cards, ...groupCards.map((card) => ({ ...card, column_id: targetColId }))],
+              groups: [
+                ...(c.groups || []).filter((g) => g.id !== groupId),
+                { ...groupData, column_id: targetColId },
+              ],
+              cards: [
+                ...c.cards,
+                ...groupCards.map((card) => ({
+                  ...card,
+                  column_id: targetColId,
+                })),
+              ],
             };
           }
           return c;
@@ -447,7 +606,10 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
     if (!isOverCol && overId !== active.id) {
       // Find target card's group membership
       const targetCard = (() => {
-        for (const col of columns) { const c = col.cards.find((x) => x.id === overId); if (c) return c; }
+        for (const col of columns) {
+          const c = col.cards.find((x) => x.id === overId);
+          if (c) return c;
+        }
         return null;
       })();
       const targetGroupId = targetCard?.group_id;
@@ -455,8 +617,11 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
 
       // Find original column from pre-drag snapshot (for cross-column detection)
       let origColId = null;
-      for (const col of (savedColumnsRef.current || [])) {
-        if (col.cards.find((c) => c.id === active.id)) { origColId = col.id; break; }
+      for (const col of savedColumnsRef.current || []) {
+        if (col.cards.find((c) => c.id === active.id)) {
+          origColId = col.id;
+          break;
+        }
       }
 
       if (targetGroupId) {
@@ -464,8 +629,13 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
         try {
           if (origColId && origColId !== overColId) {
             // Cross-column: move card first (backend clears old group automatically)
-            const dstCards = (savedColumnsRef.current || []).find((c) => c.id === overColId)?.cards || [];
-            await moveCard(active.id, { column_id: overColId, position: dstCards.length });
+            const dstCards =
+              (savedColumnsRef.current || []).find((c) => c.id === overColId)
+                ?.cards || [];
+            await moveCard(active.id, {
+              column_id: overColId,
+              position: dstCards.length,
+            });
           } else if (activeGroupId) {
             // Same-column: was in a group → remove first so old group can auto-delete
             await removeCardFromGroup(activeGroupId, active.id);
@@ -474,7 +644,9 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
           setColumns((prev) =>
             prev.map((c) => ({
               ...c,
-              cards: c.cards.map((card) => (card.id === active.id ? updatedActive : card)),
+              cards: c.cards.map((card) =>
+                card.id === active.id ? updatedActive : card,
+              ),
             })),
           );
         } catch (e) {
@@ -488,14 +660,28 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
         // Both ungrouped → create a new group
         try {
           if (origColId && origColId !== overColId) {
-            const dstCards = (savedColumnsRef.current || []).find((c) => c.id === overColId)?.cards || [];
-            await moveCard(active.id, { column_id: overColId, position: dstCards.length });
+            const dstCards =
+              (savedColumnsRef.current || []).find((c) => c.id === overColId)
+                ?.cards || [];
+            await moveCard(active.id, {
+              column_id: overColId,
+              position: dstCards.length,
+            });
           }
-          const group = await createGroup({ column_id: overColId, title: "Группа" });
+          const group = await createGroup({
+            column_id: overColId,
+            title: "Группа",
+          });
           setColumns((prev) =>
             prev.map((c) =>
               c.id === overColId
-                ? { ...c, groups: [...(c.groups || []).filter((g) => g.id !== group.id), group] }
+                ? {
+                    ...c,
+                    groups: [
+                      ...(c.groups || []).filter((g) => g.id !== group.id),
+                      group,
+                    ],
+                  }
                 : c,
             ),
           );
@@ -545,24 +731,43 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
 
   // ── Add column ───────────────────────────────────────────────────────────
 
-  const openAddCol = () => { setNewColTitle(""); setNewColColor("#6750A4"); setAddColOpen(true); };
+  const openAddCol = () => {
+    setNewColTitle("");
+    setNewColColor("#6750A4");
+    setAddColOpen(true);
+  };
 
   const confirmAddColumn = async () => {
     if (!newColTitle.trim()) return;
     setAddColOpen(false);
-    const col = await createColumn({ board_id: board.id, title: newColTitle.trim(), color: newColColor });
+    const col = await createColumn({
+      board_id: board.id,
+      title: newColTitle.trim(),
+      color: newColColor,
+    });
     setColumns((prev) =>
-      prev.find((c) => c.id === col.id) ? prev : [...prev, { ...col, cards: [], groups: [] }],
+      prev.find((c) => c.id === col.id)
+        ? prev
+        : [...prev, { ...col, cards: [], groups: [] }],
     );
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <DndContext sensors={sensors} collisionDetection={collisionDetection}
-      onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}
+    <DndContext
+      sensors={sensors}
+      collisionDetection={collisionDetection}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
     >
-      <div ref={boardRef} style={styles.board} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave}>
+      <div
+        ref={boardRef}
+        style={styles.board}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      >
         {columns.map((col) => (
           <Column
             key={col.id}
@@ -571,12 +776,21 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
             collapsedGroups={collapsedGroups}
             onToggleCollapse={(groupId) => {
               const newCollapsed = !collapsedGroups[groupId];
-              sendMessage({ event: "group_collapse", data: { group_id: groupId, collapsed: newCollapsed } });
+              sendMessage({
+                event: "group_collapse",
+                data: { group_id: groupId, collapsed: newCollapsed },
+              });
             }}
             onUpdate={(updated) =>
-              setColumns((prev) => prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)))
+              setColumns((prev) =>
+                prev.map((c) =>
+                  c.id === updated.id ? { ...c, ...updated } : c,
+                ),
+              )
             }
-            onDelete={(id) => setColumns((prev) => prev.filter((c) => c.id !== id))}
+            onDelete={(id) =>
+              setColumns((prev) => prev.filter((c) => c.id !== id))
+            }
             onCardCreated={(colId, card) =>
               setColumns((prev) =>
                 prev.map((c) =>
@@ -590,7 +804,12 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
               setColumns((prev) =>
                 prev.map((c) =>
                   c.id === colId
-                    ? { ...c, cards: c.cards.map((x) => (x.id === card.id ? card : x)) }
+                    ? {
+                        ...c,
+                        cards: c.cards.map((x) =>
+                          x.id === card.id ? card : x,
+                        ),
+                      }
                     : c,
                 ),
               )
@@ -598,7 +817,9 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
             onCardDeleted={(colId, cardId) =>
               setColumns((prev) =>
                 prev.map((c) =>
-                  c.id === colId ? { ...c, cards: c.cards.filter((x) => x.id !== cardId) } : c,
+                  c.id === colId
+                    ? { ...c, cards: c.cards.filter((x) => x.id !== cardId) }
+                    : c,
                 ),
               )
             }
@@ -606,7 +827,13 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
               setColumns((prev) =>
                 prev.map((c) =>
                   c.id === colId
-                    ? { ...c, groups: [...(c.groups || []).filter((g) => g.id !== group.id), group] }
+                    ? {
+                        ...c,
+                        groups: [
+                          ...(c.groups || []).filter((g) => g.id !== group.id),
+                          group,
+                        ],
+                      }
                     : c,
                 ),
               )
@@ -615,7 +842,12 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
               setColumns((prev) =>
                 prev.map((c) =>
                   c.id === colId
-                    ? { ...c, groups: (c.groups || []).map((g) => (g.id === group.id ? group : g)) }
+                    ? {
+                        ...c,
+                        groups: (c.groups || []).map((g) =>
+                          g.id === group.id ? group : g,
+                        ),
+                      }
                     : c,
                 ),
               )
@@ -626,9 +858,13 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
                   c.id === colId
                     ? {
                         ...c,
-                        groups: (c.groups || []).filter((g) => g.id !== groupId),
+                        groups: (c.groups || []).filter(
+                          (g) => g.id !== groupId,
+                        ),
                         cards: c.cards.map((card) =>
-                          card.group_id === groupId ? { ...card, group_id: null } : card,
+                          card.group_id === groupId
+                            ? { ...card, group_id: null }
+                            : card,
                         ),
                       }
                     : c,
@@ -649,14 +885,23 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
       </div>
 
       {/* Add Column Dialog */}
-      <Dialog open={addColOpen} title="Новая колонка" icon="view_column"
-        onClose={() => setAddColOpen(false)} onConfirm={confirmAddColumn} confirmLabel="Создать"
+      <Dialog
+        open={addColOpen}
+        title="Новая колонка"
+        icon="view_column"
+        onClose={() => setAddColOpen(false)}
+        onConfirm={confirmAddColumn}
+        confirmLabel="Создать"
       >
         <div style={styles.field}>
           <label style={styles.label}>Название</label>
-          <input style={styles.input} value={newColTitle}
+          <input
+            style={styles.input}
+            value={newColTitle}
             onChange={(e) => setNewColTitle(e.target.value)}
-            placeholder="Например: Что прошло хорошо?" maxLength={80} autoFocus
+            placeholder="Например: Что прошло хорошо?"
+            maxLength={80}
+            autoFocus
             onKeyDown={(e) => e.key === "Enter" && confirmAddColumn()}
           />
         </div>
@@ -664,10 +909,16 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
           <label style={styles.label}>Цвет метки</label>
           <div style={styles.colorGrid}>
             {COLUMN_COLORS.map((c) => (
-              <button key={c} onClick={() => setNewColColor(c)}
+              <button
+                key={c}
+                onClick={() => setNewColColor(c)}
                 style={{
-                  ...styles.colorSwatch, background: c,
-                  outline: c === newColColor ? `3px solid ${c}` : "3px solid transparent",
+                  ...styles.colorSwatch,
+                  background: c,
+                  outline:
+                    c === newColColor
+                      ? `3px solid ${c}`
+                      : "3px solid transparent",
                   outlineOffset: 2,
                   transform: c === newColColor ? "scale(1.18)" : "scale(1)",
                 }}
@@ -677,7 +928,9 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
         </div>
         <div style={{ ...styles.preview, borderLeftColor: newColColor }}>
           <div style={{ ...styles.previewDot, background: newColColor }} />
-          <span style={styles.previewTitle}>{newColTitle.trim() || "Название колонки"}</span>
+          <span style={styles.previewTitle}>
+            {newColTitle.trim() || "Название колонки"}
+          </span>
           <span style={styles.previewCount}>0</span>
         </div>
       </Dialog>
@@ -685,25 +938,46 @@ export default function BoardPage({ board, onBoardUpdate, exportRef, onTimerWsEv
       <DragOverlay>
         {activeCard && (
           <div style={{ transform: "rotate(3deg)", opacity: 0.9 }}>
-            <CardWidget card={activeCard} onUpdate={() => {}} onDelete={() => {}} dragOverlay />
+            <CardWidget
+              card={activeCard}
+              onUpdate={() => {}}
+              onDelete={() => {}}
+              dragOverlay
+            />
           </div>
         )}
         {activeGroup && (
-          <div style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "8px 14px",
-            borderRadius: 10,
-            background: "color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))",
-            border: "1.5px solid var(--md-outline-variant)",
-            boxShadow: "var(--elevation-2)",
-            opacity: 0.9,
-            transform: "rotate(2deg)",
-            cursor: "grabbing",
-          }}>
-            <span className="material-symbols-rounded" style={{ fontSize: 14, color: "var(--md-primary)" }}>folder</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--md-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 14px",
+              borderRadius: 10,
+              background:
+                "color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))",
+              border: "1.5px solid var(--md-outline-variant)",
+              boxShadow: "var(--elevation-2)",
+              opacity: 0.9,
+              transform: "rotate(2deg)",
+              cursor: "grabbing",
+            }}
+          >
+            <span
+              className="material-symbols-rounded"
+              style={{ fontSize: 14, color: "var(--md-primary)" }}
+            >
+              folder
+            </span>
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: "var(--md-primary)",
+                textTransform: "uppercase",
+                letterSpacing: 0.5,
+              }}
+            >
               {activeGroup.title}
             </span>
           </div>
@@ -790,7 +1064,13 @@ const styles = {
     gap: 8,
     transition: "border-color 0.2s",
   },
-  previewDot: { width: 12, height: 12, borderRadius: "50%", flexShrink: 0, transition: "background 0.2s" },
+  previewDot: {
+    width: 12,
+    height: 12,
+    borderRadius: "50%",
+    flexShrink: 0,
+    transition: "background 0.2s",
+  },
   previewTitle: {
     flex: 1,
     fontSize: 14,
