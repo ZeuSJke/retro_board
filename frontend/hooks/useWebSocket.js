@@ -1,0 +1,70 @@
+'use client'
+
+import { useCallback, useEffect, useRef } from 'react'
+
+export function useWebSocket(boardId, onMessage, onOpen) {
+  const onMessageRef = useRef(onMessage)
+  onMessageRef.current = onMessage
+  const onOpenRef = useRef(onOpen)
+  onOpenRef.current = onOpen
+
+  const wsRef = useRef(null)
+
+  const sendMessage = useCallback((msg) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg))
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!boardId) return
+
+    let cancelled = false
+    let reconnectTimer = null
+
+    const connect = () => {
+      if (cancelled) return
+
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
+      // In production nginx proxies /ws/ to backend; in dev use NEXT_PUBLIC_WS_HOST
+      const wsHost = process.env.NEXT_PUBLIC_WS_HOST || location.host
+      const ws = new WebSocket(`${protocol}://${wsHost}/ws/${boardId}`)
+
+      ws.onopen = () => {
+        onOpenRef.current?.()
+      }
+
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data)
+          onMessageRef.current(msg)
+        } catch {}
+      }
+
+      ws.onclose = () => {
+        if (cancelled) return
+        reconnectTimer = setTimeout(connect, 2000)
+      }
+
+      wsRef.current = ws
+    }
+
+    connect()
+
+    const ping = setInterval(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send('ping')
+      }
+    }, 25000)
+
+    return () => {
+      cancelled = true
+      clearTimeout(reconnectTimer)
+      clearInterval(ping)
+      wsRef.current?.close()
+      wsRef.current = null
+    }
+  }, [boardId])
+
+  return { sendMessage }
+}

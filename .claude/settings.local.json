@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E '\\\\.\\(py|jsx|js|json|yml|yaml|md\\)$')",
+      "Bash(docker exec retro_board-frontend-1 cat /var/log/nginx/error.log)",
+      "Bash(docker exec retro_board-frontend-1 sh -c \"nginx -t 2>&1 && curl -s http://localhost:3000 | head -5\")",
+      "Bash(docker exec retro_board-frontend-1 sh -c \"wget -qO- http://localhost:3000 2>&1 | head -3\")",
+      "Bash(docker exec retro_board-frontend-1 sh -c \"cat /proc/net/tcp6 | head -5; cat /proc/net/tcp | head -5\")",
+      "Bash(docker compose build frontend)",
+      "Bash(docker compose up -d)",
+      "Bash(docker exec retro_board-frontend-1 sh -c \"wget -qO- http://localhost:3000 2>&1 | head -2\")",
+      "Bash(docker exec retro_board-frontend-1 sh -c \"cat /proc/net/tcp\")",
+      "Bash(docker exec retro_board-frontend-1 sh -c \"wget -qO- http://127.0.0.1:3000 2>&1 | head -2\")",
+      "Bash(docker compose down -v)",
+      "Bash(docker compose up --build -d)"
+    ]
+  }
+}

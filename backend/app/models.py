@@ -19,7 +19,8 @@ class Board(Base):
     __tablename__ = "boards"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    slug: Mapped[str | None] = mapped_column(String(150), unique=True, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
     )

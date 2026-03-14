@@ -1,8 +1,10 @@
-import { useState } from "react";
-import { useDraggable } from "@dnd-kit/core";
-import CardWidget from "./CardWidget";
-import Dialog from "./Dialog";
-import { updateGroup, deleteGroup } from "../api";
+'use client'
+
+import { useState } from 'react'
+import { useDraggable } from '@dnd-kit/core'
+import CardWidget from './CardWidget'
+import Dialog from './Dialog'
+import { updateGroup, deleteGroup } from '../api'
 
 export default function CardGroupWidget({
   group,
@@ -15,40 +17,33 @@ export default function CardGroupWidget({
   onCardUpdated,
   onCardDeleted,
 }) {
-  const [editingTitle, setEditingTitle] = useState(false);
-  const [titleVal, setTitleVal] = useState(group.title);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleVal, setTitleVal] = useState(group.title)
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
-  const {
-    attributes,
-    listeners,
-    setNodeRef: setDragRef,
-    isDragging,
-  } = useDraggable({
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
     id: `group-${group.id}`,
-    data: { type: "group", group },
-  });
+    data: { type: 'group', group },
+  })
 
   const saveTitle = async () => {
-    setEditingTitle(false);
+    setEditingTitle(false)
     if (titleVal.trim() && titleVal !== group.title) {
-      const updated = await updateGroup(group.id, { title: titleVal.trim() });
-      onGroupUpdated(updated);
+      const updated = await updateGroup(group.id, { title: titleVal.trim() })
+      onGroupUpdated(updated)
     }
-  };
+  }
 
   const confirmDelete = async () => {
-    setDeleteOpen(false);
-    await deleteGroup(group.id);
-    onGroupDeleted(columnId, group.id);
-  };
+    setDeleteOpen(false)
+    await deleteGroup(group.id)
+    onGroupDeleted(columnId, group.id)
+  }
 
   return (
     <>
       <div style={{ ...styles.container, opacity: isDragging ? 0.4 : 1 }}>
-        {/* Group header */}
         <div style={styles.header}>
-          {/* Drag handle */}
           <button
             ref={setDragRef}
             {...attributes}
@@ -65,15 +60,15 @@ export default function CardGroupWidget({
           <button
             style={styles.collapseBtn}
             onClick={() => onToggleCollapse?.()}
-            title={collapsed ? "Развернуть" : "Свернуть"}
+            title={collapsed ? 'Развернуть' : 'Свернуть'}
           >
             <span
               className="material-symbols-rounded"
               style={{
                 fontSize: 16,
-                transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
-                transition: "transform 0.2s",
-                display: "block",
+                transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                transition: 'transform 0.2s',
+                display: 'block',
               }}
             >
               expand_more
@@ -82,7 +77,7 @@ export default function CardGroupWidget({
 
           <span
             className="material-symbols-rounded"
-            style={{ fontSize: 14, color: "var(--md-primary)", flexShrink: 0 }}
+            style={{ fontSize: 14, color: 'var(--md-primary)', flexShrink: 0 }}
           >
             folder
           </span>
@@ -93,15 +88,15 @@ export default function CardGroupWidget({
               value={titleVal}
               onChange={(e) => setTitleVal(e.target.value)}
               onBlur={saveTitle}
-              onKeyDown={(e) => e.key === "Enter" && saveTitle()}
+              onKeyDown={(e) => e.key === 'Enter' && saveTitle()}
               autoFocus
             />
           ) : (
             <span
               style={styles.title}
               onDoubleClick={() => {
-                setTitleVal(group.title);
-                setEditingTitle(true);
+                setTitleVal(group.title)
+                setEditingTitle(true)
               }}
               title="Двойной клик — переименовать"
             >
@@ -122,7 +117,6 @@ export default function CardGroupWidget({
           </button>
         </div>
 
-        {/* Cards */}
         {!collapsed && (
           <div style={styles.cards}>
             {cards.length === 0 ? (
@@ -153,68 +147,57 @@ export default function CardGroupWidget({
         onConfirm={confirmDelete}
         confirmLabel="Удалить"
       >
-        <p
-          style={{
-            fontSize: 14,
-            lineHeight: 1.6,
-            color: "var(--md-on-surface-variant)",
-          }}
-        >
-          Группа{" "}
-          <strong style={{ color: "var(--md-on-surface)" }}>
-            «{group.title}»
-          </strong>{" "}
-          будет удалена, карточки ({cards.length}) останутся в колонке без
-          группы.
+        <p style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--md-on-surface-variant)' }}>
+          Группа{' '}
+          <strong style={{ color: 'var(--md-on-surface)' }}>«{group.title}»</strong>{' '}
+          будет удалена, карточки ({cards.length}) останутся в колонке без группы.
         </p>
       </Dialog>
     </>
-  );
+  )
 }
 
 const styles = {
   container: {
-    border: "1.5px solid var(--md-outline-variant)",
+    border: '1.5px solid var(--md-outline-variant)',
     borderRadius: 12,
-    overflow: "hidden",
-    background:
-      "color-mix(in srgb, var(--md-primary) 4%, var(--md-surface-variant))",
+    overflow: 'hidden',
+    background: 'color-mix(in srgb, var(--md-primary) 4%, var(--md-surface-variant))',
   },
   header: {
-    display: "flex",
-    alignItems: "center",
+    display: 'flex',
+    alignItems: 'center',
     gap: 6,
-    padding: "8px 10px",
-    borderBottom: "1px solid var(--md-outline-variant)",
-    background:
-      "color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))",
+    padding: '8px 10px',
+    borderBottom: '1px solid var(--md-outline-variant)',
+    background: 'color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))',
   },
   dragHandle: {
     width: 22,
     height: 22,
-    borderRadius: "50%",
-    border: "none",
-    background: "transparent",
-    color: "var(--md-on-surface-variant)",
-    cursor: "grab",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    borderRadius: '50%',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--md-on-surface-variant)',
+    cursor: 'grab',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     flexShrink: 0,
     padding: 0,
-    touchAction: "none",
+    touchAction: 'none',
   },
   collapseBtn: {
     width: 22,
     height: 22,
-    borderRadius: "50%",
-    border: "none",
-    background: "transparent",
-    color: "var(--md-on-surface-variant)",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    borderRadius: '50%',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--md-on-surface-variant)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     flexShrink: 0,
     padding: 0,
   },
@@ -222,63 +205,58 @@ const styles = {
     flex: 1,
     fontSize: 12,
     fontWeight: 700,
-    textTransform: "uppercase",
+    textTransform: 'uppercase',
     letterSpacing: 0.5,
-    color: "var(--md-primary)",
-    cursor: "default",
-    userSelect: "none",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    color: 'var(--md-primary)',
+    cursor: 'default',
+    userSelect: 'none',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   },
   titleInput: {
     flex: 1,
     fontSize: 12,
     fontWeight: 700,
-    border: "none",
-    background: "transparent",
-    outline: "2px solid var(--md-primary)",
+    border: 'none',
+    background: 'transparent',
+    outline: '2px solid var(--md-primary)',
     borderRadius: 4,
-    padding: "1px 4px",
+    padding: '1px 4px',
     fontFamily: "'Roboto', sans-serif",
-    color: "var(--md-primary)",
-    textTransform: "uppercase",
+    color: 'var(--md-primary)',
+    textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   count: {
     fontSize: 11,
     fontWeight: 600,
-    background: "var(--md-primary-container)",
-    color: "var(--md-on-primary-container)",
-    padding: "1px 6px",
+    background: 'var(--md-primary-container)',
+    color: 'var(--md-on-primary-container)',
+    padding: '1px 6px',
     borderRadius: 10,
     flexShrink: 0,
   },
   delBtn: {
     width: 22,
     height: 22,
-    borderRadius: "50%",
-    border: "none",
-    background: "transparent",
-    color: "var(--md-on-surface-variant)",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    borderRadius: '50%',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--md-on-surface-variant)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     flexShrink: 0,
     padding: 0,
   },
-  cards: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-    padding: "8px",
-  },
+  cards: { display: 'flex', flexDirection: 'column', gap: 8, padding: '8px' },
   empty: {
-    textAlign: "center",
+    textAlign: 'center',
     fontSize: 12,
-    color: "var(--md-on-surface-variant)",
-    padding: "8px 0",
+    color: 'var(--md-on-surface-variant)',
+    padding: '8px 0',
     opacity: 0.6,
   },
-};
+}
