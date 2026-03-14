@@ -2,7 +2,7 @@
 
 Полноценное веб-приложение для проведения Agile-ретроспектив в реальном времени.
 
-**Стек:** React 18 + Vite · FastAPI · PostgreSQL · WebSocket · Docker
+**Стек:** Next.js 15 · FastAPI · PostgreSQL · WebSocket · Docker
 
 ---
 
@@ -38,7 +38,7 @@ POSTGRES_DB=retroboard
 POSTGRES_USER=retro
 POSTGRES_PASSWORD=your_secure_password
 
-CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+CORS_ORIGINS=http://localhost:3080
 ```
 
 ### 2. Запусти
@@ -87,16 +87,27 @@ uvicorn main:app --reload
 # → Swagger: http://localhost:8000/docs
 ```
 
-### Фронтенд (React + Vite)
+### Фронтенд (Next.js)
 
 ```bash
 cd frontend
 npm install
+```
+
+Создай файл `frontend/.env.local`:
+
+```env
+BACKEND_URL=http://localhost:8000
+NEXT_PUBLIC_WS_HOST=localhost:8000
+```
+
+```bash
 npm run dev
 # → http://localhost:3000
 ```
 
-> Vite автоматически проксирует `/api` и `/ws` на `http://localhost:8000` (см. `vite.config.js`)
+> Next.js проксирует `/api/*` на `http://localhost:8000` через `next.config.mjs` (rewrites).
+> WebSocket подключается напрямую к `localhost:8000` через `NEXT_PUBLIC_WS_HOST`.
 
 ---
 
@@ -129,34 +140,39 @@ retro_board/
 │           └── websocket.py
 │
 └── frontend/
-    ├── Dockerfile                # Multi-stage: builder → nginx
+    ├── Dockerfile                # Multi-stage: builder → runner + nginx
     ├── nginx.conf                # Proxy /api и /ws на backend
-    ├── vite.config.js
-    ├── index.html
-    └── src/
-        ├── main.jsx
-        ├── App.jsx
-        ├── index.css             # CSS-переменные MD3, глобальные стили
-        ├── api/                  # Axios-клиент для всех эндпоинтов
-        ├── components/
-        │   ├── BoardsPanel.jsx   # Боковая панель со списком досок
-        │   ├── CardGroupWidget.jsx # Группа карточек с DnD
-        │   ├── CardWidget.jsx    # Карточка заметки с DnD
-        │   ├── Column.jsx        # Колонка с карточками
-        │   ├── Dialog.jsx        # Переиспользуемый диалог (+ danger-режим)
-        │   ├── ThemePanel.jsx    # Панель смены темы
-        │   ├── TimerWidget.jsx   # Таймер обратного отсчёта
-        │   ├── Topbar.jsx        # Верхняя панель навигации
-        │   └── WelcomeDialog.jsx # Диалог ввода имени при первом входе
-        ├── hooks/
-        │   └── useWebSocket.js   # WS с автореконнектом и защитой от StrictMode
-        ├── pages/
-        │   └── BoardPage.jsx     # Доска с DnD-контекстом
-        ├── store/
-        │   └── index.js          # Zustand: username, theme, currentBoard
-        └── utils/
-            ├── exportPDF.js      # Экспорт доски в PDF
-            └── theme.js          # Цвета, applyTheme, initials
+    ├── next.config.mjs           # Next.js: standalone output, API rewrite
+    ├── start.sh                  # Запуск node server.js + nginx
+    ├── .env.local                # Локальные переменные (не в git!)
+    ├── app/
+    │   ├── layout.jsx            # Root layout: шрифты, глобальные стили
+    │   ├── globals.css           # CSS-переменные MD3, глобальные стили
+    │   ├── page.jsx              # Главная: список досок, редирект
+    │   └── board/
+    │       └── [id]/
+    │           └── page.jsx      # Страница доски по ID
+    ├── components/
+    │   ├── App.jsx               # Корневой компонент: состояние, WS, таймер
+    │   ├── BoardPage.jsx         # Доска с DnD-контекстом
+    │   ├── BoardsPanel.jsx       # Боковая панель со списком досок
+    │   ├── CardGroupWidget.jsx   # Группа карточек с DnD
+    │   ├── CardWidget.jsx        # Карточка заметки с DnD
+    │   ├── Column.jsx            # Колонка с карточками
+    │   ├── Dialog.jsx            # Переиспользуемый диалог (+ danger-режим)
+    │   ├── ThemePanel.jsx        # Панель смены темы
+    │   ├── TimerWidget.jsx       # Таймер обратного отсчёта
+    │   ├── Topbar.jsx            # Верхняя панель навигации
+    │   └── WelcomeDialog.jsx     # Диалог ввода имени при первом входе
+    ├── hooks/
+    │   └── useWebSocket.js       # WS с автореконнектом и защитой от StrictMode
+    ├── store/
+    │   └── index.js              # Zustand: username, theme, currentBoard
+    ├── api/
+    │   └── index.js              # Axios-клиент для всех эндпоинтов
+    └── utils/
+        ├── exportPDF.js          # Экспорт доски в PDF
+        └── theme.js              # Цвета, applyTheme, initials
 ```
 
 ---
@@ -252,7 +268,14 @@ ws://localhost/ws/{board_id}
 | Переменная | Описание | Пример |
 |---|---|---|
 | `DATABASE_URL` | Строка подключения к PostgreSQL | `postgresql://retro:pass@localhost:5432/retroboard` |
-| `CORS_ORIGINS` | Разрешённые CORS-источники | `http://localhost:3000,http://localhost:5173` |
+| `CORS_ORIGINS` | Разрешённые CORS-источники | `http://localhost:3000` |
+
+### `frontend/.env.local` (для локальной разработки без Docker)
+
+| Переменная | Описание | Пример |
+|---|---|---|
+| `BACKEND_URL` | URL бэкенда для Server-side rewrites | `http://localhost:8000` |
+| `NEXT_PUBLIC_WS_HOST` | Хост WebSocket (доступен в браузере) | `localhost:8000` |
 
 ---
 

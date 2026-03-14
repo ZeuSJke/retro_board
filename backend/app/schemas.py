@@ -87,6 +87,7 @@ class BoardUpdate(BaseModel):
 
 class BoardOut(BoardBase):
     id: str
+    slug: Optional[str] = None
     created_at: datetime
     columns: list[ColumnOut] = []
 
@@ -94,6 +95,7 @@ class BoardOut(BoardBase):
 
 class BoardListItem(BoardBase):
     id: str
+    slug: Optional[str] = None
     created_at: datetime
     model_config = {"from_attributes": True}
 

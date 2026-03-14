@@ -1,5 +1,6 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
+from slugify import slugify
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -14,6 +15,10 @@ DEFAULT_COLUMNS = [
 ]
 
 
+def _make_slug(name: str) -> str:
+    return slugify(name, max_length=80, word_boundary=True) or "board"
+
+
 @router.get("/", response_model=list[schemas.BoardListItem])
 def list_boards(db: Session = Depends(get_db)):
     return db.query(models.Board).order_by(models.Board.created_at.desc()).all()
@@ -21,7 +26,11 @@ def list_boards(db: Session = Depends(get_db)):
 
 @router.post("/", response_model=schemas.BoardOut, status_code=201)
 def create_board(body: schemas.BoardCreate, db: Session = Depends(get_db)):
-    board = models.Board(id=str(uuid.uuid4()), name=body.name)
+    existing = db.query(models.Board).filter(models.Board.name == body.name).first()
+    if existing:
+        raise HTTPException(409, "Измени название, такая доска уже есть")
+    uid = str(uuid.uuid4())
+    board = models.Board(id=uid, name=body.name, slug=_make_slug(body.name))
     db.add(board)
     db.flush()
     for i, col in enumerate(DEFAULT_COLUMNS):
@@ -34,6 +43,14 @@ def create_board(body: schemas.BoardCreate, db: Session = Depends(get_db)):
         ))
     db.commit()
     db.refresh(board)
+    return board
+
+
+@router.get("/by-slug/{slug}", response_model=schemas.BoardOut)
+def get_board_by_slug(slug: str, db: Session = Depends(get_db)):
+    board = db.query(models.Board).filter(models.Board.slug == slug).first()
+    if not board:
+        raise HTTPException(404, "Board not found")
     return board
 
 
@@ -51,7 +68,13 @@ def update_board(board_id: str, body: schemas.BoardUpdate, db: Session = Depends
     if not board:
         raise HTTPException(404, "Board not found")
     if body.name is not None:
+        existing = db.query(models.Board).filter(
+            models.Board.name == body.name, models.Board.id != board_id
+        ).first()
+        if existing:
+            raise HTTPException(409, "Измени название, такая доска уже есть")
         board.name = body.name
+        board.slug = _make_slug(body.name)
     db.commit()
     db.refresh(board)
     return board

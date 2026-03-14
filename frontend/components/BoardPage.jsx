@@ -1,4 +1,6 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+'use client'
+
+import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   DndContext,
   PointerSensor,
@@ -8,10 +10,10 @@ import {
   DragOverlay,
   pointerWithin,
   closestCenter,
-} from "@dnd-kit/core";
-import Column from "../components/Column";
-import CardWidget from "../components/CardWidget";
-import Dialog from "../components/Dialog";
+} from '@dnd-kit/core'
+import Column from './Column'
+import CardWidget from './CardWidget'
+import Dialog from './Dialog'
 import {
   createColumn,
   moveCard,
@@ -19,39 +21,39 @@ import {
   addCardToGroup,
   removeCardFromGroup,
   moveGroup,
-} from "../api";
-import { useWebSocket } from "../hooks/useWebSocket";
-import { useAppStore } from "../store";
-import { userColor } from "../utils/theme";
-import { exportBoardToPDF } from "../utils/exportPDF";
+} from '../api'
+import { useWebSocket } from '../hooks/useWebSocket'
+import { useAppStore } from '../store'
+import { userColor } from '../utils/theme'
+import { exportBoardToPDF } from '../utils/exportPDF'
 
 const COLUMN_COLORS = [
-  "#6750A4",
-  "#0061A4",
-  "#006E1C",
-  "#BA1A1A",
-  "#E8760A",
-  "#006A60",
-  "#7D5260",
-  "#FF6D00",
-  "#43A047",
-  "#1B6CA8",
-];
+  '#6750A4',
+  '#0061A4',
+  '#006E1C',
+  '#BA1A1A',
+  '#E8760A',
+  '#006A60',
+  '#7D5260',
+  '#FF6D00',
+  '#43A047',
+  '#1B6CA8',
+]
 
 // ── Cursor marker ─────────────────────────────────────────────────────────────
 
 function CursorMarker({ username, x, y }) {
-  const color = userColor(username);
+  const color = userColor(username)
   return (
     <div
       style={{
-        position: "absolute",
+        position: 'absolute',
         left: x,
         top: y,
-        pointerEvents: "none",
+        pointerEvents: 'none',
         zIndex: 500,
-        transition: "left 0.08s linear, top 0.08s linear",
-        userSelect: "none",
+        transition: 'left 0.08s linear, top 0.08s linear',
+        userSelect: 'none',
       }}
     >
       <svg
@@ -60,8 +62,8 @@ function CursorMarker({ username, x, y }) {
         viewBox="0 0 20 24"
         fill="none"
         style={{
-          display: "block",
-          filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.35))",
+          display: 'block',
+          filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.35))',
         }}
       >
         <path
@@ -74,25 +76,25 @@ function CursorMarker({ username, x, y }) {
       </svg>
       <div
         style={{
-          position: "absolute",
+          position: 'absolute',
           top: 18,
           left: 14,
           background: color,
-          color: "white",
+          color: 'white',
           borderRadius: 10,
-          padding: "2px 8px",
+          padding: '2px 8px',
           fontSize: 11,
           fontWeight: 700,
           fontFamily: "'Roboto', sans-serif",
-          whiteSpace: "nowrap",
-          boxShadow: "0 2px 6px rgba(0,0,0,0.25)",
+          whiteSpace: 'nowrap',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
           letterSpacing: 0.2,
         }}
       >
         {username}
       </div>
     </div>
-  );
+  )
 }
 
 // ── BoardPage ─────────────────────────────────────────────────────────────────
@@ -104,38 +106,38 @@ export default function BoardPage({
   onTimerWsEvent,
   sendTimerRef,
 }) {
-  const { username } = useAppStore();
-  const [columns, setColumns] = useState(board.columns || []);
-  const [activeCard, setActiveCard] = useState(null);
-  const [activeGroup, setActiveGroup] = useState(null);
-  const [addColOpen, setAddColOpen] = useState(false);
-  const [newColTitle, setNewColTitle] = useState("");
-  const [newColColor, setNewColColor] = useState("#6750A4");
+  const { username } = useAppStore()
+  const [columns, setColumns] = useState(board.columns || [])
+  const [activeCard, setActiveCard] = useState(null)
+  const [activeGroup, setActiveGroup] = useState(null)
+  const [addColOpen, setAddColOpen] = useState(false)
+  const [newColTitle, setNewColTitle] = useState('')
+  const [newColColor, setNewColColor] = useState('#6750A4')
 
   // Collapsed groups: { groupId → bool }
-  const [collapsedGroups, setCollapsedGroups] = useState({});
+  const [collapsedGroups, setCollapsedGroups] = useState({})
 
   // Cursors: { username → { x, y } }
-  const [cursors, setCursors] = useState({});
-  const cursorTimeouts = useRef({});
-  const boardRef = useRef(null);
-  const lastSentRef = useRef(0);
-  const lastCursorRef = useRef(null);
-  const sendMessageRef = useRef(null);
-  const savedColumnsRef = useRef(null);
-  const [groupTargetId, setGroupTargetId] = useState(null);
+  const [cursors, setCursors] = useState({})
+  const cursorTimeouts = useRef({})
+  const boardRef = useRef(null)
+  const lastSentRef = useRef(0)
+  const lastCursorRef = useRef(null)
+  const sendMessageRef = useRef(null)
+  const savedColumnsRef = useRef(null)
+  const [groupTargetId, setGroupTargetId] = useState(null)
 
   // Keep columns in sync when board prop changes
   useState(() => {
-    setColumns(board.columns || []);
-  });
+    setColumns(board.columns || [])
+  })
 
   // Expose export function via ref
   useEffect(() => {
     if (exportRef) {
-      exportRef.current = () => exportBoardToPDF(board, columns);
+      exportRef.current = () => exportBoardToPDF(board, columns)
     }
-  }, [exportRef, board, columns]);
+  }, [exportRef, board, columns])
 
   // Expose WS timer send functions via ref
   useEffect(() => {
@@ -143,23 +145,23 @@ export default function BoardPage({
       sendTimerRef.current = {
         start: (duration, remaining) =>
           sendMessage({
-            event: "timer_start",
+            event: 'timer_start',
             data: { duration, remaining, ts: Date.now() },
           }),
         pause: (remaining) =>
-          sendMessage({ event: "timer_pause", data: { remaining } }),
+          sendMessage({ event: 'timer_pause', data: { remaining } }),
         reset: (duration) =>
-          sendMessage({ event: "timer_reset", data: { duration } }),
-      };
+          sendMessage({ event: 'timer_reset', data: { duration } }),
+      }
     }
-  });
+  })
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      Object.values(cursorTimeouts.current).forEach(clearTimeout);
-    };
-  }, []);
+      Object.values(cursorTimeouts.current).forEach(clearTimeout)
+    }
+  }, [])
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
 
@@ -167,63 +169,61 @@ export default function BoardPage({
     board.id,
     useCallback(
       (msg) => {
-        const { event, data } = msg;
+        const { event, data } = msg
 
-        if (event === "group_collapse") {
-          const { group_id, collapsed } = data;
-          setCollapsedGroups((prev) => ({ ...prev, [group_id]: collapsed }));
-          return;
+        if (event === 'group_collapse') {
+          const { group_id, collapsed } = data
+          setCollapsedGroups((prev) => ({ ...prev, [group_id]: collapsed }))
+          return
         }
 
-        if (event === "cursor_move") {
-          const { username: u, x, y } = data;
-          if (!u) return;
-          setCursors((prev) => ({ ...prev, [u]: { x, y } }));
-          clearTimeout(cursorTimeouts.current[u]);
+        if (event === 'cursor_move') {
+          const { username: u, x, y } = data
+          if (!u) return
+          setCursors((prev) => ({ ...prev, [u]: { x, y } }))
+          clearTimeout(cursorTimeouts.current[u])
           cursorTimeouts.current[u] = setTimeout(() => {
             setCursors((prev) => {
-              const n = { ...prev };
-              delete n[u];
-              return n;
-            });
-          }, 6000);
-          return;
+              const n = { ...prev }
+              delete n[u]
+              return n
+            })
+          }, 6000)
+          return
         }
 
-        if (event === "cursor_leave") {
-          const { username: u } = data;
-          if (!u) return;
-          clearTimeout(cursorTimeouts.current[u]);
+        if (event === 'cursor_leave') {
+          const { username: u } = data
+          if (!u) return
+          clearTimeout(cursorTimeouts.current[u])
           setCursors((prev) => {
-            const n = { ...prev };
-            delete n[u];
-            return n;
-          });
-          return;
+            const n = { ...prev }
+            delete n[u]
+            return n
+          })
+          return
         }
 
         // Timer events: forward to App for state management
         if (
-          event === "timer_start" ||
-          event === "timer_pause" ||
-          event === "timer_reset"
+          event === 'timer_start' ||
+          event === 'timer_pause' ||
+          event === 'timer_reset'
         ) {
-          onTimerWsEvent?.(event, data);
-          return;
+          onTimerWsEvent?.(event, data)
+          return
         }
 
         setColumns((prev) => {
           switch (event) {
-            case "column_created":
-              if (prev.find((c) => c.id === data.id)) return prev;
-              return [...prev, { ...data, cards: [], groups: [] }];
-            case "column_updated":
-              return prev.map((c) =>
-                c.id === data.id ? { ...c, ...data } : c,
-              );
-            case "column_deleted":
-              return prev.filter((c) => c.id !== data.id);
-            case "card_created":
+            case 'column_created':
+              if (prev.find((c) => c.id === data.id)) return prev
+              return [...prev, { ...data, cards: [], groups: [] }]
+            case 'column_updated':
+              return prev.map((c) => (c.id === data.id ? { ...c, ...data } : c))
+            case 'column_deleted':
+              return prev.filter((c) => c.id !== data.id)
+            case 'card_created':
               return prev.map((c) =>
                 c.id === data.column_id
                   ? {
@@ -234,44 +234,40 @@ export default function BoardPage({
                       ].sort((a, b) => a.position - b.position),
                     }
                   : c,
-              );
-            case "card_updated":
+              )
+            case 'card_updated':
               return prev.map((c) => ({
                 ...c,
                 cards: c.cards.map((x) => (x.id === data.id ? data : x)),
-              }));
-            case "card_moved": {
-              const { card, old_column_id } = data;
+              }))
+            case 'card_moved': {
+              const { card, old_column_id } = data
               return prev.map((c) => {
                 if (c.id === old_column_id && c.id === card.column_id) {
-                  // Same-column reorder: remove and re-insert with updated position
                   const cards = [
                     ...c.cards.filter((x) => x.id !== card.id),
                     card,
-                  ].sort((a, b) => a.position - b.position);
-                  return { ...c, cards };
+                  ].sort((a, b) => a.position - b.position)
+                  return { ...c, cards }
                 }
                 if (c.id === old_column_id)
-                  return {
-                    ...c,
-                    cards: c.cards.filter((x) => x.id !== card.id),
-                  };
+                  return { ...c, cards: c.cards.filter((x) => x.id !== card.id) }
                 if (c.id === card.column_id) {
                   const cards = [
                     ...c.cards.filter((x) => x.id !== card.id),
                     card,
-                  ].sort((a, b) => a.position - b.position);
-                  return { ...c, cards };
+                  ].sort((a, b) => a.position - b.position)
+                  return { ...c, cards }
                 }
-                return c;
-              });
+                return c
+              })
             }
-            case "card_deleted":
+            case 'card_deleted':
               return prev.map((c) => ({
                 ...c,
                 cards: c.cards.filter((x) => x.id !== data.id),
-              }));
-            case "group_created":
+              }))
+            case 'group_created':
               return prev.map((c) =>
                 c.id === data.column_id
                   ? {
@@ -282,16 +278,14 @@ export default function BoardPage({
                       ],
                     }
                   : c,
-              );
-            case "group_updated":
+              )
+            case 'group_updated':
               return prev.map((c) => ({
                 ...c,
-                groups: (c.groups || []).map((g) =>
-                  g.id === data.id ? data : g,
-                ),
-              }));
-            case "group_deleted": {
-              const { id, column_id, card_ids } = data;
+                groups: (c.groups || []).map((g) => (g.id === data.id ? data : g)),
+              }))
+            case 'group_deleted': {
+              const { id, column_id, card_ids } = data
               return prev.map((c) =>
                 c.id === column_id
                   ? {
@@ -304,20 +298,18 @@ export default function BoardPage({
                       ),
                     }
                   : c,
-              );
+              )
             }
-            case "group_moved": {
-              const { group, old_column_id, cards } = data;
-              const movedCardIds = cards.map((c) => c.id);
+            case 'group_moved': {
+              const { group, old_column_id, cards } = data
+              const movedCardIds = cards.map((c) => c.id)
               return prev.map((c) => {
                 if (c.id === old_column_id) {
                   return {
                     ...c,
                     groups: (c.groups || []).filter((g) => g.id !== group.id),
-                    cards: c.cards.filter(
-                      (card) => !movedCardIds.includes(card.id),
-                    ),
-                  };
+                    cards: c.cards.filter((card) => !movedCardIds.includes(card.id)),
+                  }
                 }
                 if (c.id === group.column_id) {
                   return {
@@ -327,235 +319,218 @@ export default function BoardPage({
                       group,
                     ],
                     cards: [
-                      ...c.cards.filter(
-                        (card) => !movedCardIds.includes(card.id),
-                      ),
+                      ...c.cards.filter((card) => !movedCardIds.includes(card.id)),
                       ...cards,
                     ],
-                  };
+                  }
                 }
-                return c;
-              });
+                return c
+              })
             }
             default:
-              return prev;
+              return prev
           }
-        });
+        })
       },
       [onTimerWsEvent],
     ),
     useCallback(() => {
-      // On reconnect, re-send last cursor position so other users see it
-      const pos = lastCursorRef.current;
+      const pos = lastCursorRef.current
       if (pos)
         sendMessageRef.current?.({
-          event: "cursor_move",
+          event: 'cursor_move',
           data: { username, ...pos },
-        });
+        })
     }, [username]),
-  );
-  sendMessageRef.current = sendMessage;
+  )
+  sendMessageRef.current = sendMessage
 
   // ── Cursor tracking ──────────────────────────────────────────────────────
 
   const handleMouseMove = useCallback(
     (e) => {
-      const now = Date.now();
-      if (now - lastSentRef.current < 50) return;
-      lastSentRef.current = now;
-      const b = boardRef.current;
-      if (!b) return;
-      const rect = b.getBoundingClientRect();
+      const now = Date.now()
+      if (now - lastSentRef.current < 50) return
+      lastSentRef.current = now
+      const b = boardRef.current
+      if (!b) return
+      const rect = b.getBoundingClientRect()
       const pos = {
         x: e.clientX - rect.left + b.scrollLeft,
         y: e.clientY - rect.top + b.scrollTop,
-      };
-      lastCursorRef.current = pos;
-      sendMessage({ event: "cursor_move", data: { username, ...pos } });
+      }
+      lastCursorRef.current = pos
+      sendMessage({ event: 'cursor_move', data: { username, ...pos } })
     },
     [username, sendMessage],
-  );
+  )
 
   const handleMouseLeave = useCallback(() => {
-    sendMessage({ event: "cursor_leave", data: { username } });
-  }, [username, sendMessage]);
+    sendMessage({ event: 'cursor_leave', data: { username } })
+  }, [username, sendMessage])
 
   // ── DnD ─────────────────────────────────────────────────────────────────
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 250, tolerance: 5 },
-    }),
-  );
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+  )
 
   const collisionDetection = useCallback((args) => {
-    // When dragging a group, prefer column droppables
-    if (String(args.active?.id || "").startsWith("group-")) {
-      const pointer = pointerWithin(args);
-      const cols = pointer.filter((c) => String(c.id).startsWith("col-"));
-      if (cols.length > 0) return cols;
-      return closestCenter(args);
+    if (String(args.active?.id || '').startsWith('group-')) {
+      const pointer = pointerWithin(args)
+      const cols = pointer.filter((c) => String(c.id).startsWith('col-'))
+      if (cols.length > 0) return cols
+      return closestCenter(args)
     }
-    // When dragging a card, prefer cards over columns
-    const pointer = pointerWithin(args);
-    const cards = pointer.filter((c) => !String(c.id).startsWith("col-"));
-    if (cards.length > 0) return cards;
-    if (pointer.length > 0) return pointer;
-    return closestCenter(args);
-  }, []);
+    const pointer = pointerWithin(args)
+    const cards = pointer.filter((c) => !String(c.id).startsWith('col-'))
+    if (cards.length > 0) return cards
+    if (pointer.length > 0) return pointer
+    return closestCenter(args)
+  }, [])
 
   const findCard = (id) => {
     for (const col of columns) {
-      const card = col.cards.find((c) => c.id === id);
-      if (card) return { card, colId: col.id };
+      const card = col.cards.find((c) => c.id === id)
+      if (card) return { card, colId: col.id }
     }
-    return null;
-  };
+    return null
+  }
 
   const onDragStart = ({ active }) => {
-    savedColumnsRef.current = columns;
-    if (String(active.id).startsWith("group-")) {
-      const groupId = String(active.id).slice(6);
+    savedColumnsRef.current = columns
+    if (String(active.id).startsWith('group-')) {
+      const groupId = String(active.id).slice(6)
       for (const col of columns) {
-        const g = (col.groups || []).find((g) => g.id === groupId);
+        const g = (col.groups || []).find((g) => g.id === groupId)
         if (g) {
-          setActiveGroup(g);
-          break;
+          setActiveGroup(g)
+          break
         }
       }
-      return;
+      return
     }
-    const found = findCard(active.id);
-    if (found) setActiveCard(found.card);
-  };
+    const found = findCard(active.id)
+    if (found) setActiveCard(found.card)
+  }
 
   const onDragOver = ({ active, over }) => {
     if (!over) {
-      setGroupTargetId(null);
-      return;
+      setGroupTargetId(null)
+      return
     }
-    // Group drags don't need optimistic moves; column isOver handles visual feedback
-    if (String(active.id).startsWith("group-")) return;
+    if (String(active.id).startsWith('group-')) return
 
-    const activeFound = findCard(active.id);
-    if (!activeFound) return;
-    const overId = over.id;
-    const isOverCol = String(overId).startsWith("col-");
-    const overColId = isOverCol ? overId.slice(4) : findCard(overId)?.colId;
+    const activeFound = findCard(active.id)
+    if (!activeFound) return
+    const overId = over.id
+    const isOverCol = String(overId).startsWith('col-')
+    const overColId = isOverCol ? overId.slice(4) : findCard(overId)?.colId
 
-    // Look up target card to decide if a group action applies
     const overCard = !isOverCol
       ? (() => {
           for (const col of columns) {
-            const c = col.cards.find((x) => x.id === overId);
-            if (c) return c;
+            const c = col.cards.find((x) => x.id === overId)
+            if (c) return c
           }
-          return null;
+          return null
         })()
-      : null;
-    const targetGroupId = overCard?.group_id;
-    const activeGroupId = activeFound.card.group_id;
+      : null
+    const targetGroupId = overCard?.group_id
+    const activeGroupId = activeFound.card.group_id
 
-    // Show group-target highlight when:
-    //   - target card is in a group (we'll join it), OR
-    //   - both cards are ungrouped (we'll create a new group)
-    // Don't highlight when active is grouped but target is not (that's just an ungroup/move)
     if (
       !isOverCol &&
       overId !== active.id &&
       overColId &&
       (targetGroupId || !activeGroupId)
     ) {
-      setGroupTargetId(overId);
-      // Cross-column: also do optimistic move so the card appears in the target column
+      setGroupTargetId(overId)
       if (overColId !== activeFound.colId) {
         setColumns((prev) => {
-          const srcCol = prev.find((c) => c.id === activeFound.colId);
-          const dstCol = prev.find((c) => c.id === overColId);
-          if (!srcCol || !dstCol) return prev;
-          const card = srcCol.cards.find((c) => c.id === active.id);
+          const srcCol = prev.find((c) => c.id === activeFound.colId)
+          const dstCol = prev.find((c) => c.id === overColId)
+          if (!srcCol || !dstCol) return prev
+          const card = srcCol.cards.find((c) => c.id === active.id)
           const newSrc = {
             ...srcCol,
             cards: srcCol.cards.filter((c) => c.id !== active.id),
-          };
-          const overCardIdx = dstCol.cards.findIndex((c) => c.id === overId);
-          const newCards = [...dstCol.cards];
+          }
+          const overCardIdx = dstCol.cards.findIndex((c) => c.id === overId)
+          const newCards = [...dstCol.cards]
           newCards.splice(overCardIdx >= 0 ? overCardIdx : newCards.length, 0, {
             ...card,
             column_id: overColId,
             group_id: null,
-          });
+          })
           return prev.map((c) => {
-            if (c.id === activeFound.colId) return newSrc;
-            if (c.id === overColId) return { ...dstCol, cards: newCards };
-            return c;
-          });
-        });
+            if (c.id === activeFound.colId) return newSrc
+            if (c.id === overColId) return { ...dstCol, cards: newCards }
+            return c
+          })
+        })
       }
-      return;
+      return
     }
-    setGroupTargetId(null);
+    setGroupTargetId(null)
 
-    // Cross-column (hovering over column droppable background): optimistically move card
-    if (!overColId || overColId === activeFound.colId) return;
+    if (!overColId || overColId === activeFound.colId) return
     setColumns((prev) => {
-      const srcCol = prev.find((c) => c.id === activeFound.colId);
-      const dstCol = prev.find((c) => c.id === overColId);
-      if (!srcCol || !dstCol) return prev;
-      const card = srcCol.cards.find((c) => c.id === active.id);
+      const srcCol = prev.find((c) => c.id === activeFound.colId)
+      const dstCol = prev.find((c) => c.id === overColId)
+      if (!srcCol || !dstCol) return prev
+      const card = srcCol.cards.find((c) => c.id === active.id)
       const newSrc = {
         ...srcCol,
         cards: srcCol.cards.filter((c) => c.id !== active.id),
-      };
+      }
       const newCards = [
         ...dstCol.cards,
         { ...card, column_id: overColId, group_id: null },
-      ];
+      ]
       return prev.map((c) => {
-        if (c.id === activeFound.colId) return newSrc;
-        if (c.id === overColId) return { ...dstCol, cards: newCards };
-        return c;
-      });
-    });
-  };
+        if (c.id === activeFound.colId) return newSrc
+        if (c.id === overColId) return { ...dstCol, cards: newCards }
+        return c
+      })
+    })
+  }
 
   const onDragEnd = async ({ active, over }) => {
-    setActiveCard(null);
-    setActiveGroup(null);
-    setGroupTargetId(null);
+    setActiveCard(null)
+    setActiveGroup(null)
+    setGroupTargetId(null)
 
     if (!over) {
-      if (savedColumnsRef.current) setColumns(savedColumnsRef.current);
-      return;
+      if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
+      return
     }
 
-    // ── Group drag: move entire group to a different column ──────────────────
-    if (String(active.id).startsWith("group-")) {
-      const groupId = String(active.id).slice(6);
-      const overId = over.id;
-      const isOverCol = String(overId).startsWith("col-");
-      const targetColId = isOverCol ? overId.slice(4) : findCard(overId)?.colId;
-      if (!targetColId) return;
+    // ── Group drag ────────────────────────────────────────────────────────
+    if (String(active.id).startsWith('group-')) {
+      const groupId = String(active.id).slice(6)
+      const overId = over.id
+      const isOverCol = String(overId).startsWith('col-')
+      const targetColId = isOverCol ? overId.slice(4) : findCard(overId)?.colId
+      if (!targetColId) return
 
-      // Find group in saved state
-      let srcColId = null;
-      let groupData = null;
+      let srcColId = null
+      let groupData = null
       for (const col of savedColumnsRef.current || []) {
-        const g = (col.groups || []).find((g) => g.id === groupId);
+        const g = (col.groups || []).find((g) => g.id === groupId)
         if (g) {
-          srcColId = col.id;
-          groupData = g;
-          break;
+          srcColId = col.id
+          groupData = g
+          break
         }
       }
-      if (!groupData || targetColId === srcColId) return;
+      if (!groupData || targetColId === srcColId) return
 
-      // Optimistic update
       const groupCards =
         (savedColumnsRef.current || [])
           .find((c) => c.id === srcColId)
-          ?.cards.filter((card) => card.group_id === groupId) || [];
+          ?.cards.filter((card) => card.group_id === groupId) || []
       setColumns((prev) =>
         prev.map((c) => {
           if (c.id === srcColId) {
@@ -563,7 +538,7 @@ export default function BoardPage({
               ...c,
               groups: (c.groups || []).filter((g) => g.id !== groupId),
               cards: c.cards.filter((card) => card.group_id !== groupId),
-            };
+            }
           }
           if (c.id === targetColId) {
             return {
@@ -579,68 +554,58 @@ export default function BoardPage({
                   column_id: targetColId,
                 })),
               ],
-            };
+            }
           }
-          return c;
+          return c
         }),
-      );
+      )
 
       try {
-        await moveGroup(groupId, { column_id: targetColId });
+        await moveGroup(groupId, { column_id: targetColId })
       } catch (e) {
-        console.error("Move group failed", e);
-        if (savedColumnsRef.current) setColumns(savedColumnsRef.current);
+        console.error('Move group failed', e)
+        if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
       }
-      return;
+      return
     }
 
-    // ── Card drag ────────────────────────────────────────────────────────────
-    const activeFound = findCard(active.id);
-    if (!activeFound) return;
-    const overId = over.id;
-    const isOverCol = String(overId).startsWith("col-");
-    const overColId = isOverCol ? overId.slice(4) : findCard(overId)?.colId;
-    if (!overColId) return;
+    // ── Card drag ────────────────────────────────────────────────────────
+    const activeFound = findCard(active.id)
+    if (!activeFound) return
+    const overId = over.id
+    const isOverCol = String(overId).startsWith('col-')
+    const overColId = isOverCol ? overId.slice(4) : findCard(overId)?.colId
+    if (!overColId) return
 
-    // Dropped on a card → group action (join existing group, or create new one)
     if (!isOverCol && overId !== active.id) {
-      // Find target card's group membership
       const targetCard = (() => {
         for (const col of columns) {
-          const c = col.cards.find((x) => x.id === overId);
-          if (c) return c;
+          const c = col.cards.find((x) => x.id === overId)
+          if (c) return c
         }
-        return null;
-      })();
-      const targetGroupId = targetCard?.group_id;
-      const activeGroupId = activeFound.card.group_id;
+        return null
+      })()
+      const targetGroupId = targetCard?.group_id
+      const activeGroupId = activeFound.card.group_id
 
-      // Find original column from pre-drag snapshot (for cross-column detection)
-      let origColId = null;
+      let origColId = null
       for (const col of savedColumnsRef.current || []) {
         if (col.cards.find((c) => c.id === active.id)) {
-          origColId = col.id;
-          break;
+          origColId = col.id
+          break
         }
       }
 
       if (targetGroupId) {
-        // Target is in a group → add active card to that group
         try {
           if (origColId && origColId !== overColId) {
-            // Cross-column: move card first (backend clears old group automatically)
             const dstCards =
-              (savedColumnsRef.current || []).find((c) => c.id === overColId)
-                ?.cards || [];
-            await moveCard(active.id, {
-              column_id: overColId,
-              position: dstCards.length,
-            });
+              (savedColumnsRef.current || []).find((c) => c.id === overColId)?.cards || []
+            await moveCard(active.id, { column_id: overColId, position: dstCards.length })
           } else if (activeGroupId) {
-            // Same-column: was in a group → remove first so old group can auto-delete
-            await removeCardFromGroup(activeGroupId, active.id);
+            await removeCardFromGroup(activeGroupId, active.id)
           }
-          const updatedActive = await addCardToGroup(targetGroupId, active.id);
+          const updatedActive = await addCardToGroup(targetGroupId, active.id)
           setColumns((prev) =>
             prev.map((c) => ({
               ...c,
@@ -648,30 +613,22 @@ export default function BoardPage({
                 card.id === active.id ? updatedActive : card,
               ),
             })),
-          );
+          )
         } catch (e) {
-          console.error("Join group failed", e);
-          if (savedColumnsRef.current) setColumns(savedColumnsRef.current);
+          console.error('Join group failed', e)
+          if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
         }
-        return;
+        return
       }
 
       if (!activeGroupId) {
-        // Both ungrouped → create a new group
         try {
           if (origColId && origColId !== overColId) {
             const dstCards =
-              (savedColumnsRef.current || []).find((c) => c.id === overColId)
-                ?.cards || [];
-            await moveCard(active.id, {
-              column_id: overColId,
-              position: dstCards.length,
-            });
+              (savedColumnsRef.current || []).find((c) => c.id === overColId)?.cards || []
+            await moveCard(active.id, { column_id: overColId, position: dstCards.length })
           }
-          const group = await createGroup({
-            column_id: overColId,
-            title: "Группа",
-          });
+          const group = await createGroup({ column_id: overColId, title: 'Группа' })
           setColumns((prev) =>
             prev.map((c) =>
               c.id === overColId
@@ -684,73 +641,68 @@ export default function BoardPage({
                   }
                 : c,
             ),
-          );
+          )
           const [updatedOver, updatedActive] = await Promise.all([
             addCardToGroup(group.id, overId),
             addCardToGroup(group.id, active.id),
-          ]);
+          ])
           setColumns((prev) =>
             prev.map((c) =>
               c.id === overColId
                 ? {
                     ...c,
                     cards: c.cards.map((card) => {
-                      if (card.id === overId) return updatedOver;
-                      if (card.id === active.id) return updatedActive;
-                      return card;
+                      if (card.id === overId) return updatedOver
+                      if (card.id === active.id) return updatedActive
+                      return card
                     }),
                   }
                 : c,
             ),
-          );
+          )
         } catch (e) {
-          console.error("Group creation from drag failed", e);
-          if (savedColumnsRef.current) setColumns(savedColumnsRef.current);
+          console.error('Group creation from drag failed', e)
+          if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
         }
-        return;
+        return
       }
-
-      // Active is grouped, target is ungrouped → fall through to normal move (ungroup)
     }
 
     // Normal card move
-    const dstCol = columns.find((c) => c.id === overColId);
-    if (!dstCol) return;
-    const overIdx = dstCol.cards.findIndex((c) => c.id === overId);
-    const newPos = overIdx >= 0 ? overIdx : dstCol.cards.length;
+    const dstCol = columns.find((c) => c.id === overColId)
+    if (!dstCol) return
+    const overIdx = dstCol.cards.findIndex((c) => c.id === overId)
+    const newPos = overIdx >= 0 ? overIdx : dstCol.cards.length
     try {
-      // Grouped card dropped in same column → remove from group first
       if (activeFound.card.group_id && overColId === activeFound.colId) {
-        await removeCardFromGroup(activeFound.card.group_id, active.id);
+        await removeCardFromGroup(activeFound.card.group_id, active.id)
       }
-      await moveCard(active.id, { column_id: overColId, position: newPos });
+      await moveCard(active.id, { column_id: overColId, position: newPos })
     } catch (e) {
-      console.error("Move failed", e);
+      console.error('Move failed', e)
     }
-  };
+  }
 
   // ── Add column ───────────────────────────────────────────────────────────
 
   const openAddCol = () => {
-    setNewColTitle("");
-    setNewColColor("#6750A4");
-    setAddColOpen(true);
-  };
+    setNewColTitle('')
+    setNewColColor('#6750A4')
+    setAddColOpen(true)
+  }
 
   const confirmAddColumn = async () => {
-    if (!newColTitle.trim()) return;
-    setAddColOpen(false);
+    if (!newColTitle.trim()) return
+    setAddColOpen(false)
     const col = await createColumn({
       board_id: board.id,
       title: newColTitle.trim(),
       color: newColColor,
-    });
+    })
     setColumns((prev) =>
-      prev.find((c) => c.id === col.id)
-        ? prev
-        : [...prev, { ...col, cards: [], groups: [] }],
-    );
-  };
+      prev.find((c) => c.id === col.id) ? prev : [...prev, { ...col, cards: [], groups: [] }],
+    )
+  }
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -775,22 +727,18 @@ export default function BoardPage({
             groupTargetId={groupTargetId}
             collapsedGroups={collapsedGroups}
             onToggleCollapse={(groupId) => {
-              const newCollapsed = !collapsedGroups[groupId];
+              const newCollapsed = !collapsedGroups[groupId]
               sendMessage({
-                event: "group_collapse",
+                event: 'group_collapse',
                 data: { group_id: groupId, collapsed: newCollapsed },
-              });
+              })
             }}
             onUpdate={(updated) =>
               setColumns((prev) =>
-                prev.map((c) =>
-                  c.id === updated.id ? { ...c, ...updated } : c,
-                ),
+                prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)),
               )
             }
-            onDelete={(id) =>
-              setColumns((prev) => prev.filter((c) => c.id !== id))
-            }
+            onDelete={(id) => setColumns((prev) => prev.filter((c) => c.id !== id))}
             onCardCreated={(colId, card) =>
               setColumns((prev) =>
                 prev.map((c) =>
@@ -804,12 +752,7 @@ export default function BoardPage({
               setColumns((prev) =>
                 prev.map((c) =>
                   c.id === colId
-                    ? {
-                        ...c,
-                        cards: c.cards.map((x) =>
-                          x.id === card.id ? card : x,
-                        ),
-                      }
+                    ? { ...c, cards: c.cards.map((x) => (x.id === card.id ? card : x)) }
                     : c,
                 ),
               )
@@ -858,13 +801,9 @@ export default function BoardPage({
                   c.id === colId
                     ? {
                         ...c,
-                        groups: (c.groups || []).filter(
-                          (g) => g.id !== groupId,
-                        ),
+                        groups: (c.groups || []).filter((g) => g.id !== groupId),
                         cards: c.cards.map((card) =>
-                          card.group_id === groupId
-                            ? { ...card, group_id: null }
-                            : card,
+                          card.group_id === groupId ? { ...card, group_id: null } : card,
                         ),
                       }
                     : c,
@@ -902,7 +841,7 @@ export default function BoardPage({
             placeholder="Например: Что прошло хорошо?"
             maxLength={80}
             autoFocus
-            onKeyDown={(e) => e.key === "Enter" && confirmAddColumn()}
+            onKeyDown={(e) => e.key === 'Enter' && confirmAddColumn()}
           />
         </div>
         <div style={styles.field}>
@@ -916,11 +855,9 @@ export default function BoardPage({
                   ...styles.colorSwatch,
                   background: c,
                   outline:
-                    c === newColColor
-                      ? `3px solid ${c}`
-                      : "3px solid transparent",
+                    c === newColColor ? `3px solid ${c}` : '3px solid transparent',
                   outlineOffset: 2,
-                  transform: c === newColColor ? "scale(1.18)" : "scale(1)",
+                  transform: c === newColColor ? 'scale(1.18)' : 'scale(1)',
                 }}
               />
             ))}
@@ -929,7 +866,7 @@ export default function BoardPage({
         <div style={{ ...styles.preview, borderLeftColor: newColColor }}>
           <div style={{ ...styles.previewDot, background: newColColor }} />
           <span style={styles.previewTitle}>
-            {newColTitle.trim() || "Название колонки"}
+            {newColTitle.trim() || 'Название колонки'}
           </span>
           <span style={styles.previewCount}>0</span>
         </div>
@@ -937,7 +874,7 @@ export default function BoardPage({
 
       <DragOverlay>
         {activeCard && (
-          <div style={{ transform: "rotate(3deg)", opacity: 0.9 }}>
+          <div style={{ transform: 'rotate(3deg)', opacity: 0.9 }}>
             <CardWidget
               card={activeCard}
               onUpdate={() => {}}
@@ -949,23 +886,23 @@ export default function BoardPage({
         {activeGroup && (
           <div
             style={{
-              display: "inline-flex",
-              alignItems: "center",
+              display: 'inline-flex',
+              alignItems: 'center',
               gap: 8,
-              padding: "8px 14px",
+              padding: '8px 14px',
               borderRadius: 10,
               background:
-                "color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))",
-              border: "1.5px solid var(--md-outline-variant)",
-              boxShadow: "var(--elevation-2)",
+                'color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))',
+              border: '1.5px solid var(--md-outline-variant)',
+              boxShadow: 'var(--elevation-2)',
               opacity: 0.9,
-              transform: "rotate(2deg)",
-              cursor: "grabbing",
+              transform: 'rotate(2deg)',
+              cursor: 'grabbing',
             }}
           >
             <span
               className="material-symbols-rounded"
-              style={{ fontSize: 14, color: "var(--md-primary)" }}
+              style={{ fontSize: 14, color: 'var(--md-primary)' }}
             >
               folder
             </span>
@@ -973,8 +910,8 @@ export default function BoardPage({
               style={{
                 fontSize: 12,
                 fontWeight: 700,
-                color: "var(--md-primary)",
-                textTransform: "uppercase",
+                color: 'var(--md-primary)',
+                textTransform: 'uppercase',
                 letterSpacing: 0.5,
               }}
             >
@@ -984,109 +921,109 @@ export default function BoardPage({
         )}
       </DragOverlay>
     </DndContext>
-  );
+  )
 }
 
 const styles = {
   board: {
-    position: "relative",
-    display: "flex",
+    position: 'relative',
+    display: 'flex',
     gap: 16,
-    alignItems: "flex-start",
-    padding: "24px",
-    minHeight: "calc(100vh - 120px)",
+    alignItems: 'flex-start',
+    padding: '24px',
+    minHeight: 'calc(100vh - 120px)',
     paddingBottom: 40,
-    width: "100%",
-    minWidth: "fit-content",
-    boxSizing: "border-box",
+    width: '100%',
+    minWidth: 'fit-content',
+    boxSizing: 'border-box',
   },
   addColBtn: {
     minWidth: 180,
     height: 56,
     flexShrink: 0,
-    padding: "0 20px",
+    padding: '0 20px',
     borderRadius: 16,
-    border: "2px dashed var(--md-outline-variant)",
-    background: "transparent",
-    color: "var(--md-on-surface-variant)",
+    border: '2px dashed var(--md-outline-variant)',
+    background: 'transparent',
+    color: 'var(--md-on-surface-variant)',
     fontFamily: "'Roboto', sans-serif",
     fontSize: 14,
     fontWeight: 500,
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
-    alignSelf: "flex-start",
-    transition: "var(--transition)",
+    alignSelf: 'flex-start',
+    transition: 'var(--transition)',
   },
   field: { marginBottom: 18 },
   label: {
-    display: "block",
+    display: 'block',
     fontSize: 12,
     fontWeight: 600,
-    textTransform: "uppercase",
+    textTransform: 'uppercase',
     letterSpacing: 0.6,
-    color: "var(--md-on-surface-variant)",
+    color: 'var(--md-on-surface-variant)',
     marginBottom: 8,
   },
   input: {
-    width: "100%",
-    border: "1.5px solid var(--md-outline-variant)",
+    width: '100%',
+    border: '1.5px solid var(--md-outline-variant)',
     borderRadius: 12,
-    padding: "12px 14px",
+    padding: '12px 14px',
     fontFamily: "'Roboto', sans-serif",
     fontSize: 14,
-    color: "var(--md-on-surface)",
-    background: "var(--md-surface-variant)",
-    outline: "none",
-    transition: "border-color 0.15s",
-    boxSizing: "border-box",
+    color: 'var(--md-on-surface)',
+    background: 'var(--md-surface-variant)',
+    outline: 'none',
+    transition: 'border-color 0.15s',
+    boxSizing: 'border-box',
   },
-  colorGrid: { display: "flex", gap: 8, flexWrap: "wrap" },
+  colorGrid: { display: 'flex', gap: 8, flexWrap: 'wrap' },
   colorSwatch: {
     width: 34,
     height: 34,
-    borderRadius: "50%",
-    border: "none",
-    cursor: "pointer",
-    transition: "transform 0.15s, outline 0.15s",
+    borderRadius: '50%',
+    border: 'none',
+    cursor: 'pointer',
+    transition: 'transform 0.15s, outline 0.15s',
     flexShrink: 0,
   },
   preview: {
     marginTop: 4,
     borderRadius: 10,
-    padding: "10px 14px",
-    background: "var(--md-surface-variant)",
-    borderLeft: "4px solid #6750A4",
-    display: "flex",
-    alignItems: "center",
+    padding: '10px 14px',
+    background: 'var(--md-surface-variant)',
+    borderLeft: '4px solid #6750A4',
+    display: 'flex',
+    alignItems: 'center',
     gap: 8,
-    transition: "border-color 0.2s",
+    transition: 'border-color 0.2s',
   },
   previewDot: {
     width: 12,
     height: 12,
-    borderRadius: "50%",
+    borderRadius: '50%',
     flexShrink: 0,
-    transition: "background 0.2s",
+    transition: 'background 0.2s',
   },
   previewTitle: {
     flex: 1,
     fontSize: 14,
     fontWeight: 600,
-    color: "var(--md-on-surface)",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    color: 'var(--md-on-surface)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
     opacity: 0.7,
   },
   previewCount: {
     fontSize: 12,
     fontWeight: 600,
-    background: "var(--md-surface)",
-    color: "var(--md-on-surface-variant)",
-    padding: "1px 8px",
+    background: 'var(--md-surface)',
+    color: 'var(--md-on-surface-variant)',
+    padding: '1px 8px',
     borderRadius: 20,
   },
-};
+}
