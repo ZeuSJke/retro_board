@@ -20,7 +20,8 @@ class ConnectionManager:
         return self.usernames.get(id(ws))
 
     def disconnect(self, board_id: str, ws: WebSocket):
-        self.rooms[board_id].remove(ws)
+        if ws in self.rooms[board_id]:
+            self.rooms[board_id].remove(ws)
         self.usernames.pop(id(ws), None)
 
     async def broadcast(
