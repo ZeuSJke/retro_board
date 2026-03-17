@@ -1,13 +1,15 @@
-export function applyTheme({ primary, dark }) {
+import type { Theme } from '../types'
+
+export function applyTheme({ primary, dark }: Theme): void {
   const root = document.documentElement
 
-  const hex2rgb = (h) => [
+  const hex2rgb = (h: string): [number, number, number] => [
     parseInt(h.slice(1, 3), 16),
     parseInt(h.slice(3, 5), 16),
     parseInt(h.slice(5, 7), 16),
   ]
-  const mix = (a, b, t) => a.map((v, i) => Math.round(v * (1 - t) + b[i] * t))
-  const rgb2hex = (r) => '#' + r.map((v) => v.toString(16).padStart(2, '0')).join('')
+  const mix = (a: number[], b: number[], t: number) => a.map((v, i) => Math.round(v * (1 - t) + b[i] * t))
+  const rgb2hex = (r: number[]) => '#' + r.map((v) => v.toString(16).padStart(2, '0')).join('')
 
   const p = hex2rgb(primary)
   const white = [255, 255, 255]
@@ -41,26 +43,26 @@ export function applyTheme({ primary, dark }) {
   }
 }
 
-export const PRIMARY_COLORS = [
+export const PRIMARY_COLORS: string[] = [
   '#6750A4', '#0061A4', '#006E1C', '#BA1A1A', '#E8760A',
   '#006A60', '#7D5260', '#1B6CA8', '#FF6D00', '#43A047',
 ]
 
-export const CARD_COLORS = [
+export const CARD_COLORS: string[] = [
   '#FFFFFF', '#FFF9C4', '#F8BBD9', '#C8E6C9', '#BBDEFB',
   '#FFE0B2', '#E1BEE7', '#B2EBF2', '#FFCDD2', '#DCEDC8',
 ]
 
-export const AVATAR_COLORS = [
+export const AVATAR_COLORS: string[] = [
   '#6750A4', '#0061A4', '#006E1C', '#BA1A1A', '#E8760A', '#006A60', '#7D5260',
 ]
 
-export function userColor(name = '') {
+export function userColor(name: string = ''): string {
   let h = 0
   for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_COLORS.length
   return AVATAR_COLORS[Math.abs(h)]
 }
 
-export function initials(name = '') {
+export function initials(name: string = ''): string {
   return name.slice(0, 2).toUpperCase()
 }

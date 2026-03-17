@@ -1,0 +1,169 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  transition: opacity 0.3s ease;
+}
+
+.card {
+  background: var(--md-surface);
+  border-radius: 32px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.3), 0 8px 16px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  transition: transform 0.35s cubic-bezier(0.2, 0, 0, 1), opacity 0.3s ease;
+}
+
+.logoStrip {
+  background: var(--md-primary);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logoText {
+  color: white;
+  font-family: 'Roboto', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.body {
+  padding: 36px 40px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  position: relative;
+  transition: background 0.25s ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.avatarText {
+  font-size: 28px;
+  font-weight: 700;
+  color: white;
+  user-select: none;
+  font-family: 'Roboto', sans-serif;
+}
+
+.avatarRing {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2.5px solid;
+  opacity: 0.4;
+  transition: border-color 0.25s ease;
+}
+
+.title {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--md-on-surface);
+  margin: 0 0 8px;
+  font-family: 'Roboto', sans-serif;
+  letter-spacing: -0.3px;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: var(--md-on-surface-variant);
+  text-align: center;
+  line-height: 1.5;
+  margin: 0 0 28px;
+  max-width: 300px;
+  font-family: 'Roboto', sans-serif;
+}
+
+.inputWrap {
+  width: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.inputIcon {
+  position: absolute;
+  left: 14px;
+  font-size: 20px;
+  color: var(--md-on-surface-variant);
+  pointer-events: none;
+}
+
+.input {
+  width: 100%;
+  height: 52px;
+  border: 1.5px solid var(--md-outline-variant);
+  border-radius: 16px;
+  padding: 0 44px;
+  font-family: 'Roboto', sans-serif;
+  font-size: 16px;
+  color: var(--md-on-surface);
+  background: var(--md-surface-variant);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.clearBtn {
+  position: absolute;
+  right: 10px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--md-on-surface-variant);
+}
+
+.btn {
+  width: 100%;
+  height: 52px;
+  border-radius: 16px;
+  border: none;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  font-family: 'Roboto', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  transition: opacity 0.15s, transform 0.1s;
+  letter-spacing: 0.2px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--md-on-surface-variant);
+  opacity: 0.7;
+  margin: 0;
+  font-family: 'Roboto', sans-serif;
+}

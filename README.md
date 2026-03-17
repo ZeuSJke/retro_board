@@ -1,29 +1,29 @@
-# 🚀 RetroBoard — Agile Ретро Доска
+# RetroBoard — Agile Ретро Доска
 
-Полноценное веб-приложение для проведения Agile-ретроспектив в реальном времени.
+Веб-приложение для проведения Agile-ретроспектив в реальном времени.
 
-**Стек:** Next.js 15 · FastAPI · PostgreSQL · WebSocket · Docker
-
----
-
-## ✨ Возможности
-
-- 📋 **Несколько досок** — создавай, переключайся, удаляй; новая доска создаётся с тремя колонками по умолчанию
-- 🗂️ **Колонки** — добавляй любое количество, меняй название (двойной клик) и цвет метки
-- 🗒️ **Заметки** — с именем автора, цветом фона, лайками и drag & drop
-- 🗃️ **Группы карточек** — объединяй карточки в именованные группы, перемещай группу целиком в другую колонку
-- 🖱️ **Drag & Drop** — перетаскивай карточки между колонками (@dnd-kit)
-- ⏱️ **Таймер** — обратный отсчёт для временных слотов ретро (старт / пауза / сброс), синхронизируется через WebSocket
-- 🔄 **Real-time** — все участники видят изменения мгновенно через WebSocket
-- 👆 **Курсоры участников** — позиции курсоров транслируются в реальном времени
-- 🎨 **Тема** — Material Design 3, меняй акцентный цвет и тёмный/светлый режим
-- 📤 **Экспорт в PDF** — сохрани содержимое доски одним кликом
-- 💾 **Персистентность** — данные хранятся в PostgreSQL
-- 📱 **Адаптивность** — колонки масштабируются под размер экрана
+**Стек:** Next.js 15 · TypeScript · FastAPI · PostgreSQL · Alembic · WebSocket · Docker
 
 ---
 
-## 🐳 Быстрый старт (Docker)
+## Возможности
+
+- Несколько досок — создавай, переключайся, удаляй; новая доска создаётся с тремя колонками по умолчанию
+- Колонки — добавляй любое количество, меняй название (двойной клик) и цвет метки
+- Заметки — с именем автора, цветом фона, лайками и drag & drop
+- Группы карточек — объединяй карточки в именованные группы, перемещай группу целиком в другую колонку
+- Drag & Drop — перетаскивай карточки и группы между колонками (@dnd-kit, мышь + тач)
+- Таймер — обратный отсчёт для временных слотов ретро (старт / пауза / сброс), синхронизируется через WebSocket
+- Real-time — все участники видят изменения мгновенно через WebSocket
+- Курсоры участников — позиции курсоров транслируются в реальном времени
+- Тема — Material Design 3, меняй акцентный цвет и тёмный/светлый режим
+- Экспорт в PDF — сохрани содержимое доски одним кликом
+- Персистентность — данные хранятся в PostgreSQL
+- Адаптивность — колонки масштабируются под размер экрана
+
+---
+
+## Быстрый старт (Docker)
 
 ### 1. Подготовь переменные окружения
 
@@ -57,7 +57,7 @@ docker compose up --build
 
 ---
 
-## 💻 Разработка без Docker
+## Разработка без Docker
 
 ### База данных
 
@@ -70,24 +70,24 @@ docker compose up db -d
 ```bash
 cd backend
 
-# Создай виртуальное окружение
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
-# Установи зависимости
 pip install -r requirements.txt
 
-# Настрой переменные окружения
 cp .env.example .env
 # Укажи DATABASE_URL для localhost в backend/.env
 
+# Применить миграции
+alembic upgrade head
+
 # Запусти с hot reload
 uvicorn main:app --reload
-# → http://localhost:8000
-# → Swagger: http://localhost:8000/docs
+# -> http://localhost:8000
+# -> Swagger: http://localhost:8000/docs
 ```
 
-### Фронтенд (Next.js)
+### Фронтенд (Next.js + TypeScript)
 
 ```bash
 cd frontend
@@ -103,7 +103,7 @@ NEXT_PUBLIC_WS_HOST=localhost:8000
 
 ```bash
 npm run dev
-# → http://localhost:3000
+# -> http://localhost:3000
 ```
 
 > Next.js проксирует `/api/*` на `http://localhost:8000` через `next.config.mjs` (rewrites).
@@ -111,73 +111,123 @@ npm run dev
 
 ---
 
-## 📁 Структура проекта
+## Структура проекта
 
 ```
 retro_board/
 ├── .env.example                  # Шаблон переменных окружения
-├── .env                          # Локальные переменные (не в git!)
-├── .gitattributes                # Принудительные LF-переносы для sh/yml/py
-├── docker-compose.yml            # Основной compose (dev + prod)
-├── docker-compose.prod.yml       # Prod-оверрайд: без --reload, лимиты памяти
+├── .github/workflows/ci.yml     # CI: тесты бэкенда + линт фронтенда
+├── docker-compose.yml
+├── docker-compose.prod.yml      # Prod-оверрайд: без --reload, лимиты памяти
 │
 ├── backend/
-│   ├── .env.example              # Шаблон для локальной разработки
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── main.py                   # FastAPI app, CORS, роутеры
+│   ├── main.py                   # FastAPI app, CORS, миграции Alembic
+│   ├── alembic.ini               # Конфигурация Alembic
+│   ├── alembic/                  # Миграции базы данных
+│   │   ├── env.py
+│   │   └── versions/
+│   ├── tests/                    # Тесты pytest
+│   │   ├── conftest.py
+│   │   ├── test_boards.py
+│   │   ├── test_cards.py
+│   │   ├── test_columns.py
+│   │   └── test_groups.py
 │   └── app/
-│       ├── config.py             # Pydantic Settings (читает .env)
+│       ├── config.py             # Pydantic Settings
 │       ├── database.py           # SQLAlchemy engine + сессия
 │       ├── models.py             # ORM-модели: Board, Column, Card, CardGroup
-│       ├── schemas.py            # Pydantic схемы (In/Out)
+│       ├── schemas.py            # Pydantic-схемы с валидацией цветов
 │       ├── ws_manager.py         # WebSocket connection manager
 │       └── routers/
 │           ├── boards.py
 │           ├── columns.py
 │           ├── cards.py
-│           ├── groups.py         # CRUD групп карточек
+│           ├── groups.py
 │           └── websocket.py
 │
 └── frontend/
-    ├── Dockerfile                # Multi-stage: builder → runner + nginx
-    ├── nginx.conf                # Proxy /api и /ws на backend
+    ├── Dockerfile                # Multi-stage: builder -> runner + nginx
+    ├── nginx.conf                # Проксирование /api и /ws на backend
     ├── next.config.mjs           # Next.js: standalone output, API rewrite
+    ├── tsconfig.json             # TypeScript strict конфиг
+    ├── .eslintrc.json            # ESLint + next/core-web-vitals
     ├── start.sh                  # Запуск node server.js + nginx
-    ├── .env.local                # Локальные переменные (не в git!)
     ├── app/
-    │   ├── layout.jsx            # Root layout: шрифты, глобальные стили
+    │   ├── layout.tsx            # Root layout: шрифты, глобальные стили
     │   ├── globals.css           # CSS-переменные MD3, глобальные стили
-    │   ├── page.jsx              # Главная: список досок, редирект
-    │   └── board/
-    │       └── [id]/
-    │           └── page.jsx      # Страница доски по ID
+    │   ├── page.tsx              # Главная: список досок, редирект
+    │   └── board/[id]/page.tsx   # Страница доски по ID/slug
     ├── components/
-    │   ├── App.jsx               # Корневой компонент: состояние, WS, таймер
-    │   ├── BoardPage.jsx         # Доска с DnD-контекстом
-    │   ├── BoardsPanel.jsx       # Боковая панель со списком досок
-    │   ├── CardGroupWidget.jsx   # Группа карточек с DnD
-    │   ├── CardWidget.jsx        # Карточка заметки с DnD
-    │   ├── Column.jsx            # Колонка с карточками
-    │   ├── Dialog.jsx            # Переиспользуемый диалог (+ danger-режим)
-    │   ├── ThemePanel.jsx        # Панель смены темы
-    │   ├── TimerWidget.jsx       # Таймер обратного отсчёта
-    │   ├── Topbar.jsx            # Верхняя панель навигации
-    │   └── WelcomeDialog.jsx     # Диалог ввода имени при первом входе
+    │   ├── App.tsx               # Корневой компонент: состояние, таймер
+    │   ├── App.module.css
+    │   ├── BoardPage.tsx         # Доска с DnD-контекстом (оркестратор)
+    │   ├── BoardPage.module.css
+    │   ├── BoardsPanel.tsx       # Боковая панель со списком досок
+    │   ├── BoardsPanel.module.css
+    │   ├── CardGroupWidget.tsx   # Группа карточек с DnD
+    │   ├── CardGroupWidget.module.css
+    │   ├── CardWidget.tsx        # Карточка заметки с DnD
+    │   ├── CardWidget.module.css
+    │   ├── Column.tsx            # Колонка с карточками
+    │   ├── Column.module.css
+    │   ├── CursorMarker.tsx      # Индикатор курсора участника
+    │   ├── CursorMarker.module.css
+    │   ├── Dialog.tsx            # Переиспользуемый диалог (+ danger-режим)
+    │   ├── Dialog.module.css
+    │   ├── ThemePanel.tsx        # Панель смены темы
+    │   ├── ThemePanel.module.css
+    │   ├── TimerWidget.tsx       # Таймер обратного отсчёта
+    │   ├── TimerWidget.module.css
+    │   ├── Topbar.tsx            # Верхняя панель навигации
+    │   ├── Topbar.module.css
+    │   ├── WelcomeDialog.tsx     # Диалог ввода имени при первом входе
+    │   └── WelcomeDialog.module.css
     ├── hooks/
-    │   └── useWebSocket.js       # WS с автореконнектом и защитой от StrictMode
+    │   ├── useWebSocket.ts       # WS с автореконнектом
+    │   ├── useBoardWebSocket.ts  # WS доски: сообщения, курсоры, группы
+    │   └── useBoardDragDrop.ts   # DnD сенсоры, коллизии, обработчики
     ├── store/
-    │   └── index.js              # Zustand: username, theme, currentBoard
+    │   └── index.ts              # Zustand: username, theme, currentBoard
     ├── api/
-    │   └── index.js              # Axios-клиент для всех эндпоинтов
+    │   └── index.ts              # Типизированный Axios-клиент
+    ├── types/
+    │   └── index.ts              # TypeScript интерфейсы
     └── utils/
-        ├── exportPDF.js          # Экспорт доски в PDF
-        └── theme.js              # Цвета, applyTheme, initials
+        ├── exportPDF.ts          # Экспорт доски в PDF
+        └── theme.ts              # Цвета, applyTheme, initials
 ```
 
 ---
 
-## 🔌 API Reference
+## CI/CD
+
+GitHub Actions запускается на push/PR в `main`:
+
+- **backend-tests** — Python 3.12, `pytest -v` (SQLite in-memory)
+- **frontend-lint** — Node 20, `npm run lint` (ESLint)
+
+---
+
+## Миграции базы данных (Alembic)
+
+```bash
+cd backend
+
+# Создать новую миграцию после изменения моделей
+alembic revision --autogenerate -m "описание"
+
+# Применить миграции
+alembic upgrade head
+
+# Для существующих баз без таблицы alembic_version:
+# Приложение автоматически определяет это и выполняет stamp head при старте
+```
+
+---
+
+## API Reference
 
 ### Boards
 
@@ -186,6 +236,7 @@ retro_board/
 | `GET` | `/api/boards/` | Список всех досок |
 | `POST` | `/api/boards/` | Создать доску (+ 3 колонки по умолчанию) |
 | `GET` | `/api/boards/{id}` | Получить доску со всеми колонками и карточками |
+| `GET` | `/api/boards/by-slug/{slug}` | Получить доску по slug |
 | `PATCH` | `/api/boards/{id}` | Переименовать доску |
 | `DELETE` | `/api/boards/{id}` | Удалить доску (каскадно) |
 
@@ -224,7 +275,7 @@ retro_board/
 ws://localhost/ws/{board_id}
 ```
 
-Клиент подключается к каналу доски. Все изменения транслируются всем подключённым клиентам:
+Все изменения транслируются всем подключённым клиентам:
 
 ```json
 { "event": "card_created", "data": { ...card } }
@@ -252,7 +303,7 @@ ws://localhost/ws/{board_id}
 
 ---
 
-## ⚙️ Переменные окружения
+## Переменные окружения
 
 ### Корневой `.env` (для Docker Compose)
 
@@ -274,12 +325,12 @@ ws://localhost/ws/{board_id}
 
 | Переменная | Описание | Пример |
 |---|---|---|
-| `BACKEND_URL` | URL бэкенда для Server-side rewrites | `http://localhost:8000` |
+| `BACKEND_URL` | URL бэкенда для серверных rewrites | `http://localhost:8000` |
 | `NEXT_PUBLIC_WS_HOST` | Хост WebSocket (доступен в браузере) | `localhost:8000` |
 
 ---
 
-## 🛠️ Полезные команды
+## Полезные команды
 
 ```bash
 # Запустить только базу данных
@@ -290,6 +341,12 @@ docker compose up --build
 
 # Посмотреть логи бэкенда
 docker compose logs -f backend
+
+# Запустить тесты бэкенда
+cd backend && pytest -v
+
+# Запустить линтер фронтенда
+cd frontend && npm run lint
 
 # Остановить все контейнеры
 docker compose down
@@ -303,21 +360,17 @@ docker compose exec db pg_dump -U retro retroboard > backup_$(date +%Y%m%d).sql
 
 ---
 
-## 🏠 Деплой на домашний сервер (TrueNAS + Nginx Proxy Manager)
+## Деплой на домашний сервер (TrueNAS + Nginx Proxy Manager)
 
-Проект содержит `docker-compose.prod.yml` — оверрайд для запуска поверх основного compose:
-убирает `--reload`, ограничивает память контейнеров.
+Prod-оверрайд убирает `--reload` и ограничивает память контейнеров:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-Также в репозитории есть `deploy.sh` — вспомогательный скрипт, написанный **под конкретную
-конфигурацию с TrueNAS + Nginx Proxy Manager** (frontend на порту `3080`, NPM проксирует
-трафик с 80/443). Для других окружений скрипт нужно адаптировать под себя.
+`deploy.sh` — вспомогательный скрипт под конкретную конфигурацию с TrueNAS + Nginx Proxy Manager (фронтенд на порту `3080`, NPM проксирует трафик с 80/443). Для других окружений скрипт нужно адаптировать.
 
 ```bash
-# Исправить переносы строк после копирования с Windows
 sed -i 's/\r$//' deploy.sh
 chmod +x deploy.sh
 
@@ -327,15 +380,15 @@ chmod +x deploy.sh
 ./deploy.sh stop       # остановить
 ```
 
-Приложение будет доступно на `http://<IP-сервера>:3080`. NPM настраивается
-на проксирование к этому порту с включённой поддержкой WebSocket.
+Приложение будет доступно на `http://<IP-сервера>:3080`. NPM настраивается на проксирование к этому порту с включённой поддержкой WebSocket.
 
 ---
 
-## 🔒 Безопасность
+## Безопасность
 
 - Файл `.env` добавлен в `.gitignore` — секреты не попадут в репозиторий
-- `.env.example` показывает структуру без реальных значений — его можно и нужно коммитить
+- `.env.example` показывает структуру без реальных значений
 - Смени `POSTGRES_PASSWORD` перед деплоем на продакшн
 - Настрой `CORS_ORIGINS` на реальный домен фронтенда
 - В продакшне порт `5432` (PostgreSQL) не проброшен наружу
+- Поля цвета валидируются паттерном hex (`#RRGGBB`)

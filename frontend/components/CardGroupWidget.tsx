@@ -5,6 +5,20 @@ import { useDraggable } from '@dnd-kit/core'
 import CardWidget from './CardWidget'
 import Dialog from './Dialog'
 import { updateGroup, deleteGroup } from '../api'
+import type { Card, CardGroup } from '../types'
+import styles from './CardGroupWidget.module.css'
+
+interface CardGroupWidgetProps {
+  group: CardGroup
+  cards: Card[]
+  collapsed: boolean
+  columnId: string
+  onToggleCollapse?: () => void
+  onGroupUpdated: (group: CardGroup) => void
+  onGroupDeleted: (columnId: string, groupId: string) => void
+  onCardUpdated: (card: Card) => void
+  onCardDeleted: (id: string) => void
+}
 
 export default function CardGroupWidget({
   group,
@@ -16,7 +30,7 @@ export default function CardGroupWidget({
   onGroupDeleted,
   onCardUpdated,
   onCardDeleted,
-}) {
+}: CardGroupWidgetProps) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleVal, setTitleVal] = useState(group.title)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -42,13 +56,13 @@ export default function CardGroupWidget({
 
   return (
     <>
-      <div style={{ ...styles.container, opacity: isDragging ? 0.4 : 1 }}>
-        <div style={styles.header}>
+      <div className={styles.container} style={{ opacity: isDragging ? 0.4 : 1 }}>
+        <div className={styles.header}>
           <button
             ref={setDragRef}
             {...attributes}
             {...listeners}
-            style={styles.dragHandle}
+            className={styles.dragHandle}
             title="Перетащить группу в другую колонку"
             onClick={(e) => e.stopPropagation()}
           >
@@ -58,7 +72,7 @@ export default function CardGroupWidget({
           </button>
 
           <button
-            style={styles.collapseBtn}
+            className={styles.collapseBtn}
             onClick={() => onToggleCollapse?.()}
             title={collapsed ? 'Развернуть' : 'Свернуть'}
           >
@@ -84,7 +98,7 @@ export default function CardGroupWidget({
 
           {editingTitle ? (
             <input
-              style={styles.titleInput}
+              className={styles.titleInput}
               value={titleVal}
               onChange={(e) => setTitleVal(e.target.value)}
               onBlur={saveTitle}
@@ -93,7 +107,7 @@ export default function CardGroupWidget({
             />
           ) : (
             <span
-              style={styles.title}
+              className={styles.title}
               onDoubleClick={() => {
                 setTitleVal(group.title)
                 setEditingTitle(true)
@@ -104,10 +118,10 @@ export default function CardGroupWidget({
             </span>
           )}
 
-          <span style={styles.count}>{cards.length}</span>
+          <span className={styles.count}>{cards.length}</span>
 
           <button
-            style={styles.delBtn}
+            className={styles.delBtn}
             onClick={() => setDeleteOpen(true)}
             title="Удалить группу"
           >
@@ -118,9 +132,9 @@ export default function CardGroupWidget({
         </div>
 
         {!collapsed && (
-          <div style={styles.cards}>
+          <div className={styles.cards}>
             {cards.length === 0 ? (
-              <div style={styles.empty}>Нет карточек в группе</div>
+              <div className={styles.empty}>Нет карточек в группе</div>
             ) : (
               cards.map((card) => (
                 <CardWidget
@@ -129,7 +143,6 @@ export default function CardGroupWidget({
                   onUpdate={onCardUpdated}
                   onDelete={onCardDeleted}
                   groupId={group.id}
-                  onRemoveFromGroup={onCardUpdated}
                   onGroupDeleted={onGroupDeleted}
                 />
               ))
@@ -155,108 +168,4 @@ export default function CardGroupWidget({
       </Dialog>
     </>
   )
-}
-
-const styles = {
-  container: {
-    border: '1.5px solid var(--md-outline-variant)',
-    borderRadius: 12,
-    overflow: 'hidden',
-    background: 'color-mix(in srgb, var(--md-primary) 4%, var(--md-surface-variant))',
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '8px 10px',
-    borderBottom: '1px solid var(--md-outline-variant)',
-    background: 'color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))',
-  },
-  dragHandle: {
-    width: 22,
-    height: 22,
-    borderRadius: '50%',
-    border: 'none',
-    background: 'transparent',
-    color: 'var(--md-on-surface-variant)',
-    cursor: 'grab',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    padding: 0,
-    touchAction: 'none',
-  },
-  collapseBtn: {
-    width: 22,
-    height: 22,
-    borderRadius: '50%',
-    border: 'none',
-    background: 'transparent',
-    color: 'var(--md-on-surface-variant)',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    padding: 0,
-  },
-  title: {
-    flex: 1,
-    fontSize: 12,
-    fontWeight: 700,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: 'var(--md-primary)',
-    cursor: 'default',
-    userSelect: 'none',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  titleInput: {
-    flex: 1,
-    fontSize: 12,
-    fontWeight: 700,
-    border: 'none',
-    background: 'transparent',
-    outline: '2px solid var(--md-primary)',
-    borderRadius: 4,
-    padding: '1px 4px',
-    fontFamily: "'Roboto', sans-serif",
-    color: 'var(--md-primary)',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  count: {
-    fontSize: 11,
-    fontWeight: 600,
-    background: 'var(--md-primary-container)',
-    color: 'var(--md-on-primary-container)',
-    padding: '1px 6px',
-    borderRadius: 10,
-    flexShrink: 0,
-  },
-  delBtn: {
-    width: 22,
-    height: 22,
-    borderRadius: '50%',
-    border: 'none',
-    background: 'transparent',
-    color: 'var(--md-on-surface-variant)',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    padding: 0,
-  },
-  cards: { display: 'flex', flexDirection: 'column', gap: 8, padding: '8px' },
-  empty: {
-    textAlign: 'center',
-    fontSize: 12,
-    color: 'var(--md-on-surface-variant)',
-    padding: '8px 0',
-    opacity: 0.6,
-  },
 }

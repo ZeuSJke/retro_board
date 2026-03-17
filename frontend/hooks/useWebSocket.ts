@@ -1,16 +1,21 @@
 'use client'
 
 import { useCallback, useEffect, useRef } from 'react'
+import type { WsMessage } from '../types'
 
-export function useWebSocket(boardId, onMessage, onOpen) {
+export function useWebSocket(
+  boardId: string,
+  onMessage: (msg: WsMessage) => void,
+  onOpen?: () => void,
+): { sendMessage: (msg: WsMessage) => void } {
   const onMessageRef = useRef(onMessage)
   onMessageRef.current = onMessage
   const onOpenRef = useRef(onOpen)
   onOpenRef.current = onOpen
 
-  const wsRef = useRef(null)
+  const wsRef = useRef<WebSocket | null>(null)
 
-  const sendMessage = useCallback((msg) => {
+  const sendMessage = useCallback((msg: WsMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg))
     }
@@ -20,13 +25,12 @@ export function useWebSocket(boardId, onMessage, onOpen) {
     if (!boardId) return
 
     let cancelled = false
-    let reconnectTimer = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
     const connect = () => {
       if (cancelled) return
 
       const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-      // In production nginx proxies /ws/ to backend; in dev use NEXT_PUBLIC_WS_HOST
       const wsHost = process.env.NEXT_PUBLIC_WS_HOST || location.host
       const ws = new WebSocket(`${protocol}://${wsHost}/ws/${boardId}`)
 
@@ -36,9 +40,9 @@ export function useWebSocket(boardId, onMessage, onOpen) {
 
       ws.onmessage = (e) => {
         try {
-          const msg = JSON.parse(e.data)
+          const msg = JSON.parse(e.data) as WsMessage
           onMessageRef.current(msg)
-        } catch {}
+        } catch { /* ignore malformed messages */ }
       }
 
       ws.onclose = () => {
@@ -59,7 +63,7 @@ export function useWebSocket(boardId, onMessage, onOpen) {
 
     return () => {
       cancelled = true
-      clearTimeout(reconnectTimer)
+      if (reconnectTimer) clearTimeout(reconnectTimer)
       clearInterval(ping)
       wsRef.current?.close()
       wsRef.current = null

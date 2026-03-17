@@ -38,11 +38,11 @@ class Column(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     board_id: Mapped[str] = mapped_column(
-        String, ForeignKey("boards.id", ondelete="CASCADE")
+        String, ForeignKey("boards.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(80), nullable=False)
     color: Mapped[str] = mapped_column(String(20), default="#6750A4")
-    position: Mapped[int] = mapped_column(Integer, default=0)
+    position: Mapped[int] = mapped_column(Integer, default=0, index=True)
 
     board: Mapped["Board"] = relationship("Board", back_populates="columns")
     cards: Mapped[list["Card"]] = relationship(
@@ -64,10 +64,10 @@ class CardGroup(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     column_id: Mapped[str] = mapped_column(
-        String, ForeignKey("columns.id", ondelete="CASCADE")
+        String, ForeignKey("columns.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(120), nullable=False, default="Группа")
-    position: Mapped[int] = mapped_column(Integer, default=0)
+    position: Mapped[int] = mapped_column(Integer, default=0, index=True)
 
     column: Mapped["Column"] = relationship("Column", back_populates="groups")
 
@@ -77,15 +77,15 @@ class Card(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     column_id: Mapped[str] = mapped_column(
-        String, ForeignKey("columns.id", ondelete="CASCADE")
+        String, ForeignKey("columns.id", ondelete="CASCADE"), index=True
     )
     group_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("card_groups.id", ondelete="SET NULL"), nullable=True
+        String, ForeignKey("card_groups.id", ondelete="SET NULL"), nullable=True, index=True
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
     author: Mapped[str] = mapped_column(String(60), default="Аноним")
     color: Mapped[str] = mapped_column(String(20), default="#FFFFFF")
-    position: Mapped[int] = mapped_column(Integer, default=0)
+    position: Mapped[int] = mapped_column(Integer, default=0, index=True)
     likes: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc

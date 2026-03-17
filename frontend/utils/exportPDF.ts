@@ -3,22 +3,24 @@
  * No external dependencies required.
  */
 
+import type { Board, Column, Card } from '../types'
+
 const AVATAR_COLORS = [
   '#6750A4', '#0061A4', '#006E1C', '#BA1A1A',
   '#E8760A', '#006A60', '#7D5260',
 ]
 
-function userColor(name = '') {
+function userColor(name: string = ''): string {
   let h = 0
   for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_COLORS.length
   return AVATAR_COLORS[Math.abs(h)]
 }
 
-function initials(name = '') {
+function initials(name: string = ''): string {
   return name.slice(0, 2).toUpperCase()
 }
 
-function isLight(hex) {
+function isLight(hex: string): boolean {
   if (!hex || hex === '#FFFFFF') return true
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
@@ -26,7 +28,7 @@ function isLight(hex) {
   return 0.299 * r + 0.587 * g + 0.114 * b > 180
 }
 
-function formatDate() {
+function formatDate(): string {
   return new Date().toLocaleDateString('ru-RU', {
     day: 'numeric',
     month: 'long',
@@ -34,7 +36,7 @@ function formatDate() {
   })
 }
 
-function cardHTML(card) {
+function cardHTML(card: Card): string {
   const bg = card.color || '#FFFFFF'
   const textColor = isLight(bg) ? '#1C1B1F' : '#FFFFFF'
   const subtleColor = isLight(bg) ? '#49454F' : 'rgba(255,255,255,0.7)'
@@ -53,7 +55,7 @@ function cardHTML(card) {
     </div>`
 }
 
-function escHtml(str = '') {
+function escHtml(str: string = ''): string {
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -62,7 +64,7 @@ function escHtml(str = '') {
     .replace(/\n/g, '<br>')
 }
 
-function columnHTML(col) {
+function columnHTML(col: Column): string {
   if (!col) return ''
 
   const ungrouped = col.cards.filter((c) => !c.group_id)
@@ -102,7 +104,7 @@ function columnHTML(col) {
     </div>`
 }
 
-export function exportBoardToPDF(board, columns) {
+export function exportBoardToPDF(board: Board, columns: Column[]): void {
   const totalCards = columns.reduce((s, c) => s + (c.cards?.length || 0), 0)
   const totalGroups = columns.reduce((s, c) => s + (c.groups?.length || 0), 0)
 

@@ -2,7 +2,18 @@
 
 import { useState, useCallback } from 'react'
 import { createBoard, deleteBoard } from '../api'
+import type { BoardListItem } from '../types'
 import Dialog from './Dialog'
+import styles from './BoardsPanel.module.css'
+
+interface BoardsPanelProps {
+  open: boolean
+  boards: BoardListItem[]
+  currentId: string | undefined
+  onSelect: (id: string) => void
+  onCreated: (board: BoardListItem) => void
+  onDeleted: (id: string) => void
+}
 
 export default function BoardsPanel({
   open,
@@ -11,14 +22,14 @@ export default function BoardsPanel({
   onSelect,
   onCreated,
   onDeleted,
-}) {
+}: BoardsPanelProps) {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
-  const [createError, setCreateError] = useState(null)
-  const [deleteTarget, setDeleteTarget] = useState(null)
-  const [toast, setToast] = useState(null)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
 
-  const showToast = useCallback((message) => {
+  const showToast = useCallback((message: string) => {
     setToast(message)
     setTimeout(() => setToast(null), 3000)
   }, [])
@@ -30,13 +41,15 @@ export default function BoardsPanel({
       setNewName('')
       setCreating(false)
       setCreateError(null)
-      onCreated(board)
-    } catch (e) {
-      setCreateError(e?.response?.data?.detail || 'Ошибка создания доски')
+      onCreated(board as unknown as BoardListItem)
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      setCreateError(err?.response?.data?.detail || 'Ошибка создания доски')
     }
   }
 
   const confirmDelete = async () => {
+    if (!deleteTarget) return
     await deleteBoard(deleteTarget.id)
     onDeleted(deleteTarget.id)
     setDeleteTarget(null)
@@ -44,18 +57,18 @@ export default function BoardsPanel({
 
   return (
     <>
-      <aside style={{ ...styles.panel, left: open ? 0 : -320 }}>
-        <div style={styles.header}>
+      <aside className={styles.panel} style={{ left: open ? 0 : -320 }}>
+        <div className={styles.header}>
           <span className="material-symbols-rounded">dashboard</span>
           Мои доски
         </div>
 
-        <div style={styles.list}>
+        <div className={styles.list}>
           {boards.map((b) => (
             <div
               key={b.id}
+              className={`${styles.item} board-item`}
               style={{
-                ...styles.item,
                 background:
                   b.id === currentId ? 'var(--md-secondary-container)' : 'transparent',
                 color:
@@ -64,7 +77,6 @@ export default function BoardsPanel({
                     : 'var(--md-on-surface-variant)',
               }}
               onClick={() => onSelect(b.id)}
-              className="board-item"
             >
               <span className="material-symbols-rounded">grid_view</span>
               <span
@@ -78,7 +90,7 @@ export default function BoardsPanel({
                 {b.name}
               </span>
               <button
-                style={styles.delBtn}
+                className={styles.delBtn}
                 onClick={(e) => {
                   e.stopPropagation()
                   if (boards.length <= 1) return showToast('Нельзя удалить последнюю доску')
@@ -94,13 +106,13 @@ export default function BoardsPanel({
           ))}
         </div>
 
-        <div style={styles.footer}>
+        <div className={styles.footer}>
           {creating ? (
             <div>
-              <div style={styles.createRow}>
+              <div className={styles.createRow}>
                 <input
+                  className={styles.input}
                   style={{
-                    ...styles.input,
                     borderColor: createError ? 'var(--md-error)' : 'var(--md-outline-variant)',
                   }}
                   value={newName}
@@ -113,8 +125,8 @@ export default function BoardsPanel({
                   }}
                 />
                 <button
+                  className={styles.compactBtn}
                   style={{
-                    ...styles.compactBtn,
                     background: 'var(--md-primary)',
                     color: 'var(--md-on-primary)',
                   }}
@@ -126,7 +138,7 @@ export default function BoardsPanel({
                   </span>
                 </button>
                 <button
-                  style={styles.compactBtn}
+                  className={styles.compactBtn}
                   onClick={() => {
                     setCreating(false)
                     setNewName('')
@@ -140,11 +152,11 @@ export default function BoardsPanel({
                 </button>
               </div>
               {createError && (
-                <p style={styles.errorText}>{createError}</p>
+                <p className={styles.errorText}>{createError}</p>
               )}
             </div>
           ) : (
-            <button style={styles.addBtn} onClick={() => setCreating(true)}>
+            <button className={styles.addBtn} onClick={() => setCreating(true)}>
               <span className="material-symbols-rounded">add</span>
               Новая доска
             </button>
@@ -161,7 +173,7 @@ export default function BoardsPanel({
         onConfirm={confirmDelete}
         confirmLabel="Удалить"
       >
-        <p style={styles.confirmText}>
+        <p className={styles.confirmText}>
           Доска{' '}
           <strong style={{ color: 'var(--md-on-surface)' }}>
             «{deleteTarget?.name}»
@@ -171,7 +183,7 @@ export default function BoardsPanel({
       </Dialog>
 
       {toast && (
-        <div style={styles.toast}>
+        <div className={styles.toast}>
           <span className="material-symbols-rounded" style={{ fontSize: 20, flexShrink: 0 }}>
             info
           </span>
@@ -180,134 +192,4 @@ export default function BoardsPanel({
       )}
     </>
   )
-}
-
-const styles = {
-  panel: {
-    position: 'fixed',
-    top: 64,
-    bottom: 0,
-    width: 300,
-    background: 'var(--md-surface-1)',
-    zIndex: 90,
-    transition: 'left 0.2s cubic-bezier(0.2,0,0,1)',
-    boxShadow: 'var(--elevation-3)',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-  },
-  header: {
-    padding: '16px 20px',
-    fontSize: 18,
-    fontWeight: 700,
-    borderBottom: '1px solid var(--md-outline-variant)',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    flexShrink: 0,
-  },
-  list: { flex: 1, overflowY: 'auto', padding: 8 },
-  item: {
-    padding: '10px 14px',
-    borderRadius: 12,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    fontWeight: 500,
-    fontSize: 14,
-    transition: 'var(--transition)',
-  },
-  delBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: '50%',
-    border: 'none',
-    background: 'transparent',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: 'var(--md-on-surface-variant)',
-    flexShrink: 0,
-  },
-  footer: {
-    padding: 12,
-    borderTop: '1px solid var(--md-outline-variant)',
-    flexShrink: 0,
-  },
-  createRow: { display: 'flex', gap: 6, alignItems: 'center' },
-  input: {
-    flex: 1,
-    minWidth: 0,
-    border: '1.5px solid var(--md-outline-variant)',
-    borderRadius: 10,
-    padding: '10px 12px',
-    fontFamily: "'Roboto', sans-serif",
-    fontSize: 13,
-    background: 'var(--md-surface-variant)',
-    color: 'var(--md-on-surface)',
-    outline: 'none',
-    boxSizing: 'border-box',
-  },
-  compactBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    border: 'none',
-    background: 'var(--md-surface-variant)',
-    color: 'var(--md-on-surface-variant)',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    transition: 'background 0.15s',
-  },
-  addBtn: {
-    width: '100%',
-    height: 44,
-    borderRadius: 12,
-    border: 'none',
-    background: 'var(--md-primary)',
-    color: 'var(--md-on-primary)',
-    fontFamily: "'Roboto', sans-serif",
-    fontSize: 14,
-    fontWeight: 500,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    transition: 'opacity 0.15s',
-  },
-  confirmText: {
-    fontSize: 14,
-    lineHeight: 1.6,
-    color: 'var(--md-on-surface-variant)',
-  },
-  errorText: {
-    margin: '6px 0 0',
-    fontSize: 12,
-    color: 'var(--md-error)',
-  },
-  toast: {
-    position: 'fixed',
-    bottom: 24,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    background: 'var(--md-inverse-surface, #313033)',
-    color: 'var(--md-inverse-on-surface, #F4EFF4)',
-    padding: '12px 20px',
-    borderRadius: 12,
-    fontSize: 14,
-    fontWeight: 500,
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    boxShadow: 'var(--elevation-3)',
-    zIndex: 200,
-    whiteSpace: 'nowrap',
-    animation: 'fadeInUp 0.2s ease',
-  },
 }

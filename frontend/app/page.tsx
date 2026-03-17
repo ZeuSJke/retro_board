@@ -19,7 +19,7 @@ export default function HomePage() {
         }
         const target =
           currentBoardId && list.find((b) => b.id === currentBoardId)
-            ? list.find((b) => b.id === currentBoardId)
+            ? list.find((b) => b.id === currentBoardId)!
             : list[0]
         router.replace(`/board/${target.slug || target.id}`)
       } catch {
@@ -29,8 +29,8 @@ export default function HomePage() {
   }, [])
 
   return (
-    <div style={styles.centered}>
-      <div style={styles.spinner} />
+    <div style={centeredStyle}>
+      <div style={spinnerStyle} />
       <p style={{ color: 'var(--md-on-surface-variant)', fontSize: 14 }}>
         Загрузка...
       </p>
@@ -38,21 +38,20 @@ export default function HomePage() {
   )
 }
 
-const styles = {
-  centered: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100vh',
-    gap: 12,
-  },
-  spinner: {
-    width: 40,
-    height: 40,
-    borderRadius: '50%',
-    border: '3px solid var(--md-outline-variant)',
-    borderTopColor: 'var(--md-primary)',
-    animation: 'spin 0.8s linear infinite',
-  },
+const centeredStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  height: '100vh',
+  gap: 12,
+}
+
+const spinnerStyle: React.CSSProperties = {
+  width: 40,
+  height: 40,
+  borderRadius: '50%',
+  border: '3px solid var(--md-outline-variant)',
+  borderTopColor: 'var(--md-primary)',
+  animation: 'spin 0.8s linear infinite',
 }

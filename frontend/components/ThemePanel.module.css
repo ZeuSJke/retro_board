@@ -1,0 +1,63 @@
+.panel {
+  position: fixed;
+  top: 64px;
+  bottom: 0;
+  width: 300px;
+  background: var(--md-surface-1);
+  z-index: 90;
+  transition: right 0.2s cubic-bezier(0.2, 0, 0, 1);
+  box-shadow: var(--elevation-3);
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.sectionTitle {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--md-on-surface);
+  margin-bottom: 12px;
+}
+
+.swatches {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.customSwatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--md-outline);
+  background: var(--md-surface-variant);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.colorInput {
+  position: absolute;
+  inset: 0;
+  width: 150%;
+  height: 150%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
