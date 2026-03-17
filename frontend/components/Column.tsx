@@ -15,6 +15,23 @@ import {
 } from '../api'
 import { useAppStore } from '../store'
 import { CARD_COLORS } from '../utils/theme'
+import type { Column as ColumnType, Card, CardGroup } from '../types'
+import s from './Column.module.css'
+
+interface ColumnProps {
+  column: ColumnType
+  onUpdate: (column: ColumnType) => void
+  onDelete: (id: string) => void
+  onCardCreated: (colId: string, card: Card) => void
+  onCardUpdated: (colId: string, card: Card) => void
+  onCardDeleted: (colId: string, cardId: string) => void
+  onGroupCreated: (colId: string, group: CardGroup) => void
+  onGroupUpdated: (colId: string, group: CardGroup) => void
+  onGroupDeleted: (colId: string, groupId: string) => void
+  groupTargetId: string | null
+  collapsedGroups: Record<string, boolean>
+  onToggleCollapse: (groupId: string) => void
+}
 
 export default function Column({
   column,
@@ -29,7 +46,7 @@ export default function Column({
   groupTargetId,
   collapsedGroups,
   onToggleCollapse,
-}) {
+}: ColumnProps) {
   const { username } = useAppStore()
   const [addOpen, setAddOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -40,7 +57,7 @@ export default function Column({
   const [colorPickerOpen, setColorPickerOpen] = useState(false)
 
   const [groupAssignOpen, setGroupAssignOpen] = useState(false)
-  const [assigningCardId, setAssigningCardId] = useState(null)
+  const [assigningCardId, setAssigningCardId] = useState<string | null>(null)
   const [newGroupTitle, setNewGroupTitle] = useState('')
 
   const { setNodeRef, isOver } = useDroppable({
@@ -58,7 +75,7 @@ export default function Column({
     }
   }
 
-  const saveColor = async (color) => {
+  const saveColor = async (color: string) => {
     setColorPickerOpen(false)
     const updated = await updateColumn(column.id, { color })
     onUpdate(updated)
@@ -84,7 +101,7 @@ export default function Column({
     setAddOpen(false)
   }
 
-  const handleAssignToGroup = async (groupId) => {
+  const handleAssignToGroup = async (groupId: string) => {
     setGroupAssignOpen(false)
     if (!assigningCardId) return
     const updated = await addCardToGroup(groupId, assigningCardId)
@@ -104,7 +121,7 @@ export default function Column({
     setNewGroupTitle('')
   }
 
-  const openGroupAssign = (cardId) => {
+  const openGroupAssign = (cardId: string) => {
     setNewGroupTitle('')
     setAssigningCardId(cardId)
     setGroupAssignOpen(true)
@@ -117,9 +134,8 @@ export default function Column({
   return (
     <>
       <div
-        className="column"
+        className={`${s.column} column`}
         style={{
-          ...styles.column,
           background: isOver
             ? 'color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))'
             : 'var(--md-surface-variant)',
@@ -127,16 +143,16 @@ export default function Column({
           transition: 'max-height 0.2s ease, background 0.15s',
         }}
       >
-        {/* Header */}
-        <div style={styles.header}>
+        <div className={s.header}>
           <div
-            style={{ ...styles.dot, background: column.color }}
+            className={s.dot}
+            style={{ background: column.color }}
             onClick={() => setColorPickerOpen(true)}
             title="Изменить цвет"
           />
           {editingTitle ? (
             <input
-              style={styles.titleInput}
+              className={s.titleInput}
               value={titleVal}
               onChange={(e) => setTitleVal(e.target.value)}
               onBlur={saveTitle}
@@ -145,7 +161,7 @@ export default function Column({
             />
           ) : (
             <span
-              style={styles.title}
+              className={s.title}
               onDoubleClick={() => {
                 setTitleVal(column.title)
                 setEditingTitle(true)
@@ -155,12 +171,11 @@ export default function Column({
               {column.title}
             </span>
           )}
-          <span style={styles.count}>{(column.cards || []).length}</span>
+          <span className={s.count}>{(column.cards || []).length}</span>
           <button
-            style={styles.iconBtn}
+            className={`${s.iconBtn} col-del-btn`}
             onClick={() => setDeleteOpen(true)}
             title="Удалить колонку"
-            className="col-del-btn"
           >
             <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
               close
@@ -168,8 +183,7 @@ export default function Column({
           </button>
         </div>
 
-        {/* Cards + Groups */}
-        <div ref={setNodeRef} style={styles.cards}>
+        <div ref={setNodeRef} className={s.cards}>
           {groups.map((group) => (
             <CardGroupWidget
               key={group.id}
@@ -179,7 +193,7 @@ export default function Column({
               collapsed={collapsedGroups?.[group.id] || false}
               onToggleCollapse={() => onToggleCollapse?.(group.id)}
               onGroupUpdated={(updated) => onGroupUpdated(column.id, updated)}
-              onGroupDeleted={(id) => onGroupDeleted(column.id, id)}
+              onGroupDeleted={(_, id) => onGroupDeleted(column.id, id)}
               onCardUpdated={(updated) => onCardUpdated(column.id, updated)}
               onCardDeleted={(id) => onCardDeleted(column.id, id)}
             />
@@ -200,13 +214,12 @@ export default function Column({
           </SortableContext>
 
           {ungroupedCards.length === 0 && groups.length === 0 && (
-            <div style={styles.emptyDrop}>Перетащи карточку сюда</div>
+            <div className={s.emptyDrop}>Перетащи карточку сюда</div>
           )}
         </div>
 
-        {/* Footer */}
-        <div style={styles.footer}>
-          <button style={styles.addBtn} onClick={() => setAddOpen(true)}>
+        <div className={s.footer}>
+          <button className={s.addBtn} onClick={() => setAddOpen(true)}>
             <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
               add
             </span>
@@ -215,18 +228,10 @@ export default function Column({
         </div>
       </div>
 
-      {/* Color picker */}
       {colorPickerOpen && (
-        <div style={styles.colorOverlay} onClick={() => setColorPickerOpen(false)}>
-          <div style={styles.colorPopover} onClick={(e) => e.stopPropagation()}>
-            <div
-              style={{
-                fontSize: 13,
-                fontWeight: 700,
-                marginBottom: 10,
-                color: 'var(--md-on-surface)',
-              }}
-            >
+        <div className={s.colorOverlay} onClick={() => setColorPickerOpen(false)}>
+          <div className={s.colorPopover} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: 'var(--md-on-surface)' }}>
               Цвет колонки
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
@@ -236,7 +241,8 @@ export default function Column({
               ].map((c) => (
                 <div
                   key={c}
-                  style={{ ...styles.swatchSmall, background: c }}
+                  className={s.swatchSmall}
+                  style={{ background: c }}
                   onClick={() => saveColor(c)}
                 />
               ))}
@@ -251,7 +257,6 @@ export default function Column({
         </div>
       )}
 
-      {/* Add card dialog */}
       <Dialog
         open={addOpen}
         title="Новая заметка"
@@ -265,7 +270,7 @@ export default function Column({
         confirmLabel="Добавить"
       >
         <textarea
-          style={styles.textarea}
+          className={s.textarea}
           value={cardText}
           onChange={(e) => setCardText(e.target.value)}
           placeholder="Что думаете?"
@@ -274,7 +279,7 @@ export default function Column({
           onKeyDown={(e) => e.key === 'Enter' && e.ctrlKey && handleAddCard()}
         />
         <div style={{ marginTop: 16 }}>
-          <div style={styles.sectionLabel}>Цвет заметки</div>
+          <div className={s.sectionLabel}>Цвет заметки</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {CARD_COLORS.map((c) => (
               <div
@@ -301,7 +306,6 @@ export default function Column({
         </div>
       </Dialog>
 
-      {/* Delete column dialog */}
       <Dialog
         open={deleteOpen}
         title="Удалить колонку?"
@@ -311,7 +315,7 @@ export default function Column({
         onConfirm={confirmDelete}
         confirmLabel="Удалить"
       >
-        <p style={styles.confirmText}>
+        <p className={s.confirmText}>
           Колонка{' '}
           <strong style={{ color: 'var(--md-on-surface)' }}>
             «{column.title}»
@@ -321,7 +325,6 @@ export default function Column({
         </p>
       </Dialog>
 
-      {/* Assign to group dialog */}
       <Dialog
         open={groupAssignOpen}
         title="Добавить в группу"
@@ -337,7 +340,7 @@ export default function Column({
           {groups.map((g) => (
             <button
               key={g.id}
-              style={styles.groupPickBtn}
+              className={s.groupPickBtn}
               onClick={() => handleAssignToGroup(g.id)}
             >
               <span
@@ -351,25 +354,19 @@ export default function Column({
           ))}
 
           {groups.length > 0 && (
-            <div
-              style={{
-                height: 1,
-                background: 'var(--md-outline-variant)',
-                margin: '4px 0',
-              }}
-            />
+            <div style={{ height: 1, background: 'var(--md-outline-variant)', margin: '4px 0' }} />
           )}
 
-          <div style={styles.newGroupRow}>
+          <div className={s.newGroupRow}>
             <input
-              style={styles.newGroupInput}
+              className={s.newGroupInput}
               value={newGroupTitle}
               onChange={(e) => setNewGroupTitle(e.target.value)}
               placeholder="Название новой группы"
               maxLength={120}
               onKeyDown={(e) => e.key === 'Enter' && handleCreateAndAssign()}
             />
-            <button style={styles.newGroupBtn} onClick={handleCreateAndAssign}>
+            <button className={s.newGroupBtn} onClick={handleCreateAndAssign}>
               <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
                 add
               </span>
@@ -380,199 +377,4 @@ export default function Column({
       </Dialog>
     </>
   )
-}
-
-const styles = {
-  column: {
-    flex: '1 1 260px',
-    minWidth: 240,
-    maxWidth: 420,
-    borderRadius: 16,
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  header: { padding: 14, display: 'flex', alignItems: 'center', gap: 8 },
-  dot: {
-    width: 16,
-    height: 16,
-    borderRadius: '50%',
-    flexShrink: 0,
-    cursor: 'pointer',
-    border: '2px solid rgba(0,0,0,0.1)',
-    transition: 'transform 0.15s',
-  },
-  title: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: 700,
-    color: 'var(--md-on-surface)',
-    cursor: 'default',
-    userSelect: 'none',
-  },
-  titleInput: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: 700,
-    border: 'none',
-    background: 'transparent',
-    outline: '2px solid var(--md-primary)',
-    borderRadius: 6,
-    padding: '2px 4px',
-    fontFamily: "'Roboto', sans-serif",
-    color: 'var(--md-on-surface)',
-  },
-  count: {
-    fontSize: 12,
-    fontWeight: 600,
-    background: 'var(--md-surface)',
-    color: 'var(--md-on-surface-variant)',
-    padding: '2px 8px',
-    borderRadius: 20,
-    minWidth: 24,
-    textAlign: 'center',
-  },
-  iconBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: '50%',
-    border: 'none',
-    background: 'transparent',
-    color: 'var(--md-on-surface-variant)',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    transition: 'background 0.15s',
-  },
-  cards: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '0 12px 12px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 10,
-    minHeight: 60,
-  },
-  emptyDrop: {
-    textAlign: 'center',
-    fontSize: 13,
-    color: 'var(--md-on-surface-variant)',
-    padding: '20px 0',
-    opacity: 0.6,
-  },
-  footer: { padding: '0 12px 12px' },
-  addBtn: {
-    width: '100%',
-    boxSizing: 'border-box',
-    height: 40,
-    borderRadius: 20,
-    border: '2px dashed var(--md-outline-variant)',
-    background: 'transparent',
-    color: 'var(--md-on-surface-variant)',
-    fontFamily: "'Roboto', sans-serif",
-    fontSize: 14,
-    fontWeight: 500,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    whiteSpace: 'nowrap',
-    transition: 'var(--transition)',
-  },
-  textarea: {
-    width: '100%',
-    border: '1px solid var(--md-outline-variant)',
-    borderRadius: 12,
-    padding: 14,
-    fontFamily: "'Roboto', sans-serif",
-    fontSize: 14,
-    color: 'var(--md-on-surface)',
-    background: 'var(--md-surface-variant)',
-    outline: 'none',
-    resize: 'vertical',
-    transition: 'border-color 0.15s',
-  },
-  sectionLabel: {
-    fontSize: 12,
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: 'var(--md-on-surface-variant)',
-    marginBottom: 10,
-  },
-  confirmText: {
-    fontSize: 14,
-    lineHeight: 1.6,
-    color: 'var(--md-on-surface-variant)',
-  },
-  colorOverlay: {
-    position: 'fixed',
-    inset: 0,
-    zIndex: 200,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'rgba(0,0,0,0.3)',
-  },
-  colorPopover: {
-    background: 'var(--md-surface)',
-    borderRadius: 16,
-    padding: 16,
-    boxShadow: 'var(--elevation-3)',
-  },
-  swatchSmall: {
-    width: 30,
-    height: 30,
-    borderRadius: '50%',
-    cursor: 'pointer',
-    border: '2px solid transparent',
-    transition: 'transform 0.1s',
-  },
-  groupPickBtn: {
-    width: '100%',
-    padding: '10px 14px',
-    borderRadius: 12,
-    border: '1.5px solid var(--md-outline-variant)',
-    background: 'var(--md-surface-variant)',
-    color: 'var(--md-on-surface)',
-    fontFamily: "'Roboto', sans-serif",
-    fontSize: 14,
-    fontWeight: 500,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    textAlign: 'left',
-    transition: 'background 0.15s',
-  },
-  newGroupRow: { display: 'flex', gap: 8, alignItems: 'center' },
-  newGroupInput: {
-    flex: 1,
-    border: '1.5px solid var(--md-outline-variant)',
-    borderRadius: 12,
-    padding: '9px 12px',
-    fontFamily: "'Roboto', sans-serif",
-    fontSize: 14,
-    color: 'var(--md-on-surface)',
-    background: 'var(--md-surface-variant)',
-    outline: 'none',
-  },
-  newGroupBtn: {
-    height: 40,
-    padding: '0 14px',
-    borderRadius: 20,
-    border: 'none',
-    background: 'var(--md-primary)',
-    color: 'var(--md-on-primary)',
-    fontFamily: "'Roboto', sans-serif",
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 4,
-    flexShrink: 0,
-    transition: 'opacity 0.15s',
-  },
 }

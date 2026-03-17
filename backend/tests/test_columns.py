@@ -29,6 +29,14 @@ class TestCreateColumn:
         })
         assert resp.status_code == 404
 
+    def test_invalid_color_returns_422(self, client, sample_board):
+        resp = client.post("/api/columns/", json={
+            "board_id": sample_board["id"],
+            "title": "Bad",
+            "color": "blue",
+        })
+        assert resp.status_code == 422
+
 
 class TestUpdateColumn:
     def test_update_title(self, client, sample_column):
@@ -46,6 +54,13 @@ class TestUpdateColumn:
         )
         assert resp.status_code == 200
         assert resp.json()["color"] == "#FF5722"
+
+    def test_update_invalid_color_returns_422(self, client, sample_column):
+        resp = client.patch(
+            f"/api/columns/{sample_column['id']}",
+            json={"color": "not-a-color"},
+        )
+        assert resp.status_code == 422
 
     def test_update_position(self, client, sample_column):
         resp = client.patch(

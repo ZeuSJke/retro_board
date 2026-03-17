@@ -10,30 +10,35 @@ import WelcomeDialog from './WelcomeDialog'
 import { useAppStore } from '../store'
 import { applyTheme } from '../utils/theme'
 import { getBoards, getBoardBySlug, updateBoard, createBoard } from '../api'
+import type { Board, BoardListItem, TimerState } from '../types'
+import styles from './App.module.css'
 
-export default function App({ boardId }) {
+interface AppProps {
+  boardId: string
+}
+
+export default function App({ boardId }: AppProps) {
   const router = useRouter()
   const { theme, currentBoardId, setCurrentBoard, setUsername, username } = useAppStore()
-  const [boards, setBoards] = useState([])
-  const [currentBoard, setCurrentBoardData] = useState(null)
+  const [boards, setBoards] = useState<BoardListItem[]>([])
+  const [currentBoard, setCurrentBoardData] = useState<Board | null>(null)
   const [boardsPanelOpen, setBoardsPanelOpen] = useState(false)
   const [themePanelOpen, setThemePanelOpen] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
   const [showWelcome, setShowWelcome] = useState(username === 'Аноним')
 
-  // Export ref — BoardPage sets this to the current export function
-  const exportRef = useRef(null)
+  const exportRef = useRef<(() => void) | null>(null)
 
-  // Timer state — managed here so it persists across board navigation
-  const [timer, setTimer] = useState({ duration: 300, remaining: 300, running: false })
-  const timerIntervalRef = useRef(null)
-  // sendTimerRef — BoardPage sets this to { start, pause, reset } WS senders
-  const sendTimerRef = useRef(null)
-  // Guard: don't overwrite localStorage with default state before the board is loaded
+  const [timer, setTimer] = useState<TimerState>({ duration: 300, remaining: 300, running: false })
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const sendTimerRef = useRef<{
+    start: (duration: number, remaining: number) => void
+    pause: (remaining: number) => void
+    reset: (duration: number) => void
+  } | null>(null)
   const timerRestoredRef = useRef(false)
 
-  // Persist timer to localStorage on every change
   useEffect(() => {
     if (!boardId || !timerRestoredRef.current) return
     localStorage.setItem(
@@ -47,27 +52,25 @@ export default function App({ boardId }) {
     )
   }, [timer.duration, timer.remaining, timer.running, boardId])
 
-  const handleWelcomeConfirm = (name) => {
+  const handleWelcomeConfirm = (name: string) => {
     setUsername(name)
     setShowWelcome(false)
   }
 
-  // Apply theme on mount & changes
   useEffect(() => {
     applyTheme(theme)
   }, [theme])
 
-  // Cleanup timer on unmount
   useEffect(() => {
-    return () => clearInterval(timerIntervalRef.current)
+    return () => {
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
+    }
   }, [])
 
-  // Load boards list once
   useEffect(() => {
     loadBoards()
   }, [])
 
-  // Load board data when boardId changes
   useEffect(() => {
     if (boardId) {
       timerRestoredRef.current = false
@@ -81,28 +84,27 @@ export default function App({ boardId }) {
       let list = await getBoards()
       if (list.length === 0) {
         const board = await createBoard('Моя первая ретро-доска')
-        list = [board]
+        list = [board as unknown as BoardListItem]
         router.replace(`/board/${board.slug || board.id}`)
       }
       setBoards(list)
-    } catch (e) {
+    } catch {
       setError('Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен.')
     }
   }
 
-  const loadBoard = async (id) => {
+  const loadBoard = async (id: string) => {
     try {
       setLoading(true)
       const board = await getBoardBySlug(id)
       setCurrentBoardData(board)
       setCurrentBoard(board.id)
 
-      // Restore timer state from localStorage
       try {
         const saved = localStorage.getItem(`retro_timer_${id}`)
         if (saved) {
           const { duration, remaining, running, savedAt } = JSON.parse(saved)
-          clearInterval(timerIntervalRef.current)
+          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
           if (running) {
             const elapsed = Math.floor((Date.now() - savedAt) / 1000)
             const adjusted = Math.max(0, remaining - elapsed)
@@ -112,28 +114,28 @@ export default function App({ boardId }) {
             setTimer({ duration, remaining, running: false })
           }
         }
-      } catch {}
+      } catch { /* ignore corrupted timer data */ }
       timerRestoredRef.current = true
-    } catch (e) {
+    } catch {
       setError('Не удалось загрузить доску.')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleSelectBoard = async (id) => {
+  const handleSelectBoard = async (id: string) => {
     setBoardsPanelOpen(false)
     const board = boards.find((b) => b.id === id)
     router.push(`/board/${board?.slug || id}`)
   }
 
-  const handleBoardCreated = async (board) => {
+  const handleBoardCreated = async (board: BoardListItem) => {
     setBoards((prev) => [board, ...prev])
     setBoardsPanelOpen(false)
     router.push(`/board/${board.slug || board.id}`)
   }
 
-  const handleBoardDeleted = (id) => {
+  const handleBoardDeleted = (id: string) => {
     const remaining = boards.filter((b) => b.id !== id)
     setBoards(remaining)
     if (currentBoard?.id === id && remaining.length > 0) {
@@ -141,7 +143,7 @@ export default function App({ boardId }) {
     }
   }
 
-  const handleRename = async (name) => {
+  const handleRename = async (name: string) => {
     if (!name?.trim() || !currentBoard) return
     const updated_board = await updateBoard(currentBoard.id, { name: name.trim() })
     const updated = { ...currentBoard, name: name.trim(), slug: updated_board.slug }
@@ -157,15 +159,13 @@ export default function App({ boardId }) {
     setThemePanelOpen(false)
   }
 
-  // ── Timer management ──────────────────────────────────────────────────────
-
-  const startCountdown = useCallback((remaining) => {
-    clearInterval(timerIntervalRef.current)
+  const startCountdown = useCallback((remaining: number) => {
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
     timerIntervalRef.current = setInterval(() => {
       setTimer((prev) => {
         const next = Math.max(0, prev.remaining - 1)
         if (next <= 0) {
-          clearInterval(timerIntervalRef.current)
+          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
           return { ...prev, remaining: 0, running: false }
         }
         return { ...prev, remaining: next }
@@ -174,24 +174,24 @@ export default function App({ boardId }) {
   }, [])
 
   const handleTimerWsEvent = useCallback(
-    (event, data) => {
+    (event: string, data: Record<string, unknown>) => {
       if (event === 'timer_start') {
-        const networkDelay = (Date.now() - (data.ts || Date.now())) / 1000
-        const adjusted = Math.max(0, Math.round(data.remaining - networkDelay))
-        setTimer({ duration: data.duration, remaining: adjusted, running: true })
+        const networkDelay = (Date.now() - ((data.ts as number) || Date.now())) / 1000
+        const adjusted = Math.max(0, Math.round((data.remaining as number) - networkDelay))
+        setTimer({ duration: data.duration as number, remaining: adjusted, running: true })
         startCountdown(adjusted)
       } else if (event === 'timer_pause') {
-        clearInterval(timerIntervalRef.current)
-        setTimer((prev) => ({ ...prev, remaining: data.remaining, running: false }))
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
+        setTimer((prev) => ({ ...prev, remaining: data.remaining as number, running: false }))
       } else if (event === 'timer_reset') {
-        clearInterval(timerIntervalRef.current)
-        setTimer({ duration: data.duration, remaining: data.duration, running: false })
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
+        setTimer({ duration: data.duration as number, remaining: data.duration as number, running: false })
       }
     },
     [startCountdown],
   )
 
-  const handleTimerStart = useCallback((duration, remaining) => {
+  const handleTimerStart = useCallback((duration: number, remaining: number) => {
     sendTimerRef.current?.start(duration, remaining)
   }, [])
 
@@ -199,15 +199,13 @@ export default function App({ boardId }) {
     sendTimerRef.current?.pause(timer.remaining)
   }, [timer.remaining])
 
-  const handleTimerReset = useCallback((duration) => {
+  const handleTimerReset = useCallback((duration: number) => {
     sendTimerRef.current?.reset(duration)
   }, [])
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
   if (error)
     return (
-      <div style={styles.centered}>
+      <div className={styles.centered}>
         <span
           className="material-symbols-rounded"
           style={{ fontSize: 48, color: 'var(--md-error)', marginBottom: 16 }}
@@ -215,7 +213,7 @@ export default function App({ boardId }) {
           error
         </span>
         <p style={{ color: 'var(--md-error)', fontWeight: 600, marginBottom: 8 }}>{error}</p>
-        <button style={styles.retryBtn} onClick={loadBoards}>
+        <button className={styles.retryBtn} onClick={loadBoards}>
           Повторить
         </button>
       </div>
@@ -223,8 +221,8 @@ export default function App({ boardId }) {
 
   if (loading || !currentBoard)
     return (
-      <div style={styles.centered}>
-        <div style={styles.spinner} />
+      <div className={styles.centered}>
+        <div className={styles.spinner} />
         <p style={{ color: 'var(--md-on-surface-variant)', fontSize: 14 }}>Загрузка...</p>
       </div>
     )
@@ -253,9 +251,8 @@ export default function App({ boardId }) {
         onTimerReset={handleTimerReset}
       />
 
-      {/* Overlay */}
       {(boardsPanelOpen || themePanelOpen) && (
-        <div style={styles.overlay} onClick={closePanels} />
+        <div className={styles.overlay} onClick={closePanels} />
       )}
 
       <BoardsPanel
@@ -269,7 +266,7 @@ export default function App({ boardId }) {
 
       <ThemePanel open={themePanelOpen} />
 
-      <main style={styles.main}>
+      <main className={styles.main}>
         {currentBoard && (
           <BoardPage
             key={currentBoard.id}
@@ -283,42 +280,4 @@ export default function App({ boardId }) {
       </main>
     </>
   )
-}
-
-const styles = {
-  main: { marginTop: 64, overflowX: 'auto' },
-  overlay: {
-    position: 'fixed',
-    inset: 0,
-    background: 'rgba(0,0,0,0.4)',
-    zIndex: 85,
-  },
-  centered: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100vh',
-    gap: 12,
-  },
-  spinner: {
-    width: 40,
-    height: 40,
-    borderRadius: '50%',
-    border: '3px solid var(--md-outline-variant)',
-    borderTopColor: 'var(--md-primary)',
-    animation: 'spin 0.8s linear infinite',
-  },
-  retryBtn: {
-    height: 40,
-    padding: '0 20px',
-    borderRadius: 20,
-    border: 'none',
-    background: 'var(--md-primary)',
-    color: 'var(--md-on-primary)',
-    fontFamily: "'Roboto', sans-serif",
-    fontSize: 14,
-    fontWeight: 500,
-    cursor: 'pointer',
-  },
 }

@@ -1,7 +1,11 @@
 from contextlib import asynccontextmanager
 
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import inspect
+
 from app.config import settings
-from app.database import Base, engine
+from app.database import engine
 from app.routers import boards, cards, columns, groups, websocket
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +13,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    alembic_cfg = Config("alembic.ini")
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    if tables and "alembic_version" not in tables:
+        # Existing DB without Alembic — stamp current state
+        command.stamp(alembic_cfg, "head")
+    else:
+        command.upgrade(alembic_cfg, "head")
     yield
 
 

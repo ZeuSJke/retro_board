@@ -1,3 +1,8 @@
+# Node / Frontend
+node_modules/
+.next/
+frontend/.eslintcache
+
 # Environment variables — never commit secrets!
 .env
 .env.local

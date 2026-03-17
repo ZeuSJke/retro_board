@@ -1,0 +1,125 @@
+.card {
+  border-radius: 12px;
+  padding: 14px 14px 10px;
+  box-shadow: var(--elevation-1);
+  border-left: 4px solid transparent;
+  position: relative;
+  transition: box-shadow 0.15s;
+}
+
+.author {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+}
+
+.text {
+  font-size: 14px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.editTextarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 14px;
+  line-height: 1.55;
+  font-family: 'Roboto', sans-serif;
+  border: none;
+  outline: 2px solid var(--md-primary);
+  border-radius: 6px;
+  padding: 2px 4px;
+  resize: vertical;
+  min-height: 56px;
+}
+
+.actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 10px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.likeBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  border-radius: 20px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: 'Roboto', sans-serif;
+  transition: background 0.15s, color 0.15s;
+  min-width: 40px;
+}
+
+.likeCount {
+  min-width: 8px;
+  display: inline-block;
+  text-align: center;
+}
+
+.iconBtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.confirmText {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--md-on-surface-variant);
+  margin-bottom: 12px;
+}
+
+.cardPreview {
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: var(--md-surface-variant);
+  border-left: 3px solid var(--md-outline-variant);
+}
+
+.cardPreviewText {
+  font-size: 13px;
+  color: var(--md-on-surface);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dragPlaceholder {
+  min-height: 72px;
+  border-radius: 12px;
+  border: 2px dashed var(--md-primary);
+  background: color-mix(in srgb, var(--md-primary) 10%, transparent);
+}

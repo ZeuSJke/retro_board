@@ -1,7 +1,10 @@
 from __future__ import annotations
+import re
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 # ── Card ──────────────────────────────────────────────────────────────────────
@@ -9,7 +12,7 @@ from pydantic import BaseModel, Field
 class CardBase(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
     author: str = Field(default="Аноним", max_length=60)
-    color: str = Field(default="#FFFFFF", max_length=20)
+    color: str = Field(default="#FFFFFF", pattern=r"^#[0-9a-fA-F]{6}$")
 
 class CardCreate(CardBase):
     column_id: str
@@ -20,6 +23,13 @@ class CardUpdate(BaseModel):
     group_id: Optional[str] = None
     column_id: Optional[str] = None
     position: Optional[int] = None
+
+    @field_validator("color")
+    @classmethod
+    def validate_color(cls, v: str | None) -> str | None:
+        if v is not None and not _HEX_COLOR_RE.match(v):
+            raise ValueError("color must be a hex string like #RRGGBB")
+        return v
 
 class CardOut(CardBase):
     id: str
@@ -54,7 +64,7 @@ class CardGroupOut(BaseModel):
 
 class ColumnBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=80)
-    color: str = Field(default="#6750A4", max_length=20)
+    color: str = Field(default="#6750A4", pattern=r"^#[0-9a-fA-F]{6}$")
 
 class ColumnCreate(ColumnBase):
     board_id: str
@@ -63,6 +73,13 @@ class ColumnUpdate(BaseModel):
     title: Optional[str] = None
     color: Optional[str] = None
     position: Optional[int] = None
+
+    @field_validator("color")
+    @classmethod
+    def validate_color(cls, v: str | None) -> str | None:
+        if v is not None and not _HEX_COLOR_RE.match(v):
+            raise ValueError("color must be a hex string like #RRGGBB")
+        return v
 
 class ColumnOut(ColumnBase):
     id: str

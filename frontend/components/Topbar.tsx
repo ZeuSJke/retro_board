@@ -2,8 +2,22 @@
 
 import { useState } from 'react'
 import { useAppStore } from '../store'
+import type { TimerState } from '../types'
 import Dialog from './Dialog'
 import TimerWidget from './TimerWidget'
+import styles from './Topbar.module.css'
+
+interface TopbarProps {
+  boardName: string
+  onBoardsToggle: () => void
+  onThemeToggle: () => void
+  onRename: (name: string) => Promise<void>
+  onExport?: () => void
+  timerState: TimerState | null
+  onTimerStart: (duration: number, remaining: number) => void
+  onTimerPause: () => void
+  onTimerReset: (duration: number) => void
+}
 
 export default function Topbar({
   boardName,
@@ -15,23 +29,23 @@ export default function Topbar({
   onTimerStart,
   onTimerPause,
   onTimerReset,
-}) {
+}: TopbarProps) {
   const { username, setUsername } = useAppStore()
   const [usernameOpen, setUsernameOpen] = useState(false)
   const [nameOpen, setNameOpen] = useState(false)
   const [tempName, setTempName] = useState('')
   const [tempBoard, setTempBoard] = useState('')
-  const [renameError, setRenameError] = useState(null)
+  const [renameError, setRenameError] = useState<string | null>(null)
 
   return (
     <>
-      <header style={styles.bar}>
-        <button style={styles.iconBtn} onClick={onBoardsToggle}>
+      <header className={styles.bar}>
+        <button className={styles.iconBtn} onClick={onBoardsToggle}>
           <span className="material-symbols-rounded">menu</span>
         </button>
-        <div style={styles.logo}>RetroBoard</div>
+        <div className={styles.logo}>RetroBoard</div>
         <button
-          style={styles.boardName}
+          className={styles.boardName}
           onClick={() => {
             setTempBoard(boardName)
             setRenameError(null)
@@ -41,7 +55,7 @@ export default function Topbar({
         >
           {boardName}
         </button>
-        <div style={styles.actions}>
+        <div className={styles.actions}>
           {timerState && (
             <TimerWidget
               timerState={timerState}
@@ -52,13 +66,13 @@ export default function Topbar({
           )}
 
           {onExport && (
-            <button style={styles.iconBtn} onClick={onExport} title="Экспорт в PDF">
+            <button className={styles.iconBtn} onClick={onExport} title="Экспорт в PDF">
               <span className="material-symbols-rounded">picture_as_pdf</span>
             </button>
           )}
 
           <button
-            style={styles.chip}
+            className={styles.chip}
             onClick={() => {
               setTempName(username)
               setUsernameOpen(true)
@@ -67,7 +81,7 @@ export default function Topbar({
             <span className="material-symbols-rounded">account_circle</span>
             {username}
           </button>
-          <button style={styles.iconBtn} onClick={onThemeToggle} title="Тема">
+          <button className={styles.iconBtn} onClick={onThemeToggle} title="Тема">
             <span className="material-symbols-rounded">palette</span>
           </button>
         </div>
@@ -83,7 +97,7 @@ export default function Topbar({
         }}
       >
         <input
-          style={styles.input}
+          className={styles.input}
           value={tempName}
           onChange={(e) => setTempName(e.target.value)}
           placeholder="Введите имя"
@@ -104,13 +118,15 @@ export default function Topbar({
             await onRename(tempBoard)
             setNameOpen(false)
             setRenameError(null)
-          } catch (e) {
-            setRenameError(e?.response?.data?.detail || 'Ошибка переименования')
+          } catch (e: unknown) {
+            const err = e as { response?: { data?: { detail?: string } } }
+            setRenameError(err?.response?.data?.detail || 'Ошибка переименования')
           }
         }}
       >
         <input
-          style={{ ...styles.input, borderColor: renameError ? 'var(--md-error)' : 'var(--md-outline)' }}
+          className={styles.input}
+          style={{ borderColor: renameError ? 'var(--md-error)' : 'var(--md-outline)' }}
           value={tempBoard}
           onChange={(e) => { setTempBoard(e.target.value); setRenameError(null) }}
           placeholder="Название доски"
@@ -121,8 +137,9 @@ export default function Topbar({
                 await onRename(tempBoard)
                 setNameOpen(false)
                 setRenameError(null)
-              } catch (err) {
-                setRenameError(err?.response?.data?.detail || 'Ошибка переименования')
+              } catch (err: unknown) {
+                const error = err as { response?: { data?: { detail?: string } } }
+                setRenameError(error?.response?.data?.detail || 'Ошибка переименования')
               }
             }
           }}
@@ -134,90 +151,4 @@ export default function Topbar({
       </Dialog>
     </>
   )
-}
-
-const styles = {
-  bar: {
-    height: 64,
-    background: 'var(--md-surface-1)',
-    display: 'flex',
-    alignItems: 'center',
-    padding: '0 16px',
-    gap: 12,
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 100,
-    boxShadow: 'var(--elevation-2)',
-  },
-  logo: {
-    fontFamily: "'Roboto', sans-serif",
-    fontSize: 22,
-    fontWeight: 700,
-    color: 'var(--md-primary)',
-    letterSpacing: -0.5,
-  },
-  boardName: {
-    fontSize: 15,
-    fontWeight: 500,
-    color: 'var(--md-on-surface-variant)',
-    flex: 1,
-    cursor: 'pointer',
-    padding: '4px 10px',
-    borderRadius: 8,
-    border: '1px solid transparent',
-    background: 'transparent',
-    fontFamily: "'Roboto', sans-serif",
-    textAlign: 'left',
-    transition: 'var(--transition)',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    maxWidth: 320,
-  },
-  actions: {
-    display: 'flex',
-    gap: 8,
-    alignItems: 'center',
-    marginLeft: 'auto',
-  },
-  iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: '50%',
-    border: 'none',
-    background: 'transparent',
-    color: 'var(--md-on-surface-variant)',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    transition: 'var(--transition)',
-  },
-  chip: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '6px 14px',
-    background: 'var(--md-secondary-container)',
-    color: 'var(--md-on-secondary-container)',
-    borderRadius: 20,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    border: 'none',
-    fontFamily: "'Roboto', sans-serif",
-  },
-  input: {
-    width: '100%',
-    border: '1px solid var(--md-outline)',
-    borderRadius: 12,
-    padding: '12px 14px',
-    fontFamily: "'Roboto', sans-serif",
-    fontSize: 14,
-    color: 'var(--md-on-surface)',
-    background: 'var(--md-surface)',
-    outline: 'none',
-  },
 }

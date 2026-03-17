@@ -43,7 +43,17 @@ class JSONEncodedList(TypeDecorator):
 # ---------------------------------------------------------------------------
 from app.database import Base, get_db
 from app.models import Card
-from main import app
+
+# Import app but patch lifespan so alembic is not invoked during tests
+from contextlib import asynccontextmanager
+import main as _main_module
+
+@asynccontextmanager
+async def _test_lifespan(app):
+    yield
+
+_main_module.app.router.lifespan_context = _test_lifespan
+app = _main_module.app
 
 # Patch the underlying SA column type so SQLite can handle list<->json
 Card.__table__.c.likes.type = JSONEncodedList()

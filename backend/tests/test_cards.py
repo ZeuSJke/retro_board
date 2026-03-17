@@ -31,6 +31,22 @@ class TestCreateCard:
         })
         assert resp.status_code == 404
 
+    def test_invalid_color_returns_422(self, client, sample_column):
+        resp = client.post("/api/cards/", json={
+            "column_id": sample_column["id"],
+            "text": "Bad color",
+            "color": "red",
+        })
+        assert resp.status_code == 422
+
+    def test_short_hex_color_returns_422(self, client, sample_column):
+        resp = client.post("/api/cards/", json={
+            "column_id": sample_column["id"],
+            "text": "Bad color",
+            "color": "#FFF",
+        })
+        assert resp.status_code == 422
+
 
 class TestUpdateCard:
     def test_update_text(self, client, sample_card):
@@ -48,6 +64,13 @@ class TestUpdateCard:
         )
         assert resp.status_code == 200
         assert resp.json()["color"] == "#FF0000"
+
+    def test_update_invalid_color_returns_422(self, client, sample_card):
+        resp = client.patch(
+            f"/api/cards/{sample_card['id']}",
+            json={"color": "notacolor"},
+        )
+        assert resp.status_code == 422
 
     def test_not_found_returns_404(self, client):
         resp = client.patch("/api/cards/no-id", json={"text": "X"})
