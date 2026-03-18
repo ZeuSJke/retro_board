@@ -16,6 +16,9 @@
 - Таймер — обратный отсчёт для временных слотов ретро (старт / пауза / сброс), синхронизируется через WebSocket
 - Real-time — все участники видят изменения мгновенно через WebSocket
 - Курсоры участников — позиции курсоров транслируются в реальном времени
+- Лимит голосов — настраиваемый лимит голосов на участника (по умолчанию 5), бейдж использования в топбаре
+- Обработка ошибок — глобальный middleware на бэкенде, toast-уведомления и ErrorBoundary на фронтенде
+- Rate Limiting — ограничение частоты запросов (100/мин чтение, 30/мин мутации, 20 сообщений/сек WebSocket)
 - Тема — Material Design 3, меняй акцентный цвет и тёмный/светлый режим
 - Экспорт в PDF — сохрани содержимое доски одним кликом
 - Персистентность — данные хранятся в PostgreSQL
@@ -116,14 +119,14 @@ npm run dev
 ```
 retro_board/
 ├── .env.example                  # Шаблон переменных окружения
-├── .github/workflows/ci.yml     # CI: тесты бэкенда + линт фронтенда
+├── .github/workflows/ci.yml     # CI: тесты бэкенда + линт и тесты фронтенда
 ├── docker-compose.yml
 ├── docker-compose.prod.yml      # Prod-оверрайд: без --reload, лимиты памяти
 │
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── main.py                   # FastAPI app, CORS, миграции Alembic
+│   ├── main.py                   # FastAPI app, CORS, миграции, rate limiter, error middleware
 │   ├── alembic.ini               # Конфигурация Alembic
 │   ├── alembic/                  # Миграции базы данных
 │   │   ├── env.py
@@ -133,10 +136,13 @@ retro_board/
 │   │   ├── test_boards.py
 │   │   ├── test_cards.py
 │   │   ├── test_columns.py
-│   │   └── test_groups.py
+│   │   ├── test_groups.py
+│   │   ├── test_error_handling.py
+│   │   └── test_rate_limiting.py
 │   └── app/
 │       ├── config.py             # Pydantic Settings
 │       ├── database.py           # SQLAlchemy engine + сессия
+│       ├── limiter.py            # Конфигурация slowapi rate limiter
 │       ├── models.py             # ORM-модели: Board, Column, Card, CardGroup
 │       ├── schemas.py            # Pydantic-схемы с валидацией цветов
 │       ├── ws_manager.py         # WebSocket connection manager
@@ -154,8 +160,19 @@ retro_board/
     ├── tsconfig.json             # TypeScript strict конфиг
     ├── .eslintrc.json            # ESLint + next/core-web-vitals
     ├── start.sh                  # Запуск node server.js + nginx
+    ├── vitest.config.ts            # Конфигурация Vitest для тестов
+    ├── tests/                      # Фронтенд-тесты (Vitest + Testing Library)
+    │   ├── setup.ts
+    │   ├── store/
+    │   │   ├── index.test.ts
+    │   │   └── toastStore.test.ts
+    │   ├── api/
+    │   │   └── index.test.ts
+    │   └── components/
+    │       ├── CardWidget.test.tsx
+    │       └── Column.test.tsx
     ├── app/
-    │   ├── layout.tsx            # Root layout: шрифты, глобальные стили
+    │   ├── layout.tsx            # Root layout: шрифты, ErrorBoundary, Toast
     │   ├── globals.css           # CSS-переменные MD3, глобальные стили
     │   ├── page.tsx              # Главная: список досок, редирект
     │   └── board/[id]/page.tsx   # Страница доски по ID/slug
@@ -168,7 +185,7 @@ retro_board/
     │   ├── BoardsPanel.module.css
     │   ├── CardGroupWidget.tsx   # Группа карточек с DnD
     │   ├── CardGroupWidget.module.css
-    │   ├── CardWidget.tsx        # Карточка заметки с DnD
+    │   ├── CardWidget.tsx        # Карточка заметки с DnD, лимит голосов
     │   ├── CardWidget.module.css
     │   ├── Column.tsx            # Колонка с карточками
     │   ├── Column.module.css
@@ -176,6 +193,9 @@ retro_board/
     │   ├── CursorMarker.module.css
     │   ├── Dialog.tsx            # Переиспользуемый диалог (+ danger-режим)
     │   ├── Dialog.module.css
+    │   ├── ErrorBoundary.tsx    # Обработка ошибок рендера (fallback UI)
+    │   ├── Toast.tsx            # Toast-уведомления (ошибки, инфо)
+    │   ├── Toast.module.css
     │   ├── ThemePanel.tsx        # Панель смены темы
     │   ├── ThemePanel.module.css
     │   ├── TimerWidget.tsx       # Таймер обратного отсчёта
@@ -189,7 +209,8 @@ retro_board/
     │   ├── useBoardWebSocket.ts  # WS доски: сообщения, курсоры, группы
     │   └── useBoardDragDrop.ts   # DnD сенсоры, коллизии, обработчики
     ├── store/
-    │   └── index.ts              # Zustand: username, theme, currentBoard
+    │   ├── index.ts              # Zustand: username, theme, currentBoard
+    │   └── toastStore.ts         # Standalone store для toast-уведомлений
     ├── api/
     │   └── index.ts              # Типизированный Axios-клиент
     ├── types/
@@ -203,10 +224,13 @@ retro_board/
 
 ## CI/CD
 
-GitHub Actions запускается на push/PR в `main`:
+GitHub Actions запускается на push/PR в `main` (`.github/workflows/ci.yml`):
 
-- **backend-tests** — Python 3.12, `pytest -v` (SQLite in-memory)
-- **frontend-lint** — Node 20, `npm run lint` (ESLint)
+| Job | Окружение | Команда | Что проверяет |
+|---|---|---|---|
+| **backend-tests** | Python 3.12 | `pytest -v` | API-эндпоинты, модели, обработка ошибок, rate limiting, лимит голосов (SQLite in-memory) |
+| **frontend-lint** | Node 20 | `npm run lint` | ESLint + next/core-web-vitals |
+| **frontend-tests** | Node 20 | `npm test` | Компоненты, store, API-клиент (Vitest + Testing Library + jsdom) |
 
 ---
 
@@ -237,7 +261,7 @@ alembic upgrade head
 | `POST` | `/api/boards/` | Создать доску (+ 3 колонки по умолчанию) |
 | `GET` | `/api/boards/{id}` | Получить доску со всеми колонками и карточками |
 | `GET` | `/api/boards/by-slug/{slug}` | Получить доску по slug |
-| `PATCH` | `/api/boards/{id}` | Переименовать доску |
+| `PATCH` | `/api/boards/{id}` | Обновить доску (название, лимит голосов) |
 | `DELETE` | `/api/boards/{id}` | Удалить доску (каскадно) |
 
 ### Columns
@@ -255,7 +279,7 @@ alembic upgrade head
 | `POST` | `/api/cards/` | Создать карточку |
 | `PATCH` | `/api/cards/{id}` | Обновить текст / цвет |
 | `POST` | `/api/cards/{id}/move` | Переместить в другую колонку |
-| `POST` | `/api/cards/{id}/like` | Добавить / убрать лайк |
+| `POST` | `/api/cards/{id}/like` | Добавить / убрать лайк (с проверкой лимита голосов) |
 | `DELETE` | `/api/cards/{id}` | Удалить карточку |
 
 ### Groups
@@ -345,6 +369,12 @@ docker compose logs -f backend
 # Запустить тесты бэкенда
 cd backend && pytest -v
 
+# Запустить тесты фронтенда
+cd frontend && npm test
+
+# Запустить тесты фронтенда в watch-режиме
+cd frontend && npm run test:watch
+
 # Запустить линтер фронтенда
 cd frontend && npm run lint
 
@@ -392,3 +422,7 @@ chmod +x deploy.sh
 - Настрой `CORS_ORIGINS` на реальный домен фронтенда
 - В продакшне порт `5432` (PostgreSQL) не проброшен наружу
 - Поля цвета валидируются паттерном hex (`#RRGGBB`)
+- Rate Limiting — slowapi ограничивает частоту HTTP-запросов по IP (100/мин GET, 30/мин мутации)
+- WebSocket Rate Limiting — скользящее окно: максимум 20 сообщений/сек, лишние отбрасываются
+- Лимит голосов — серверная проверка: при превышении лимита возвращается HTTP 403
+- Глобальный обработчик ошибок — необработанные исключения логируются, клиенту возвращается generic JSON-ответ без стектрейса
