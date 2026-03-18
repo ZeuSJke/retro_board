@@ -55,6 +55,15 @@ async def _test_lifespan(app):
 _main_module.app.router.lifespan_context = _test_lifespan
 app = _main_module.app
 
+# Disable rate limiting in tests by default
+from app.limiter import limiter
+limiter.enabled = False
+
+# Test-only endpoint to verify global error handler
+@app.get("/api/test-500")
+def _test_500_endpoint():
+    raise RuntimeError("test error")
+
 # Patch the underlying SA column type so SQLite can handle list<->json
 Card.__table__.c.likes.type = JSONEncodedList()
 

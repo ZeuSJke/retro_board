@@ -1,10 +1,11 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from slugify import slugify
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
+from app.limiter import limiter
 
 router = APIRouter()
 
@@ -20,17 +21,19 @@ def _make_slug(name: str) -> str:
 
 
 @router.get("/", response_model=list[schemas.BoardListItem])
-def list_boards(db: Session = Depends(get_db)):
+@limiter.limit("100/minute")
+def list_boards(request: Request, db: Session = Depends(get_db)):
     return db.query(models.Board).order_by(models.Board.created_at.desc()).all()
 
 
 @router.post("/", response_model=schemas.BoardOut, status_code=201)
-def create_board(body: schemas.BoardCreate, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+def create_board(request: Request, body: schemas.BoardCreate, db: Session = Depends(get_db)):
     existing = db.query(models.Board).filter(models.Board.name == body.name).first()
     if existing:
         raise HTTPException(409, "Измени название, такая доска уже есть")
     uid = str(uuid.uuid4())
-    board = models.Board(id=uid, name=body.name, slug=_make_slug(body.name))
+    board = models.Board(id=uid, name=body.name, slug=_make_slug(body.name), max_votes=body.max_votes)
     db.add(board)
     db.flush()
     for i, col in enumerate(DEFAULT_COLUMNS):
@@ -47,7 +50,8 @@ def create_board(body: schemas.BoardCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/by-slug/{slug}", response_model=schemas.BoardOut)
-def get_board_by_slug(slug: str, db: Session = Depends(get_db)):
+@limiter.limit("100/minute")
+def get_board_by_slug(request: Request, slug: str, db: Session = Depends(get_db)):
     board = db.query(models.Board).filter(models.Board.slug == slug).first()
     if not board:
         raise HTTPException(404, "Board not found")
@@ -55,7 +59,8 @@ def get_board_by_slug(slug: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{board_id}", response_model=schemas.BoardOut)
-def get_board(board_id: str, db: Session = Depends(get_db)):
+@limiter.limit("100/minute")
+def get_board(request: Request, board_id: str, db: Session = Depends(get_db)):
     board = db.get(models.Board, board_id)
     if not board:
         raise HTTPException(404, "Board not found")
@@ -63,7 +68,8 @@ def get_board(board_id: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/{board_id}", response_model=schemas.BoardOut)
-def update_board(board_id: str, body: schemas.BoardUpdate, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+def update_board(request: Request, board_id: str, body: schemas.BoardUpdate, db: Session = Depends(get_db)):
     board = db.get(models.Board, board_id)
     if not board:
         raise HTTPException(404, "Board not found")
@@ -75,13 +81,16 @@ def update_board(board_id: str, body: schemas.BoardUpdate, db: Session = Depends
             raise HTTPException(409, "Измени название, такая доска уже есть")
         board.name = body.name
         board.slug = _make_slug(body.name)
+    if body.max_votes is not None:
+        board.max_votes = body.max_votes
     db.commit()
     db.refresh(board)
     return board
 
 
 @router.delete("/{board_id}", status_code=204)
-def delete_board(board_id: str, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+def delete_board(request: Request, board_id: str, db: Session = Depends(get_db)):
     board = db.get(models.Board, board_id)
     if not board:
         raise HTTPException(404, "Board not found")

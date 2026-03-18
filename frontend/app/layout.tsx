@@ -1,5 +1,7 @@
 import './globals.css'
 import type { Metadata } from 'next'
+import ErrorBoundary from '../components/ErrorBoundary'
+import ToastContainer from '../components/Toast'
 
 export const metadata: Metadata = {
   title: 'RetroBoard',
@@ -17,7 +19,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <ErrorBoundary>
+          {children}
+          <ToastContainer />
+        </ErrorBoundary>
+      </body>
     </html>
   )
 }

@@ -20,6 +20,7 @@ import s from './Column.module.css'
 
 interface ColumnProps {
   column: ColumnType
+  canVote?: boolean
   onUpdate: (column: ColumnType) => void
   onDelete: (id: string) => void
   onCardCreated: (colId: string, card: Card) => void
@@ -35,6 +36,7 @@ interface ColumnProps {
 
 export default function Column({
   column,
+  canVote = true,
   onUpdate,
   onDelete,
   onCardCreated,
@@ -189,6 +191,7 @@ export default function Column({
               key={group.id}
               group={group}
               columnId={column.id}
+              canVote={canVote}
               cards={(column.cards || []).filter((c) => c.group_id === group.id)}
               collapsed={collapsedGroups?.[group.id] || false}
               onToggleCollapse={() => onToggleCollapse?.(group.id)}
@@ -204,6 +207,7 @@ export default function Column({
               <CardWidget
                 key={card.id}
                 card={card}
+                canVote={canVote}
                 onUpdate={(updated) => onCardUpdated(column.id, updated)}
                 onDelete={(id) => onCardDeleted(column.id, id)}
                 groups={groups}

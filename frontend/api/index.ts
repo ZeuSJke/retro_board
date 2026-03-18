@@ -1,14 +1,31 @@
 import axios from 'axios'
 import type { Board, BoardListItem, Column, Card, CardGroup } from '../types'
+import { showToast } from '../store/toastStore'
 
 const api = axios.create({ baseURL: '/api' })
+
+api.interceptors.response.use(
+  (r) => r,
+  (error) => {
+    const status = error.response?.status
+    if (status === 429) {
+      showToast('Слишком много запросов. Подождите немного.', 'error')
+    } else if (status === 403) {
+      const msg = error.response?.data?.detail || 'Доступ запрещён'
+      showToast(msg, 'error')
+    } else if (status && status >= 500) {
+      showToast('Что-то пошло не так', 'error')
+    }
+    return Promise.reject(error)
+  },
+)
 
 // ── Boards ──────────────────────────────────────────────────────────────────
 export const getBoards = (): Promise<BoardListItem[]> => api.get('/boards/').then((r) => r.data)
 export const createBoard = (name: string): Promise<Board> => api.post('/boards/', { name }).then((r) => r.data)
 export const getBoard = (id: string): Promise<Board> => api.get(`/boards/${id}`).then((r) => r.data)
 export const getBoardBySlug = (slug: string): Promise<Board> => api.get(`/boards/by-slug/${slug}`).then((r) => r.data)
-export const updateBoard = (id: string, data: { name?: string }): Promise<Board> => api.patch(`/boards/${id}`, data).then((r) => r.data)
+export const updateBoard = (id: string, data: { name?: string; max_votes?: number }): Promise<Board> => api.patch(`/boards/${id}`, data).then((r) => r.data)
 export const deleteBoard = (id: string): Promise<void> => api.delete(`/boards/${id}`)
 
 // ── Columns ─────────────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ import s from './CardWidget.module.css'
 
 interface CardWidgetProps {
   card: Card
+  canVote?: boolean
   onUpdate: (card: Card) => void
   onDelete: (id: string) => void
   groups?: CardGroup[]
@@ -24,6 +25,7 @@ interface CardWidgetProps {
 
 export default function CardWidget({
   card,
+  canVote = true,
   onUpdate,
   onDelete,
   groups = [],
@@ -55,9 +57,15 @@ export default function CardWidget({
 
   const handleLike = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    const updated = await toggleLike(card.id, username)
-    onUpdate(updated)
+    try {
+      const updated = await toggleLike(card.id, username)
+      onUpdate(updated)
+    } catch {
+      // 403 vote limit → toast shown automatically by interceptor
+    }
   }
+
+  const likeDisabled = !canVote && !liked
 
   const handleRemoveFromGroup = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -182,9 +190,11 @@ export default function CardWidget({
                     color: 'var(--md-on-primary-container)',
                   }
                 : {}),
+              ...(likeDisabled ? { opacity: 0.4, cursor: 'not-allowed' } : {}),
             }}
             onClick={handleLike}
-            title={liked ? 'Убрать лайк' : 'Лайк'}
+            disabled={likeDisabled}
+            title={likeDisabled ? 'Лимит голосов исчерпан' : liked ? 'Убрать лайк' : 'Лайк'}
           >
             <span
               className={`material-symbols-rounded${liked ? ' filled' : ''}`}

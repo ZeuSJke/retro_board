@@ -97,14 +97,16 @@ class BoardBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
 
 class BoardCreate(BoardBase):
-    pass
+    max_votes: int = Field(default=5, ge=1, le=99)
 
 class BoardUpdate(BaseModel):
     name: Optional[str] = None
+    max_votes: Optional[int] = Field(default=None, ge=1, le=99)
 
 class BoardOut(BoardBase):
     id: str
     slug: Optional[str] = None
+    max_votes: int
     created_at: datetime
     columns: list[ColumnOut] = []
 
@@ -113,6 +115,7 @@ class BoardOut(BoardBase):
 class BoardListItem(BoardBase):
     id: str
     slug: Optional[str] = None
+    max_votes: int
     created_at: datetime
     model_config = {"from_attributes": True}
 

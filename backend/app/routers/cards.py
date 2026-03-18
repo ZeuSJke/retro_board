@@ -1,16 +1,29 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
 from app.ws_manager import manager
+from app.limiter import limiter
 
 router = APIRouter()
 
 
+def _count_user_votes(db: Session, board_id: str, username: str) -> int:
+    """Count how many likes a user has across all cards in a board."""
+    cards = (
+        db.query(models.Card)
+        .join(models.Column, models.Card.column_id == models.Column.id)
+        .filter(models.Column.board_id == board_id)
+        .all()
+    )
+    return sum(1 for card in cards if username in (card.likes or []))
+
+
 @router.post("/", response_model=schemas.CardOut, status_code=201)
-async def create_card(body: schemas.CardCreate, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def create_card(request: Request, body: schemas.CardCreate, db: Session = Depends(get_db)):
     col = db.get(models.Column, body.column_id)
     if not col:
         raise HTTPException(404, "Column not found")
@@ -33,7 +46,8 @@ async def create_card(body: schemas.CardCreate, db: Session = Depends(get_db)):
 
 
 @router.patch("/{card_id}", response_model=schemas.CardOut)
-async def update_card(card_id: str, body: schemas.CardUpdate, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def update_card(request: Request, card_id: str, body: schemas.CardUpdate, db: Session = Depends(get_db)):
     card = db.get(models.Card, card_id)
     if not card:
         raise HTTPException(404, "Card not found")
@@ -52,7 +66,8 @@ async def update_card(card_id: str, body: schemas.CardUpdate, db: Session = Depe
 
 
 @router.post("/{card_id}/move", response_model=schemas.CardOut)
-async def move_card(card_id: str, body: schemas.MoveCard, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def move_card(request: Request, card_id: str, body: schemas.MoveCard, db: Session = Depends(get_db)):
     card = db.get(models.Card, card_id)
     if not card:
         raise HTTPException(404, "Card not found")
@@ -102,26 +117,33 @@ async def move_card(card_id: str, body: schemas.MoveCard, db: Session = Depends(
 
 
 @router.post("/{card_id}/like", response_model=schemas.CardOut)
-async def toggle_like(card_id: str, username: str, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def toggle_like(request: Request, card_id: str, username: str, db: Session = Depends(get_db)):
     card = db.get(models.Card, card_id)
     if not card:
         raise HTTPException(404, "Card not found")
+    col = db.get(models.Column, card.column_id)
     likes = list(card.likes or [])
     if username in likes:
         likes.remove(username)
     else:
+        # Check vote limit before adding
+        board = db.get(models.Board, col.board_id)
+        used = _count_user_votes(db, col.board_id, username)
+        if used >= board.max_votes:
+            raise HTTPException(403, "Лимит голосов исчерпан")
         likes.append(username)
     card.likes = likes
     db.commit()
     db.refresh(card)
-    col = db.get(models.Column, card.column_id)
     out = schemas.CardOut.model_validate(card)
     await manager.broadcast(col.board_id, "card_updated", out.model_dump(mode="json"))
     return out
 
 
 @router.delete("/{card_id}", status_code=204)
-async def delete_card(card_id: str, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def delete_card(request: Request, card_id: str, db: Session = Depends(get_db)):
     card = db.get(models.Card, card_id)
     if not card:
         raise HTTPException(404, "Card not found")

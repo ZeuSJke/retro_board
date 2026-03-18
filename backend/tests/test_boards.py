@@ -58,6 +58,31 @@ class TestGetBoard:
         assert resp.status_code == 404
 
 
+class TestBoardMaxVotes:
+    def test_default_max_votes(self, client):
+        resp = client.post("/api/boards/", json={"name": "Votes Board"})
+        assert resp.status_code == 201
+        assert resp.json()["max_votes"] == 5
+
+    def test_custom_max_votes(self, client):
+        resp = client.post("/api/boards/", json={"name": "Custom Votes", "max_votes": 10})
+        assert resp.status_code == 201
+        assert resp.json()["max_votes"] == 10
+
+    def test_update_max_votes(self, client, sample_board):
+        resp = client.patch(
+            f"/api/boards/{sample_board['id']}",
+            json={"max_votes": 3},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["max_votes"] == 3
+
+    def test_max_votes_in_list(self, client, sample_board):
+        resp = client.get("/api/boards/")
+        boards = resp.json()
+        assert all("max_votes" in b for b in boards)
+
+
 class TestUpdateBoard:
     def test_rename(self, client, sample_board):
         resp = client.patch(
