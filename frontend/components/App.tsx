@@ -29,6 +29,7 @@ export default function App({ boardId }: AppProps) {
   const [showWelcome, setShowWelcome] = useState(username === 'Аноним')
 
   const exportRef = useRef<(() => void) | null>(null)
+  const [votesUsed, setVotesUsed] = useState(0)
 
   const [timer, setTimer] = useState<TimerState>({ duration: 300, remaining: 300, running: false })
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -143,15 +144,17 @@ export default function App({ boardId }: AppProps) {
     }
   }
 
-  const handleRename = async (name: string) => {
-    if (!name?.trim() || !currentBoard) return
-    const updated_board = await updateBoard(currentBoard.id, { name: name.trim() })
-    const updated = { ...currentBoard, name: name.trim(), slug: updated_board.slug }
+  const handleBoardSettings = async (data: { name?: string; max_votes?: number }) => {
+    if (!currentBoard) return
+    const updated_board = await updateBoard(currentBoard.id, data)
+    const updated = { ...currentBoard, ...updated_board }
     setCurrentBoardData(updated)
     setBoards((prev) =>
-      prev.map((b) => (b.id === updated.id ? { ...b, name: updated.name } : b)),
+      prev.map((b) => (b.id === updated.id ? { ...b, name: updated.name, max_votes: updated.max_votes } : b)),
     )
-    router.replace(`/board/${updated.slug || updated.id}`)
+    if (data.name) {
+      router.replace(`/board/${updated.slug || updated.id}`)
+    }
   }
 
   const closePanels = () => {
@@ -235,6 +238,8 @@ export default function App({ boardId }: AppProps) {
     <>
       <Topbar
         boardName={currentBoard?.name || ''}
+        maxVotes={currentBoard?.max_votes ?? 5}
+        votesUsed={votesUsed}
         onBoardsToggle={() => {
           setThemePanelOpen(false)
           setBoardsPanelOpen((v) => !v)
@@ -243,7 +248,7 @@ export default function App({ boardId }: AppProps) {
           setBoardsPanelOpen(false)
           setThemePanelOpen((v) => !v)
         }}
-        onRename={handleRename}
+        onBoardSettings={handleBoardSettings}
         onExport={() => exportRef.current?.()}
         timerState={currentBoard ? timer : null}
         onTimerStart={handleTimerStart}
@@ -275,6 +280,7 @@ export default function App({ boardId }: AppProps) {
             exportRef={exportRef}
             onTimerWsEvent={handleTimerWsEvent}
             sendTimerRef={sendTimerRef}
+            onVotesChanged={setVotesUsed}
           />
         )}
       </main>

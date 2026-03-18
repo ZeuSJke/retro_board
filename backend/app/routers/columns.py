@@ -1,16 +1,18 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
 from app.ws_manager import manager
+from app.limiter import limiter
 
 router = APIRouter()
 
 
 @router.post("/", response_model=schemas.ColumnOut, status_code=201)
-async def create_column(body: schemas.ColumnCreate, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def create_column(request: Request, body: schemas.ColumnCreate, db: Session = Depends(get_db)):
     board = db.get(models.Board, body.board_id)
     if not board:
         raise HTTPException(404, "Board not found")
@@ -31,7 +33,8 @@ async def create_column(body: schemas.ColumnCreate, db: Session = Depends(get_db
 
 
 @router.patch("/{column_id}", response_model=schemas.ColumnOut)
-async def update_column(column_id: str, body: schemas.ColumnUpdate, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def update_column(request: Request, column_id: str, body: schemas.ColumnUpdate, db: Session = Depends(get_db)):
     col = db.get(models.Column, column_id)
     if not col:
         raise HTTPException(404, "Column not found")
@@ -49,7 +52,8 @@ async def update_column(column_id: str, body: schemas.ColumnUpdate, db: Session 
 
 
 @router.delete("/{column_id}", status_code=204)
-async def delete_column(column_id: str, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def delete_column(request: Request, column_id: str, db: Session = Depends(get_db)):
     col = db.get(models.Column, column_id)
     if not col:
         raise HTTPException(404, "Column not found")

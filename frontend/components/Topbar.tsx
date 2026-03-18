@@ -9,9 +9,11 @@ import styles from './Topbar.module.css'
 
 interface TopbarProps {
   boardName: string
+  maxVotes: number
+  votesUsed: number
   onBoardsToggle: () => void
   onThemeToggle: () => void
-  onRename: (name: string) => Promise<void>
+  onBoardSettings: (data: { name?: string; max_votes?: number }) => Promise<void>
   onExport?: () => void
   timerState: TimerState | null
   onTimerStart: (duration: number, remaining: number) => void
@@ -21,9 +23,11 @@ interface TopbarProps {
 
 export default function Topbar({
   boardName,
+  maxVotes,
+  votesUsed,
   onBoardsToggle,
   onThemeToggle,
-  onRename,
+  onBoardSettings,
   onExport,
   timerState,
   onTimerStart,
@@ -35,6 +39,7 @@ export default function Topbar({
   const [nameOpen, setNameOpen] = useState(false)
   const [tempName, setTempName] = useState('')
   const [tempBoard, setTempBoard] = useState('')
+  const [tempMaxVotes, setTempMaxVotes] = useState(5)
   const [renameError, setRenameError] = useState<string | null>(null)
 
   return (
@@ -48,6 +53,7 @@ export default function Topbar({
           className={styles.boardName}
           onClick={() => {
             setTempBoard(boardName)
+            setTempMaxVotes(maxVotes)
             setRenameError(null)
             setNameOpen(true)
           }}
@@ -71,6 +77,14 @@ export default function Topbar({
             </button>
           )}
 
+          <span
+            className={styles.chip}
+            style={{ cursor: 'default', gap: 4, fontSize: 13 }}
+            title={`Голосов: ${votesUsed} из ${maxVotes}`}
+          >
+            <span className="material-symbols-rounded" style={{ fontSize: 16 }}>thumb_up</span>
+            {votesUsed}/{maxVotes}
+          </span>
           <button
             className={styles.chip}
             onClick={() => {
@@ -111,40 +125,46 @@ export default function Topbar({
 
       <Dialog
         open={nameOpen}
-        title="Название доски"
+        title="Настройки доски"
         onClose={() => { setNameOpen(false); setRenameError(null) }}
         onConfirm={async () => {
           try {
-            await onRename(tempBoard)
+            const data: { name?: string; max_votes?: number } = {}
+            if (tempBoard.trim() !== boardName) data.name = tempBoard.trim()
+            if (tempMaxVotes !== maxVotes) data.max_votes = tempMaxVotes
+            if (Object.keys(data).length > 0) await onBoardSettings(data)
             setNameOpen(false)
             setRenameError(null)
           } catch (e: unknown) {
             const err = e as { response?: { data?: { detail?: string } } }
-            setRenameError(err?.response?.data?.detail || 'Ошибка переименования')
+            setRenameError(err?.response?.data?.detail || 'Ошибка сохранения')
           }
         }}
       >
-        <input
-          className={styles.input}
-          style={{ borderColor: renameError ? 'var(--md-error)' : 'var(--md-outline)' }}
-          value={tempBoard}
-          onChange={(e) => { setTempBoard(e.target.value); setRenameError(null) }}
-          placeholder="Название доски"
-          maxLength={120}
-          onKeyDown={async (e) => {
-            if (e.key === 'Enter') {
-              try {
-                await onRename(tempBoard)
-                setNameOpen(false)
-                setRenameError(null)
-              } catch (err: unknown) {
-                const error = err as { response?: { data?: { detail?: string } } }
-                setRenameError(error?.response?.data?.detail || 'Ошибка переименования')
-              }
-            }
-          }}
-          autoFocus
-        />
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--md-on-surface-variant)' }}>Название доски</label>
+          <input
+            className={styles.input}
+            style={{ borderColor: renameError ? 'var(--md-error)' : 'var(--md-outline)', marginTop: 4 }}
+            value={tempBoard}
+            onChange={(e) => { setTempBoard(e.target.value); setRenameError(null) }}
+            placeholder="Название доски"
+            maxLength={120}
+            autoFocus
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--md-on-surface-variant)' }}>Лимит голосов на участника</label>
+          <input
+            className={styles.input}
+            style={{ marginTop: 4, width: 80 }}
+            type="number"
+            min={1}
+            max={99}
+            value={tempMaxVotes}
+            onChange={(e) => setTempMaxVotes(Math.max(1, Math.min(99, Number(e.target.value) || 1)))}
+          />
+        </div>
         {renameError && (
           <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--md-error)' }}>{renameError}</p>
         )}

@@ -1,3 +1,5 @@
+import logging
+import traceback
 from contextlib import asynccontextmanager
 
 from alembic import command
@@ -7,8 +9,16 @@ from sqlalchemy import inspect
 from app.config import settings
 from app.database import engine
 from app.routers import boards, cards, columns, groups, websocket
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+from app.limiter import limiter
+
+logger = logging.getLogger("retroboard")
+logging.basicConfig(level=logging.INFO)
 
 
 @asynccontextmanager
@@ -30,6 +40,24 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+class GlobalErrorMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            logger.error("Unhandled exception: %s\n%s", exc, traceback.format_exc())
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Внутренняя ошибка сервера"},
+            )
+
+
+app.add_middleware(GlobalErrorMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

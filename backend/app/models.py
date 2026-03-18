@@ -21,6 +21,7 @@ class Board(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     slug: Mapped[str | None] = mapped_column(String(150), unique=True, nullable=True, index=True)
+    max_votes: Mapped[int] = mapped_column(Integer, default=5)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
     )

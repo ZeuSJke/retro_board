@@ -145,6 +145,50 @@ class TestToggleLike:
         resp = client.post("/api/cards/no-id/like", params={"username": "X"})
         assert resp.status_code == 404
 
+    def test_vote_limit_returns_403(self, client, sample_board, sample_column):
+        """Exceeding max_votes returns 403."""
+        # Board default max_votes = 5, update to 2 for testing
+        client.patch(f"/api/boards/{sample_board['id']}", json={"max_votes": 2})
+
+        # Create 3 cards
+        cards = []
+        for i in range(3):
+            resp = client.post("/api/cards/", json={
+                "column_id": sample_column["id"],
+                "text": f"Card {i}",
+            })
+            cards.append(resp.json())
+
+        # Like first two — should succeed
+        for card in cards[:2]:
+            resp = client.post(f"/api/cards/{card['id']}/like", params={"username": "Voter"})
+            assert resp.status_code == 200
+
+        # Third like should fail
+        resp = client.post(f"/api/cards/{cards[2]['id']}/like", params={"username": "Voter"})
+        assert resp.status_code == 403
+        assert "Лимит голосов исчерпан" in resp.json()["detail"]
+
+    def test_removing_vote_always_allowed(self, client, sample_board, sample_column):
+        """Removing a vote should work even when at the limit."""
+        client.patch(f"/api/boards/{sample_board['id']}", json={"max_votes": 1})
+
+        resp = client.post("/api/cards/", json={
+            "column_id": sample_column["id"],
+            "text": "Card A",
+        })
+        card = resp.json()
+
+        # Like (fills limit)
+        resp = client.post(f"/api/cards/{card['id']}/like", params={"username": "Voter"})
+        assert resp.status_code == 200
+        assert "Voter" in resp.json()["likes"]
+
+        # Unlike (should work)
+        resp = client.post(f"/api/cards/{card['id']}/like", params={"username": "Voter"})
+        assert resp.status_code == 200
+        assert "Voter" not in resp.json()["likes"]
+
 
 class TestDeleteCard:
     def test_returns_204(self, client, sample_card):

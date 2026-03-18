@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { DndContext, DragOverlay } from '@dnd-kit/core'
 import Column from './Column'
 import CardWidget from './CardWidget'
 import CursorMarker from './CursorMarker'
 import Dialog from './Dialog'
 import { createColumn } from '../api'
+import { useAppStore } from '../store'
 import { useBoardWebSocket } from '../hooks/useBoardWebSocket'
 import { useBoardDragDrop } from '../hooks/useBoardDragDrop'
 import { exportBoardToPDF } from '../utils/exportPDF'
@@ -28,6 +29,7 @@ interface BoardPageProps {
     pause: (remaining: number) => void
     reset: (duration: number) => void
   } | null>
+  onVotesChanged?: (used: number) => void
 }
 
 export default function BoardPage({
@@ -36,6 +38,7 @@ export default function BoardPage({
   exportRef,
   onTimerWsEvent,
   sendTimerRef,
+  onVotesChanged,
 }: BoardPageProps) {
   const [addColOpen, setAddColOpen] = useState(false)
   const [newColTitle, setNewColTitle] = useState('')
@@ -53,10 +56,29 @@ export default function BoardPage({
     handleMouseLeave,
   } = useBoardWebSocket({ boardId: board.id, onTimerWsEvent })
 
+  const { username } = useAppStore()
+
   // Initialize columns from board prop
   useEffect(() => {
     setColumns(board.columns || [])
   }, [board.columns, setColumns])
+
+  // Count votes used by current user
+  const votesUsed = useMemo(() => {
+    let count = 0
+    for (const col of columns) {
+      for (const card of col.cards || []) {
+        if ((card.likes || []).includes(username)) count++
+      }
+    }
+    return count
+  }, [columns, username])
+
+  useEffect(() => {
+    onVotesChanged?.(votesUsed)
+  }, [votesUsed, onVotesChanged])
+
+  const canVote = votesUsed < (board.max_votes ?? 5)
 
   const {
     sensors,
@@ -140,6 +162,7 @@ export default function BoardPage({
           <Column
             key={col.id}
             column={col}
+            canVote={canVote}
             groupTargetId={groupTargetId}
             collapsedGroups={collapsedGroups}
             onToggleCollapse={(groupId: string) => {

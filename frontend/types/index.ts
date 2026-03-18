@@ -2,6 +2,7 @@ export interface Board {
   id: string
   name: string
   slug: string | null
+  max_votes: number
   created_at: string
   columns: Column[]
 }
@@ -10,6 +11,7 @@ export interface BoardListItem {
   id: string
   name: string
   slug: string | null
+  max_votes: number
   created_at: string
 }
 

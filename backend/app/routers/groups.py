@@ -1,17 +1,19 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
 from app.ws_manager import manager
+from app.limiter import limiter
 
 router = APIRouter()
 
 
 @router.post("/", response_model=schemas.CardGroupOut, status_code=201)
-async def create_group(body: schemas.CardGroupCreate, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def create_group(request: Request, body: schemas.CardGroupCreate, db: Session = Depends(get_db)):
     col = db.get(models.Column, body.column_id)
     if not col:
         raise HTTPException(404, "Column not found")
@@ -31,8 +33,9 @@ async def create_group(body: schemas.CardGroupCreate, db: Session = Depends(get_
 
 
 @router.patch("/{group_id}", response_model=schemas.CardGroupOut)
+@limiter.limit("30/minute")
 async def update_group(
-    group_id: str, body: schemas.CardGroupUpdate, db: Session = Depends(get_db)
+    request: Request, group_id: str, body: schemas.CardGroupUpdate, db: Session = Depends(get_db)
 ):
     group = db.get(models.CardGroup, group_id)
     if not group:
@@ -48,7 +51,8 @@ async def update_group(
 
 
 @router.delete("/{group_id}", status_code=204)
-async def delete_group(group_id: str, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def delete_group(request: Request, group_id: str, db: Session = Depends(get_db)):
     group = db.get(models.CardGroup, group_id)
     if not group:
         raise HTTPException(404, "Group not found")
@@ -72,7 +76,8 @@ async def delete_group(group_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{group_id}/set_card/{card_id}", response_model=schemas.CardOut)
-async def set_card_group(group_id: str, card_id: str, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def set_card_group(request: Request, group_id: str, card_id: str, db: Session = Depends(get_db)):
     """Add a card to a group."""
     group = db.get(models.CardGroup, group_id)
     if not group:
@@ -92,7 +97,8 @@ async def set_card_group(group_id: str, card_id: str, db: Session = Depends(get_
 
 
 @router.patch("/{group_id}/move", response_model=schemas.CardGroupOut)
-async def move_group(group_id: str, body: schemas.GroupMove, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def move_group(request: Request, group_id: str, body: schemas.GroupMove, db: Session = Depends(get_db)):
     """Move a group (and all its cards) to a different column."""
     group = db.get(models.CardGroup, group_id)
     if not group:
@@ -128,8 +134,9 @@ async def move_group(group_id: str, body: schemas.GroupMove, db: Session = Depen
 
 
 @router.delete("/{group_id}/remove_card/{card_id}", response_model=schemas.CardOut)
+@limiter.limit("30/minute")
 async def remove_card_from_group(
-    group_id: str, card_id: str, db: Session = Depends(get_db)
+    request: Request, group_id: str, card_id: str, db: Session = Depends(get_db)
 ):
     """Remove a card from its group. Auto-deletes the group if it becomes empty."""
     card = db.get(models.Card, card_id)
