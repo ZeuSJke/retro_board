@@ -8,6 +8,8 @@ class ConnectionManager:
     def __init__(self):
         self.rooms: dict[str, list[WebSocket]] = defaultdict(list)
         self.usernames: dict[int, str] = {}  # id(ws) → username
+        self.facilitators: dict[str, str] = {}  # board_id → username
+        self.phases: dict[str, str] = {}  # board_id → phase
 
     async def connect(self, board_id: str, ws: WebSocket):
         await ws.accept()
@@ -19,10 +21,42 @@ class ConnectionManager:
     def get_username(self, ws: WebSocket) -> str | None:
         return self.usernames.get(id(ws))
 
+    def get_users(self, board_id: str) -> list[str]:
+        """Return unique usernames currently connected to a board."""
+        seen: set[str] = set()
+        result: list[str] = []
+        for ws in self.rooms.get(board_id, []):
+            name = self.usernames.get(id(ws))
+            if name and name not in seen:
+                seen.add(name)
+                result.append(name)
+        return result
+
     def disconnect(self, board_id: str, ws: WebSocket):
         if ws in self.rooms[board_id]:
             self.rooms[board_id].remove(ws)
-        self.usernames.pop(id(ws), None)
+        username = self.usernames.pop(id(ws), None)
+        # If facilitator disconnects, clear facilitator state
+        if username and self.facilitators.get(board_id) == username:
+            self.facilitators.pop(board_id, None)
+            self.phases.pop(board_id, None)
+
+    def set_facilitator(self, board_id: str, username: str):
+        self.facilitators[board_id] = username
+        self.phases[board_id] = "brainstorm"
+
+    def get_facilitator(self, board_id: str) -> str | None:
+        return self.facilitators.get(board_id)
+
+    def clear_facilitator(self, board_id: str):
+        self.facilitators.pop(board_id, None)
+        self.phases.pop(board_id, None)
+
+    def set_phase(self, board_id: str, phase: str):
+        self.phases[board_id] = phase
+
+    def get_phase(self, board_id: str) -> str | None:
+        return self.phases.get(board_id)
 
     async def broadcast(
         self,

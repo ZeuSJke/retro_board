@@ -20,6 +20,9 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent }: UseBoardWebSocket
   const [columns, setColumns] = useState<Column[]>([])
   const [cursors, setCursors] = useState<Record<string, CursorPos>>({})
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
+  const [activeUsers, setActiveUsers] = useState<string[]>([])
+  const [facilitator, setFacilitator] = useState<string | null>(null)
+  const [phase, setPhase] = useState<string | null>(null)
   const cursorTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastCursorRef = useRef<CursorPos | null>(null)
   const sendMessageRef = useRef<((msg: WsMessage) => void) | null>(null)
@@ -69,6 +72,25 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent }: UseBoardWebSocket
 
       if (event === 'timer_start' || event === 'timer_pause' || event === 'timer_reset') {
         onTimerWsEvent?.(event, data)
+        return
+      }
+
+      if (event === 'presence_update') {
+        const { users } = data as { users: string[] }
+        setActiveUsers(users)
+        return
+      }
+
+      if (event === 'facilitator_update') {
+        const { facilitator: f, phase: p } = data as { facilitator: string | null; phase: string | null }
+        setFacilitator(f)
+        setPhase(p)
+        return
+      }
+
+      if (event === 'phase_update') {
+        const { phase: p } = data as { phase: string }
+        setPhase(p)
         return
       }
 
@@ -244,6 +266,9 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent }: UseBoardWebSocket
     setColumns,
     cursors,
     collapsedGroups,
+    activeUsers,
+    facilitator,
+    phase,
     sendMessage,
     handleMouseMove,
     handleMouseLeave,

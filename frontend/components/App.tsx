@@ -30,6 +30,14 @@ export default function App({ boardId }: AppProps) {
 
   const exportRef = useRef<(() => void) | null>(null)
   const [votesUsed, setVotesUsed] = useState(0)
+  const [activeUsers, setActiveUsers] = useState<string[]>([])
+  const [facilitator, setFacilitator] = useState<string | null>(null)
+  const [phase, setPhase] = useState<string | null>(null)
+  const sendFacilitatorRef = useRef<{
+    start: () => void
+    stop: () => void
+    changePhase: (phase: string) => void
+  } | null>(null)
 
   const [timer, setTimer] = useState<TimerState>({ duration: 300, remaining: 300, running: false })
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -206,6 +214,23 @@ export default function App({ boardId }: AppProps) {
     sendTimerRef.current?.reset(duration)
   }, [])
 
+  const handleFacilitatorStart = useCallback(() => {
+    sendFacilitatorRef.current?.start()
+  }, [])
+
+  const handleFacilitatorStop = useCallback(() => {
+    sendFacilitatorRef.current?.stop()
+  }, [])
+
+  const handlePhaseChange = useCallback((p: string) => {
+    sendFacilitatorRef.current?.changePhase(p)
+  }, [])
+
+  const handleFacilitatorChanged = useCallback((f: string | null, p: string | null) => {
+    setFacilitator(f)
+    setPhase(p)
+  }, [])
+
   if (error)
     return (
       <div className={styles.centered}>
@@ -254,6 +279,12 @@ export default function App({ boardId }: AppProps) {
         onTimerStart={handleTimerStart}
         onTimerPause={handleTimerPause}
         onTimerReset={handleTimerReset}
+        activeUsers={activeUsers}
+        facilitator={facilitator}
+        phase={phase}
+        onFacilitatorStart={handleFacilitatorStart}
+        onFacilitatorStop={handleFacilitatorStop}
+        onPhaseChange={handlePhaseChange}
       />
 
       {(boardsPanelOpen || themePanelOpen) && (
@@ -281,6 +312,9 @@ export default function App({ boardId }: AppProps) {
             onTimerWsEvent={handleTimerWsEvent}
             sendTimerRef={sendTimerRef}
             onVotesChanged={setVotesUsed}
+            onPresenceChanged={setActiveUsers}
+            onFacilitatorChanged={handleFacilitatorChanged}
+            sendFacilitatorRef={sendFacilitatorRef}
           />
         )}
       </main>

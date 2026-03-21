@@ -21,6 +21,10 @@ import s from './Column.module.css'
 interface ColumnProps {
   column: ColumnType
   canVote?: boolean
+  cardCreationDisabled?: boolean
+  brainstormHidden?: boolean
+  currentUser?: string
+  isFacilitator?: boolean
   onUpdate: (column: ColumnType) => void
   onDelete: (id: string) => void
   onCardCreated: (colId: string, card: Card) => void
@@ -37,6 +41,10 @@ interface ColumnProps {
 export default function Column({
   column,
   canVote = true,
+  cardCreationDisabled = false,
+  brainstormHidden = false,
+  currentUser,
+  isFacilitator = false,
   onUpdate,
   onDelete,
   onCardCreated,
@@ -192,6 +200,9 @@ export default function Column({
               group={group}
               columnId={column.id}
               canVote={canVote}
+              brainstormHidden={brainstormHidden}
+              currentUser={currentUser}
+              isFacilitator={isFacilitator}
               cards={(column.cards || []).filter((c) => c.group_id === group.id)}
               collapsed={collapsedGroups?.[group.id] || false}
               onToggleCollapse={() => onToggleCollapse?.(group.id)}
@@ -203,18 +214,22 @@ export default function Column({
           ))}
 
           <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
-            {ungroupedCards.map((card) => (
-              <CardWidget
-                key={card.id}
-                card={card}
-                canVote={canVote}
-                onUpdate={(updated) => onCardUpdated(column.id, updated)}
-                onDelete={(id) => onCardDeleted(column.id, id)}
-                groups={groups}
-                onAssignGroup={openGroupAssign}
-                isGroupTarget={card.id === groupTargetId}
-              />
-            ))}
+            {ungroupedCards.map((card) => {
+              const hidden = brainstormHidden && !isFacilitator && card.author !== currentUser
+              return (
+                <CardWidget
+                  key={card.id}
+                  card={card}
+                  canVote={canVote}
+                  hidden={hidden}
+                  onUpdate={(updated) => onCardUpdated(column.id, updated)}
+                  onDelete={(id) => onCardDeleted(column.id, id)}
+                  groups={groups}
+                  onAssignGroup={openGroupAssign}
+                  isGroupTarget={card.id === groupTargetId}
+                />
+              )
+            })}
           </SortableContext>
 
           {ungroupedCards.length === 0 && groups.length === 0 && (
@@ -223,7 +238,12 @@ export default function Column({
         </div>
 
         <div className={s.footer}>
-          <button className={s.addBtn} onClick={() => setAddOpen(true)}>
+          <button
+            className={s.addBtn}
+            onClick={() => setAddOpen(true)}
+            disabled={cardCreationDisabled}
+            title={cardCreationDisabled ? 'Дождитесь начала сессии (фасилитатор ещё не назначен)' : undefined}
+          >
             <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
               add
             </span>

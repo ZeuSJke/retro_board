@@ -10,11 +10,14 @@ router = APIRouter()
 WS_RATE_LIMIT = 20  # max messages per second
 WS_RATE_WINDOW = 1.0  # seconds
 
+VALID_PHASES = ("brainstorm", "reveal", "discuss", "vote")
+
 
 @router.websocket("/ws/{board_id}")
 async def websocket_endpoint(websocket: WebSocket, board_id: str):
     await manager.connect(board_id, websocket)
     msg_timestamps: list[float] = []
+    username_announced = False
     try:
         while True:
             data = await websocket.receive_text()
@@ -38,6 +41,26 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                     username = payload.get("username")
                     if username:
                         manager.set_username(websocket, username)
+                        # Broadcast presence on first cursor_move (user joined)
+                        if not username_announced:
+                            username_announced = True
+                            await manager.broadcast(
+                                board_id,
+                                "presence_update",
+                                {"users": manager.get_users(board_id)},
+                            )
+                            # Send current facilitator state to new user
+                            fac = manager.get_facilitator(board_id)
+                            if fac:
+                                await websocket.send_text(
+                                    json.dumps({
+                                        "event": "facilitator_update",
+                                        "data": {
+                                            "facilitator": fac,
+                                            "phase": manager.get_phase(board_id),
+                                        },
+                                    })
+                                )
                     await manager.broadcast(
                         board_id, "cursor_move", payload, exclude=websocket
                     )
@@ -55,11 +78,56 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                     # Broadcast to ALL (including sender) for sync confirmation
                     await manager.broadcast(board_id, event, payload)
 
+                elif event == "facilitator_start":
+                    username = manager.get_username(websocket)
+                    if username and not manager.get_facilitator(board_id):
+                        manager.set_facilitator(board_id, username)
+                        await manager.broadcast(
+                            board_id,
+                            "facilitator_update",
+                            {"facilitator": username, "phase": "brainstorm"},
+                        )
+
+                elif event == "facilitator_stop":
+                    username = manager.get_username(websocket)
+                    if username and manager.get_facilitator(board_id) == username:
+                        manager.clear_facilitator(board_id)
+                        await manager.broadcast(
+                            board_id,
+                            "facilitator_update",
+                            {"facilitator": None, "phase": None},
+                        )
+
+                elif event == "phase_change":
+                    username = manager.get_username(websocket)
+                    phase = payload.get("phase")
+                    if (
+                        username
+                        and manager.get_facilitator(board_id) == username
+                        and phase in VALID_PHASES
+                    ):
+                        manager.set_phase(board_id, phase)
+                        await manager.broadcast(
+                            board_id, "phase_update", {"phase": phase}
+                        )
+
             except (json.JSONDecodeError, KeyError):
                 pass
 
     except WebSocketDisconnect:
         username = manager.get_username(websocket)
+        was_facilitator = manager.get_facilitator(board_id) == username
         manager.disconnect(board_id, websocket)
         if username:
             await manager.broadcast(board_id, "cursor_leave", {"username": username})
+            await manager.broadcast(
+                board_id,
+                "presence_update",
+                {"users": manager.get_users(board_id)},
+            )
+        if was_facilitator:
+            await manager.broadcast(
+                board_id,
+                "facilitator_update",
+                {"facilitator": None, "phase": None},
+            )

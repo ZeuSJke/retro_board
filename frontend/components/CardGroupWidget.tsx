@@ -14,6 +14,9 @@ interface CardGroupWidgetProps {
   collapsed: boolean
   columnId: string
   canVote?: boolean
+  brainstormHidden?: boolean
+  currentUser?: string
+  isFacilitator?: boolean
   onToggleCollapse?: () => void
   onGroupUpdated: (group: CardGroup) => void
   onGroupDeleted: (columnId: string, groupId: string) => void
@@ -27,6 +30,9 @@ export default function CardGroupWidget({
   collapsed,
   columnId,
   canVote = true,
+  brainstormHidden = false,
+  currentUser,
+  isFacilitator = false,
   onToggleCollapse,
   onGroupUpdated,
   onGroupDeleted,
@@ -138,17 +144,21 @@ export default function CardGroupWidget({
             {cards.length === 0 ? (
               <div className={styles.empty}>Нет карточек в группе</div>
             ) : (
-              cards.map((card) => (
-                <CardWidget
-                  key={card.id}
-                  card={card}
-                  canVote={canVote}
-                  onUpdate={onCardUpdated}
-                  onDelete={onCardDeleted}
-                  groupId={group.id}
-                  onGroupDeleted={onGroupDeleted}
-                />
-              ))
+              cards.map((card) => {
+                const hidden = brainstormHidden && !isFacilitator && card.author !== currentUser
+                return (
+                  <CardWidget
+                    key={card.id}
+                    card={card}
+                    canVote={canVote}
+                    hidden={hidden}
+                    onUpdate={onCardUpdated}
+                    onDelete={onCardDeleted}
+                    groupId={group.id}
+                    onGroupDeleted={onGroupDeleted}
+                  />
+                )
+              })
             )}
           </div>
         )}

@@ -123,3 +123,21 @@
   border: 2px dashed var(--md-primary);
   background: color-mix(in srgb, var(--md-primary) 10%, transparent);
 }
+
+.hiddenCard {
+  border-radius: 12px;
+  padding: 16px 14px;
+  background: var(--md-surface-variant);
+  border: 1.5px dashed var(--md-outline-variant);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+}
+
+.hiddenText {
+  font-size: 13px;
+  color: var(--md-outline);
+  font-style: italic;
+  font-family: 'Roboto', sans-serif;
+}

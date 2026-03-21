@@ -30,6 +30,13 @@ interface BoardPageProps {
     reset: (duration: number) => void
   } | null>
   onVotesChanged?: (used: number) => void
+  onPresenceChanged?: (users: string[]) => void
+  onFacilitatorChanged?: (facilitator: string | null, phase: string | null) => void
+  sendFacilitatorRef: React.MutableRefObject<{
+    start: () => void
+    stop: () => void
+    changePhase: (phase: string) => void
+  } | null>
 }
 
 export default function BoardPage({
@@ -39,6 +46,9 @@ export default function BoardPage({
   onTimerWsEvent,
   sendTimerRef,
   onVotesChanged,
+  onPresenceChanged,
+  onFacilitatorChanged,
+  sendFacilitatorRef,
 }: BoardPageProps) {
   const [addColOpen, setAddColOpen] = useState(false)
   const [newColTitle, setNewColTitle] = useState('')
@@ -51,6 +61,9 @@ export default function BoardPage({
     setColumns,
     cursors,
     collapsedGroups,
+    activeUsers,
+    facilitator,
+    phase,
     sendMessage,
     handleMouseMove: wsMouseMove,
     handleMouseLeave,
@@ -78,7 +91,16 @@ export default function BoardPage({
     onVotesChanged?.(votesUsed)
   }, [votesUsed, onVotesChanged])
 
-  const canVote = votesUsed < (board.max_votes ?? 5)
+  useEffect(() => {
+    onPresenceChanged?.(activeUsers)
+  }, [activeUsers, onPresenceChanged])
+
+  useEffect(() => {
+    onFacilitatorChanged?.(facilitator, phase)
+  }, [facilitator, phase, onFacilitatorChanged])
+
+  const votingAllowed = !facilitator || phase === 'vote'
+  const canVote = votingAllowed && votesUsed < (board.max_votes ?? 5)
 
   const {
     sensors,
@@ -114,6 +136,21 @@ export default function BoardPage({
       }
     }
   })
+
+  // Expose WS facilitator send functions via ref
+  useEffect(() => {
+    if (sendFacilitatorRef) {
+      sendFacilitatorRef.current = {
+        start: () => sendMessage({ event: 'facilitator_start', data: {} }),
+        stop: () => sendMessage({ event: 'facilitator_stop', data: {} }),
+        changePhase: (p: string) =>
+          sendMessage({ event: 'phase_change', data: { phase: p } }),
+      }
+    }
+  })
+
+  const isBrainstorm = phase === 'brainstorm'
+  const cardCreationDisabled = !facilitator
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
@@ -163,6 +200,10 @@ export default function BoardPage({
             key={col.id}
             column={col}
             canVote={canVote}
+            cardCreationDisabled={cardCreationDisabled}
+            brainstormHidden={isBrainstorm}
+            currentUser={username}
+            isFacilitator={facilitator === username}
             groupTargetId={groupTargetId}
             collapsedGroups={collapsedGroups}
             onToggleCollapse={(groupId: string) => {

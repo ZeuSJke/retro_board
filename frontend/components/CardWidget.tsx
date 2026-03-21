@@ -13,6 +13,7 @@ import s from './CardWidget.module.css'
 interface CardWidgetProps {
   card: Card
   canVote?: boolean
+  hidden?: boolean
   onUpdate: (card: Card) => void
   onDelete: (id: string) => void
   groups?: CardGroup[]
@@ -26,6 +27,7 @@ interface CardWidgetProps {
 export default function CardWidget({
   card,
   canVote = true,
+  hidden = false,
   onUpdate,
   onDelete,
   groups = [],
@@ -118,6 +120,17 @@ export default function CardWidget({
 
   if (isDragging && !dragOverlay) {
     return <div ref={setNodeRef} style={style} className={s.dragPlaceholder} />
+  }
+
+  if (hidden) {
+    return (
+      <div ref={setNodeRef} className={s.hiddenCard} style={style}>
+        <span className="material-symbols-rounded" style={{ fontSize: 18, color: 'var(--md-outline)' }}>
+          visibility_off
+        </span>
+        <span className={s.hiddenText}>Заметка скрыта</span>
+      </div>
+    )
   }
 
   return (
