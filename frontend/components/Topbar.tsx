@@ -2,10 +2,27 @@
 
 import { useState } from 'react'
 import { useAppStore } from '../store'
+import { userColor, initials } from '../utils/theme'
 import type { TimerState } from '../types'
 import Dialog from './Dialog'
 import TimerWidget from './TimerWidget'
 import styles from './Topbar.module.css'
+
+const PHASE_LABELS: Record<string, string> = {
+  brainstorm: 'Мозговой штурм',
+  reveal: 'Обсуждение',
+  discuss: 'Дискуссия',
+  vote: 'Голосование',
+}
+
+const PHASE_ICONS: Record<string, string> = {
+  brainstorm: 'edit_note',
+  reveal: 'visibility',
+  discuss: 'forum',
+  vote: 'how_to_vote',
+}
+
+const PHASE_ORDER = ['brainstorm', 'reveal', 'discuss', 'vote']
 
 interface TopbarProps {
   boardName: string
@@ -19,6 +36,12 @@ interface TopbarProps {
   onTimerStart: (duration: number, remaining: number) => void
   onTimerPause: () => void
   onTimerReset: (duration: number) => void
+  activeUsers: string[]
+  facilitator: string | null
+  phase: string | null
+  onFacilitatorStart: () => void
+  onFacilitatorStop: () => void
+  onPhaseChange: (phase: string) => void
 }
 
 export default function Topbar({
@@ -33,6 +56,12 @@ export default function Topbar({
   onTimerStart,
   onTimerPause,
   onTimerReset,
+  activeUsers,
+  facilitator,
+  phase,
+  onFacilitatorStart,
+  onFacilitatorStop,
+  onPhaseChange,
 }: TopbarProps) {
   const { username, setUsername } = useAppStore()
   const [usernameOpen, setUsernameOpen] = useState(false)
@@ -41,6 +70,11 @@ export default function Topbar({
   const [tempBoard, setTempBoard] = useState('')
   const [tempMaxVotes, setTempMaxVotes] = useState(5)
   const [renameError, setRenameError] = useState<string | null>(null)
+
+  const isFacilitator = facilitator === username
+  const MAX_VISIBLE_AVATARS = 4
+  const visibleUsers = activeUsers.slice(0, MAX_VISIBLE_AVATARS)
+  const extraUsers = activeUsers.length - MAX_VISIBLE_AVATARS
 
   return (
     <>
@@ -62,6 +96,56 @@ export default function Topbar({
           {boardName}
         </button>
         <div className={styles.actions}>
+          {/* Phase indicator */}
+          {phase && (
+            <div className={styles.phaseChip} title={PHASE_LABELS[phase] || phase}>
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
+                {PHASE_ICONS[phase] || 'flag'}
+              </span>
+              {PHASE_LABELS[phase] || phase}
+            </div>
+          )}
+
+          {/* Facilitator controls */}
+          {isFacilitator && (
+            <div className={styles.facControls}>
+              {PHASE_ORDER.map((p) => (
+                <button
+                  key={p}
+                  className={`${styles.facBtn} ${phase === p ? styles.facBtnActive : ''}`}
+                  onClick={() => onPhaseChange(p)}
+                  title={PHASE_LABELS[p]}
+                >
+                  <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
+                    {PHASE_ICONS[p]}
+                  </span>
+                </button>
+              ))}
+              <button
+                className={`${styles.facBtn} ${styles.facBtnStop}`}
+                onClick={onFacilitatorStop}
+                title="Завершить режим ведущего"
+              >
+                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>close</span>
+              </button>
+            </div>
+          )}
+
+          {/* Become facilitator button */}
+          {!facilitator && (
+            <button className={styles.iconBtn} onClick={onFacilitatorStart} title="Стать ведущим">
+              <span className="material-symbols-rounded">present_to_all</span>
+            </button>
+          )}
+
+          {/* Facilitator badge (when someone else is facilitator) */}
+          {facilitator && !isFacilitator && (
+            <span className={styles.facBadge} title={`Ведущий: ${facilitator}`}>
+              <span className="material-symbols-rounded" style={{ fontSize: 14 }}>present_to_all</span>
+              {facilitator}
+            </span>
+          )}
+
           {timerState && (
             <TimerWidget
               timerState={timerState}
@@ -85,6 +169,21 @@ export default function Topbar({
             <span className="material-symbols-rounded" style={{ fontSize: 16 }}>thumb_up</span>
             {votesUsed}/{maxVotes}
           </span>
+
+          {/* Presence avatars */}
+          {activeUsers.length > 0 && (
+            <div className={styles.presence} title={activeUsers.join(', ')}>
+              {visibleUsers.map((u) => (
+                <div key={u} className={styles.avatar} style={{ background: userColor(u) }}>
+                  {initials(u)}
+                </div>
+              ))}
+              {extraUsers > 0 && (
+                <div className={styles.avatarExtra}>+{extraUsers}</div>
+              )}
+            </div>
+          )}
+
           <button
             className={styles.chip}
             onClick={() => {

@@ -113,6 +113,12 @@
   transition: var(--transition);
 }
 
+.addBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-style: dotted;
+}
+
 .textarea {
   width: 100%;
   border: 1px solid var(--md-outline-variant);

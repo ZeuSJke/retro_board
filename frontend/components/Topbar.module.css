@@ -87,3 +87,123 @@
   background: var(--md-surface);
   outline: none;
 }
+
+/* Presence avatars */
+.presence {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  cursor: default;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: 'Roboto', sans-serif;
+  margin-left: -6px;
+  border: 2px solid var(--md-surface-1);
+  letter-spacing: 0.3px;
+}
+
+.avatar:first-child {
+  margin-left: 0;
+}
+
+.avatarExtra {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--md-outline-variant);
+  color: var(--md-on-surface-variant);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: 'Roboto', sans-serif;
+  margin-left: -6px;
+  border: 2px solid var(--md-surface-1);
+}
+
+/* Phase indicator */
+.phaseChip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'Roboto', sans-serif;
+  white-space: nowrap;
+}
+
+/* Facilitator controls */
+.facControls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--md-surface-variant);
+  border-radius: 20px;
+  padding: 2px;
+}
+
+.facBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+}
+
+.facBtn:hover {
+  background: var(--md-outline-variant);
+}
+
+.facBtnActive {
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+}
+
+.facBtnActive:hover {
+  background: var(--md-primary);
+  opacity: 0.9;
+}
+
+.facBtnStop {
+  color: var(--md-error);
+}
+
+.facBtnStop:hover {
+  background: color-mix(in srgb, var(--md-error) 15%, transparent);
+}
+
+/* Facilitator badge */
+.facBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'Roboto', sans-serif;
+  white-space: nowrap;
+}
