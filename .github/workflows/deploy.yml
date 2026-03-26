@@ -1,0 +1,32 @@
+name: Deploy
+
+on:
+  # Автоматически после успешного CI на main
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+  # Ручной запуск
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # При автоматическом триггере — только если CI прошёл успешно
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.TRUENAS_HOST }}
+          username: ${{ secrets.TRUENAS_USER }}
+          key: ${{ secrets.TRUENAS_SSH_KEY }}
+          port: ${{ secrets.TRUENAS_SSH_PORT || 22 }}
+          script: |
+            cd /mnt/main/projects/retro_board
+            git pull origin main
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
