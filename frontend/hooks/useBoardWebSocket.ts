@@ -13,9 +13,11 @@ interface CursorPos {
 interface UseBoardWebSocketParams {
   boardId: string
   onTimerWsEvent?: (event: string, data: Record<string, unknown>) => void
+  onFacilitatorChanged?: (facilitator: string | null, phase: string | null) => void
+  onPhaseChanged?: (phase: string) => void
 }
 
-export function useBoardWebSocket({ boardId, onTimerWsEvent }: UseBoardWebSocketParams) {
+export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChanged, onPhaseChanged }: UseBoardWebSocketParams) {
   const { username } = useAppStore()
   const [columns, setColumns] = useState<Column[]>([])
   const [cursors, setCursors] = useState<Record<string, CursorPos>>({})
@@ -86,12 +88,14 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent }: UseBoardWebSocket
         const { facilitator: f, phase: p } = data as { facilitator: string | null; phase: string | null }
         setFacilitator(f)
         setPhase(p)
+        onFacilitatorChanged?.(f, p)
         return
       }
 
       if (event === 'phase_update') {
         const { phase: p } = data as { phase: string }
         setPhase(p)
+        onPhaseChanged?.(p)
         return
       }
 
@@ -249,7 +253,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent }: UseBoardWebSocket
         }
       })
     },
-    [onTimerWsEvent],
+    [onTimerWsEvent, onFacilitatorChanged, onPhaseChanged],
   )
 
   const { sendMessage } = useWebSocket(

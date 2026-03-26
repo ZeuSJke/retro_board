@@ -232,6 +232,10 @@ export default function App({ boardId }: AppProps) {
     setPhase(p)
   }, [])
 
+  const handlePhaseChanged = useCallback((p: string) => {
+    setPhase(p)
+  }, [])
+
   if (error)
     return (
       <div className={styles.centered}>
@@ -315,6 +319,7 @@ export default function App({ boardId }: AppProps) {
             onVotesChanged={setVotesUsed}
             onPresenceChanged={setActiveUsers}
             onFacilitatorChanged={handleFacilitatorChanged}
+            onPhaseChanged={handlePhaseChanged}
             sendFacilitatorRef={sendFacilitatorRef}
           />
         )}

@@ -34,6 +34,7 @@ interface BoardPageProps {
   onVotesChanged?: (used: number) => void
   onPresenceChanged?: (users: string[]) => void
   onFacilitatorChanged?: (facilitator: string | null, phase: string | null) => void
+  onPhaseChanged?: (phase: string) => void
   sendFacilitatorRef: React.MutableRefObject<{
     start: () => void
     stop: () => void
@@ -50,6 +51,7 @@ export default function BoardPage({
   onVotesChanged,
   onPresenceChanged,
   onFacilitatorChanged,
+  onPhaseChanged,
   sendFacilitatorRef,
 }: BoardPageProps) {
   const [addColOpen, setAddColOpen] = useState(false)
@@ -71,7 +73,12 @@ export default function BoardPage({
     sendMessage,
     handleMouseMove: wsMouseMove,
     handleMouseLeave,
-  } = useBoardWebSocket({ boardId: board.id, onTimerWsEvent })
+  } = useBoardWebSocket({
+    boardId: board.id,
+    onTimerWsEvent,
+    onFacilitatorChanged,
+    onPhaseChanged,
+  })
 
   const { username } = useAppStore()
 
@@ -98,10 +105,6 @@ export default function BoardPage({
   useEffect(() => {
     onPresenceChanged?.(activeUsers)
   }, [activeUsers, onPresenceChanged])
-
-  useEffect(() => {
-    onFacilitatorChanged?.(facilitator, phase)
-  }, [facilitator, phase, onFacilitatorChanged])
 
   const votingAllowed = !facilitator || phase === 'vote'
   const canVote = votingAllowed && votesUsed < (board.max_votes ?? 5)
@@ -328,6 +331,7 @@ export default function BoardPage({
 
         <MasterColumn
           actionItems={actionItems}
+          dropDisabled={!!facilitator && facilitator !== username}
           onUpdated={(item) =>
             setActionItems((prev) =>
               prev.map((i) => (i.id === item.id ? item : i)),
