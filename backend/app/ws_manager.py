@@ -104,6 +104,7 @@ class ConnectionManager:
                 dead.append(ws)
         for ws in dead:
             self.rooms[board_id].remove(ws)
+            self.usernames.pop(id(ws), None)
 
 
 manager = ConnectionManager()

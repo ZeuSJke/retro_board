@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
+from app.utils import get_or_404
 from app.ws_manager import manager
 from app.limiter import limiter
 
@@ -13,9 +14,7 @@ router = APIRouter()
 @router.get("/", response_model=list[schemas.ActionItemOut])
 @limiter.limit("30/minute")
 async def list_action_items(request: Request, board_id: str, db: Session = Depends(get_db)):
-    board = db.get(models.Board, board_id)
-    if not board:
-        raise HTTPException(404, "Board not found")
+    get_or_404(db, models.Board, board_id, "Board not found")
     items = (
         db.query(models.ActionItem)
         .filter(models.ActionItem.board_id == board_id)
@@ -28,9 +27,7 @@ async def list_action_items(request: Request, board_id: str, db: Session = Depen
 @router.post("/", response_model=schemas.ActionItemOut, status_code=201)
 @limiter.limit("30/minute")
 async def create_action_item(request: Request, body: schemas.ActionItemCreate, db: Session = Depends(get_db)):
-    board = db.get(models.Board, body.board_id)
-    if not board:
-        raise HTTPException(404, "Board not found")
+    get_or_404(db, models.Board, body.board_id, "Board not found")
     item = models.ActionItem(
         id=str(uuid.uuid4()),
         board_id=body.board_id,
@@ -48,9 +45,7 @@ async def create_action_item(request: Request, body: schemas.ActionItemCreate, d
 @router.patch("/{item_id}", response_model=schemas.ActionItemOut)
 @limiter.limit("30/minute")
 async def update_action_item(request: Request, item_id: str, body: schemas.ActionItemUpdate, db: Session = Depends(get_db)):
-    item = db.get(models.ActionItem, item_id)
-    if not item:
-        raise HTTPException(404, "Action item not found")
+    item = get_or_404(db, models.ActionItem, item_id, "Action item not found")
     if body.text is not None:
         item.text = body.text
     if "assignee" in body.model_fields_set:
@@ -65,9 +60,7 @@ async def update_action_item(request: Request, item_id: str, body: schemas.Actio
 @router.delete("/{item_id}", status_code=204)
 @limiter.limit("30/minute")
 async def delete_action_item(request: Request, item_id: str, db: Session = Depends(get_db)):
-    item = db.get(models.ActionItem, item_id)
-    if not item:
-        raise HTTPException(404, "Action item not found")
+    item = get_or_404(db, models.ActionItem, item_id, "Action item not found")
     board_id = item.board_id
     db.delete(item)
     db.commit()

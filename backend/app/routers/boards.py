@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
+from app.utils import get_or_404
 from app.limiter import limiter
 
 router = APIRouter()
@@ -61,18 +62,13 @@ def get_board_by_slug(request: Request, slug: str, db: Session = Depends(get_db)
 @router.get("/{board_id}", response_model=schemas.BoardOut)
 @limiter.limit("100/minute")
 def get_board(request: Request, board_id: str, db: Session = Depends(get_db)):
-    board = db.get(models.Board, board_id)
-    if not board:
-        raise HTTPException(404, "Board not found")
-    return board
+    return get_or_404(db, models.Board, board_id, "Board not found")
 
 
 @router.patch("/{board_id}", response_model=schemas.BoardOut)
 @limiter.limit("30/minute")
 def update_board(request: Request, board_id: str, body: schemas.BoardUpdate, db: Session = Depends(get_db)):
-    board = db.get(models.Board, board_id)
-    if not board:
-        raise HTTPException(404, "Board not found")
+    board = get_or_404(db, models.Board, board_id, "Board not found")
     if body.name is not None:
         existing = db.query(models.Board).filter(
             models.Board.name == body.name, models.Board.id != board_id
@@ -91,8 +87,6 @@ def update_board(request: Request, board_id: str, body: schemas.BoardUpdate, db:
 @router.delete("/{board_id}", status_code=204)
 @limiter.limit("30/minute")
 def delete_board(request: Request, board_id: str, db: Session = Depends(get_db)):
-    board = db.get(models.Board, board_id)
-    if not board:
-        raise HTTPException(404, "Board not found")
+    board = get_or_404(db, models.Board, board_id, "Board not found")
     db.delete(board)
     db.commit()

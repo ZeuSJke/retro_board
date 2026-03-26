@@ -1,9 +1,11 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
+from app.utils import get_or_404
 from app.ws_manager import manager
 from app.limiter import limiter
 
@@ -13,21 +15,19 @@ router = APIRouter()
 def _count_user_votes(db: Session, board_id: str, username: str) -> int:
     """Count how many likes a user has across all cards in a board."""
     cards = (
-        db.query(models.Card)
+        db.query(models.Card.likes)
         .join(models.Column, models.Card.column_id == models.Column.id)
         .filter(models.Column.board_id == board_id)
         .all()
     )
-    return sum(1 for card in cards if username in (card.likes or []))
+    return sum(1 for (likes,) in cards if username in (likes or []))
 
 
 @router.post("/", response_model=schemas.CardOut, status_code=201)
 @limiter.limit("30/minute")
 async def create_card(request: Request, body: schemas.CardCreate, db: Session = Depends(get_db)):
-    col = db.get(models.Column, body.column_id)
-    if not col:
-        raise HTTPException(404, "Column not found")
-    pos = len(col.cards)
+    col = get_or_404(db, models.Column, body.column_id, "Column not found")
+    pos = db.query(func.count(models.Card.id)).filter(models.Card.column_id == body.column_id).scalar() or 0
     card = models.Card(
         id=str(uuid.uuid4()),
         column_id=body.column_id,
@@ -48,9 +48,7 @@ async def create_card(request: Request, body: schemas.CardCreate, db: Session = 
 @router.patch("/{card_id}", response_model=schemas.CardOut)
 @limiter.limit("30/minute")
 async def update_card(request: Request, card_id: str, body: schemas.CardUpdate, db: Session = Depends(get_db)):
-    card = db.get(models.Card, card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
+    card = get_or_404(db, models.Card, card_id, "Card not found")
     if body.text is not None:
         card.text = body.text
     if body.color is not None:
@@ -68,13 +66,9 @@ async def update_card(request: Request, card_id: str, body: schemas.CardUpdate, 
 @router.post("/{card_id}/move", response_model=schemas.CardOut)
 @limiter.limit("30/minute")
 async def move_card(request: Request, card_id: str, body: schemas.MoveCard, db: Session = Depends(get_db)):
-    card = db.get(models.Card, card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
+    card = get_or_404(db, models.Card, card_id, "Card not found")
     old_col = db.get(models.Column, card.column_id)
-    new_col = db.get(models.Column, body.column_id)
-    if not new_col:
-        raise HTTPException(404, "Target column not found")
+    new_col = get_or_404(db, models.Column, body.column_id, "Target column not found")
 
     old_group_id = card.group_id if old_col.id != new_col.id else None
 
@@ -119,9 +113,7 @@ async def move_card(request: Request, card_id: str, body: schemas.MoveCard, db: 
 @router.post("/{card_id}/like", response_model=schemas.CardOut)
 @limiter.limit("30/minute")
 async def toggle_like(request: Request, card_id: str, username: str, db: Session = Depends(get_db)):
-    card = db.get(models.Card, card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
+    card = get_or_404(db, models.Card, card_id, "Card not found")
     col = db.get(models.Column, card.column_id)
     likes = list(card.likes or [])
     if username in likes:
@@ -144,9 +136,7 @@ async def toggle_like(request: Request, card_id: str, username: str, db: Session
 @router.delete("/{card_id}", status_code=204)
 @limiter.limit("30/minute")
 async def delete_card(request: Request, card_id: str, db: Session = Depends(get_db)):
-    card = db.get(models.Card, card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
+    card = get_or_404(db, models.Card, card_id, "Card not found")
     col = db.get(models.Column, card.column_id)
     board_id = col.board_id
     group_id = card.group_id
