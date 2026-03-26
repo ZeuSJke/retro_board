@@ -10,3 +10,4 @@ python-multipart==0.0.22
 websockets==16.0
 python-slugify==8.0.4
 slowapi==0.1.9
+httpx==0.27.0
