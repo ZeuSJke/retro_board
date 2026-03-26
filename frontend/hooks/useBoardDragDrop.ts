@@ -344,6 +344,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
       await moveCard(String(active.id), { column_id: overColId, position: newPos })
     } catch (e) {
       console.error('Move failed', e)
+      if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
     }
   }
 
