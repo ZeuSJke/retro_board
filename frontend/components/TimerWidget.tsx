@@ -28,6 +28,8 @@ export default function TimerWidget({ timerState, onStart, onPause, onReset }: T
   const { duration, remaining, running } = timerState
   const [expanded, setExpanded] = useState(false)
   const [selectedDuration, setSelectedDuration] = useState(duration)
+  const pillRef = useRef<HTMLButtonElement>(null)
+  const [panelPos, setPanelPos] = useState<{ top: number; right: number } | null>(null)
   const finished = remaining <= 0 && !running && duration > 0
 
   const [flash, setFlash] = useState(false)
@@ -72,7 +74,17 @@ export default function TimerWidget({ timerState, onStart, onPause, onReset }: T
           color: running ? color : 'var(--md-on-surface-variant)',
           animation: flash ? 'pillGlow 0.45s ease-in-out 4' : 'none',
         }}
-        onClick={() => setExpanded((v) => !v)}
+        ref={pillRef}
+        onClick={() => {
+          if (!expanded && pillRef.current) {
+            const rect = pillRef.current.getBoundingClientRect()
+            setPanelPos({
+              top: rect.bottom + 8,
+              right: Math.max(8, window.innerWidth - rect.right),
+            })
+          }
+          setExpanded((v) => !v)
+        }}
         title="Таймер"
       >
         <span
@@ -97,8 +109,11 @@ export default function TimerWidget({ timerState, onStart, onPause, onReset }: T
         )}
       </button>
 
-      {expanded && (
-        <div className={styles.panel}>
+      {expanded && panelPos && (
+        <div
+          className={styles.panel}
+          style={{ position: 'fixed', top: panelPos.top, right: panelPos.right }}
+        >
           <div className={styles.panelHeader}>
             <span
               className="material-symbols-rounded"

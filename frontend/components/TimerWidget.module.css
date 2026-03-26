@@ -32,10 +32,8 @@
 }
 
 .panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
   width: 240px;
+  max-width: calc(100vw - 16px);
   background: var(--md-surface);
   border-radius: 20px;
   padding: 16px;
