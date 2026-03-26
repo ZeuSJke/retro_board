@@ -137,3 +137,42 @@ class SetCardGroup(BaseModel):
 
 class GroupMove(BaseModel):
     column_id: str
+
+
+# ── ActionItem ───────────────────────────────────────────────────────────────
+
+class ActionItemCreate(BaseModel):
+    board_id: str
+    text: str = Field(..., min_length=1, max_length=2000)
+    assignee: Optional[str] = Field(default=None, max_length=60)
+
+class ActionItemUpdate(BaseModel):
+    text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
+    assignee: Optional[str] = None
+
+class ActionItemOut(BaseModel):
+    id: str
+    board_id: str
+    text: str
+    assignee: Optional[str] = None
+    jira_issue_key: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Jira Integration ────────────────────────────────────────────────────────
+
+class JiraCreateIssue(BaseModel):
+    action_item_id: str
+    project_key: str = Field(..., min_length=1, max_length=20)
+    summary: str = Field(..., min_length=1, max_length=255)
+    description: str = ""
+    issue_type: str = "Task"
+
+class JiraIssueResult(BaseModel):
+    jira_issue_key: str
+    jira_url: str
+
+class JiraStatus(BaseModel):
+    configured: bool

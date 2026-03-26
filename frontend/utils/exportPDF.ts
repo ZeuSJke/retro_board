@@ -3,7 +3,7 @@
  * No external dependencies required.
  */
 
-import type { Board, Column, Card } from '../types'
+import type { ActionItem, Board, Column, Card } from '../types'
 
 const AVATAR_COLORS = [
   '#6750A4', '#0061A4', '#006E1C', '#BA1A1A',
@@ -104,11 +104,67 @@ function columnHTML(col: Column): string {
     </div>`
 }
 
-export function exportBoardToPDF(board: Board, columns: Column[]): void {
+function actionItemHTML(item: ActionItem, index: number): string {
+  const avatarBg = userColor(item.assignee || '?')
+  const assigneeName = item.assignee || 'Не назначен'
+  const date = new Date(item.created_at).toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+
+  return `
+    <div class="action-item">
+      <div class="action-item-number">${index + 1}</div>
+      <div class="action-item-content">
+        <div class="action-item-text">${escHtml(item.text)}</div>
+        <div class="action-item-meta">
+          <div class="action-item-assignee">
+            <span class="card-avatar" style="background:${avatarBg}">${initials(item.assignee || '?')}</span>
+            <span class="action-item-assignee-name">${escHtml(assigneeName)}</span>
+          </div>
+          <div class="action-item-date">Создано: ${date}</div>
+        </div>
+        ${item.jira_issue_key ? `
+        <div class="action-item-jira">
+          <span class="jira-icon">🔗</span>
+          <span class="jira-key">${escHtml(item.jira_issue_key)}</span>
+          <span class="jira-label">— задача создана в Jira</span>
+        </div>` : ''}
+      </div>
+    </div>`
+}
+
+function actionItemsSectionHTML(actionItems: ActionItem[]): string {
+  if (actionItems.length === 0) return ''
+
+  const itemsHTML = actionItems.map((item, i) => actionItemHTML(item, i)).join('')
+
+  return `
+    <div class="action-items-section">
+      <div class="action-items-header">
+        <span class="action-items-icon">📋</span>
+        <span class="action-items-title">Итоги</span>
+        <span class="action-items-count">${actionItems.length} пункт${actionItems.length === 1 ? '' : actionItems.length < 5 ? 'а' : 'ов'}</span>
+      </div>
+      <div class="action-items-description">
+        Список решений и задач, принятых по результатам ретроспективы.
+        ${actionItems.some((i) => i.jira_issue_key) ? 'Часть задач уже заведена в Jira.' : ''}
+      </div>
+      <div class="action-items-list">
+        ${itemsHTML}
+      </div>
+    </div>`
+}
+
+export function exportBoardToPDF(board: Board, columns: Column[], actionItems: ActionItem[] = []): void {
   const totalCards = columns.reduce((s, c) => s + (c.cards?.length || 0), 0)
   const totalGroups = columns.reduce((s, c) => s + (c.groups?.length || 0), 0)
 
   const columnsHTML = columns.map(columnHTML).join('')
+  const actionItemsHTML = actionItemsSectionHTML(actionItems)
 
   const html = `<!DOCTYPE html>
 <html lang="ru">
@@ -148,9 +204,28 @@ export function exportBoardToPDF(board: Board, columns: Column[]): void {
     .group-count { background: #EADDff; color: #6750A4; padding: 1px 6px; border-radius: 10px; font-size: 10px; }
     .group-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .footer { text-align: center; padding: 16px 48px 24px; font-size: 11px; color: #79747E; border-top: 1px solid #E7E0EC; }
+    .action-items-section { margin: 0 48px 32px; padding-top: 28px; border-top: 3px solid #6750A4; page-break-before: always; }
+    .action-items-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .action-items-icon { font-size: 20px; }
+    .action-items-title { font-size: 20px; font-weight: 700; color: #1C1B1F; flex: 1; }
+    .action-items-count { font-size: 11px; font-weight: 500; color: #6750A4; background: #EADDff; padding: 2px 10px; border-radius: 20px; }
+    .action-items-description { font-size: 12px; color: #49454F; margin-bottom: 18px; line-height: 1.5; }
+    .action-items-list { display: flex; flex-direction: column; gap: 12px; }
+    .action-item { display: flex; gap: 14px; background: white; border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.10), 0 1px 2px rgba(0,0,0,0.06); border-left: 4px solid #6750A4; break-inside: avoid; }
+    .action-item-number { width: 28px; height: 28px; border-radius: 50%; background: #6750A4; color: white; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
+    .action-item-content { flex: 1; min-width: 0; }
+    .action-item-text { font-size: 14px; font-weight: 500; line-height: 1.5; color: #1C1B1F; margin-bottom: 10px; word-break: break-word; }
+    .action-item-meta { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+    .action-item-assignee { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: #49454F; }
+    .action-item-assignee-name { }
+    .action-item-date { font-size: 11px; color: #79747E; }
+    .action-item-jira { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 6px 10px; background: #E8F5E9; border-radius: 8px; font-size: 12px; }
+    .jira-icon { font-size: 14px; }
+    .jira-key { font-weight: 700; color: #1B5E20; }
+    .jira-label { color: #388E3C; }
     @media print {
       body { background: white; }
-      .cover, .card, .group-block, .column-section { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .cover, .card, .group-block, .column-section, .action-item, .action-item-number, .action-item-jira { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       @page { size: A4; margin: 0; }
     }
   </style>
@@ -163,10 +238,12 @@ export function exportBoardToPDF(board: Board, columns: Column[]): void {
       <div class="cover-stat"><span class="cover-stat-value">${columns.length}</span><span class="cover-stat-label">Колонок</span></div>
       <div class="cover-stat"><span class="cover-stat-value">${totalCards}</span><span class="cover-stat-label">Заметок</span></div>
       ${totalGroups > 0 ? `<div class="cover-stat"><span class="cover-stat-value">${totalGroups}</span><span class="cover-stat-label">Групп</span></div>` : ''}
+      ${actionItems.length > 0 ? `<div class="cover-stat"><span class="cover-stat-value">${actionItems.length}</span><span class="cover-stat-label">Итогов</span></div>` : ''}
     </div>
     <div class="cover-date">${formatDate()}</div>
   </div>
   <div class="columns-area">${columnsHTML}</div>
+  ${actionItemsHTML}
   <div class="footer">Сгенерировано RetroBoard · ${formatDate()}</div>
   <script>window.addEventListener('load', function() { setTimeout(function() { window.print(); }, 800); });</script>
 </body>

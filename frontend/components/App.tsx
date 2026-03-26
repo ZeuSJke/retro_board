@@ -125,6 +125,7 @@ export default function App({ boardId }: AppProps) {
         }
       } catch { /* ignore corrupted timer data */ }
       timerRestoredRef.current = true
+
     } catch {
       setError('Не удалось загрузить доску.')
     } finally {

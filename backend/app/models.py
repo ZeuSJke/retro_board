@@ -32,6 +32,12 @@ class Board(Base):
         cascade="all, delete-orphan",
         order_by="Column.position",
     )
+    action_items: Mapped[list["ActionItem"]] = relationship(
+        "ActionItem",
+        back_populates="board",
+        cascade="all, delete-orphan",
+        order_by="ActionItem.created_at",
+    )
 
 
 class Column(Base):
@@ -93,3 +99,20 @@ class Card(Base):
     )
 
     column: Mapped["Column"] = relationship("Column", back_populates="cards")
+
+
+class ActionItem(Base):
+    __tablename__ = "action_items"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    board_id: Mapped[str] = mapped_column(
+        String, ForeignKey("boards.id", ondelete="CASCADE"), index=True
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    assignee: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    jira_issue_key: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc
+    )
+
+    board: Mapped["Board"] = relationship("Board", back_populates="action_items")
