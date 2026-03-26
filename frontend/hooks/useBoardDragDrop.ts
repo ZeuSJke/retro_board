@@ -20,6 +20,7 @@ import {
   removeCardFromGroup,
   moveGroup,
 } from '../api'
+import { showToast } from '../store/toastStore'
 import type { Card, CardGroup, Column } from '../types'
 
 interface UseBoardDragDropParams {
@@ -227,7 +228,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
       try {
         await moveGroup(groupId, { column_id: targetColId })
       } catch (e) {
-        console.error('Move group failed', e)
+        showToast('Не удалось переместить группу', 'error')
         if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
       }
       return
@@ -279,7 +280,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
             })),
           )
         } catch (e) {
-          console.error('Join group failed', e)
+          showToast('Не удалось добавить в группу', 'error')
           if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
         }
         return
@@ -325,7 +326,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
             ),
           )
         } catch (e) {
-          console.error('Group creation from drag failed', e)
+          showToast('Не удалось создать группу', 'error')
           if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
         }
         return
@@ -343,7 +344,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
       }
       await moveCard(String(active.id), { column_id: overColId, position: newPos })
     } catch (e) {
-      console.error('Move failed', e)
+      showToast('Не удалось переместить карточку', 'error')
       if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
     }
   }

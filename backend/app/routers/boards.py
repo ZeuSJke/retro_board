@@ -1,7 +1,7 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slugify import slugify
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app import models, schemas
@@ -50,10 +50,20 @@ def create_board(request: Request, body: schemas.BoardCreate, db: Session = Depe
     return board
 
 
+def _board_query(db: Session):
+    """Board query with eager-loaded columns → cards + groups (avoids N+1)."""
+    return db.query(models.Board).options(
+        selectinload(models.Board.columns)
+        .selectinload(models.Column.cards),
+        selectinload(models.Board.columns)
+        .selectinload(models.Column.groups),
+    )
+
+
 @router.get("/by-slug/{slug}", response_model=schemas.BoardOut)
 @limiter.limit("100/minute")
 def get_board_by_slug(request: Request, slug: str, db: Session = Depends(get_db)):
-    board = db.query(models.Board).filter(models.Board.slug == slug).first()
+    board = _board_query(db).filter(models.Board.slug == slug).first()
     if not board:
         raise HTTPException(404, "Board not found")
     return board
@@ -62,7 +72,10 @@ def get_board_by_slug(request: Request, slug: str, db: Session = Depends(get_db)
 @router.get("/{board_id}", response_model=schemas.BoardOut)
 @limiter.limit("100/minute")
 def get_board(request: Request, board_id: str, db: Session = Depends(get_db)):
-    return get_or_404(db, models.Board, board_id, "Board not found")
+    board = _board_query(db).filter(models.Board.id == board_id).first()
+    if not board:
+        raise HTTPException(404, "Board not found")
+    return board
 
 
 @router.patch("/{board_id}", response_model=schemas.BoardOut)

@@ -40,8 +40,16 @@ async def update_column(request: Request, column_id: str, body: schemas.ColumnUp
         col.title = body.title
     if body.color is not None:
         col.color = body.color
-    if body.position is not None:
-        col.position = body.position
+    if body.position is not None and body.position != col.position:
+        siblings = (
+            db.query(models.Column)
+            .filter(models.Column.board_id == col.board_id, models.Column.id != col.id)
+            .order_by(models.Column.position)
+            .all()
+        )
+        siblings.insert(min(body.position, len(siblings)), col)
+        for i, c in enumerate(siblings):
+            c.position = i
     db.commit()
     db.refresh(col)
     out = schemas.ColumnOut.model_validate(col)

@@ -1,5 +1,5 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -112,14 +112,16 @@ async def move_card(request: Request, card_id: str, body: schemas.MoveCard, db: 
 
 @router.post("/{card_id}/like", response_model=schemas.CardOut)
 @limiter.limit("30/minute")
-async def toggle_like(request: Request, card_id: str, username: str, db: Session = Depends(get_db)):
-    card = get_or_404(db, models.Card, card_id, "Card not found")
+async def toggle_like(request: Request, card_id: str, username: str = Query(..., min_length=1, max_length=60), db: Session = Depends(get_db)):
+    # Lock the card row to prevent concurrent vote race conditions
+    card = db.query(models.Card).filter(models.Card.id == card_id).with_for_update().first()
+    if not card:
+        raise HTTPException(404, "Card not found")
     col = db.get(models.Column, card.column_id)
     likes = list(card.likes or [])
     if username in likes:
         likes.remove(username)
     else:
-        # Check vote limit before adding
         board = db.get(models.Board, col.board_id)
         used = _count_user_votes(db, col.board_id, username)
         if used >= board.max_votes:

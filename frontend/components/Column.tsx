@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import CardWidget from './CardWidget'
@@ -13,6 +13,7 @@ import {
   createGroup,
   addCardToGroup,
 } from '../api'
+import { showToast } from '../store/toastStore'
 import { useAppStore } from '../store'
 import { CARD_COLORS } from '../utils/theme'
 import type { Column as ColumnType, Card, CardGroup } from '../types'
@@ -38,7 +39,7 @@ interface ColumnProps {
   onToggleCollapse: (groupId: string) => void
 }
 
-export default function Column({
+export default memo(function Column({
   column,
   canVote = true,
   cardCreationDisabled = false,
@@ -80,21 +81,34 @@ export default function Column({
   const saveTitle = async () => {
     setEditingTitle(false)
     if (titleVal.trim() && titleVal !== column.title) {
-      const updated = await updateColumn(column.id, { title: titleVal.trim() })
-      onUpdate(updated)
+      try {
+        const updated = await updateColumn(column.id, { title: titleVal.trim() })
+        onUpdate(updated)
+      } catch {
+        setTitleVal(column.title)
+        showToast('Не удалось обновить название', 'error')
+      }
     }
   }
 
   const saveColor = async (color: string) => {
     setColorPickerOpen(false)
-    const updated = await updateColumn(column.id, { color })
-    onUpdate(updated)
+    try {
+      const updated = await updateColumn(column.id, { color })
+      onUpdate(updated)
+    } catch {
+      showToast('Не удалось обновить цвет', 'error')
+    }
   }
 
   const confirmDelete = async () => {
     setDeleteOpen(false)
-    await deleteColumn(column.id)
-    onDelete(column.id)
+    try {
+      await deleteColumn(column.id)
+      onDelete(column.id)
+    } catch {
+      showToast('Не удалось удалить колонку', 'error')
+    }
   }
 
   const handleAddCard = async () => {
@@ -401,4 +415,4 @@ export default function Column({
       </Dialog>
     </>
   )
-}
+})

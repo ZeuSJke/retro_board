@@ -193,6 +193,119 @@ export default function BoardPage({
   const isBrainstorm = phase === 'brainstorm'
   const cardCreationDisabled = !facilitator
 
+  const handleColumnUpdate = useCallback(
+    (updated: ColumnType) =>
+      setColumns((prev) =>
+        prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)),
+      ),
+    [setColumns],
+  )
+
+  const handleColumnDelete = useCallback(
+    (id: string) => setColumns((prev) => prev.filter((c) => c.id !== id)),
+    [setColumns],
+  )
+
+  const handleCardCreated = useCallback(
+    (colId: string, card: Card) =>
+      setColumns((prev) =>
+        prev.map((c) =>
+          c.id === colId && !c.cards.find((x) => x.id === card.id)
+            ? { ...c, cards: [...c.cards, card] }
+            : c,
+        ),
+      ),
+    [setColumns],
+  )
+
+  const handleCardUpdated = useCallback(
+    (colId: string, card: Card) =>
+      setColumns((prev) =>
+        prev.map((c) =>
+          c.id === colId
+            ? { ...c, cards: c.cards.map((x) => (x.id === card.id ? card : x)) }
+            : c,
+        ),
+      ),
+    [setColumns],
+  )
+
+  const handleCardDeleted = useCallback(
+    (colId: string, cardId: string) =>
+      setColumns((prev) =>
+        prev.map((c) =>
+          c.id === colId
+            ? { ...c, cards: c.cards.filter((x) => x.id !== cardId) }
+            : c,
+        ),
+      ),
+    [setColumns],
+  )
+
+  const handleGroupCreated = useCallback(
+    (colId: string, group: CardGroup) =>
+      setColumns((prev) =>
+        prev.map((c) =>
+          c.id === colId
+            ? {
+                ...c,
+                groups: [
+                  ...(c.groups || []).filter((g) => g.id !== group.id),
+                  group,
+                ],
+              }
+            : c,
+        ),
+      ),
+    [setColumns],
+  )
+
+  const handleGroupUpdated = useCallback(
+    (colId: string, group: CardGroup) =>
+      setColumns((prev) =>
+        prev.map((c) =>
+          c.id === colId
+            ? {
+                ...c,
+                groups: (c.groups || []).map((g) =>
+                  g.id === group.id ? group : g,
+                ),
+              }
+            : c,
+        ),
+      ),
+    [setColumns],
+  )
+
+  const handleGroupDeleted = useCallback(
+    (colId: string, groupId: string) =>
+      setColumns((prev) =>
+        prev.map((c) =>
+          c.id === colId
+            ? {
+                ...c,
+                groups: (c.groups || []).filter((g) => g.id !== groupId),
+                cards: c.cards.map((card) =>
+                  card.group_id === groupId ? { ...card, group_id: null } : card,
+                ),
+              }
+            : c,
+        ),
+      ),
+    [setColumns],
+  )
+
+  const handleToggleCollapse = useCallback(
+    (groupId: string) => {
+      const newCollapsed = !collapsedGroups[groupId]
+      sendMessage({
+        event: 'group_collapse',
+        data: { group_id: groupId, collapsed: newCollapsed },
+      })
+    },
+    [collapsedGroups, sendMessage],
+  )
+
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
       const now = Date.now()
@@ -247,90 +360,15 @@ export default function BoardPage({
             isFacilitator={facilitator === username}
             groupTargetId={groupTargetId}
             collapsedGroups={collapsedGroups}
-            onToggleCollapse={(groupId: string) => {
-              const newCollapsed = !collapsedGroups[groupId]
-              sendMessage({
-                event: 'group_collapse',
-                data: { group_id: groupId, collapsed: newCollapsed },
-              })
-            }}
-            onUpdate={(updated: ColumnType) =>
-              setColumns((prev) =>
-                prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)),
-              )
-            }
-            onDelete={(id: string) => setColumns((prev) => prev.filter((c) => c.id !== id))}
-            onCardCreated={(colId: string, card: Card) =>
-              setColumns((prev) =>
-                prev.map((c) =>
-                  c.id === colId && !c.cards.find((x) => x.id === card.id)
-                    ? { ...c, cards: [...c.cards, card] }
-                    : c,
-                ),
-              )
-            }
-            onCardUpdated={(colId: string, card: Card) =>
-              setColumns((prev) =>
-                prev.map((c) =>
-                  c.id === colId
-                    ? { ...c, cards: c.cards.map((x) => (x.id === card.id ? card : x)) }
-                    : c,
-                ),
-              )
-            }
-            onCardDeleted={(colId: string, cardId: string) =>
-              setColumns((prev) =>
-                prev.map((c) =>
-                  c.id === colId
-                    ? { ...c, cards: c.cards.filter((x) => x.id !== cardId) }
-                    : c,
-                ),
-              )
-            }
-            onGroupCreated={(colId: string, group: CardGroup) =>
-              setColumns((prev) =>
-                prev.map((c) =>
-                  c.id === colId
-                    ? {
-                        ...c,
-                        groups: [
-                          ...(c.groups || []).filter((g) => g.id !== group.id),
-                          group,
-                        ],
-                      }
-                    : c,
-                ),
-              )
-            }
-            onGroupUpdated={(colId: string, group: CardGroup) =>
-              setColumns((prev) =>
-                prev.map((c) =>
-                  c.id === colId
-                    ? {
-                        ...c,
-                        groups: (c.groups || []).map((g) =>
-                          g.id === group.id ? group : g,
-                        ),
-                      }
-                    : c,
-                ),
-              )
-            }
-            onGroupDeleted={(colId: string, groupId: string) =>
-              setColumns((prev) =>
-                prev.map((c) =>
-                  c.id === colId
-                    ? {
-                        ...c,
-                        groups: (c.groups || []).filter((g) => g.id !== groupId),
-                        cards: c.cards.map((card) =>
-                          card.group_id === groupId ? { ...card, group_id: null } : card,
-                        ),
-                      }
-                    : c,
-                ),
-              )
-            }
+            onToggleCollapse={handleToggleCollapse}
+            onUpdate={handleColumnUpdate}
+            onDelete={handleColumnDelete}
+            onCardCreated={handleCardCreated}
+            onCardUpdated={handleCardUpdated}
+            onCardDeleted={handleCardDeleted}
+            onGroupCreated={handleGroupCreated}
+            onGroupUpdated={handleGroupUpdated}
+            onGroupDeleted={handleGroupDeleted}
           />
         ))}
 
