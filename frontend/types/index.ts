@@ -44,6 +44,15 @@ export interface CardGroup {
   position: number
 }
 
+export interface ActionItem {
+  id: string
+  board_id: string
+  text: string
+  assignee: string | null
+  jira_issue_key: string | null
+  created_at: string
+}
+
 export interface WsMessage {
   event: string
   data: Record<string, unknown>

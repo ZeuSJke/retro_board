@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useWebSocket } from './useWebSocket'
 import { useAppStore } from '../store'
-import type { Column, WsMessage } from '../types'
+import type { ActionItem, Column, WsMessage } from '../types'
 
 interface CursorPos {
   x: number
@@ -23,6 +23,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent }: UseBoardWebSocket
   const [activeUsers, setActiveUsers] = useState<string[]>([])
   const [facilitator, setFacilitator] = useState<string | null>(null)
   const [phase, setPhase] = useState<string | null>(null)
+  const [actionItems, setActionItems] = useState<ActionItem[]>([])
   const cursorTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastCursorRef = useRef<CursorPos | null>(null)
   const sendMessageRef = useRef<((msg: WsMessage) => void) | null>(null)
@@ -91,6 +92,28 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent }: UseBoardWebSocket
       if (event === 'phase_update') {
         const { phase: p } = data as { phase: string }
         setPhase(p)
+        return
+      }
+
+      if (event === 'action_item_created') {
+        const item = data as unknown as ActionItem
+        setActionItems((prev) =>
+          prev.find((i) => i.id === item.id) ? prev : [...prev, item],
+        )
+        return
+      }
+
+      if (event === 'action_item_updated') {
+        const item = data as unknown as ActionItem
+        setActionItems((prev) =>
+          prev.map((i) => (i.id === item.id ? item : i)),
+        )
+        return
+      }
+
+      if (event === 'action_item_deleted') {
+        const { id } = data as { id: string }
+        setActionItems((prev) => prev.filter((i) => i.id !== id))
         return
       }
 
@@ -269,6 +292,8 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent }: UseBoardWebSocket
     activeUsers,
     facilitator,
     phase,
+    actionItems,
+    setActionItems,
     sendMessage,
     handleMouseMove,
     handleMouseLeave,

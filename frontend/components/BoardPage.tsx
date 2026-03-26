@@ -5,13 +5,15 @@ import { DndContext, DragOverlay } from '@dnd-kit/core'
 import Column from './Column'
 import CardWidget from './CardWidget'
 import CursorMarker from './CursorMarker'
+import MasterColumn from './MasterColumn'
 import Dialog from './Dialog'
-import { createColumn } from '../api'
+import type { DragEndEvent } from '@dnd-kit/core'
+import { createColumn, createActionItem } from '../api'
 import { useAppStore } from '../store'
 import { useBoardWebSocket } from '../hooks/useBoardWebSocket'
 import { useBoardDragDrop } from '../hooks/useBoardDragDrop'
 import { exportBoardToPDF } from '../utils/exportPDF'
-import type { Board, Card, CardGroup, Column as ColumnType } from '../types'
+import type { ActionItem, Board, Card, CardGroup, Column as ColumnType } from '../types'
 import styles from './BoardPage.module.css'
 
 const COLUMN_COLORS = [
@@ -64,6 +66,8 @@ export default function BoardPage({
     activeUsers,
     facilitator,
     phase,
+    actionItems,
+    setActionItems,
     sendMessage,
     handleMouseMove: wsMouseMove,
     handleMouseLeave,
@@ -113,12 +117,36 @@ export default function BoardPage({
     onDragEnd,
   } = useBoardDragDrop({ columns, setColumns })
 
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const overId = event.over ? String(event.over.id) : ''
+      if (overId === 'master-col' && activeCard) {
+        // Drop card onto master column → create action item
+        try {
+          const item = await createActionItem({
+            board_id: board.id,
+            text: activeCard.text,
+            assignee: activeCard.author,
+          })
+          setActionItems((prev) =>
+            prev.find((i) => i.id === item.id) ? prev : [...prev, item],
+          )
+        } catch { /* toast via interceptor */ }
+        // Reset DnD state without moving the card
+        onDragEnd({ ...event, over: null } as DragEndEvent)
+        return
+      }
+      onDragEnd(event)
+    },
+    [activeCard, board.id, setActionItems, onDragEnd],
+  )
+
   // Expose export function via ref
   useEffect(() => {
     if (exportRef) {
-      exportRef.current = () => exportBoardToPDF(board, columns)
+      exportRef.current = () => exportBoardToPDF(board, columns, actionItems)
     }
-  }, [exportRef, board, columns])
+  }, [exportRef, board, columns, actionItems])
 
   // Expose WS timer send functions via ref
   useEffect(() => {
@@ -187,7 +215,7 @@ export default function BoardPage({
       collisionDetection={collisionDetection}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
-      onDragEnd={onDragEnd}
+      onDragEnd={handleDragEnd}
     >
       <div
         ref={boardRef}
@@ -292,6 +320,18 @@ export default function BoardPage({
             }
           />
         ))}
+
+        <MasterColumn
+          actionItems={actionItems}
+          onUpdated={(item) =>
+            setActionItems((prev) =>
+              prev.map((i) => (i.id === item.id ? item : i)),
+            )
+          }
+          onDeleted={(id) =>
+            setActionItems((prev) => prev.filter((i) => i.id !== id))
+          }
+        />
 
         <button className={styles.addColBtn} onClick={openAddCol}>
           <span className="material-symbols-rounded">add</span>

@@ -20,7 +20,9 @@
 - Обработка ошибок — глобальный middleware на бэкенде, toast-уведомления и ErrorBoundary на фронтенде
 - Rate Limiting — ограничение частоты запросов (100/мин чтение, 30/мин мутации, 20 сообщений/сек WebSocket)
 - Тема — Material Design 3, меняй акцентный цвет и тёмный/светлый режим
-- Экспорт в PDF — сохрани содержимое доски одним кликом
+- Итоги (Action Items) — мастер-колонка на доске для фиксации решений и задач: ответственные, редактирование, real-time синхронизация через WebSocket
+- Jira-интеграция — создавай задачи в Jira прямо из итогов ретро (бэкенд-прокси, ключи не утекают в браузер)
+- Экспорт в PDF — сохрани содержимое доски одним кликом; итоги выводятся отдельным блоком с детализацией (ответственный, дата, номер задачи Jira)
 - Персистентность — данные хранятся в PostgreSQL
 - Адаптивность — колонки масштабируются под размер экрана
 
@@ -143,7 +145,7 @@ retro_board/
 │       ├── config.py             # Pydantic Settings
 │       ├── database.py           # SQLAlchemy engine + сессия
 │       ├── limiter.py            # Конфигурация slowapi rate limiter
-│       ├── models.py             # ORM-модели: Board, Column, Card, CardGroup
+│       ├── models.py             # ORM-модели: Board, Column, Card, CardGroup, ActionItem
 │       ├── schemas.py            # Pydantic-схемы с валидацией цветов
 │       ├── ws_manager.py         # WebSocket connection manager
 │       └── routers/
@@ -151,6 +153,8 @@ retro_board/
 │           ├── columns.py
 │           ├── cards.py
 │           ├── groups.py
+│           ├── action_items.py   # CRUD итогов (action items)
+│           ├── jira.py           # Jira-интеграция (прокси)
 │           └── websocket.py
 │
 └── frontend/
@@ -189,6 +193,9 @@ retro_board/
     │   ├── CardWidget.module.css
     │   ├── Column.tsx            # Колонка с карточками
     │   ├── Column.module.css
+    │   ├── MasterColumn.tsx      # Мастер-колонка итогов (action items + Jira)
+    │   ├── MasterColumn.module.css
+    │   ├── JiraDialog.tsx        # Диалог создания задачи в Jira
     │   ├── CursorMarker.tsx      # Индикатор курсора участника
     │   ├── CursorMarker.module.css
     │   ├── Dialog.tsx            # Переиспользуемый диалог (+ danger-режим)
@@ -293,6 +300,22 @@ alembic upgrade head
 | `DELETE` | `/api/groups/{id}/remove_card/{card_id}` | Убрать карточку из группы |
 | `PATCH` | `/api/groups/{id}/move` | Переместить группу в другую колонку |
 
+### Action Items (Итоги)
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/action-items/?board_id=...` | Список итогов доски |
+| `POST` | `/api/action-items/` | Создать итог (text, assignee) |
+| `PATCH` | `/api/action-items/{id}` | Обновить текст / ответственного |
+| `DELETE` | `/api/action-items/{id}` | Удалить итог |
+
+### Jira
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/jira/status` | Проверить, настроена ли Jira-интеграция |
+| `POST` | `/api/jira/create-issue` | Создать задачу в Jira из итога |
+
 ### WebSocket
 
 ```
@@ -321,6 +344,9 @@ ws://localhost/ws/{board_id}
 | `group_collapse` | Группа свёрнута / развёрнута |
 | `cursor_move` | Обновлена позиция курсора участника |
 | `cursor_leave` | Участник покинул доску |
+| `action_item_created` | Создан итог |
+| `action_item_updated` | Обновлён итог |
+| `action_item_deleted` | Удалён итог |
 | `timer_start` | Таймер запущен |
 | `timer_pause` | Таймер приостановлен |
 | `timer_reset` | Таймер сброшен |
@@ -337,6 +363,9 @@ ws://localhost/ws/{board_id}
 | `POSTGRES_USER` | Пользователь PostgreSQL | `retro` |
 | `POSTGRES_PASSWORD` | Пароль PostgreSQL | `super_secret` |
 | `CORS_ORIGINS` | Разрешённые CORS-источники (через запятую) | `http://localhost:3080` |
+| `JIRA_URL` | URL Jira-инстанса (необязательно) | `https://org.atlassian.net` |
+| `JIRA_EMAIL` | Email для Jira API (необязательно) | `user@example.com` |
+| `JIRA_API_TOKEN` | API-токен Jira (необязательно) | `...` |
 
 ### `backend/.env` (для локальной разработки без Docker)
 
@@ -425,4 +454,5 @@ chmod +x deploy.sh
 - Rate Limiting — slowapi ограничивает частоту HTTP-запросов по IP (100/мин GET, 30/мин мутации)
 - WebSocket Rate Limiting — скользящее окно: максимум 20 сообщений/сек, лишние отбрасываются
 - Лимит голосов — серверная проверка: при превышении лимита возвращается HTTP 403
+- Jira-интеграция — запросы к Jira API проксируются через бэкенд; токен и email не попадают в браузер
 - Глобальный обработчик ошибок — необработанные исключения логируются, клиенту возвращается generic JSON-ответ без стектрейса

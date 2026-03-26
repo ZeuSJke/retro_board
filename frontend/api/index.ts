@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Board, BoardListItem, Column, Card, CardGroup } from '../types'
+import type { Board, BoardListItem, Column, Card, CardGroup, ActionItem } from '../types'
 import { showToast } from '../store/toastStore'
 
 const api = axios.create({ baseURL: '/api' })
@@ -50,3 +50,21 @@ export const addCardToGroup = (groupId: string, cardId: string): Promise<Card> =
 export const removeCardFromGroup = (groupId: string, cardId: string): Promise<Card> =>
   api.delete(`/groups/${groupId}/remove_card/${cardId}`).then((r) => r.data)
 export const moveGroup = (id: string, data: { column_id: string }): Promise<CardGroup> => api.patch(`/groups/${id}/move`, data).then((r) => r.data)
+
+// ── Action Items ────────────────────────────────────────────────────────────
+export const getActionItems = (boardId: string): Promise<ActionItem[]> =>
+  api.get('/action-items/', { params: { board_id: boardId } }).then((r) => r.data)
+export const createActionItem = (data: { board_id: string; text: string; assignee?: string }): Promise<ActionItem> =>
+  api.post('/action-items/', data).then((r) => r.data)
+export const updateActionItem = (id: string, data: { text?: string; assignee?: string | null }): Promise<ActionItem> =>
+  api.patch(`/action-items/${id}`, data).then((r) => r.data)
+export const deleteActionItem = (id: string): Promise<void> =>
+  api.delete(`/action-items/${id}`)
+
+// ── Jira Integration ────────────────────────────────────────────────────────
+export const getJiraStatus = (): Promise<{ configured: boolean }> =>
+  api.get('/jira/status').then((r) => r.data)
+export const createJiraIssue = (data: {
+  action_item_id: string; project_key: string; summary: string; description?: string; issue_type?: string
+}): Promise<{ jira_issue_key: string; jira_url: string }> =>
+  api.post('/jira/create-issue', data).then((r) => r.data)
