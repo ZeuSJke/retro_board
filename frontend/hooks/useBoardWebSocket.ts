@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useWebSocket } from './useWebSocket'
 import { useAppStore } from '../store'
+import { getActionItems } from '../api'
 import type { ActionItem, Column, WsMessage } from '../types'
 
 interface CursorPos {
@@ -35,6 +36,11 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       Object.values(cursorTimeouts.current).forEach(clearTimeout)
     }
   }, [])
+
+  // Load existing action items on mount
+  useEffect(() => {
+    getActionItems(boardId).then(setActionItems).catch(() => {})
+  }, [boardId])
 
   const handleWsMessage = useCallback(
     (msg: WsMessage) => {
