@@ -19,20 +19,19 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
     msg_timestamps: list[float] = []
     username_announced = False
 
-    # Send current facilitator/phase state immediately on connect
-    fac = manager.get_facilitator(board_id)
-    if fac:
-        await websocket.send_text(
-            json.dumps({
-                "event": "facilitator_update",
-                "data": {
-                    "facilitator": fac,
-                    "phase": manager.get_phase(board_id),
-                },
-            })
-        )
-
     try:
+        # Send current facilitator/phase state immediately on connect
+        fac = manager.get_facilitator(board_id)
+        if fac:
+            await websocket.send_text(
+                json.dumps({
+                    "event": "facilitator_update",
+                    "data": {
+                        "facilitator": fac,
+                        "phase": manager.get_phase(board_id),
+                    },
+                })
+            )
         while True:
             data = await websocket.receive_text()
 
