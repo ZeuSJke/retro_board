@@ -25,8 +25,8 @@ jobs:
           host: ${{ secrets.TRUENAS_HOST }}
           username: ${{ secrets.TRUENAS_USER }}
           key: ${{ secrets.TRUENAS_SSH_KEY }}
-          port: ${{ secrets.TRUENAS_SSH_PORT || 22 }}
+          port: ${{ secrets.TRUENAS_SSH_PORT }}
           script: |
-            cd /mnt/main/projects/retro_board
+            cd ${{ secrets.TRUENAS_PROJECT_DIR }}
             git pull origin main
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
