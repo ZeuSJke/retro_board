@@ -1,4 +1,5 @@
 import json
+import time
 from collections import defaultdict
 
 from fastapi import WebSocket
@@ -10,6 +11,7 @@ class ConnectionManager:
         self.usernames: dict[int, str] = {}  # id(ws) → username
         self.facilitators: dict[str, str] = {}  # board_id → username
         self.phases: dict[str, str] = {}  # board_id → phase
+        self.timers: dict[str, dict] = {}  # board_id → timer state
 
     async def connect(self, board_id: str, ws: WebSocket):
         await ws.accept()
@@ -57,6 +59,32 @@ class ConnectionManager:
 
     def get_phase(self, board_id: str) -> str | None:
         return self.phases.get(board_id)
+
+    def set_timer(self, board_id: str, event: str, data: dict):
+        """Store timer state so new clients can catch up."""
+        if event == "timer_start":
+            self.timers[board_id] = {
+                "running": True,
+                "duration": data.get("duration", 0),
+                "remaining": data.get("remaining", 0),
+                "ts": data.get("ts", time.time() * 1000),
+            }
+        elif event == "timer_pause":
+            t = self.timers.get(board_id)
+            if t:
+                t["running"] = False
+                t["remaining"] = data.get("remaining", t["remaining"])
+        elif event == "timer_reset":
+            dur = data.get("duration", 0)
+            self.timers[board_id] = {
+                "running": False,
+                "duration": dur,
+                "remaining": dur,
+                "ts": 0,
+            }
+
+    def get_timer(self, board_id: str) -> dict | None:
+        return self.timers.get(board_id)
 
     async def broadcast(
         self,

@@ -194,7 +194,12 @@ export default function App({ boardId }: AppProps) {
         startCountdown(adjusted)
       } else if (event === 'timer_pause') {
         if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-        setTimer((prev) => ({ ...prev, remaining: data.remaining as number, running: false }))
+        setTimer((prev) => ({
+          ...prev,
+          ...(data.duration != null ? { duration: data.duration as number } : {}),
+          remaining: data.remaining as number,
+          running: false,
+        }))
       } else if (event === 'timer_reset') {
         if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
         setTimer({ duration: data.duration as number, remaining: data.duration as number, running: false })

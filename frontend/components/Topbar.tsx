@@ -152,6 +152,7 @@ export default function Topbar({
               onStart={onTimerStart}
               onPause={onTimerPause}
               onReset={onTimerReset}
+              readOnly={!!facilitator && !isFacilitator}
             />
           )}
 
