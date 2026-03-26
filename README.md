@@ -122,6 +122,7 @@ npm run dev
 retro_board/
 ├── .env.example                  # Шаблон переменных окружения
 ├── .github/workflows/ci.yml     # CI: тесты бэкенда + линт и тесты фронтенда
+├── .github/workflows/deploy.yml # CD: автодеплой на сервер через SSH
 ├── docker-compose.yml
 ├── docker-compose.prod.yml      # Prod-оверрайд: без --reload, лимиты памяти
 │
@@ -140,7 +141,8 @@ retro_board/
 │   │   ├── test_columns.py
 │   │   ├── test_groups.py
 │   │   ├── test_error_handling.py
-│   │   └── test_rate_limiting.py
+│   │   ├── test_rate_limiting.py
+│   │   └── test_websocket.py
 │   └── app/
 │       ├── config.py             # Pydantic Settings
 │       ├── database.py           # SQLAlchemy engine + сессия
@@ -231,13 +233,29 @@ retro_board/
 
 ## CI/CD
 
-GitHub Actions запускается на push/PR в `main` (`.github/workflows/ci.yml`):
+### CI — тесты и линт (`.github/workflows/ci.yml`)
+
+Запускается на push/PR в `main`:
 
 | Job | Окружение | Команда | Что проверяет |
 |---|---|---|---|
-| **backend-tests** | Python 3.12 | `pytest -v` | API-эндпоинты, модели, обработка ошибок, rate limiting, лимит голосов (SQLite in-memory) |
+| **backend-tests** | Python 3.12 | `pytest -v` | API-эндпоинты, модели, WebSocket, обработка ошибок, rate limiting, лимит голосов (SQLite in-memory) |
 | **frontend-lint** | Node 20 | `npm run lint` | ESLint + next/core-web-vitals |
 | **frontend-tests** | Node 20 | `npm test` | Компоненты, store, API-клиент (Vitest + Testing Library + jsdom) |
+
+### CD — автодеплой (`.github/workflows/deploy.yml`)
+
+После успешного CI на `main` автоматически деплоит на сервер через SSH. Также можно запустить вручную через Actions → Deploy → Run workflow.
+
+**Требуемые секреты в GitHub (Settings → Secrets → Actions):**
+
+| Секрет | Описание |
+|---|---|
+| `TRUENAS_HOST` | IP или домен сервера |
+| `TRUENAS_USER` | SSH-пользователь |
+| `TRUENAS_SSH_KEY` | Приватный SSH-ключ (ed25519) |
+| `TRUENAS_SSH_PORT` | Порт SSH (обычно 22) |
+| `TRUENAS_PROJECT_DIR` | Путь к проекту на сервере |
 
 ---
 
@@ -421,25 +439,24 @@ docker compose exec db pg_dump -U retro retroboard > backup_$(date +%Y%m%d).sql
 
 ## Деплой на домашний сервер (TrueNAS + Nginx Proxy Manager)
 
-Prod-оверрайд убирает `--reload` и ограничивает память контейнеров:
+Деплой происходит автоматически через GitHub Actions (см. CI/CD выше). При пуше в `main` после прохождения тестов сервер обновляется по SSH.
+
+Prod-оверрайд (`docker-compose.prod.yml`) убирает `--reload` и ограничивает память контейнеров.
+
+### Ручное управление на сервере
+
+`deploy.sh` — утилита для управления контейнерами на сервере:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-```
-
-`deploy.sh` — вспомогательный скрипт под конкретную конфигурацию с TrueNAS + Nginx Proxy Manager (фронтенд на порту `3080`, NPM проксирует трафик с 80/443). Для других окружений скрипт нужно адаптировать.
-
-```bash
-sed -i 's/\r$//' deploy.sh
-chmod +x deploy.sh
-
-./deploy.sh            # запустить
-./deploy.sh update     # git pull + пересборка
-./deploy.sh logs       # логи
+./deploy.sh            # собрать и запустить
 ./deploy.sh stop       # остановить
+./deploy.sh restart    # перезапустить без пересборки
+./deploy.sh logs       # логи в реальном времени
+./deploy.sh status     # статус контейнеров
+./deploy.sh update     # git pull + пересборка
 ```
 
-Приложение будет доступно на `http://<IP-сервера>:3080`. NPM настраивается на проксирование к этому порту с включённой поддержкой WebSocket.
+Приложение доступно на `http://<IP-сервера>:3080`. NPM проксирует трафик с 80/443 на этот порт с включённой поддержкой WebSocket.
 
 ---
 
