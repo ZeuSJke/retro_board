@@ -13,12 +13,14 @@ interface MasterColumnProps {
   actionItems: ActionItem[]
   onUpdated: (item: ActionItem) => void
   onDeleted: (id: string) => void
+  dropDisabled?: boolean
 }
 
 export default function MasterColumn({
   actionItems,
   onUpdated,
   onDeleted,
+  dropDisabled = false,
 }: MasterColumnProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
@@ -31,6 +33,7 @@ export default function MasterColumn({
   const { setNodeRef, isOver } = useDroppable({
     id: 'master-col',
     data: { type: 'master' },
+    disabled: dropDisabled,
   })
 
   useEffect(() => {
