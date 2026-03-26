@@ -63,12 +63,13 @@ class TestUpdateColumn:
         assert resp.status_code == 422
 
     def test_update_position(self, client, sample_column):
+        # Board has 3 default columns; moving last column to position 0
         resp = client.patch(
             f"/api/columns/{sample_column['id']}",
-            json={"position": 5},
+            json={"position": 0},
         )
         assert resp.status_code == 200
-        assert resp.json()["position"] == 5
+        assert resp.json()["position"] == 0
 
     def test_not_found_returns_404(self, client):
         resp = client.patch("/api/columns/no-id", json={"title": "X"})

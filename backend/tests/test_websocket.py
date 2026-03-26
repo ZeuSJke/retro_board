@@ -250,3 +250,98 @@ class TestWebSocketGroupCollapse:
                 assert msg1["event"] == "group_collapse"
                 assert msg2["event"] == "group_collapse"
                 assert msg2["data"]["collapsed"] is True
+
+
+class TestWebSocketOriginValidation:
+    """Origin header should be validated against CORS_ORIGINS setting."""
+
+    def test_invalid_origin_rejected(self, client):
+        """Connecting with an origin not in cors_origins should close with 1008."""
+        try:
+            with client.websocket_connect(
+                "/ws/board-origin1",
+                headers={"origin": "http://evil.example.com"},
+            ) as ws:
+                # If we get here, the connection was accepted — that's a failure
+                pytest.fail("Expected WebSocket to be closed with 1008")
+        except Exception:
+            # Connection should be rejected/closed
+            pass
+
+    def test_valid_origin_accepted(self, client):
+        """Connecting with a valid origin (from CORS_ORIGINS) should succeed."""
+        with client.websocket_connect(
+            "/ws/board-origin2",
+            headers={"origin": "http://localhost:3000"},
+        ) as ws:
+            ws.send_text("ping")
+            # Connection alive — no error
+
+    def test_no_origin_accepted(self, client):
+        """Connecting without an Origin header (non-browser client) should succeed."""
+        with client.websocket_connect("/ws/board-origin3") as ws:
+            ws.send_text("ping")
+            # Connection alive — no error
+
+
+class TestWebSocketTimerRequiresFacilitator:
+    """Timer events should only be accepted from the facilitator when a session is active."""
+
+    def test_non_facilitator_timer_ignored(self, client):
+        """When facilitator is active, non-facilitator timer_start should be ignored."""
+        with client.websocket_connect("/ws/board-tfac1") as ws_fac:
+            with client.websocket_connect("/ws/board-tfac1") as ws_other:
+                # Register usernames via cursor_move
+                ws_fac.send_text(json.dumps({
+                    "event": "cursor_move",
+                    "data": {"username": "Facilitator", "x": 0, "y": 0},
+                }))
+                recv_event(ws_other, "cursor_move")
+
+                ws_other.send_text(json.dumps({
+                    "event": "cursor_move",
+                    "data": {"username": "Regular", "x": 0, "y": 0},
+                }))
+                recv_event(ws_fac, "cursor_move")
+
+                # Start facilitator session
+                ws_fac.send_text(json.dumps({
+                    "event": "facilitator_start",
+                    "data": {},
+                }))
+                recv_event(ws_other, "facilitator_update")
+
+                # Non-facilitator tries to send timer_start — should be ignored
+                ws_other.send_text(json.dumps({
+                    "event": "timer_start",
+                    "data": {"duration": 300, "remaining": 300, "ts": 0},
+                }))
+
+                # Send a cursor_move from ws_fac as a sentinel to prove no timer_start was broadcast
+                ws_fac.send_text(json.dumps({
+                    "event": "cursor_move",
+                    "data": {"username": "Facilitator", "x": 50, "y": 50},
+                }))
+
+                # ws_other should receive cursor_move (the sentinel), NOT timer_start
+                msg = ws_other.receive_json()
+                assert msg["event"] == "cursor_move", (
+                    f"Expected cursor_move sentinel, got {msg['event']} — "
+                    "timer event was not ignored"
+                )
+
+    def test_no_facilitator_anyone_can_send_timer(self, client):
+        """When no facilitator is active, anyone can send timer events."""
+        with client.websocket_connect("/ws/board-tfac2") as ws1:
+            with client.websocket_connect("/ws/board-tfac2") as ws2:
+                # No facilitator session started — just send timer event
+                ws1.send_text(json.dumps({
+                    "event": "timer_start",
+                    "data": {"duration": 300, "remaining": 300, "ts": 0},
+                }))
+
+                # Both should receive timer_start (broadcast to all)
+                msg1 = ws1.receive_json()
+                msg2 = ws2.receive_json()
+                assert msg1["event"] == "timer_start"
+                assert msg2["event"] == "timer_start"

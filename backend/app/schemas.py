@@ -72,7 +72,7 @@ class ColumnCreate(ColumnBase):
 class ColumnUpdate(BaseModel):
     title: Optional[str] = None
     color: Optional[str] = None
-    position: Optional[int] = None
+    position: Optional[int] = Field(default=None, ge=0)
 
     @field_validator("color")
     @classmethod

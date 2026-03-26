@@ -5,6 +5,7 @@ import { useDraggable } from '@dnd-kit/core'
 import CardWidget from './CardWidget'
 import Dialog from './Dialog'
 import { updateGroup, deleteGroup } from '../api'
+import { showToast } from '../store/toastStore'
 import type { Card, CardGroup } from '../types'
 import styles from './CardGroupWidget.module.css'
 
@@ -51,15 +52,24 @@ export default function CardGroupWidget({
   const saveTitle = async () => {
     setEditingTitle(false)
     if (titleVal.trim() && titleVal !== group.title) {
-      const updated = await updateGroup(group.id, { title: titleVal.trim() })
-      onGroupUpdated(updated)
+      try {
+        const updated = await updateGroup(group.id, { title: titleVal.trim() })
+        onGroupUpdated(updated)
+      } catch {
+        setTitleVal(group.title)
+        showToast('Не удалось обновить название группы', 'error')
+      }
     }
   }
 
   const confirmDelete = async () => {
     setDeleteOpen(false)
-    await deleteGroup(group.id)
-    onGroupDeleted(columnId, group.id)
+    try {
+      await deleteGroup(group.id)
+      onGroupDeleted(columnId, group.id)
+    } catch {
+      showToast('Не удалось удалить группу', 'error')
+    }
   }
 
   return (

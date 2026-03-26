@@ -3,6 +3,7 @@ import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.config import settings
 from app.ws_manager import manager
 
 router = APIRouter()
@@ -13,8 +14,19 @@ WS_RATE_WINDOW = 1.0  # seconds
 VALID_PHASES = ("brainstorm", "reveal", "discuss", "vote")
 
 
+def _origin_allowed(websocket: WebSocket) -> bool:
+    origin = (websocket.headers.get("origin") or "").rstrip("/")
+    if not origin:
+        return True  # non-browser clients (curl, etc.)
+    allowed = [o.rstrip("/") for o in settings.cors_origins_list]
+    return origin in allowed
+
+
 @router.websocket("/ws/{board_id}")
 async def websocket_endpoint(websocket: WebSocket, board_id: str):
+    if not _origin_allowed(websocket):
+        await websocket.close(code=1008, reason="Origin not allowed")
+        return
     await manager.connect(board_id, websocket)
     msg_timestamps: list[float] = []
     username_announced = False
@@ -115,8 +127,12 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                     await manager.broadcast(board_id, "group_collapse", payload)
 
                 elif event in ("timer_start", "timer_pause", "timer_reset"):
+                    ws_user = manager.get_username(websocket)
+                    fac_user = manager.get_facilitator(board_id)
+                    # Only facilitator can control timer when session is active
+                    if fac_user and ws_user != fac_user:
+                        continue
                     manager.set_timer(board_id, event, payload)
-                    # Broadcast to ALL (including sender) for sync confirmation
                     await manager.broadcast(board_id, event, payload)
 
                 elif event == "facilitator_start":
