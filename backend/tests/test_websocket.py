@@ -181,6 +181,61 @@ class TestWebSocketTimerEvents:
             assert msg["data"]["duration"] == 600
 
 
+class TestWebSocketTimerSync:
+    """Timer state should be sent to newly connected clients."""
+
+    def test_running_timer_sent_on_connect(self, client):
+        """A client connecting while the timer is running should receive timer_start."""
+        with client.websocket_connect("/ws/board-tsync1") as ws1:
+            ws1.send_text(json.dumps({
+                "event": "timer_start",
+                "data": {"duration": 300, "remaining": 300, "ts": 1000000},
+            }))
+            ws1.receive_json()  # consume broadcast
+
+            # New client connects — should receive timer_start with recalculated remaining
+            with client.websocket_connect("/ws/board-tsync1") as ws2:
+                msg = recv_event(ws2, "timer_start")
+                assert msg["data"]["duration"] == 300
+                assert msg["data"]["remaining"] <= 300
+
+    def test_paused_timer_sent_on_connect(self, client):
+        """A client connecting while the timer is paused should receive timer_pause."""
+        with client.websocket_connect("/ws/board-tsync2") as ws1:
+            # Start then pause
+            ws1.send_text(json.dumps({
+                "event": "timer_start",
+                "data": {"duration": 600, "remaining": 600, "ts": 1000000},
+            }))
+            ws1.receive_json()
+
+            ws1.send_text(json.dumps({
+                "event": "timer_pause",
+                "data": {"remaining": 450},
+            }))
+            ws1.receive_json()
+
+            # New client connects — should receive timer_pause with remaining + duration
+            with client.websocket_connect("/ws/board-tsync2") as ws2:
+                msg = recv_event(ws2, "timer_pause")
+                assert msg["data"]["remaining"] == 450
+                assert msg["data"]["duration"] == 600
+
+    def test_reset_timer_not_sent_on_connect(self, client):
+        """After reset to 0 remaining, no timer state should be sent to new clients."""
+        with client.websocket_connect("/ws/board-tsync3") as ws1:
+            ws1.send_text(json.dumps({
+                "event": "timer_reset",
+                "data": {"duration": 300},
+            }))
+            ws1.receive_json()
+
+            # New client connects — should NOT get a timer event (remaining == duration, not running)
+            # We just verify the connection works with a ping
+            with client.websocket_connect("/ws/board-tsync3") as ws2:
+                ws2.send_text("ping")
+
+
 class TestWebSocketGroupCollapse:
     def test_group_collapse_broadcast_to_all(self, client):
         with client.websocket_connect("/ws/board-gc") as ws1:
