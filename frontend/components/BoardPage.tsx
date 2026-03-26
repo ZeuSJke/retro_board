@@ -121,6 +121,11 @@ export default function BoardPage({
     async (event: DragEndEvent) => {
       const overId = event.over ? String(event.over.id) : ''
       if (overId === 'master-col' && activeCard) {
+        // Only facilitator can drop cards onto master column
+        if (facilitator && facilitator !== username) {
+          onDragEnd({ ...event, over: null } as DragEndEvent)
+          return
+        }
         // Drop card onto master column → create action item
         try {
           const item = await createActionItem({
@@ -138,7 +143,7 @@ export default function BoardPage({
       }
       onDragEnd(event)
     },
-    [activeCard, board.id, setActionItems, onDragEnd],
+    [activeCard, board.id, setActionItems, onDragEnd, facilitator, username],
   )
 
   // Expose export function via ref
