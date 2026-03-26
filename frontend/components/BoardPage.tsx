@@ -106,6 +106,11 @@ export default function BoardPage({
     onPresenceChanged?.(activeUsers)
   }, [activeUsers, onPresenceChanged])
 
+  // Sync facilitator/phase to App — covers initial state and any edge cases
+  useEffect(() => {
+    onFacilitatorChanged?.(facilitator, phase)
+  }, [facilitator, phase, onFacilitatorChanged])
+
   const votingAllowed = !facilitator || phase === 'vote'
   const canVote = votingAllowed && votesUsed < (board.max_votes ?? 5)
 
