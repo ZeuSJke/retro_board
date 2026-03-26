@@ -1,9 +1,11 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
+from app.utils import get_or_404
 from app.ws_manager import manager
 from app.limiter import limiter
 
@@ -13,10 +15,8 @@ router = APIRouter()
 @router.post("/", response_model=schemas.ColumnOut, status_code=201)
 @limiter.limit("30/minute")
 async def create_column(request: Request, body: schemas.ColumnCreate, db: Session = Depends(get_db)):
-    board = db.get(models.Board, body.board_id)
-    if not board:
-        raise HTTPException(404, "Board not found")
-    pos = len(board.columns)
+    board = get_or_404(db, models.Board, body.board_id, "Board not found")
+    pos = db.query(func.count(models.Column.id)).filter(models.Column.board_id == body.board_id).scalar() or 0
     col = models.Column(
         id=str(uuid.uuid4()),
         board_id=body.board_id,
@@ -35,9 +35,7 @@ async def create_column(request: Request, body: schemas.ColumnCreate, db: Sessio
 @router.patch("/{column_id}", response_model=schemas.ColumnOut)
 @limiter.limit("30/minute")
 async def update_column(request: Request, column_id: str, body: schemas.ColumnUpdate, db: Session = Depends(get_db)):
-    col = db.get(models.Column, column_id)
-    if not col:
-        raise HTTPException(404, "Column not found")
+    col = get_or_404(db, models.Column, column_id, "Column not found")
     if body.title is not None:
         col.title = body.title
     if body.color is not None:
@@ -54,9 +52,7 @@ async def update_column(request: Request, column_id: str, body: schemas.ColumnUp
 @router.delete("/{column_id}", status_code=204)
 @limiter.limit("30/minute")
 async def delete_column(request: Request, column_id: str, db: Session = Depends(get_db)):
-    col = db.get(models.Column, column_id)
-    if not col:
-        raise HTTPException(404, "Column not found")
+    col = get_or_404(db, models.Column, column_id, "Column not found")
     board_id = col.board_id
     db.delete(col)
     db.commit()

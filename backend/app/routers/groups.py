@@ -1,10 +1,12 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
+from app.utils import get_or_404
 from app.ws_manager import manager
 from app.limiter import limiter
 
@@ -14,10 +16,8 @@ router = APIRouter()
 @router.post("/", response_model=schemas.CardGroupOut, status_code=201)
 @limiter.limit("30/minute")
 async def create_group(request: Request, body: schemas.CardGroupCreate, db: Session = Depends(get_db)):
-    col = db.get(models.Column, body.column_id)
-    if not col:
-        raise HTTPException(404, "Column not found")
-    pos = len(col.groups)
+    col = get_or_404(db, models.Column, body.column_id, "Column not found")
+    pos = db.query(func.count(models.CardGroup.id)).filter(models.CardGroup.column_id == body.column_id).scalar() or 0
     group = models.CardGroup(
         id=str(uuid.uuid4()),
         column_id=body.column_id,
@@ -37,9 +37,7 @@ async def create_group(request: Request, body: schemas.CardGroupCreate, db: Sess
 async def update_group(
     request: Request, group_id: str, body: schemas.CardGroupUpdate, db: Session = Depends(get_db)
 ):
-    group = db.get(models.CardGroup, group_id)
-    if not group:
-        raise HTTPException(404, "Group not found")
+    group = get_or_404(db, models.CardGroup, group_id, "Group not found")
     if body.title is not None:
         group.title = body.title
     db.commit()
@@ -53,9 +51,7 @@ async def update_group(
 @router.delete("/{group_id}", status_code=204)
 @limiter.limit("30/minute")
 async def delete_group(request: Request, group_id: str, db: Session = Depends(get_db)):
-    group = db.get(models.CardGroup, group_id)
-    if not group:
-        raise HTTPException(404, "Group not found")
+    group = get_or_404(db, models.CardGroup, group_id, "Group not found")
     col = db.get(models.Column, group.column_id)
     board_id = col.board_id
     col_id = group.column_id  # capture before deletion
@@ -79,12 +75,8 @@ async def delete_group(request: Request, group_id: str, db: Session = Depends(ge
 @limiter.limit("30/minute")
 async def set_card_group(request: Request, group_id: str, card_id: str, db: Session = Depends(get_db)):
     """Add a card to a group."""
-    group = db.get(models.CardGroup, group_id)
-    if not group:
-        raise HTTPException(404, "Group not found")
-    card = db.get(models.Card, card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
+    group = get_or_404(db, models.CardGroup, group_id, "Group not found")
+    card = get_or_404(db, models.Card, card_id, "Card not found")
     if card.column_id != group.column_id:
         raise HTTPException(400, "Card and group must be in the same column")
     card.group_id = group_id
@@ -100,13 +92,9 @@ async def set_card_group(request: Request, group_id: str, card_id: str, db: Sess
 @limiter.limit("30/minute")
 async def move_group(request: Request, group_id: str, body: schemas.GroupMove, db: Session = Depends(get_db)):
     """Move a group (and all its cards) to a different column."""
-    group = db.get(models.CardGroup, group_id)
-    if not group:
-        raise HTTPException(404, "Group not found")
+    group = get_or_404(db, models.CardGroup, group_id, "Group not found")
     old_col = db.get(models.Column, group.column_id)
-    new_col = db.get(models.Column, body.column_id)
-    if not new_col:
-        raise HTTPException(404, "Column not found")
+    new_col = get_or_404(db, models.Column, body.column_id, "Column not found")
     if old_col.board_id != new_col.board_id:
         raise HTTPException(400, "Columns must be on the same board")
 
@@ -139,9 +127,7 @@ async def remove_card_from_group(
     request: Request, group_id: str, card_id: str, db: Session = Depends(get_db)
 ):
     """Remove a card from its group. Auto-deletes the group if it becomes empty."""
-    card = db.get(models.Card, card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
+    card = get_or_404(db, models.Card, card_id, "Card not found")
     card.group_id = None
     db.commit()
     db.refresh(card)

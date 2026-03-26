@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useAppStore } from '../store'
@@ -24,7 +24,7 @@ interface CardWidgetProps {
   onGroupDeleted?: (columnId: string, groupId: string) => void
 }
 
-export default function CardWidget({
+export default memo(function CardWidget({
   card,
   canVote = true,
   hidden = false,
@@ -279,4 +279,4 @@ export default function CardWidget({
       </Dialog>
     </>
   )
-}
+})

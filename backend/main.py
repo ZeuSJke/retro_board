@@ -77,5 +77,6 @@ app.include_router(websocket.router, tags=["websocket"])
 
 
 @app.get("/health", tags=["health"])
+@app.get("/api/health", tags=["health"], include_in_schema=False)
 def health():
     return {"status": "ok"}

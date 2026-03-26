@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useWebSocket } from './useWebSocket'
 import { useAppStore } from '../store'
 import { getActionItems } from '../api'
+import { asCard, asColumn, asGroup, asActionItem } from '../utils/wsData'
 import type { ActionItem, Column, WsMessage } from '../types'
 
 interface CursorPos {
@@ -39,7 +40,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
 
   // Load existing action items on mount
   useEffect(() => {
-    getActionItems(boardId).then(setActionItems).catch(() => {})
+    getActionItems(boardId).then(setActionItems).catch((err) => console.error('Failed to load action items:', err))
   }, [boardId])
 
   const handleWsMessage = useCallback(
@@ -106,7 +107,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       }
 
       if (event === 'action_item_created') {
-        const item = data as unknown as ActionItem
+        const item = asActionItem(data)
         setActionItems((prev) =>
           prev.find((i) => i.id === item.id) ? prev : [...prev, item],
         )
@@ -114,7 +115,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       }
 
       if (event === 'action_item_updated') {
-        const item = data as unknown as ActionItem
+        const item = asActionItem(data)
         setActionItems((prev) =>
           prev.map((i) => (i.id === item.id ? item : i)),
         )
@@ -129,32 +130,36 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
 
       setColumns((prev) => {
         switch (event) {
-          case 'column_created':
-            if (prev.find((c) => c.id === (data as { id: string }).id)) return prev
-            return [...prev, { ...(data as unknown as Column), cards: [], groups: [] }]
-          case 'column_updated':
-            return prev.map((c) => (c.id === (data as { id: string }).id ? { ...c, ...(data as unknown as Partial<Column>) } : c))
+          case 'column_created': {
+            const col = asColumn(data)
+            if (prev.find((c) => c.id === col.id)) return prev
+            return [...prev, { ...col, cards: [], groups: [] }]
+          }
+          case 'column_updated': {
+            const col = asColumn(data)
+            return prev.map((c) => (c.id === col.id ? { ...c, ...col } : c))
+          }
           case 'column_deleted':
             return prev.filter((c) => c.id !== (data as { id: string }).id)
           case 'card_created': {
-            const d = data as { id: string; column_id: string; [key: string]: unknown }
+            const card = asCard(data)
             return prev.map((c) =>
-              c.id === d.column_id
+              c.id === card.column_id
                 ? {
                     ...c,
                     cards: [
-                      ...c.cards.filter((x) => x.id !== d.id),
-                      d as unknown as Column['cards'][number],
+                      ...c.cards.filter((x) => x.id !== card.id),
+                      card,
                     ].sort((a, b) => a.position - b.position),
                   }
                 : c,
             )
           }
           case 'card_updated': {
-            const d = data as { id: string; [key: string]: unknown }
+            const card = asCard(data)
             return prev.map((c) => ({
               ...c,
-              cards: c.cards.map((x) => (x.id === d.id ? (d as unknown as Column['cards'][number]) : x)),
+              cards: c.cards.map((x) => (x.id === card.id ? card : x)),
             }))
           }
           case 'card_moved': {
@@ -179,32 +184,30 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
               return c
             })
           }
-          case 'card_deleted': {
-            const d = data as { id: string }
+          case 'card_deleted':
             return prev.map((c) => ({
               ...c,
-              cards: c.cards.filter((x) => x.id !== d.id),
+              cards: c.cards.filter((x) => x.id !== (data as { id: string }).id),
             }))
-          }
           case 'group_created': {
-            const d = data as { id: string; column_id: string; [key: string]: unknown }
+            const g = asGroup(data)
             return prev.map((c) =>
-              c.id === d.column_id
+              c.id === g.column_id
                 ? {
                     ...c,
                     groups: [
-                      ...(c.groups || []).filter((g) => g.id !== d.id),
-                      d as unknown as Column['groups'][number],
+                      ...(c.groups || []).filter((x) => x.id !== g.id),
+                      g,
                     ],
                   }
                 : c,
             )
           }
           case 'group_updated': {
-            const d = data as { id: string; [key: string]: unknown }
+            const g = asGroup(data)
             return prev.map((c) => ({
               ...c,
-              groups: (c.groups || []).map((g) => (g.id === d.id ? (d as unknown as Column['groups'][number]) : g)),
+              groups: (c.groups || []).map((x) => (x.id === g.id ? g : x)),
             }))
           }
           case 'group_deleted': {
@@ -213,7 +216,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
               c.id === column_id
                 ? {
                     ...c,
-                    groups: (c.groups || []).filter((g) => g.id !== id),
+                    groups: (c.groups || []).filter((x) => x.id !== id),
                     cards: c.cards.map((card) =>
                       (card_ids || []).includes(card.id)
                         ? { ...card, group_id: null }
@@ -234,7 +237,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
               if (c.id === old_column_id) {
                 return {
                   ...c,
-                  groups: (c.groups || []).filter((g) => g.id !== group.id),
+                  groups: (c.groups || []).filter((x) => x.id !== group.id),
                   cards: c.cards.filter((card) => !movedCardIds.includes(card.id)),
                 }
               }
@@ -242,7 +245,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
                 return {
                   ...c,
                   groups: [
-                    ...(c.groups || []).filter((g) => g.id !== group.id),
+                    ...(c.groups || []).filter((x) => x.id !== group.id),
                     group,
                   ],
                   cards: [

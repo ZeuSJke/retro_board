@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import { userColor } from '../utils/theme'
 
 interface CursorMarkerProps {
@@ -8,7 +9,7 @@ interface CursorMarkerProps {
   y: number
 }
 
-export default function CursorMarker({ username, x, y }: CursorMarkerProps) {
+export default memo(function CursorMarker({ username, x, y }: CursorMarkerProps) {
   const color = userColor(username)
   return (
     <div
@@ -61,4 +62,4 @@ export default function CursorMarker({ username, x, y }: CursorMarkerProps) {
       </div>
     </div>
   )
-}
+})
