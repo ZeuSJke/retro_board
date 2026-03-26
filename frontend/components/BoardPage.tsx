@@ -334,18 +334,20 @@ export default function BoardPage({
           />
         ))}
 
-        <MasterColumn
-          actionItems={actionItems}
-          dropDisabled={!!facilitator && facilitator !== username}
-          onUpdated={(item) =>
-            setActionItems((prev) =>
-              prev.map((i) => (i.id === item.id ? item : i)),
-            )
-          }
-          onDeleted={(id) =>
-            setActionItems((prev) => prev.filter((i) => i.id !== id))
-          }
-        />
+        <div className={styles.masterWrapper}>
+          <MasterColumn
+            actionItems={actionItems}
+            dropDisabled={!!facilitator && facilitator !== username}
+            onUpdated={(item) =>
+              setActionItems((prev) =>
+                prev.map((i) => (i.id === item.id ? item : i)),
+              )
+            }
+            onDeleted={(id) =>
+              setActionItems((prev) => prev.filter((i) => i.id !== id))
+            }
+          />
+        </div>
 
         <button className={styles.addColBtn} onClick={openAddCol}>
           <span className="material-symbols-rounded">add</span>

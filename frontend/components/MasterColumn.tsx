@@ -65,125 +65,123 @@ export default function MasterColumn({
 
   return (
     <>
+      <div className={s.header}>
+        <div className={s.dot} />
+        <span className={s.title}>Итоги</span>
+        <span className={s.count}>{actionItems.length}</span>
+      </div>
+
       <div
-        className={s.column}
+        ref={setNodeRef}
+        className={s.cards}
         style={{
           background: isOver
-            ? 'color-mix(in srgb, var(--md-primary) 12%, var(--md-surface-variant))'
+            ? 'color-mix(in srgb, var(--md-primary) 10%, transparent)'
             : undefined,
+          borderRadius: isOver ? 12 : undefined,
         }}
       >
-        <div className={s.header}>
-          <div className={s.dot} />
-          <span className={s.title}>Итоги</span>
-          <span className={s.count}>{actionItems.length}</span>
-        </div>
-
-        <div ref={setNodeRef} className={s.cards}>
-          {actionItems.map((item) => (
-            <div
-              key={item.id}
-              className={s.card}
-            >
-              <div className={s.cardDrag}>
-                <div className={s.author}>
-                  {editAssigneeId === item.id ? (
-                    <input
-                      className={s.assigneeInput}
-                      value={editAssignee}
-                      onChange={(e) => setEditAssignee(e.target.value)}
-                      onBlur={() => saveAssignee(item.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') saveAssignee(item.id)
-                        if (e.key === 'Escape') setEditAssigneeId(null)
-                      }}
-                      placeholder="Ответственный"
-                      autoFocus
-                    />
-                  ) : (
-                    <div
-                      className={s.authorRow}
-                      onClick={() => {
-                        setEditAssigneeId(item.id)
-                        setEditAssignee(item.assignee || '')
-                      }}
-                      title="Нажмите чтобы изменить ответственного"
-                    >
-                      <div
-                        className={s.avatar}
-                        style={{ background: userColor(item.assignee || '?') }}
-                      >
-                        {initials(item.assignee || '?')}
-                      </div>
-                      {item.assignee || 'Не назначен'}
-                    </div>
-                  )}
-                </div>
-
-                {editingId === item.id ? (
-                  <textarea
-                    className={s.editTextarea}
-                    value={editText}
-                    onChange={(e) => setEditText(e.target.value)}
-                    onBlur={() => saveEdit(item.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && e.ctrlKey) saveEdit(item.id)
-                      if (e.key === 'Escape') setEditingId(null)
-                    }}
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
+        {actionItems.map((item) => (
+          <div key={item.id} className={s.bubble}>
+            <div className={s.bubbleTop}>
+              {editAssigneeId === item.id ? (
+                <input
+                  className={s.assigneeInput}
+                  value={editAssignee}
+                  onChange={(e) => setEditAssignee(e.target.value)}
+                  onBlur={() => saveAssignee(item.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveAssignee(item.id)
+                    if (e.key === 'Escape') setEditAssigneeId(null)
+                  }}
+                  placeholder="Ответственный"
+                  autoFocus
+                />
+              ) : (
+                <>
                   <div
-                    className={s.text}
-                    onDoubleClick={() => {
-                      setEditingId(item.id)
-                      setEditText(item.text)
-                    }}
-                    title="Двойной клик чтобы редактировать"
+                    className={s.avatar}
+                    style={{ background: userColor(item.assignee || '?') }}
                   >
-                    {item.text}
+                    {initials(item.assignee || '?')}
                   </div>
-                )}
-              </div>
-
-              <div className={s.actions}>
-                {jiraConfigured && item.jira_issue_key && (
-                  <span className={s.jiraBadge} title={item.jira_issue_key}>
-                    {item.jira_issue_key}
-                  </span>
-                )}
-
-                {jiraConfigured && !item.jira_issue_key && (
-                  <button
-                    className={s.iconBtn}
-                    onClick={() => setJiraTarget(item)}
-                    title="Создать задачу в Jira"
+                  <span
+                    className={s.assigneeName}
+                    onClick={() => {
+                      setEditAssigneeId(item.id)
+                      setEditAssignee(item.assignee || '')
+                    }}
+                    title="Нажмите чтобы изменить ответственного"
                   >
-                    <span className="material-symbols-rounded" style={{ fontSize: 15 }}>
+                    {item.assignee || 'Не назначен'}
+                  </span>
+                </>
+              )}
+              <button
+                className={s.deleteBtn}
+                onClick={() => setDeleteTarget(item)}
+                title="Удалить"
+              >
+                <span className="material-symbols-rounded" style={{ fontSize: 14 }}>
+                  close
+                </span>
+              </button>
+            </div>
+
+            {editingId === item.id ? (
+              <textarea
+                className={s.editTextarea}
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onBlur={() => saveEdit(item.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && e.ctrlKey) saveEdit(item.id)
+                  if (e.key === 'Escape') setEditingId(null)
+                }}
+                autoFocus
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <div
+                className={s.text}
+                onDoubleClick={() => {
+                  setEditingId(item.id)
+                  setEditText(item.text)
+                }}
+                title="Двойной клик чтобы редактировать"
+              >
+                {item.text}
+              </div>
+            )}
+
+            {jiraConfigured && (
+              <div className={s.jiraRow}>
+                {item.jira_issue_key ? (
+                  <span className={s.jiraBadge}>
+                    <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
                       link
                     </span>
+                    {item.jira_issue_key}
+                  </span>
+                ) : (
+                  <button
+                    className={s.jiraCreateBtn}
+                    onClick={() => setJiraTarget(item)}
+                  >
+                    <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
+                      add_link
+                    </span>
+                    Jira
                   </button>
                 )}
-
-                <button
-                  className={s.iconBtn}
-                  onClick={() => setDeleteTarget(item)}
-                  title="Удалить"
-                >
-                  <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-                    delete
-                  </span>
-                </button>
               </div>
-            </div>
-          ))}
+            )}
+          </div>
+        ))}
 
-          {actionItems.length === 0 && (
-            <div className={s.emptyDrop}>Перетащи карточку сюда</div>
-          )}
-        </div>
-
+        {actionItems.length === 0 && (
+          <div className={s.emptyDrop}>Перетащи карточку сюда</div>
+        )}
       </div>
 
       <Dialog

@@ -32,6 +32,33 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                     },
                 })
             )
+        # Send current timer state to new client
+        timer = manager.get_timer(board_id)
+        if timer:
+            if timer["running"]:
+                # Recalculate remaining based on elapsed time since start
+                elapsed_ms = time.time() * 1000 - timer["ts"]
+                remaining = max(0, timer["remaining"] - elapsed_ms / 1000)
+                await websocket.send_text(
+                    json.dumps({
+                        "event": "timer_start",
+                        "data": {
+                            "duration": timer["duration"],
+                            "remaining": remaining,
+                            "ts": time.time() * 1000,
+                        },
+                    })
+                )
+            elif timer["remaining"] > 0:
+                await websocket.send_text(
+                    json.dumps({
+                        "event": "timer_pause",
+                        "data": {
+                            "remaining": timer["remaining"],
+                            "duration": timer["duration"],
+                        },
+                    })
+                )
         while True:
             data = await websocket.receive_text()
 
@@ -88,6 +115,7 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                     await manager.broadcast(board_id, "group_collapse", payload)
 
                 elif event in ("timer_start", "timer_pause", "timer_reset"):
+                    manager.set_timer(board_id, event, payload)
                     # Broadcast to ALL (including sender) for sync confirmation
                     await manager.broadcast(board_id, event, payload)
 

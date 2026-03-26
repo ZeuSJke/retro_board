@@ -22,9 +22,10 @@ interface TimerWidgetProps {
   onStart: (duration: number, remaining: number) => void
   onPause: () => void
   onReset: (duration: number) => void
+  readOnly?: boolean
 }
 
-export default function TimerWidget({ timerState, onStart, onPause, onReset }: TimerWidgetProps) {
+export default function TimerWidget({ timerState, onStart, onPause, onReset, readOnly = false }: TimerWidgetProps) {
   const { duration, remaining, running } = timerState
   const [expanded, setExpanded] = useState(false)
   const [selectedDuration, setSelectedDuration] = useState(duration)
@@ -165,7 +166,7 @@ export default function TimerWidget({ timerState, onStart, onPause, onReset }: T
             </div>
           </div>
 
-          {!running && (
+          {!readOnly && !running && (
             <div className={styles.presets}>
               {PRESETS.map((p) => (
                 <button
@@ -193,36 +194,38 @@ export default function TimerWidget({ timerState, onStart, onPause, onReset }: T
             </div>
           )}
 
-          <div className={styles.controls}>
-            <button
-              className={styles.primaryBtn}
-              style={{
-                background: running ? 'var(--md-secondary-container)' : 'var(--md-primary)',
-                color: running
-                  ? 'var(--md-on-secondary-container)'
-                  : 'var(--md-on-primary)',
-              }}
-              onClick={running ? onPause : handleStart}
-            >
-              <span className="material-symbols-rounded" style={{ fontSize: 18 }}>
-                {running ? 'pause' : 'play_arrow'}
-              </span>
-              {running ? 'Пауза' : 'Старт'}
-            </button>
-            <button className={styles.secondaryBtn} onClick={handleReset}>
-              <span className="material-symbols-rounded" style={{ fontSize: 18 }}>
-                restart_alt
-              </span>
-              Сброс
-            </button>
-          </div>
+          {!readOnly && (
+            <div className={styles.controls}>
+              <button
+                className={styles.primaryBtn}
+                style={{
+                  background: running ? 'var(--md-secondary-container)' : 'var(--md-primary)',
+                  color: running
+                    ? 'var(--md-on-secondary-container)'
+                    : 'var(--md-on-primary)',
+                }}
+                onClick={running ? onPause : handleStart}
+              >
+                <span className="material-symbols-rounded" style={{ fontSize: 18 }}>
+                  {running ? 'pause' : 'play_arrow'}
+                </span>
+                {running ? 'Пауза' : 'Старт'}
+              </button>
+              <button className={styles.secondaryBtn} onClick={handleReset}>
+                <span className="material-symbols-rounded" style={{ fontSize: 18 }}>
+                  restart_alt
+                </span>
+                Сброс
+              </button>
+            </div>
+          )}
 
           {running && (
             <div className={styles.syncNote}>
               <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
                 sync
               </span>
-              Синхронизован для всех
+              {readOnly ? 'Управляет ведущий' : 'Синхронизован для всех'}
             </div>
           )}
         </div>
