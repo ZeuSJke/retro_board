@@ -35,7 +35,8 @@ const mockItems = [
   {
     id: 'i1',
     board_id: 'b1',
-    text: 'Fix CI pipeline',
+    title: 'Fix CI',
+    text: 'Fix CI pipeline description',
     assignee: 'Alice',
     jira_issue_key: null,
     status: 'open',
@@ -46,7 +47,8 @@ const mockItems = [
   {
     id: 'i2',
     board_id: 'b1',
-    text: 'Update docs',
+    title: 'Update docs',
+    text: 'Update documentation for API',
     assignee: 'Bob',
     jira_issue_key: null,
     status: 'done',
@@ -57,7 +59,8 @@ const mockItems = [
   {
     id: 'i3',
     board_id: 'b2',
-    text: 'Add tests',
+    title: 'Add tests',
+    text: 'Write unit tests for dashboard',
     assignee: null,
     jira_issue_key: null,
     status: 'in_progress',
@@ -70,7 +73,10 @@ const mockItems = [
 vi.mock('../../api', () => ({
   getBoards: vi.fn(() => Promise.resolve(mockBoards)),
   getAllActionItems: vi.fn(() => Promise.resolve(mockItems)),
+  updateActionItem: vi.fn((_id: string, data: Record<string, unknown>) => Promise.resolve({ ...mockItems[0], ...data })),
+  deleteActionItem: vi.fn(() => Promise.resolve()),
   carryForward: vi.fn(() => Promise.resolve([])),
+  getJiraStatus: vi.fn(() => Promise.resolve({ configured: false })),
 }))
 
 // Mock CSS modules
@@ -113,8 +119,9 @@ describe('Dashboard', () => {
     render(<Dashboard />)
 
     await waitFor(() => {
-      expect(screen.getByText('Fix CI pipeline')).toBeDefined()
+      expect(screen.getByText('Fix CI')).toBeDefined()
     })
+    expect(screen.getByText('Fix CI pipeline description')).toBeDefined()
     expect(screen.getByText('Update docs')).toBeDefined()
     expect(screen.getByText('Add tests')).toBeDefined()
   })
@@ -147,14 +154,14 @@ describe('Dashboard', () => {
     render(<Dashboard />)
 
     await waitFor(() => {
-      expect(screen.getByText('Fix CI pipeline')).toBeDefined()
+      expect(screen.getByText('Fix CI')).toBeDefined()
     })
 
     // Select "Выполнено" (done)
     const statusSelect = screen.getAllByRole('combobox')[0]
     fireEvent.change(statusSelect, { target: { value: 'done' } })
 
-    expect(screen.queryByText('Fix CI pipeline')).toBeNull()
+    expect(screen.queryByText('Fix CI')).toBeNull()
     expect(screen.getByText('Update docs')).toBeDefined()
     expect(screen.queryByText('Add tests')).toBeNull()
   })
