@@ -354,6 +354,33 @@
   white-space: nowrap;
 }
 
+/* Done section */
+.doneSection {
+  margin-top: 16px;
+}
+
+.doneToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 10px;
+  background: var(--md-surface);
+  color: var(--md-on-surface-variant);
+  font-family: 'Roboto', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-bottom: 10px;
+}
+
+.doneToggle:hover {
+  background: var(--md-surface-variant);
+}
+
 /* Jira */
 .jiraBadge {
   display: inline-flex;

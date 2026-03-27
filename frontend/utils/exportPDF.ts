@@ -177,7 +177,7 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Roboto', sans-serif; background: #F8F5FF; color: #1C1B1F; font-size: 13px; line-height: 1.5; }
-    .cover { background: linear-gradient(135deg, #6750A4 0%, #0061A4 100%); color: white; padding: 40px 48px 36px; page-break-after: avoid; }
+    .cover { background: linear-gradient(135deg, #6750A4 0%, #0061A4 100%); color: white; padding: 40px 48px 36px; }
     .cover-eyebrow { font-size: 11px; font-weight: 500; letter-spacing: 2.5px; text-transform: uppercase; opacity: 0.75; margin-bottom: 10px; }
     .cover-name { font-size: 30px; font-weight: 700; margin-bottom: 16px; line-height: 1.25; }
     .cover-stats { display: flex; gap: 24px; flex-wrap: wrap; }
@@ -186,7 +186,7 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
     .cover-stat-label { font-size: 11px; opacity: 0.7; letter-spacing: 0.5px; }
     .cover-date { margin-top: 20px; font-size: 12px; opacity: 0.65; border-top: 1px solid rgba(255,255,255,0.25); padding-top: 14px; }
     .columns-area { padding: 28px 48px 48px; display: flex; flex-direction: column; gap: 28px; }
-    .column-section { break-inside: avoid-page; }
+    .column-section { }
     .column-header { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 3px solid; margin-bottom: 14px; }
     .column-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
     .column-title { font-size: 16px; font-weight: 700; flex: 1; }
@@ -204,7 +204,7 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
     .group-count { background: #EADDff; color: #6750A4; padding: 1px 6px; border-radius: 10px; font-size: 10px; }
     .group-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .footer { text-align: center; padding: 16px 48px 24px; font-size: 11px; color: #79747E; border-top: 1px solid #E7E0EC; }
-    .action-items-section { margin: 0 48px 32px; padding-top: 28px; border-top: 3px solid #6750A4; page-break-before: always; }
+    .action-items-section { margin: 0 48px 32px; padding-top: 28px; border-top: 3px solid #6750A4; break-before: page; }
     .action-items-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
     .action-items-icon { font-size: 20px; }
     .action-items-title { font-size: 20px; font-weight: 700; color: #1C1B1F; flex: 1; }
@@ -225,6 +225,7 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
     .jira-label { color: #388E3C; }
     @media print {
       body { background: white; }
+      .cover { page-break-after: avoid; }
       .cover, .card, .group-block, .column-section, .action-item, .action-item-number, .action-item-jira { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       @page { size: A4; margin: 0; }
     }
@@ -245,7 +246,11 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
   <div class="columns-area">${columnsHTML}</div>
   ${actionItemsHTML}
   <div class="footer">Сгенерировано RetroBoard · ${formatDate()}</div>
-  <script>window.addEventListener('load', function() { setTimeout(function() { window.print(); }, 800); });</script>
+  <script>
+    window.addEventListener('load', function() {
+      setTimeout(function() { window.print(); }, 800);
+    });
+  </script>
 </body>
 </html>`
 

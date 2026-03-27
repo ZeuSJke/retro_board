@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import CardWidget from './CardWidget'
 import Dialog from './Dialog'
@@ -46,6 +46,11 @@ export default function CardGroupWidget({
   const [titleVal, setTitleVal] = useState(group.title)
   const [deleteOpen, setDeleteOpen] = useState(false)
 
+  const totalLikes = useMemo(
+    () => cards.reduce((sum, c) => sum + (c.likes || []).length, 0),
+    [cards],
+  )
+
   const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
     id: `group-${group.id}`,
     data: { type: 'group', group },
@@ -77,7 +82,7 @@ export default function CardGroupWidget({
   return (
     <>
       <div className={styles.container} style={{ opacity: isDragging ? 0.4 : 1 }}>
-        <div className={styles.header}>
+        <div className={`${styles.header} ${collapsed ? styles.headerCollapsed : ''}`}>
           <button
             ref={setDragRef}
             {...attributes}
@@ -139,6 +144,15 @@ export default function CardGroupWidget({
           )}
 
           <span className={styles.count}>{cards.length}</span>
+
+          {totalLikes > 0 && (
+            <span className={styles.likesBadge}>
+              <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
+                thumb_up
+              </span>
+              {totalLikes}
+            </span>
+          )}
 
           <button
             className={styles.delBtn}

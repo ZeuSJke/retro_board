@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { createBoard, deleteBoard } from '../api'
 import type { BoardListItem } from '../types'
 import Dialog from './Dialog'
@@ -28,6 +28,18 @@ export default function BoardsPanel({
   const [createError, setCreateError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [showAll, setShowAll] = useState(false)
+
+  // Adaptive limit: fit items into available panel height
+  // Panel = 100vh - 64px(topbar). Subtract header(56), footer(68), dashboardLink(48), toggle btn(36), padding(16)
+  const ITEM_HEIGHT = 44
+  const PANEL_OVERHEAD = 224
+  const visibleLimit = useMemo(() => {
+    const available = (typeof window !== 'undefined' ? window.innerHeight : 800) - 64 - PANEL_OVERHEAD
+    return Math.max(3, Math.floor(available / ITEM_HEIGHT))
+  }, [])
+  const hasHidden = boards.length > visibleLimit
+  const visibleBoards = showAll ? boards : boards.slice(0, visibleLimit)
 
   const showToast = useCallback((message: string) => {
     setToast(message)
@@ -71,7 +83,7 @@ export default function BoardsPanel({
             <span className="material-symbols-rounded">analytics</span>
             История ретро
           </div>
-          {boards.map((b) => (
+          {visibleBoards.map((b) => (
             <div
               key={b.id}
               className={`${styles.item} board-item`}
@@ -116,6 +128,24 @@ export default function BoardsPanel({
               </button>
             </div>
           ))}
+          {hasHidden && (
+            <button
+              className={styles.showMoreBtn}
+              onClick={() => setShowAll((v) => !v)}
+            >
+              <span
+                className="material-symbols-rounded"
+                style={{
+                  fontSize: 16,
+                  transform: showAll ? 'rotate(180deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.2s',
+                }}
+              >
+                expand_more
+              </span>
+              {showAll ? 'Скрыть' : `Ещё ${boards.length - visibleLimit}`}
+            </button>
+          )}
         </div>
 
         <div className={styles.footer}>
