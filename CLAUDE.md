@@ -83,8 +83,8 @@ All events follow `{ "event": "event_name", "data": { ... } }` format. Events: c
 - **Facilitator/phase:** Stored in `ConnectionManager` memory. Sent to new clients on WS connect. Phase controls card visibility (brainstorm hides others' cards).
 - **Card groups:** Column-scoped. Cards have nullable `group_id` FK (SET NULL on group delete). Groups can be moved between columns as units.
 - **PDF export:** Pure HTML generation in `utils/exportPDF.ts`, opened in new tab with print dialog. Includes action items section.
-- **Action item statuses:** `open` → `in_progress` → `done`. Status stored in DB (`String(20)`, not Enum — SQLite compat). `completed_at` auto-set on `done`, cleared on reopen. MasterColumn has clickable status toggle icon.
-- **Dashboard (`/dashboard`):** REST-only page (no WebSocket). Shows board history with action item counts, cross-board action item list with filters (status, board, assignee), carry-forward to copy unresolved items between boards.
+- **Action item statuses:** `open` → `in_progress` → `done`. Status stored in DB (`String(20)`, not Enum — SQLite compat). `completed_at` auto-set on `done`, cleared on reopen. MasterColumn shows status as read-only icon; full status management (edit title/description/assignee, change status, delete, Jira integration) is on Dashboard.
+- **Dashboard (`/dashboard`):** REST-only page (no WebSocket). Shows board history with action item counts, cross-board action item list with filters (status, board, assignee). Full task card UI: inline editing of title/description/assignee, status toggle, delete, Jira integration. Done items collapse into a separate section at the bottom.
 - **Board list counts:** `list_boards` endpoint uses `outerjoin(ActionItem)` + `group_by` with `func.count(case(...))` for `action_items_total` / `action_items_open`.
 
 ### Database

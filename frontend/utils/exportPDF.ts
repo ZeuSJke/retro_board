@@ -100,7 +100,7 @@ function columnHTML(col: Column): string {
         <span class="column-title">${escHtml(col.title)}</span>
         <span class="column-count">${col.cards.length} карт${col.cards.length === 1 ? 'очка' : 'очек'}</span>
       </div>
-      ${hasContent ? `<div class="cards-area">${groupsHTML}${ungroupedHTML}</div>` : '<div class="empty-col">Нет заметок</div>'}
+      ${hasContent ? `<div class="cards-area">${groupsHTML}${ungroupedHTML}</div>` : '<div class="empty-col">Нет карточек</div>'}
     </div>`
 }
 
@@ -186,7 +186,8 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
     .cover-stat-label { font-size: 11px; opacity: 0.7; letter-spacing: 0.5px; }
     .cover-date { margin-top: 20px; font-size: 12px; opacity: 0.65; border-top: 1px solid rgba(255,255,255,0.25); padding-top: 14px; }
     .columns-area { padding: 28px 48px 48px; display: flex; flex-direction: column; gap: 28px; }
-    .column-section { }
+    .column-section { break-before: page; }
+    .column-section:first-child { break-before: auto; }
     .column-header { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 3px solid; margin-bottom: 14px; }
     .column-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
     .column-title { font-size: 16px; font-weight: 700; flex: 1; }
@@ -227,7 +228,8 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
       body { background: white; }
       .cover { page-break-after: avoid; }
       .cover, .card, .group-block, .column-section, .action-item, .action-item-number, .action-item-jira { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      @page { size: A4; margin: 0; }
+      @page { size: A4; margin: 20mm 0 10mm 0; }
+      @page :first { margin: 0; }
     }
   </style>
 </head>
@@ -237,7 +239,7 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
     <div class="cover-name">${escHtml(board.name)}</div>
     <div class="cover-stats">
       <div class="cover-stat"><span class="cover-stat-value">${columns.length}</span><span class="cover-stat-label">Колонок</span></div>
-      <div class="cover-stat"><span class="cover-stat-value">${totalCards}</span><span class="cover-stat-label">Заметок</span></div>
+      <div class="cover-stat"><span class="cover-stat-value">${totalCards}</span><span class="cover-stat-label">Карточек</span></div>
       ${totalGroups > 0 ? `<div class="cover-stat"><span class="cover-stat-value">${totalGroups}</span><span class="cover-stat-label">Групп</span></div>` : ''}
       ${actionItems.length > 0 ? `<div class="cover-stat"><span class="cover-stat-value">${actionItems.length}</span><span class="cover-stat-label">Итогов</span></div>` : ''}
     </div>

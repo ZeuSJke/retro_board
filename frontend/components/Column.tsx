@@ -265,7 +265,7 @@ export default memo(function Column({
             <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
               add
             </span>
-            Добавить заметку
+            Добавить карточку
           </button>
         </div>
       </div>
@@ -301,7 +301,7 @@ export default memo(function Column({
 
       <Dialog
         open={addOpen}
-        title="Новая заметка"
+        title="Новая карточка"
         icon="edit_note"
         onClose={() => {
           setAddOpen(false)
@@ -321,7 +321,7 @@ export default memo(function Column({
           onKeyDown={(e) => e.key === 'Enter' && e.ctrlKey && handleAddCard()}
         />
         <div style={{ marginTop: 16 }}>
-          <div className={s.sectionLabel}>Цвет заметки</div>
+          <div className={s.sectionLabel}>Цвет карточки</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {CARD_COLORS.map((c) => (
               <div
@@ -362,7 +362,7 @@ export default memo(function Column({
           <strong style={{ color: 'var(--md-on-surface)' }}>
             «{column.title}»
           </strong>{' '}
-          и все её заметки ({(column.cards || []).length}) будут удалены без возможности
+          и все её карточки ({(column.cards || []).length}) будут удалены без возможности
           восстановления.
         </p>
       </Dialog>

@@ -145,7 +145,7 @@ export default memo(function CardWidget({
         <span className="material-symbols-rounded" style={{ fontSize: 18, color: 'var(--md-outline)' }}>
           visibility_off
         </span>
-        <span className={s.hiddenText}>Заметка скрыта</span>
+        <span className={s.hiddenText}>Карточка скрыта</span>
       </div>
     )
   }
@@ -285,7 +285,7 @@ export default memo(function CardWidget({
             className={s.iconBtn}
             style={{ background: btnBg, color: textColor }}
             onClick={() => setDeleteOpen(true)}
-            title="Удалить заметку"
+            title="Удалить карточку"
           >
             <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
               delete
@@ -296,7 +296,7 @@ export default memo(function CardWidget({
 
       <Dialog
         open={deleteOpen}
-        title="Удалить заметку?"
+        title="Удалить карточку?"
         icon="delete"
         danger
         onClose={() => setDeleteOpen(false)}
@@ -304,7 +304,7 @@ export default memo(function CardWidget({
         confirmLabel="Удалить"
       >
         <p className={s.confirmText}>
-          Заметка от{' '}
+          Карточка от{' '}
           <strong style={{ color: 'var(--md-on-surface)' }}>«{card.author}»</strong>{' '}
           будет удалена без возможности восстановления.
         </p>

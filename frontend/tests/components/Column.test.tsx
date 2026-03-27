@@ -153,6 +153,6 @@ describe('Column', () => {
         onToggleCollapse={noop}
       />,
     )
-    expect(screen.getByText('Добавить заметку')).toBeInTheDocument()
+    expect(screen.getByText('Добавить карточку')).toBeInTheDocument()
   })
 })
