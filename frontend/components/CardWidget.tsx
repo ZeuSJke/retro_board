@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, memo } from 'react'
+import { useState, useRef, memo } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useAppStore } from '../store'
@@ -21,6 +21,7 @@ interface CardWidgetProps {
   groupId?: string
   isGroupTarget?: boolean
   dragOverlay?: boolean
+  usedInAction?: boolean
   onGroupDeleted?: (columnId: string, groupId: string) => void
 }
 
@@ -35,6 +36,7 @@ export default memo(function CardWidget({
   groupId,
   isGroupTarget = false,
   dragOverlay = false,
+  usedInAction = false,
   onGroupDeleted,
 }: CardWidgetProps) {
   const { username } = useAppStore()
@@ -42,7 +44,22 @@ export default memo(function CardWidget({
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(card.text)
+  const [colorOpen, setColorOpen] = useState(false)
+  const [colorPos, setColorPos] = useState<{ top: number; left: number } | null>(null)
+  const colorBtnRef = useRef<HTMLButtonElement>(null)
   const inGroup = !!groupId
+
+  const CARD_COLORS = [
+    '#FFFFFF', '#FFF3E0', '#FFF9C4', '#E8F5E9',
+    '#E3F2FD', '#F3E5F5', '#FCE4EC', '#E0F7FA',
+  ]
+
+  const handleColorChange = async (color: string) => {
+    setColorOpen(false)
+    if (color === card.color) return
+    const updated = await updateCard(card.id, { color })
+    onUpdate(updated)
+  }
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({
@@ -148,6 +165,9 @@ export default memo(function CardWidget({
           ...(isGroupTarget
             ? { boxShadow: '0 0 0 3px var(--md-primary), var(--elevation-1)', outline: 'none' }
             : {}),
+          ...(usedInAction
+            ? { boxShadow: '0 0 0 2px var(--md-primary), var(--elevation-1)' }
+            : {}),
         }}
       >
         <div
@@ -245,6 +265,23 @@ export default memo(function CardWidget({
           )}
 
           <button
+            ref={colorBtnRef}
+            className={s.iconBtn}
+            style={{ background: btnBg, color: textColor }}
+            onClick={() => {
+              if (colorOpen) { setColorOpen(false); return }
+              const rect = colorBtnRef.current?.getBoundingClientRect()
+              if (rect) setColorPos({ top: rect.top - 8, left: rect.right + 8 })
+              setColorOpen(true)
+            }}
+            title="Цвет карточки"
+          >
+            <span className="material-symbols-rounded" style={{ fontSize: 15 }}>
+              palette
+            </span>
+          </button>
+
+          <button
             className={s.iconBtn}
             style={{ background: btnBg, color: textColor }}
             onClick={() => setDeleteOpen(true)}
@@ -277,6 +314,29 @@ export default memo(function CardWidget({
           </div>
         )}
       </Dialog>
+
+      {colorOpen && colorPos && (
+        <div className={s.colorOverlay} onClick={() => setColorOpen(false)}>
+          <div
+            className={s.colorPicker}
+            style={{ top: colorPos.top, left: colorPos.left }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {CARD_COLORS.map((c) => (
+              <button
+                key={c}
+                className={s.colorSwatch}
+                style={{
+                  background: c,
+                  outline: c === (card.color || '#FFFFFF') ? '2px solid var(--md-primary)' : 'none',
+                  outlineOffset: 1,
+                }}
+                onClick={() => handleColorChange(c)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </>
   )
 })

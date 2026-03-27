@@ -37,6 +37,7 @@ interface ColumnProps {
   groupTargetId: string | null
   collapsedGroups: Record<string, boolean>
   onToggleCollapse: (groupId: string) => void
+  usedCardIds?: Set<string>
 }
 
 export default memo(function Column({
@@ -57,6 +58,7 @@ export default memo(function Column({
   groupTargetId,
   collapsedGroups,
   onToggleCollapse,
+  usedCardIds,
 }: ColumnProps) {
   const { username } = useAppStore()
   const [addOpen, setAddOpen] = useState(false)
@@ -224,6 +226,7 @@ export default memo(function Column({
               onGroupDeleted={(_, id) => onGroupDeleted(column.id, id)}
               onCardUpdated={(updated) => onCardUpdated(column.id, updated)}
               onCardDeleted={(id) => onCardDeleted(column.id, id)}
+              usedCardIds={usedCardIds}
             />
           ))}
 
@@ -236,6 +239,7 @@ export default memo(function Column({
                   card={card}
                   canVote={canVote}
                   hidden={hidden}
+                  usedInAction={usedCardIds?.has(card.id)}
                   onUpdate={(updated) => onCardUpdated(column.id, updated)}
                   onDelete={(id) => onCardDeleted(column.id, id)}
                   groups={groups}

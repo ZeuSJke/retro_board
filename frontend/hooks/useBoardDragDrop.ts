@@ -42,6 +42,8 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
   const collisionDetection: CollisionDetection = useCallback((args) => {
     if (String(args.active?.id || '').startsWith('group-')) {
       const pointer = pointerWithin(args)
+      const master = pointer.filter((c) => String(c.id) === 'master-col')
+      if (master.length > 0) return master
       const cols = pointer.filter((c) => String(c.id).startsWith('col-'))
       if (cols.length > 0) return cols
       return closestCenter(args)

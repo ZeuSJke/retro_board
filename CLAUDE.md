@@ -76,13 +76,16 @@ All mutations (cards, columns, groups, action items) go through REST API. Backen
 **Routers:** boards, columns, cards, groups, action_items, jira (proxy), websocket. Each mutation endpoint broadcasts via `manager.broadcast()`.
 
 ### WebSocket Events
-All events follow `{ "event": "event_name", "data": { ... } }` format. Events: column/card/group CRUD, card_moved, cursor_move/leave, presence_update, timer_start/pause/reset, facilitator_update, phase_update, action_item CRUD, group_collapse.
+All events follow `{ "event": "event_name", "data": { ... } }` format. Events: column/card/group CRUD, card_moved, cursor_move/leave, presence_update, timer_start/pause/reset, facilitator_update, phase_update, action_item CRUD (includes `status` field), group_collapse.
 
 ### Key Patterns
 - **Optimistic UI + rollback:** DnD moves update UI immediately via `onDragOver`, then call API. On failure, `savedColumnsRef` restores previous state.
 - **Facilitator/phase:** Stored in `ConnectionManager` memory. Sent to new clients on WS connect. Phase controls card visibility (brainstorm hides others' cards).
 - **Card groups:** Column-scoped. Cards have nullable `group_id` FK (SET NULL on group delete). Groups can be moved between columns as units.
 - **PDF export:** Pure HTML generation in `utils/exportPDF.ts`, opened in new tab with print dialog. Includes action items section.
+- **Action item statuses:** `open` → `in_progress` → `done`. Status stored in DB (`String(20)`, not Enum — SQLite compat). `completed_at` auto-set on `done`, cleared on reopen. MasterColumn has clickable status toggle icon.
+- **Dashboard (`/dashboard`):** REST-only page (no WebSocket). Shows board history with action item counts, cross-board action item list with filters (status, board, assignee), carry-forward to copy unresolved items between boards.
+- **Board list counts:** `list_boards` endpoint uses `outerjoin(ActionItem)` + `group_by` with `func.count(case(...))` for `action_items_total` / `action_items_open`.
 
 ### Database
 Alembic manages migrations. `create_all` does NOT add columns to existing tables — use `docker compose down -v && docker compose up --build` for schema changes during development. Tests use SQLite in-memory with a custom `JSONEncodedList` TypeDecorator patching the `likes` ARRAY column.

@@ -1,6 +1,7 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slugify import slugify
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
@@ -24,7 +25,26 @@ def _make_slug(name: str) -> str:
 @router.get("/", response_model=list[schemas.BoardListItem])
 @limiter.limit("100/minute")
 def list_boards(request: Request, db: Session = Depends(get_db)):
-    return db.query(models.Board).order_by(models.Board.created_at.desc()).all()
+    rows = (
+        db.query(
+            models.Board,
+            func.count(models.ActionItem.id).label("action_items_total"),
+            func.count(
+                case((models.ActionItem.status != "done", 1))
+            ).label("action_items_open"),
+        )
+        .outerjoin(models.ActionItem)
+        .group_by(models.Board.id)
+        .order_by(models.Board.created_at.desc())
+        .all()
+    )
+    result = []
+    for board, total, open_count in rows:
+        item = schemas.BoardListItem.model_validate(board)
+        item.action_items_total = total
+        item.action_items_open = open_count
+        result.append(item)
+    return result
 
 
 @router.post("/", response_model=schemas.BoardOut, status_code=201)

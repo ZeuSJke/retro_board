@@ -23,6 +23,7 @@ interface CardGroupWidgetProps {
   onGroupDeleted: (columnId: string, groupId: string) => void
   onCardUpdated: (card: Card) => void
   onCardDeleted: (id: string) => void
+  usedCardIds?: Set<string>
 }
 
 export default function CardGroupWidget({
@@ -39,6 +40,7 @@ export default function CardGroupWidget({
   onGroupDeleted,
   onCardUpdated,
   onCardDeleted,
+  usedCardIds,
 }: CardGroupWidgetProps) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleVal, setTitleVal] = useState(group.title)
@@ -162,6 +164,7 @@ export default function CardGroupWidget({
                     card={card}
                     canVote={canVote}
                     hidden={hidden}
+                    usedInAction={usedCardIds?.has(card.id)}
                     onUpdate={onCardUpdated}
                     onDelete={onCardDeleted}
                     groupId={group.id}

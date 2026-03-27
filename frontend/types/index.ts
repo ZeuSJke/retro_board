@@ -13,6 +13,8 @@ export interface BoardListItem {
   slug: string | null
   max_votes: number
   created_at: string
+  action_items_total: number
+  action_items_open: number
 }
 
 export interface Column {
@@ -44,13 +46,27 @@ export interface CardGroup {
   position: number
 }
 
+export type ActionItemStatus = 'open' | 'in_progress' | 'done'
+
 export interface ActionItem {
   id: string
   board_id: string
+  title: string
   text: string
   assignee: string | null
   jira_issue_key: string | null
+  status: ActionItemStatus
+  completed_at: string | null
   created_at: string
+}
+
+export interface DashboardActionItem extends ActionItem {
+  board_name: string
+}
+
+export interface CarryForwardRequest {
+  source_board_id: string
+  target_board_id: string
 }
 
 export interface WsMessage {

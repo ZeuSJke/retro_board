@@ -64,6 +64,13 @@ export default function BoardsPanel({
         </div>
 
         <div className={styles.list}>
+          <div
+            className={styles.dashboardLink}
+            onClick={() => window.location.href = '/dashboard'}
+          >
+            <span className="material-symbols-rounded">analytics</span>
+            История ретро
+          </div>
           {boards.map((b) => (
             <div
               key={b.id}
@@ -89,6 +96,11 @@ export default function BoardsPanel({
               >
                 {b.name}
               </span>
+              {b.action_items_open > 0 && (
+                <span className={styles.actionBadge}>
+                  {b.action_items_open} откр.
+                </span>
+              )}
               <button
                 className={styles.delBtn}
                 onClick={(e) => {

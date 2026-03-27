@@ -145,3 +145,32 @@
   white-space: nowrap;
   animation: fadeInUp 0.2s ease;
 }
+
+.dashboardLink {
+  padding: 10px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--md-primary);
+  margin-bottom: 8px;
+  transition: background 0.15s;
+}
+
+.dashboardLink:hover {
+  background: color-mix(in srgb, var(--md-primary) 10%, transparent);
+}
+
+.actionBadge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--md-tertiary-container);
+  color: var(--md-on-tertiary-container);
+  white-space: nowrap;
+  flex-shrink: 0;
+}

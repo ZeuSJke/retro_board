@@ -117,3 +117,27 @@ class TestDeleteBoard:
     def test_not_found_returns_404(self, client):
         resp = client.delete("/api/boards/nonexistent")
         assert resp.status_code == 404
+
+
+class TestBoardListActionItemCounts:
+    def test_list_includes_action_item_counts(self, client, sample_board):
+        # Create 2 items, mark one done
+        client.post("/api/action-items/", json={
+            "board_id": sample_board["id"], "text": "Open item",
+        })
+        done = client.post("/api/action-items/", json={
+            "board_id": sample_board["id"], "text": "Done item",
+        }).json()
+        client.patch(f"/api/action-items/{done['id']}", json={"status": "done"})
+
+        resp = client.get("/api/boards/")
+        boards = resp.json()
+        board = next(b for b in boards if b["id"] == sample_board["id"])
+        assert board["action_items_total"] == 2
+        assert board["action_items_open"] == 1
+
+    def test_zero_counts_when_no_items(self, client, sample_board):
+        resp = client.get("/api/boards/")
+        board = next(b for b in resp.json() if b["id"] == sample_board["id"])
+        assert board["action_items_total"] == 0
+        assert board["action_items_open"] == 0

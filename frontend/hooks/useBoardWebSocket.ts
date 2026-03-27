@@ -269,6 +269,11 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
     boardId,
     handleWsMessage,
     useCallback(() => {
+      // Announce username immediately on connect
+      sendMessageRef.current?.({
+        event: 'identify',
+        data: { username },
+      })
       const pos = lastCursorRef.current
       if (pos)
         sendMessageRef.current?.({
