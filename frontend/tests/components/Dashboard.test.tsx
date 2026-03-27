@@ -75,7 +75,6 @@ vi.mock('../../api', () => ({
   getAllActionItems: vi.fn(() => Promise.resolve(mockItems)),
   updateActionItem: vi.fn((_id: string, data: Record<string, unknown>) => Promise.resolve({ ...mockItems[0], ...data })),
   deleteActionItem: vi.fn(() => Promise.resolve()),
-  carryForward: vi.fn(() => Promise.resolve([])),
   getJiraStatus: vi.fn(() => Promise.resolve({ configured: false })),
 }))
 
@@ -98,7 +97,6 @@ describe('Dashboard', () => {
 
     expect(screen.getByText('Прошлые ретро')).toBeDefined()
     expect(screen.getByText('Все задачи')).toBeDefined()
-    expect(screen.getByText('Перенос задач')).toBeDefined()
   })
 
   it('renders board cards', async () => {
@@ -122,8 +120,15 @@ describe('Dashboard', () => {
       expect(screen.getByText('Fix CI')).toBeDefined()
     })
     expect(screen.getByText('Fix CI pipeline description')).toBeDefined()
-    expect(screen.getByText('Update docs')).toBeDefined()
     expect(screen.getByText('Add tests')).toBeDefined()
+
+    // Done items are collapsed by default
+    expect(screen.queryByText('Update documentation for API')).toBeNull()
+
+    // Expand done section
+    fireEvent.click(screen.getByText(/Выполненные/))
+    expect(screen.getByText('Update docs')).toBeDefined()
+    expect(screen.getByText('Update documentation for API')).toBeDefined()
   })
 
   it('navigates to board on click', async () => {
@@ -157,20 +162,15 @@ describe('Dashboard', () => {
       expect(screen.getByText('Fix CI')).toBeDefined()
     })
 
-    // Select "Выполнено" (done)
+    // Select "Выполнено" (done) — done items show in main list, no collapse
     const statusSelect = screen.getAllByRole('combobox')[0]
     fireEvent.change(statusSelect, { target: { value: 'done' } })
 
     expect(screen.queryByText('Fix CI')).toBeNull()
     expect(screen.getByText('Update docs')).toBeDefined()
     expect(screen.queryByText('Add tests')).toBeNull()
+    // No collapsed section when filtering by specific status
+    expect(screen.queryByText(/Выполненные/)).toBeNull()
   })
 
-  it('shows carry forward button', async () => {
-    render(<Dashboard />)
-
-    await waitFor(() => {
-      expect(screen.getByText('Перенести задачи')).toBeDefined()
-    })
-  })
 })
