@@ -57,6 +57,7 @@ export default function BoardPage({
   const [addColOpen, setAddColOpen] = useState(false)
   const [newColTitle, setNewColTitle] = useState('')
   const [newColColor, setNewColColor] = useState('#6750A4')
+  const [usedCardIds, setUsedCardIds] = useState<Set<string>>(new Set())
   const boardRef = useRef<HTMLDivElement>(null)
   const lastSentRef = useRef(0)
 
@@ -128,13 +129,14 @@ export default function BoardPage({
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const overId = event.over ? String(event.over.id) : ''
-      if (overId === 'master-col' && activeCard) {
-        // Only facilitator can drop cards onto master column
-        if (facilitator && facilitator !== username) {
+      const droppingOnMaster = overId === 'master-col'
+      const blockedByFacilitator = facilitator && facilitator !== username
+
+      if (droppingOnMaster && activeCard) {
+        if (blockedByFacilitator) {
           onDragEnd({ ...event, over: null } as DragEndEvent)
           return
         }
-        // Drop card onto master column → create action item
         try {
           const item = await createActionItem({
             board_id: board.id,
@@ -145,14 +147,45 @@ export default function BoardPage({
           setActionItems((prev) =>
             prev.find((i) => i.id === item.id) ? prev : [...prev, item],
           )
+          setUsedCardIds((prev) => new Set(prev).add(activeCard.id))
         } catch { /* toast via interceptor */ }
-        // Reset DnD state without moving the card
         onDragEnd({ ...event, over: null } as DragEndEvent)
         return
       }
+
+      if (droppingOnMaster && activeGroup) {
+        if (blockedByFacilitator) {
+          onDragEnd({ ...event, over: null } as DragEndEvent)
+          return
+        }
+        // Collect all cards from this group
+        const groupCards = columns
+          .flatMap((col) => col.cards)
+          .filter((c) => c.group_id === activeGroup.id)
+        const combinedText = groupCards.map((c) => c.text).join(' ')
+        try {
+          const item = await createActionItem({
+            board_id: board.id,
+            title: 'Новая задача',
+            text: combinedText || activeGroup.title,
+            assignee: groupCards[0]?.author ?? null,
+          })
+          setActionItems((prev) =>
+            prev.find((i) => i.id === item.id) ? prev : [...prev, item],
+          )
+          setUsedCardIds((prev) => {
+            const next = new Set(prev)
+            groupCards.forEach((c) => next.add(c.id))
+            return next
+          })
+        } catch { /* toast via interceptor */ }
+        onDragEnd({ ...event, over: null } as DragEndEvent)
+        return
+      }
+
       onDragEnd(event)
     },
-    [activeCard, board.id, setActionItems, onDragEnd, facilitator, username],
+    [activeCard, activeGroup, board.id, columns, setActionItems, onDragEnd, facilitator, username],
   )
 
   // Expose export function via ref
@@ -370,6 +403,7 @@ export default function BoardPage({
             onGroupCreated={handleGroupCreated}
             onGroupUpdated={handleGroupUpdated}
             onGroupDeleted={handleGroupDeleted}
+            usedCardIds={usedCardIds}
           />
         ))}
 

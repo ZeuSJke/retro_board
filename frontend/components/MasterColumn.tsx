@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import Dialog from './Dialog'
-import JiraDialog from './JiraDialog'
-import { getJiraStatus, updateActionItem, deleteActionItem } from '../api'
+import { updateActionItem, deleteActionItem } from '../api'
 import { userColor, initials } from '../utils/theme'
 import type { ActionItem, ActionItemStatus } from '../types'
 import s from './MasterColumn.module.css'
@@ -16,11 +15,6 @@ interface MasterColumnProps {
   dropDisabled?: boolean
 }
 
-const NEXT_STATUS: Record<ActionItemStatus, ActionItemStatus> = {
-  open: 'in_progress',
-  in_progress: 'done',
-  done: 'open',
-}
 const STATUS_ICON: Record<ActionItemStatus, string> = {
   open: 'radio_button_unchecked',
   in_progress: 'pending',
@@ -30,6 +24,11 @@ const STATUS_CLASS: Record<ActionItemStatus, string> = {
   open: s.taskOpen,
   in_progress: s.taskProgress,
   done: s.taskDone,
+}
+const STATUS_LABEL: Record<ActionItemStatus, string> = {
+  open: 'Открыто',
+  in_progress: 'В работе',
+  done: 'Выполнено',
 }
 
 export default function MasterColumn({
@@ -45,20 +44,12 @@ export default function MasterColumn({
   const [editAssigneeId, setEditAssigneeId] = useState<string | null>(null)
   const [editAssignee, setEditAssignee] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ActionItem | null>(null)
-  const [jiraConfigured, setJiraConfigured] = useState(false)
-  const [jiraTarget, setJiraTarget] = useState<ActionItem | null>(null)
 
   const { setNodeRef, isOver } = useDroppable({
     id: 'master-col',
     data: { type: 'master' },
     disabled: dropDisabled,
   })
-
-  useEffect(() => {
-    getJiraStatus()
-      .then((s) => setJiraConfigured(s.configured))
-      .catch(() => setJiraConfigured(false))
-  }, [])
 
   const saveTitle = async (id: string) => {
     setEditingTitleId(null)
@@ -89,12 +80,6 @@ export default function MasterColumn({
     setDeleteTarget(null)
   }
 
-  const toggleStatus = async (item: ActionItem) => {
-    const next = NEXT_STATUS[item.status]
-    const updated = await updateActionItem(item.id, { status: next })
-    onUpdated(updated)
-  }
-
   return (
     <>
       <div className={s.header}>
@@ -118,17 +103,16 @@ export default function MasterColumn({
             key={item.id}
             className={`${s.task} ${STATUS_CLASS[item.status] || ''}`}
           >
-            {/* Header: status + title + delete */}
+            {/* Header: status (read-only) + title + delete */}
             <div className={s.taskHeader}>
-              <button
-                className={`${s.statusBtn} ${item.status === 'done' ? s.statusDone : item.status === 'in_progress' ? s.statusProgress : ''}`}
-                onClick={() => toggleStatus(item)}
-                title={item.status === 'open' ? 'Открыто' : item.status === 'in_progress' ? 'В работе' : 'Выполнено'}
+              <span
+                className={`${s.statusIcon} ${item.status === 'done' ? s.statusDone : item.status === 'in_progress' ? s.statusProgress : ''}`}
+                title={STATUS_LABEL[item.status]}
               >
                 <span className="material-symbols-rounded" style={{ fontSize: 18 }}>
                   {STATUS_ICON[item.status]}
                 </span>
-              </button>
+              </span>
 
               {editingTitleId === item.id ? (
                 <input
@@ -230,28 +214,6 @@ export default function MasterColumn({
               )}
             </div>
 
-            {jiraConfigured && (
-              <div className={s.jiraRow}>
-                {item.jira_issue_key ? (
-                  <span className={s.jiraBadge}>
-                    <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
-                      link
-                    </span>
-                    {item.jira_issue_key}
-                  </span>
-                ) : (
-                  <button
-                    className={s.jiraCreateBtn}
-                    onClick={() => setJiraTarget(item)}
-                  >
-                    <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
-                      add_link
-                    </span>
-                    Jira
-                  </button>
-                )}
-              </div>
-            )}
           </div>
         ))}
 
@@ -274,16 +236,6 @@ export default function MasterColumn({
         </p>
       </Dialog>
 
-      {jiraTarget && (
-        <JiraDialog
-          item={jiraTarget}
-          onClose={() => setJiraTarget(null)}
-          onCreated={(updated) => {
-            onUpdated(updated)
-            setJiraTarget(null)
-          }}
-        />
-      )}
     </>
   )
 }

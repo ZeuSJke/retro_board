@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { getBoards, getAllActionItems, carryForward } from '../api'
-import type { BoardListItem, DashboardActionItem } from '../types'
+import { getBoards, getAllActionItems, updateActionItem, deleteActionItem, carryForward, getJiraStatus } from '../api'
+import { userColor, initials } from '../utils/theme'
+import type { BoardListItem, DashboardActionItem, ActionItemStatus } from '../types'
 import Dialog from './Dialog'
+import JiraDialog from './JiraDialog'
 import s from './Dashboard.module.css'
 
 type StatusFilter = 'all' | 'open' | 'in_progress' | 'done'
@@ -16,34 +18,24 @@ const STATUS_LABELS: Record<StatusFilter, string> = {
   done: 'Выполнено',
 }
 
+const NEXT_STATUS: Record<ActionItemStatus, ActionItemStatus> = {
+  open: 'in_progress',
+  in_progress: 'done',
+  done: 'open',
+}
+
+const STATUS_ICON: Record<ActionItemStatus, string> = {
+  open: 'radio_button_unchecked',
+  in_progress: 'pending',
+  done: 'check_circle',
+}
+
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('ru-RU', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
   })
-}
-
-function StatusIcon({ status }: { status: string }) {
-  if (status === 'done') {
-    return (
-      <span className={`material-symbols-rounded ${s.statusIcon} ${s.statusDone}`}>
-        check_circle
-      </span>
-    )
-  }
-  if (status === 'in_progress') {
-    return (
-      <span className={`material-symbols-rounded ${s.statusIcon} ${s.statusProgress}`}>
-        pending
-      </span>
-    )
-  }
-  return (
-    <span className={`material-symbols-rounded ${s.statusIcon} ${s.statusOpen}`}>
-      radio_button_unchecked
-    </span>
-  )
 }
 
 export default function Dashboard() {
@@ -78,6 +70,9 @@ export default function Dashboard() {
           setBoards(boardsData)
           setItems(itemsData)
         }
+        getJiraStatus()
+          .then((s) => { if (!cancelled) setJiraConfigured(s.configured) })
+          .catch(() => {})
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -101,9 +96,54 @@ export default function Dashboard() {
     })
   }, [items, statusFilter, boardFilter, assigneeFilter])
 
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editingDescId, setEditingDescId] = useState<string | null>(null)
+  const [editDesc, setEditDesc] = useState('')
+  const [editAssigneeId, setEditAssigneeId] = useState<string | null>(null)
+  const [editAssignee, setEditAssignee] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<DashboardActionItem | null>(null)
+  const [jiraConfigured, setJiraConfigured] = useState(false)
+  const [jiraTarget, setJiraTarget] = useState<DashboardActionItem | null>(null)
+
   async function loadItems() {
     const data = await getAllActionItems()
     setItems(data)
+  }
+
+  async function toggleStatus(item: DashboardActionItem) {
+    const next = NEXT_STATUS[item.status]
+    const updated = await updateActionItem(item.id, { status: next })
+    setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated } : i)))
+  }
+
+  async function saveTitle(id: string) {
+    setEditingTitleId(null)
+    if (editTitle.trim()) {
+      const updated = await updateActionItem(id, { title: editTitle.trim() })
+      setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated } : i)))
+    }
+  }
+
+  async function saveDesc(id: string) {
+    setEditingDescId(null)
+    if (editDesc.trim()) {
+      const updated = await updateActionItem(id, { text: editDesc.trim() })
+      setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated } : i)))
+    }
+  }
+
+  async function saveAssignee(id: string) {
+    setEditAssigneeId(null)
+    const updated = await updateActionItem(id, { assignee: editAssignee.trim() || null })
+    setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated } : i)))
+  }
+
+  async function confirmDeleteItem() {
+    if (!deleteTarget) return
+    await deleteActionItem(deleteTarget.id)
+    setItems((prev) => prev.filter((i) => i.id !== deleteTarget.id))
+    setDeleteTarget(null)
   }
 
   async function handleCarryForward() {
@@ -222,21 +262,158 @@ export default function Dashboard() {
         {filteredItems.length === 0 ? (
           <p className={s.emptyText}>Задачи не найдены</p>
         ) : (
-          <div>
+          <div className={s.taskList}>
             {filteredItems.map((item) => (
               <div
                 key={item.id}
-                className={`${s.itemRow} ${item.status === 'done' ? s.itemDone : ''}`}
+                className={`${s.taskCard} ${
+                  item.status === 'done' ? s.taskDone : item.status === 'in_progress' ? s.taskProgress : s.taskOpen
+                }`}
               >
-                <StatusIcon status={item.status} />
-                <span className={s.itemText} title={item.text}>
-                  {item.text}
-                </span>
-                {item.assignee && (
-                  <span className={s.itemMeta}>{item.assignee}</span>
+                {/* Header: status toggle + title + delete */}
+                <div className={s.taskHeader}>
+                  <button
+                    className={`${s.statusBtn} ${
+                      item.status === 'done' ? s.statusBtnDone : item.status === 'in_progress' ? s.statusBtnProgress : ''
+                    }`}
+                    onClick={() => toggleStatus(item)}
+                    title={`${STATUS_LABELS[item.status]} → ${STATUS_LABELS[NEXT_STATUS[item.status]]}`}
+                  >
+                    <span className="material-symbols-rounded" style={{ fontSize: 20 }}>
+                      {STATUS_ICON[item.status]}
+                    </span>
+                  </button>
+
+                  {editingTitleId === item.id ? (
+                    <input
+                      className={s.taskTitleInput}
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      onBlur={() => saveTitle(item.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveTitle(item.id)
+                        if (e.key === 'Escape') setEditingTitleId(null)
+                      }}
+                      autoFocus
+                    />
+                  ) : (
+                    <span
+                      className={s.taskTitle}
+                      onDoubleClick={() => {
+                        setEditingTitleId(item.id)
+                        setEditTitle(item.title || item.text)
+                      }}
+                      title="Двойной клик — редактировать"
+                    >
+                      {item.title || item.text}
+                    </span>
+                  )}
+
+                  <button
+                    className={s.taskDelBtn}
+                    onClick={() => setDeleteTarget(item)}
+                    title="Удалить"
+                  >
+                    <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
+                      delete
+                    </span>
+                  </button>
+                </div>
+
+                {/* Description */}
+                {editingDescId === item.id ? (
+                  <textarea
+                    className={s.taskDescInput}
+                    value={editDesc}
+                    onChange={(e) => setEditDesc(e.target.value)}
+                    onBlur={() => saveDesc(item.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.ctrlKey) saveDesc(item.id)
+                      if (e.key === 'Escape') setEditingDescId(null)
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <div
+                    className={s.taskDesc}
+                    onDoubleClick={() => {
+                      setEditingDescId(item.id)
+                      setEditDesc(item.text)
+                    }}
+                    title="Двойной клик — редактировать описание"
+                  >
+                    {item.text}
+                  </div>
                 )}
-                <span className={s.itemMeta}>{item.board_name}</span>
-                <span className={s.itemMeta}>{formatDate(item.created_at)}</span>
+
+                {/* Meta row: assignee + board + date */}
+                <div className={s.taskMetaRow}>
+                  {editAssigneeId === item.id ? (
+                    <input
+                      className={s.assigneeInput}
+                      value={editAssignee}
+                      onChange={(e) => setEditAssignee(e.target.value)}
+                      onBlur={() => saveAssignee(item.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveAssignee(item.id)
+                        if (e.key === 'Escape') setEditAssigneeId(null)
+                      }}
+                      placeholder="Ответственный"
+                      autoFocus
+                    />
+                  ) : (
+                    <span
+                      className={s.assigneeTag}
+                      onClick={() => {
+                        setEditAssigneeId(item.id)
+                        setEditAssignee(item.assignee || '')
+                      }}
+                      title="Нажмите чтобы изменить"
+                    >
+                      <span
+                        className={s.avatar}
+                        style={{ background: userColor(item.assignee || '?') }}
+                      >
+                        {initials(item.assignee || '?')}
+                      </span>
+                      {item.assignee || 'Не назначен'}
+                    </span>
+                  )}
+
+                  <span className={s.metaTag}>
+                    <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
+                      dashboard
+                    </span>
+                    {item.board_name}
+                  </span>
+
+                  <span className={s.metaTag}>
+                    {formatDate(item.created_at)}
+                  </span>
+
+                  {jiraConfigured && (
+                    <>
+                      {item.jira_issue_key ? (
+                        <span className={s.jiraBadge}>
+                          <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
+                            link
+                          </span>
+                          {item.jira_issue_key}
+                        </span>
+                      ) : (
+                        <button
+                          className={s.jiraBtn}
+                          onClick={() => setJiraTarget(item)}
+                        >
+                          <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
+                            add_link
+                          </span>
+                          Jira
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -254,6 +431,37 @@ export default function Dashboard() {
           Перенести задачи
         </button>
       </section>
+
+      {/* Delete action item dialog */}
+      <Dialog
+        open={!!deleteTarget}
+        title="Удалить задачу?"
+        icon="delete"
+        danger
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDeleteItem}
+        confirmLabel="Удалить"
+      >
+        <p className={s.emptyText} style={{ textAlign: 'left', padding: 0 }}>
+          Задача{' '}
+          <strong style={{ color: 'var(--md-on-surface)' }}>
+            «{deleteTarget?.title || deleteTarget?.text}»
+          </strong>{' '}
+          будет удалена без возможности восстановления.
+        </p>
+      </Dialog>
+
+      {/* Jira dialog */}
+      {jiraTarget && (
+        <JiraDialog
+          item={jiraTarget}
+          onClose={() => setJiraTarget(null)}
+          onCreated={(updated) => {
+            setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated } : i)))
+            setJiraTarget(null)
+          }}
+        />
+      )}
 
       {/* Carry forward dialog */}
       <Dialog
