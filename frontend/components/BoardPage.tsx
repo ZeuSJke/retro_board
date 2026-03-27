@@ -138,6 +138,7 @@ export default function BoardPage({
         try {
           const item = await createActionItem({
             board_id: board.id,
+            title: 'Новая задача',
             text: activeCard.text,
             assignee: activeCard.author,
           })

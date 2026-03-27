@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Board, BoardListItem, Column, Card, CardGroup, ActionItem } from '../types'
+import type { Board, BoardListItem, Column, Card, CardGroup, ActionItem, DashboardActionItem, CarryForwardRequest, ActionItemStatus } from '../types'
 import { showToast } from '../store/toastStore'
 
 const api = axios.create({ baseURL: '/api' })
@@ -54,12 +54,16 @@ export const moveGroup = (id: string, data: { column_id: string }): Promise<Card
 // ── Action Items ────────────────────────────────────────────────────────────
 export const getActionItems = (boardId: string): Promise<ActionItem[]> =>
   api.get('/action-items/', { params: { board_id: boardId } }).then((r) => r.data)
-export const createActionItem = (data: { board_id: string; text: string; assignee?: string }): Promise<ActionItem> =>
+export const createActionItem = (data: { board_id: string; title?: string; text: string; assignee?: string }): Promise<ActionItem> =>
   api.post('/action-items/', data).then((r) => r.data)
-export const updateActionItem = (id: string, data: { text?: string; assignee?: string | null }): Promise<ActionItem> =>
+export const updateActionItem = (id: string, data: { title?: string; text?: string; assignee?: string | null; status?: ActionItemStatus }): Promise<ActionItem> =>
   api.patch(`/action-items/${id}`, data).then((r) => r.data)
 export const deleteActionItem = (id: string): Promise<void> =>
   api.delete(`/action-items/${id}`)
+export const getAllActionItems = (params?: { status?: string; board_id?: string; assignee?: string }): Promise<DashboardActionItem[]> =>
+  api.get('/action-items/all', { params }).then((r) => r.data)
+export const carryForward = (data: CarryForwardRequest): Promise<ActionItem[]> =>
+  api.post('/action-items/carry-forward', data).then((r) => r.data)
 
 // ── Jira Integration ────────────────────────────────────────────────────────
 export const getJiraStatus = (): Promise<{ configured: boolean }> =>

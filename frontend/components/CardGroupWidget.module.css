@@ -1,7 +1,6 @@
 .container {
   border: 1.5px solid var(--md-outline-variant);
   border-radius: 12px;
-  overflow: hidden;
   background: color-mix(in srgb, var(--md-primary) 4%, var(--md-surface-variant));
 }
 
@@ -12,6 +11,7 @@
   padding: 8px 10px;
   border-bottom: 1px solid var(--md-outline-variant);
   background: color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant));
+  border-radius: 12px 12px 0 0;
 }
 
 .dragHandle {

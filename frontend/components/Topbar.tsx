@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAppStore } from '../store'
 import { userColor, initials } from '../utils/theme'
 import type { TimerState } from '../types'
@@ -63,6 +64,7 @@ export default function Topbar({
   onFacilitatorStop,
   onPhaseChange,
 }: TopbarProps) {
+  const router = useRouter()
   const { username, setUsername } = useAppStore()
   const [usernameOpen, setUsernameOpen] = useState(false)
   const [nameOpen, setNameOpen] = useState(false)
@@ -155,6 +157,10 @@ export default function Topbar({
               readOnly={!!facilitator && !isFacilitator}
             />
           )}
+
+          <button className={styles.iconBtn} onClick={() => router.push('/dashboard')} title="История ретро">
+            <span className="material-symbols-rounded">analytics</span>
+          </button>
 
           {onExport && (
             <button className={styles.iconBtn} onClick={onExport} title="Экспорт в PDF">

@@ -108,9 +108,14 @@ class ActionItem(Base):
     board_id: Mapped[str] = mapped_column(
         String, ForeignKey("boards.id", ondelete="CASCADE"), index=True
     )
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     text: Mapped[str] = mapped_column(Text, nullable=False)
     assignee: Mapped[str | None] = mapped_column(String(60), nullable=True)
     jira_issue_key: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
     )

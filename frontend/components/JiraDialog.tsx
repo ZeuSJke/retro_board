@@ -16,9 +16,9 @@ export default function JiraDialog({ item, onClose, onCreated }: JiraDialogProps
   const [projectKey, setProjectKey] = useState(
     () => localStorage.getItem('retro_jira_project') || '',
   )
-  const [summary, setSummary] = useState(item.text)
+  const [summary, setSummary] = useState(item.title || item.text)
   const [description, setDescription] = useState(
-    item.assignee ? `Ответственный: ${item.assignee}` : '',
+    [item.text, item.assignee ? `Ответственный: ${item.assignee}` : ''].filter(Boolean).join('\n\n'),
   )
   const [issueType, setIssueType] = useState('Task')
   const [loading, setLoading] = useState(false)

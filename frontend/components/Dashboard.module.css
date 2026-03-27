@@ -1,0 +1,229 @@
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 20px;
+  min-height: 100vh;
+  background: var(--md-background);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.backBtn {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: none;
+  background: var(--md-surface-variant);
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.backBtn:hover {
+  opacity: 0.85;
+}
+
+.pageTitle {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--md-on-surface);
+}
+
+.section {
+  border-radius: 16px;
+  background: var(--md-surface-1);
+  box-shadow: var(--elevation-1);
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.sectionTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--md-on-surface);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Board cards */
+.boardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.boardCard {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--md-surface);
+  border: 1px solid var(--md-outline-variant);
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+}
+
+.boardCard:hover {
+  box-shadow: var(--elevation-2);
+}
+
+.boardCardName {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--md-on-surface);
+  margin-bottom: 4px;
+}
+
+.boardCardMeta {
+  font-size: 12px;
+  color: var(--md-on-surface-variant);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--md-tertiary-container);
+  color: var(--md-on-tertiary-container);
+}
+
+/* Filters row */
+.filters {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.filterSelect,
+.filterInput {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1.5px solid var(--md-outline-variant);
+  font-family: 'Roboto', sans-serif;
+  font-size: 13px;
+  background: var(--md-surface-variant);
+  color: var(--md-on-surface);
+  outline: none;
+}
+
+/* Items list */
+.itemRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  transition: background 0.15s;
+}
+
+.itemRow:hover {
+  background: var(--md-surface-variant);
+}
+
+.itemText {
+  flex: 1;
+  font-size: 13px;
+  color: var(--md-on-surface);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemMeta {
+  font-size: 11px;
+  color: var(--md-on-surface-variant);
+  white-space: nowrap;
+}
+
+.statusIcon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.statusOpen {
+  color: var(--md-on-surface-variant);
+}
+
+.statusProgress {
+  color: #E8760A;
+}
+
+.statusDone {
+  color: #006E1C;
+}
+
+/* Carry forward */
+.carryBtn {
+  padding: 10px 20px;
+  border-radius: 12px;
+  border: none;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  font-family: 'Roboto', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: opacity 0.15s;
+}
+
+.carryBtn:hover {
+  opacity: 0.9;
+}
+
+.carryForm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.carrySelect {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1.5px solid var(--md-outline-variant);
+  font-family: 'Roboto', sans-serif;
+  font-size: 13px;
+  background: var(--md-surface-variant);
+  color: var(--md-on-surface);
+  outline: none;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px;
+  color: var(--md-on-surface-variant);
+  font-size: 14px;
+}
+
+.emptyText {
+  text-align: center;
+  padding: 20px;
+  font-size: 13px;
+  color: var(--md-on-surface-variant);
+}
+
+.itemDone .itemText {
+  text-decoration: line-through;
+  opacity: 0.6;
+}

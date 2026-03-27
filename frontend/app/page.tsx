@@ -15,7 +15,7 @@ export default function HomePage() {
         let list = await getBoards()
         if (list.length === 0) {
           const board = await createBoard('Моя первая ретро-доска')
-          list = [board]
+          list = [board as unknown as (typeof list)[0]]
         }
         const target =
           currentBoardId && list.find((b) => b.id === currentBoardId)

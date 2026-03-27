@@ -89,7 +89,30 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                 event = msg.get("event")
                 payload = msg.get("data", {})
 
-                if event == "cursor_move":
+                if event == "identify":
+                    uname = payload.get("username")
+                    if uname:
+                        manager.set_username(websocket, uname)
+                        if not username_announced:
+                            username_announced = True
+                            await manager.broadcast(
+                                board_id,
+                                "presence_update",
+                                {"users": manager.get_users(board_id)},
+                            )
+                            fac = manager.get_facilitator(board_id)
+                            if fac:
+                                await websocket.send_text(
+                                    json.dumps({
+                                        "event": "facilitator_update",
+                                        "data": {
+                                            "facilitator": fac,
+                                            "phase": manager.get_phase(board_id),
+                                        },
+                                    })
+                                )
+
+                elif event == "cursor_move":
                     username = payload.get("username")
                     if username:
                         manager.set_username(websocket, username)

@@ -55,68 +55,117 @@
   border-radius: 12px;
 }
 
-/* Bubble item */
-.bubble {
+/* Task item */
+.task {
   border-radius: 10px;
   padding: 10px 12px;
   background: var(--md-surface);
   border: 1px solid var(--md-outline-variant);
+  border-left: 3px solid #E8760A;
   transition: box-shadow 0.15s;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.bubble:hover {
+.task:hover {
   box-shadow: var(--elevation-1);
 }
 
-.bubbleTop {
+.taskDone {
+  border-left-color: #006E1C;
+  opacity: 0.6;
+}
+
+.taskProgress {
+  border-left-color: #E8760A;
+}
+
+.taskOpen {
+  border-left-color: var(--md-primary);
+}
+
+/* Task header row */
+.taskHeader {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.avatar {
-  width: 20px;
-  height: 20px;
+.taskIcon {
+  flex-shrink: 0;
+  font-size: 16px;
+  color: #E8760A;
+}
+
+.taskOpen .taskIcon {
+  color: var(--md-primary);
+}
+
+.taskDone .taskIcon {
+  color: #006E1C;
+}
+
+/* Status toggle */
+.statusBtn {
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
+  border: none;
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
-  font-weight: 700;
-  color: white;
   flex-shrink: 0;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  transition: color 0.15s;
+  padding: 0;
 }
 
-.assigneeName {
+.statusBtn:hover {
+  color: var(--md-primary);
+}
+
+.statusProgress {
+  color: #E8760A;
+}
+
+.statusDone {
+  color: #006E1C;
+}
+
+/* Title */
+.taskTitle {
   flex: 1;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--md-on-surface-variant);
-  cursor: pointer;
+  color: var(--md-on-surface);
+  line-height: 1.3;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  cursor: text;
 }
 
-.assigneeInput {
+.taskDone .taskTitle {
+  text-decoration: line-through;
+}
+
+.titleInput {
   flex: 1;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  border: 1.5px solid var(--md-primary);
-  border-radius: 6px;
-  padding: 2px 6px;
+  border: none;
+  outline: 2px solid var(--md-primary);
+  border-radius: 4px;
+  padding: 2px 4px;
   font-family: 'Roboto', sans-serif;
   color: var(--md-on-surface);
-  background: var(--md-surface-variant);
-  outline: none;
+  background: var(--md-surface);
   min-width: 0;
 }
 
@@ -136,7 +185,7 @@
   transition: opacity 0.15s, background 0.15s;
 }
 
-.bubble:hover .deleteBtn {
+.task:hover .deleteBtn {
   opacity: 1;
 }
 
@@ -145,28 +194,82 @@
   color: #BA1A1A;
 }
 
-.text {
-  font-size: 13px;
+/* Description */
+.taskDesc {
+  font-size: 12px;
   line-height: 1.5;
   word-break: break-word;
-  color: var(--md-on-surface);
+  color: var(--md-on-surface-variant);
   cursor: text;
+  padding-left: 28px;
+}
+
+.taskDone .taskDesc {
+  text-decoration: line-through;
 }
 
 .editTextarea {
   width: 100%;
   box-sizing: border-box;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
   font-family: 'Roboto', sans-serif;
   border: none;
   outline: 2px solid var(--md-primary);
   border-radius: 6px;
-  padding: 2px 4px;
+  padding: 4px 6px;
   resize: vertical;
-  min-height: 48px;
+  min-height: 40px;
   color: var(--md-on-surface);
   background: var(--md-surface);
+  margin-left: 28px;
+  width: calc(100% - 28px);
+}
+
+/* Assignee row */
+.taskMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 28px;
+}
+
+.avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+}
+
+.assigneeName {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assigneeInput {
+  font-size: 11px;
+  font-weight: 500;
+  border: 1.5px solid var(--md-primary);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-family: 'Roboto', sans-serif;
+  color: var(--md-on-surface);
+  background: var(--md-surface-variant);
+  outline: none;
+  min-width: 0;
+  flex: 1;
 }
 
 /* Jira row */
@@ -174,7 +277,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 2px;
+  padding-left: 28px;
 }
 
 .jiraBadge {

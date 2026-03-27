@@ -1,8 +1,10 @@
 from __future__ import annotations
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
+
+ActionItemStatus = Literal["open", "in_progress", "done"]
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -117,6 +119,8 @@ class BoardListItem(BoardBase):
     slug: Optional[str] = None
     max_votes: int
     created_at: datetime
+    action_items_total: int = 0
+    action_items_open: int = 0
     model_config = {"from_attributes": True}
 
 
@@ -143,22 +147,32 @@ class GroupMove(BaseModel):
 
 class ActionItemCreate(BaseModel):
     board_id: str
+    title: str = Field(default="", max_length=200)
     text: str = Field(..., min_length=1, max_length=2000)
     assignee: Optional[str] = Field(default=None, max_length=60)
+    status: ActionItemStatus = "open"
 
 class ActionItemUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
     text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
     assignee: Optional[str] = None
+    status: Optional[ActionItemStatus] = None
 
 class ActionItemOut(BaseModel):
     id: str
     board_id: str
+    title: str = ""
     text: str
     assignee: Optional[str] = None
     jira_issue_key: Optional[str] = None
+    status: str = "open"
+    completed_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+class DashboardActionItem(ActionItemOut):
+    board_name: str = ""
 
 
 # ── Jira Integration ────────────────────────────────────────────────────────
@@ -176,3 +190,10 @@ class JiraIssueResult(BaseModel):
 
 class JiraStatus(BaseModel):
     configured: bool
+
+
+# ── Carry Forward ──────────────────────────────────────────────────────────
+
+class CarryForwardRequest(BaseModel):
+    source_board_id: str
+    target_board_id: str
