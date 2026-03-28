@@ -1,6 +1,5 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 

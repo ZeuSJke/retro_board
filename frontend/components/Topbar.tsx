@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '../store'
 import { userColor, initials } from '../utils/theme'
+import { getApiErrorMessage } from '../utils/apiError'
 import type { TimerState } from '../types'
 import Dialog from './Dialog'
 import TimerWidget from './TimerWidget'
@@ -56,7 +57,8 @@ export default function Topbar({
   onPhaseChange,
 }: TopbarProps) {
   const router = useRouter()
-  const { username, setUsername } = useAppStore()
+  const username = useAppStore((s) => s.username)
+  const setUsername = useAppStore((s) => s.setUsername)
   const [usernameOpen, setUsernameOpen] = useState(false)
   const [nameOpen, setNameOpen] = useState(false)
   const [tempName, setTempName] = useState('')
@@ -222,8 +224,7 @@ export default function Topbar({
             setNameOpen(false)
             setRenameError(null)
           } catch (e: unknown) {
-            const err = e as { response?: { data?: { detail?: string } } }
-            setRenameError(err?.response?.data?.detail || 'Ошибка сохранения')
+            setRenameError(getApiErrorMessage(e, 'Ошибка сохранения'))
           }
         }}
       >

@@ -4,29 +4,7 @@
  */
 
 import type { ActionItem, Board, Column, Card } from '../types'
-
-const AVATAR_COLORS = [
-  '#6750A4', '#0061A4', '#006E1C', '#BA1A1A',
-  '#E8760A', '#006A60', '#7D5260',
-]
-
-function userColor(name: string = ''): string {
-  let h = 0
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_COLORS.length
-  return AVATAR_COLORS[Math.abs(h)]
-}
-
-function initials(name: string = ''): string {
-  return name.slice(0, 2).toUpperCase()
-}
-
-function isLight(hex: string): boolean {
-  if (!hex || hex === '#FFFFFF') return true
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return 0.299 * r + 0.587 * g + 0.114 * b > 180
-}
+import { userColor, initials, isLight } from './theme'
 
 function formatDate(): string {
   return new Date().toLocaleDateString('ru-RU', {

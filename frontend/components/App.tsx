@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Topbar from './Topbar'
 import BoardsPanel from './BoardsPanel'
@@ -10,7 +10,10 @@ import WelcomeDialog from './WelcomeDialog'
 import { useAppStore } from '../store'
 import { applyTheme } from '../utils/theme'
 import { getBoards, getBoardBySlug, updateBoard, createBoard } from '../api'
-import type { Board, BoardListItem, TimerState } from '../types'
+import { useTimer } from '../hooks/useTimer'
+import { useFacilitator } from '../hooks/useFacilitator'
+import { boardToBoardListItem } from '../utils/boardMapper'
+import type { Board, BoardListItem } from '../types'
 import styles from './App.module.css'
 
 interface AppProps {
@@ -19,7 +22,11 @@ interface AppProps {
 
 export default function App({ boardId }: AppProps) {
   const router = useRouter()
-  const { theme, currentBoardId, setCurrentBoard, setUsername, username } = useAppStore()
+  const theme = useAppStore((s) => s.theme)
+  const currentBoardId = useAppStore((s) => s.currentBoardId)
+  const setCurrentBoard = useAppStore((s) => s.setCurrentBoard)
+  const setUsername = useAppStore((s) => s.setUsername)
+  const username = useAppStore((s) => s.username)
   const [boards, setBoards] = useState<BoardListItem[]>([])
   const [currentBoard, setCurrentBoardData] = useState<Board | null>(null)
   const [boardsPanelOpen, setBoardsPanelOpen] = useState(false)
@@ -31,36 +38,30 @@ export default function App({ boardId }: AppProps) {
   const exportRef = useRef<(() => void) | null>(null)
   const [votesUsed, setVotesUsed] = useState(0)
   const [activeUsers, setActiveUsers] = useState<string[]>([])
-  const [facilitator, setFacilitator] = useState<string | null>(null)
-  const [phase, setPhase] = useState<string | null>(null)
-  const sendFacilitatorRef = useRef<{
-    start: () => void
-    stop: () => void
-    changePhase: (phase: string) => void
-  } | null>(null)
 
-  const [timer, setTimer] = useState<TimerState>({ duration: 300, remaining: 300, running: false })
-  const [autoAdvance, setAutoAdvance] = useState(false)
-  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const sendTimerRef = useRef<{
-    start: (duration: number, remaining: number) => void
-    pause: (remaining: number) => void
-    reset: (duration: number) => void
-  } | null>(null)
-  const timerRestoredRef = useRef(false)
+  const {
+    timer,
+    autoAdvance,
+    setAutoAdvance,
+    sendTimerRef,
+    restoreTimer,
+    handleTimerWsEvent,
+    handleTimerStart,
+    handleTimerPause,
+    handleTimerReset,
+  } = useTimer(boardId)
 
-  useEffect(() => {
-    if (!boardId || !timerRestoredRef.current) return
-    localStorage.setItem(
-      `retro_timer_${boardId}`,
-      JSON.stringify({
-        duration: timer.duration,
-        remaining: timer.remaining,
-        running: timer.running,
-        savedAt: Date.now(),
-      }),
-    )
-  }, [timer.duration, timer.remaining, timer.running, boardId])
+  const {
+    facilitator,
+    phase,
+    sendFacilitatorRef,
+    handleFacilitatorStart,
+    handleFacilitatorStop,
+    handlePhaseChange,
+    handleNextPhase,
+    handleFacilitatorChanged,
+    handlePhaseChanged,
+  } = useFacilitator(sendTimerRef, timer.duration)
 
   const handleWelcomeConfirm = (name: string) => {
     setUsername(name)
@@ -72,18 +73,11 @@ export default function App({ boardId }: AppProps) {
   }, [theme])
 
   useEffect(() => {
-    return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-    }
-  }, [])
-
-  useEffect(() => {
     loadBoards()
   }, [])
 
   useEffect(() => {
     if (boardId) {
-      timerRestoredRef.current = false
       loadBoard(boardId)
     }
   }, [boardId])
@@ -94,7 +88,7 @@ export default function App({ boardId }: AppProps) {
       let list = await getBoards()
       if (list.length === 0) {
         const board = await createBoard('Моя первая ретро-доска')
-        list = [board as unknown as BoardListItem]
+        list = [boardToBoardListItem(board)]
         router.replace(`/board/${board.slug || board.id}`)
       }
       setBoards(list)
@@ -109,24 +103,7 @@ export default function App({ boardId }: AppProps) {
       const board = await getBoardBySlug(id)
       setCurrentBoardData(board)
       setCurrentBoard(board.id)
-
-      try {
-        const saved = localStorage.getItem(`retro_timer_${id}`)
-        if (saved) {
-          const { duration, remaining, running, savedAt } = JSON.parse(saved)
-          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-          if (running) {
-            const elapsed = Math.floor((Date.now() - savedAt) / 1000)
-            const adjusted = Math.max(0, remaining - elapsed)
-            setTimer({ duration, remaining: adjusted, running: adjusted > 0 })
-            if (adjusted > 0) startCountdown(adjusted)
-          } else {
-            setTimer({ duration, remaining, running: false })
-          }
-        }
-      } catch { /* ignore corrupted timer data */ }
-      timerRestoredRef.current = true
-
+      restoreTimer(id)
     } catch {
       setError('Не удалось загрузить доску.')
     } finally {
@@ -171,88 +148,6 @@ export default function App({ boardId }: AppProps) {
     setBoardsPanelOpen(false)
     setThemePanelOpen(false)
   }
-
-  const startCountdown = useCallback((remaining: number) => {
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-    timerIntervalRef.current = setInterval(() => {
-      setTimer((prev) => {
-        const next = Math.max(0, prev.remaining - 1)
-        if (next <= 0) {
-          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-          return { ...prev, remaining: 0, running: false }
-        }
-        return { ...prev, remaining: next }
-      })
-    }, 1000)
-  }, [])
-
-  const handleTimerWsEvent = useCallback(
-    (event: string, data: Record<string, unknown>) => {
-      if (event === 'timer_start') {
-        const networkDelay = (Date.now() - ((data.ts as number) || Date.now())) / 1000
-        const adjusted = Math.max(0, Math.round((data.remaining as number) - networkDelay))
-        setTimer({ duration: data.duration as number, remaining: adjusted, running: true })
-        startCountdown(adjusted)
-      } else if (event === 'timer_pause') {
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-        setTimer((prev) => ({
-          ...prev,
-          ...(data.duration != null ? { duration: data.duration as number } : {}),
-          remaining: data.remaining as number,
-          running: false,
-        }))
-      } else if (event === 'timer_reset') {
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-        setTimer({ duration: data.duration as number, remaining: data.duration as number, running: false })
-      }
-    },
-    [startCountdown],
-  )
-
-  const handleTimerStart = useCallback((duration: number, remaining: number) => {
-    sendTimerRef.current?.start(duration, remaining)
-  }, [])
-
-  const handleTimerPause = useCallback(() => {
-    sendTimerRef.current?.pause(timer.remaining)
-  }, [timer.remaining])
-
-  const handleTimerReset = useCallback((duration: number) => {
-    sendTimerRef.current?.reset(duration)
-  }, [])
-
-  const handleFacilitatorStart = useCallback(() => {
-    sendFacilitatorRef.current?.start()
-  }, [])
-
-  const handleFacilitatorStop = useCallback(() => {
-    sendFacilitatorRef.current?.stop()
-  }, [])
-
-  const handlePhaseChange = useCallback((p: string) => {
-    sendFacilitatorRef.current?.changePhase(p)
-  }, [])
-
-  const handleNextPhase = useCallback(() => {
-    if (!phase) return
-    const PHASE_ORDER = ['brainstorm', 'reveal', 'discuss', 'vote']
-    const idx = PHASE_ORDER.indexOf(phase)
-    if (idx >= 0 && idx < PHASE_ORDER.length - 1) {
-      const next = PHASE_ORDER[idx + 1]
-      sendFacilitatorRef.current?.changePhase(next)
-      // Reset timer for new phase
-      sendTimerRef.current?.reset(timer.duration)
-    }
-  }, [phase, timer.duration])
-
-  const handleFacilitatorChanged = useCallback((f: string | null, p: string | null) => {
-    setFacilitator(f)
-    setPhase(p)
-  }, [])
-
-  const handlePhaseChanged = useCallback((p: string) => {
-    setPhase(p)
-  }, [])
 
   if (error)
     return (

@@ -5,7 +5,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useAppStore } from '../store'
 import { toggleLike, deleteCard, removeCardFromGroup, updateCard } from '../api'
-import { userColor, initials } from '../utils/theme'
+import { userColor, initials, isLight } from '../utils/theme'
 import type { Card, CardGroup } from '../types'
 import Dialog from './Dialog'
 import s from './CardWidget.module.css'
@@ -13,6 +13,7 @@ import s from './CardWidget.module.css'
 interface CardWidgetProps {
   card: Card
   canVote?: boolean
+  readOnly?: boolean
   hidden?: boolean
   onUpdate: (card: Card) => void
   onDelete: (id: string) => void
@@ -28,6 +29,7 @@ interface CardWidgetProps {
 export default memo(function CardWidget({
   card,
   canVote = true,
+  readOnly = false,
   hidden = false,
   onUpdate,
   onDelete,
@@ -39,7 +41,7 @@ export default memo(function CardWidget({
   usedInAction = false,
   onGroupDeleted,
 }: CardWidgetProps) {
-  const { username } = useAppStore()
+  const username = useAppStore((s) => s.username)
   const liked = (card.likes || []).includes(username)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -93,7 +95,7 @@ export default memo(function CardWidget({
     }
   }
 
-  const likeDisabled = !canVote && !liked
+  const likeDisabled = readOnly || (!canVote && !liked)
 
   const handleRemoveFromGroup = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -143,14 +145,6 @@ export default memo(function CardWidget({
     } catch {
       // WS broadcast will restore if needed
     }
-  }
-
-  const isLight = (hex: string): boolean => {
-    if (!hex || hex === '#FFFFFF') return true
-    const r = parseInt(hex.slice(1, 3), 16)
-    const g = parseInt(hex.slice(3, 5), 16)
-    const b = parseInt(hex.slice(5, 7), 16)
-    return 0.299 * r + 0.587 * g + 0.114 * b > 180
   }
 
   const cardBg = card.color || '#FFFFFF'
@@ -222,13 +216,13 @@ export default memo(function CardWidget({
           ) : (
             <div
               className={s.text}
-              style={{ color: textColor, cursor: 'text' }}
-              onDoubleClick={(e) => {
+              style={{ color: textColor, cursor: readOnly ? 'default' : 'text' }}
+              onDoubleClick={readOnly ? undefined : (e) => {
                 e.stopPropagation()
                 setEditText(card.text)
                 setEditing(true)
               }}
-              title="Двойной клик чтобы редактировать"
+              title={readOnly ? undefined : 'Двойной клик чтобы редактировать'}
             >
               {card.text}
             </div>
@@ -251,7 +245,7 @@ export default memo(function CardWidget({
             }}
             onClick={handleLike}
             disabled={likeDisabled}
-            title={likeDisabled ? 'Лимит голосов исчерпан' : liked ? 'Убрать лайк' : 'Лайк'}
+            title={readOnly ? 'Ретро завершено' : likeDisabled ? 'Лимит голосов исчерпан' : liked ? 'Убрать лайк' : 'Лайк'}
           >
             <span
               className={`material-symbols-rounded${liked ? ' filled' : ''}`}
@@ -262,7 +256,7 @@ export default memo(function CardWidget({
             <span className={s.likeCount}>{(card.likes || []).length}</span>
           </button>
 
-          {showGroupBtn && (
+          {!readOnly && showGroupBtn && (
             <button
               className={s.iconBtn}
               style={{ background: btnBg, color: textColor }}
@@ -275,7 +269,7 @@ export default memo(function CardWidget({
             </button>
           )}
 
-          {inGroup && (
+          {!readOnly && inGroup && (
             <button
               className={s.iconBtn}
               style={{ background: btnBg, color: textColor }}
@@ -288,33 +282,37 @@ export default memo(function CardWidget({
             </button>
           )}
 
-          <button
-            ref={colorBtnRef}
-            className={s.iconBtn}
-            style={{ background: btnBg, color: textColor }}
-            onClick={() => {
-              if (colorOpen) { setColorOpen(false); return }
-              const rect = colorBtnRef.current?.getBoundingClientRect()
-              if (rect) setColorPos({ top: rect.top - 8, left: rect.right + 8 })
-              setColorOpen(true)
-            }}
-            title="Цвет карточки"
-          >
-            <span className="material-symbols-rounded" style={{ fontSize: 15 }}>
-              palette
-            </span>
-          </button>
+          {!readOnly && (
+            <button
+              ref={colorBtnRef}
+              className={s.iconBtn}
+              style={{ background: btnBg, color: textColor }}
+              onClick={() => {
+                if (colorOpen) { setColorOpen(false); return }
+                const rect = colorBtnRef.current?.getBoundingClientRect()
+                if (rect) setColorPos({ top: rect.top - 8, left: rect.right + 8 })
+                setColorOpen(true)
+              }}
+              title="Цвет карточки"
+            >
+              <span className="material-symbols-rounded" style={{ fontSize: 15 }}>
+                palette
+              </span>
+            </button>
+          )}
 
-          <button
-            className={s.iconBtn}
-            style={{ background: btnBg, color: textColor }}
-            onClick={() => setDeleteOpen(true)}
-            title="Удалить карточку"
-          >
-            <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-              delete
-            </span>
-          </button>
+          {!readOnly && (
+            <button
+              className={s.iconBtn}
+              style={{ background: btnBg, color: textColor }}
+              onClick={() => setDeleteOpen(true)}
+              title="Удалить карточку"
+            >
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
+                delete
+              </span>
+            </button>
+          )}
         </div>
       </div>
 

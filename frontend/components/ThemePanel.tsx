@@ -10,7 +10,8 @@ interface ThemePanelProps {
 }
 
 export default function ThemePanel({ open }: ThemePanelProps) {
-  const { theme, setTheme } = useAppStore()
+  const theme = useAppStore((s) => s.theme)
+  const setTheme = useAppStore((s) => s.setTheme)
 
   const update = (patch: Partial<Theme>) => {
     const next = { ...theme, ...patch }

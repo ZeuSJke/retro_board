@@ -5,7 +5,21 @@ import { useWebSocket } from './useWebSocket'
 import { useAppStore } from '../store'
 import { getActionItems } from '../api'
 import { asCard, asColumn, asGroup, asActionItem } from '../utils/wsData'
-import type { ActionItem, Column, WsMessage } from '../types'
+import type {
+  ActionItem,
+  Column,
+  WsMessage,
+  WsCursorMoveData,
+  WsCursorLeaveData,
+  WsPresenceData,
+  WsFacilitatorData,
+  WsPhaseData,
+  WsGroupCollapseData,
+  WsCardMovedData,
+  WsGroupMovedData,
+  WsDeletedData,
+  WsGroupDeletedData,
+} from '../types'
 
 interface CursorPos {
   x: number
@@ -20,7 +34,7 @@ interface UseBoardWebSocketParams {
 }
 
 export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChanged, onPhaseChanged }: UseBoardWebSocketParams) {
-  const { username } = useAppStore()
+  const username = useAppStore((s) => s.username)
   const [columns, setColumns] = useState<Column[]>([])
   const [cursors, setCursors] = useState<Record<string, CursorPos>>({})
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
@@ -48,13 +62,13 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       const { event, data } = msg
 
       if (event === 'group_collapse') {
-        const { group_id, collapsed } = data as { group_id: string; collapsed: boolean }
+        const { group_id, collapsed } = data as unknown as WsGroupCollapseData
         setCollapsedGroups((prev) => ({ ...prev, [group_id]: collapsed }))
         return
       }
 
       if (event === 'cursor_move') {
-        const { username: u, x, y } = data as { username: string; x: number; y: number }
+        const { username: u, x, y } = data as unknown as WsCursorMoveData
         if (!u) return
         setCursors((prev) => ({ ...prev, [u]: { x, y } }))
         clearTimeout(cursorTimeouts.current[u])
@@ -69,7 +83,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       }
 
       if (event === 'cursor_leave') {
-        const { username: u } = data as { username: string }
+        const { username: u } = data as unknown as WsCursorLeaveData
         if (!u) return
         clearTimeout(cursorTimeouts.current[u])
         setCursors((prev) => {
@@ -86,13 +100,13 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       }
 
       if (event === 'presence_update') {
-        const { users } = data as { users: string[] }
+        const { users } = data as unknown as WsPresenceData
         setActiveUsers(users)
         return
       }
 
       if (event === 'facilitator_update') {
-        const { facilitator: f, phase: p } = data as { facilitator: string | null; phase: string | null }
+        const { facilitator: f, phase: p } = data as unknown as WsFacilitatorData
         setFacilitator(f)
         setPhase(p)
         onFacilitatorChanged?.(f, p)
@@ -100,7 +114,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       }
 
       if (event === 'phase_update') {
-        const { phase: p } = data as { phase: string }
+        const { phase: p } = data as unknown as WsPhaseData
         setPhase(p)
         onPhaseChanged?.(p)
         return
@@ -140,7 +154,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
             return prev.map((c) => (c.id === col.id ? { ...c, ...col } : c))
           }
           case 'column_deleted':
-            return prev.filter((c) => c.id !== (data as { id: string }).id)
+            return prev.filter((c) => c.id !== (data as unknown as WsDeletedData).id)
           case 'card_created': {
             const card = asCard(data)
             return prev.map((c) =>
@@ -163,7 +177,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
             }))
           }
           case 'card_moved': {
-            const { card, old_column_id } = data as { card: Column['cards'][number]; old_column_id: string }
+            const { card, old_column_id } = data as unknown as WsCardMovedData
             return prev.map((c) => {
               if (c.id === old_column_id && c.id === card.column_id) {
                 const cards = [
@@ -187,7 +201,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
           case 'card_deleted':
             return prev.map((c) => ({
               ...c,
-              cards: c.cards.filter((x) => x.id !== (data as { id: string }).id),
+              cards: c.cards.filter((x) => x.id !== (data as unknown as WsDeletedData).id),
             }))
           case 'group_created': {
             const g = asGroup(data)
@@ -211,7 +225,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
             }))
           }
           case 'group_deleted': {
-            const { id, column_id, card_ids } = data as { id: string; column_id: string; card_ids?: string[] }
+            const { id, column_id, card_ids } = data as unknown as WsGroupDeletedData
             return prev.map((c) =>
               c.id === column_id
                 ? {
@@ -227,11 +241,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
             )
           }
           case 'group_moved': {
-            const { group, old_column_id, cards } = data as {
-              group: Column['groups'][number]
-              old_column_id: string
-              cards: Column['cards']
-            }
+            const { group, old_column_id, cards } = data as unknown as WsGroupMovedData
             const movedCardIds = cards.map((c) => c.id)
             return prev.map((c) => {
               if (c.id === old_column_id) {

@@ -80,7 +80,20 @@ export default function BoardPage({
     onPhaseChanged,
   })
 
-  const { username } = useAppStore()
+  const username = useAppStore((s) => s.username)
+
+  // Track if retro session ended (facilitator was active then stopped)
+  const hadFacilitatorRef = useRef(false)
+  const [boardLocked, setBoardLocked] = useState(false)
+
+  useEffect(() => {
+    if (facilitator) {
+      hadFacilitatorRef.current = true
+      setBoardLocked(false)
+    } else if (hadFacilitatorRef.current) {
+      setBoardLocked(true)
+    }
+  }, [facilitator])
 
   // Initialize columns from board prop
   useEffect(() => {
@@ -120,7 +133,7 @@ export default function BoardPage({
     onFacilitatorChanged?.(facilitator, phase)
   }, [facilitator, phase, onFacilitatorChanged])
 
-  const votingAllowed = !facilitator || phase === 'vote'
+  const votingAllowed = boardLocked ? false : !facilitator || phase === 'vote'
   const canVote = votingAllowed && votesUsed < (board.max_votes ?? 5)
 
   const {
@@ -214,7 +227,7 @@ export default function BoardPage({
           sendMessage({ event: 'timer_reset', data: { duration } }),
       }
     }
-  })
+  }, [sendTimerRef, sendMessage])
 
   // Expose WS facilitator send functions via ref
   useEffect(() => {
@@ -226,10 +239,11 @@ export default function BoardPage({
           sendMessage({ event: 'phase_change', data: { phase: p } }),
       }
     }
-  })
+  }, [sendFacilitatorRef, sendMessage])
 
   const isBrainstorm = phase === 'brainstorm'
-  const cardCreationDisabled = !facilitator
+  const cardCreationDisabled = boardLocked || !facilitator
+  const readOnly = boardLocked
 
   const handleColumnUpdate = useCallback(
     (updated: ColumnType) =>
@@ -381,11 +395,11 @@ export default function BoardPage({
 
   return (
     <DndContext
-      sensors={sensors}
+      sensors={boardLocked ? [] : sensors}
       collisionDetection={collisionDetection}
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDragEnd={handleDragEnd}
+      onDragStart={boardLocked ? undefined : onDragStart}
+      onDragOver={boardLocked ? undefined : onDragOver}
+      onDragEnd={boardLocked ? undefined : handleDragEnd}
     >
       <div
         ref={boardRef}
@@ -398,6 +412,7 @@ export default function BoardPage({
             key={col.id}
             column={col}
             canVote={canVote}
+            readOnly={readOnly}
             cardCreationDisabled={cardCreationDisabled}
             brainstormHidden={isBrainstorm}
             currentUser={username}

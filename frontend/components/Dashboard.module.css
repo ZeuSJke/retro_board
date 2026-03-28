@@ -415,45 +415,6 @@
   background: #E9F2FF;
 }
 
-/* Carry forward */
-.carryBtn {
-  padding: 10px 20px;
-  border-radius: 12px;
-  border: none;
-  background: var(--md-primary);
-  color: var(--md-on-primary);
-  font-family: 'Roboto', sans-serif;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  transition: opacity 0.15s;
-}
-
-.carryBtn:hover {
-  opacity: 0.9;
-}
-
-.carryForm {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.carrySelect {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1.5px solid var(--md-outline-variant);
-  font-family: 'Roboto', sans-serif;
-  font-size: 13px;
-  background: var(--md-surface-variant);
-  color: var(--md-on-surface);
-  outline: none;
-}
-
 .loading {
   display: flex;
   align-items: center;

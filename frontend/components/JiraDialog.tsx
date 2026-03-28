@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Dialog from './Dialog'
 import { createJiraIssue } from '../api'
 import { showToast } from '../store/toastStore'
+import { getApiErrorMessage } from '../utils/apiError'
 import type { ActionItem } from '../types'
 
 interface JiraDialogProps {
@@ -40,8 +41,7 @@ export default function JiraDialog({ item, onClose, onCreated }: JiraDialogProps
       showToast(`Задача создана: ${result.jira_issue_key}`, 'info')
       onCreated({ ...item, jira_issue_key: result.jira_issue_key })
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } }
-      setError(err?.response?.data?.detail || 'Ошибка создания задачи в Jira')
+      setError(getApiErrorMessage(e, 'Ошибка создания задачи в Jira'))
     } finally {
       setLoading(false)
     }

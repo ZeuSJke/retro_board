@@ -4,10 +4,11 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '../store'
 import { getBoards, createBoard } from '../api'
+import { boardToBoardListItem } from '../utils/boardMapper'
 
 export default function HomePage() {
   const router = useRouter()
-  const { currentBoardId } = useAppStore()
+  const currentBoardId = useAppStore((s) => s.currentBoardId)
 
   useEffect(() => {
     ;(async () => {
@@ -15,7 +16,7 @@ export default function HomePage() {
         let list = await getBoards()
         if (list.length === 0) {
           const board = await createBoard('Моя первая ретро-доска')
-          list = [board as unknown as (typeof list)[0]]
+          list = [boardToBoardListItem(board)]
         }
         const target =
           currentBoardId && list.find((b) => b.id === currentBoardId)

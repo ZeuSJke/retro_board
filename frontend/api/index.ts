@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Board, BoardListItem, Column, Card, CardGroup, ActionItem, DashboardActionItem, CarryForwardRequest, ActionItemStatus, TrendPoint } from '../types'
+import type { Board, BoardListItem, Column, Card, CardGroup, ActionItem, DashboardActionItem, CarryForwardRequest, ActionItemStatus } from '../types'
 import { showToast } from '../store/toastStore'
 
 const api = axios.create({ baseURL: '/api' })
@@ -64,8 +64,6 @@ export const getAllActionItems = (params?: { status?: string; board_id?: string;
   api.get('/action-items/all', { params }).then((r) => r.data)
 export const carryForward = (data: CarryForwardRequest): Promise<ActionItem[]> =>
   api.post('/action-items/carry-forward', data).then((r) => r.data)
-export const getTrends = (): Promise<TrendPoint[]> =>
-  api.get('/action-items/trends').then((r) => r.data)
 
 // ── Jira Integration ────────────────────────────────────────────────────────
 export const getJiraStatus = (): Promise<{ configured: boolean }> =>

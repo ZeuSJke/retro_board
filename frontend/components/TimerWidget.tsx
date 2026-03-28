@@ -66,6 +66,7 @@ export default function TimerWidget({
   const [editingTime, setEditingTime] = useState(false)
   const pillRef = useRef<HTMLButtonElement>(null)
   const [panelPos, setPanelPos] = useState<{ top: number; right: number } | null>(null)
+  const paused = !running && remaining > 0 && remaining < duration
   const finished = remaining <= 0 && !running && duration > 0
 
   const [flash, setFlash] = useState(false)
@@ -104,9 +105,12 @@ export default function TimerWidget({
       : `hsl(${(pct / 50) * 60}, 80%, 42%)`
 
   const handleStart = () => {
-    const dur = running ? duration : selectedDuration
-    const rem = running ? remaining : selectedDuration
-    onStart(dur, rem)
+    if (paused) {
+      // Resume from current remaining time
+      onStart(duration, remaining)
+    } else {
+      onStart(selectedDuration, selectedDuration)
+    }
   }
 
   const handleReset = () => {
@@ -135,10 +139,12 @@ export default function TimerWidget({
         style={{
           background: running
             ? `color-mix(in srgb, ${color} 15%, var(--md-surface-variant))`
-            : finished
-              ? 'color-mix(in srgb, #BA1A1A 12%, var(--md-surface-variant))'
-              : 'var(--md-surface-variant)',
-          color: running ? color : 'var(--md-on-surface-variant)',
+            : paused
+              ? `color-mix(in srgb, ${color} 10%, var(--md-surface-variant))`
+              : finished
+                ? 'color-mix(in srgb, #BA1A1A 12%, var(--md-surface-variant))'
+                : 'var(--md-surface-variant)',
+          color: running || paused ? color : 'var(--md-on-surface-variant)',
           animation: flash ? 'pillGlow 0.45s ease-in-out 4' : 'none',
         }}
         ref={pillRef}
@@ -162,9 +168,18 @@ export default function TimerWidget({
             display: 'inline-block',
           }}
         >
-          {running ? 'timer' : finished ? 'alarm_on' : 'timer'}
+          {running ? 'timer' : paused ? 'pause_circle' : finished ? 'alarm_on' : 'timer'}
         </span>
-        <span className={styles.pillTime}>{fmt(remaining)}</span>
+        <span className={`${styles.pillTime} ${paused ? styles.pillTimePaused : ''}`}>{fmt(remaining)}</span>
+        {paused && (
+          <span
+            className={styles.dot}
+            style={{
+              background: color,
+              animation: 'blink 1.5s ease-in-out infinite',
+            }}
+          />
+        )}
         {running && (
           <span
             className={styles.dot}
@@ -218,7 +233,8 @@ export default function TimerWidget({
                 cy="60"
                 r="52"
                 fill="none"
-                stroke={finished ? '#BA1A1A' : running ? color : 'var(--md-outline-variant)'}
+                stroke={finished ? '#BA1A1A' : running || paused ? color : 'var(--md-outline-variant)'}
+                opacity={paused ? 0.5 : 1}
                 strokeWidth="6"
                 strokeDasharray={`${2 * Math.PI * 52}`}
                 strokeDashoffset={`${2 * Math.PI * 52 * (1 - progress)}`}
@@ -228,18 +244,19 @@ export default function TimerWidget({
             </svg>
             <div className={styles.countdownText}>
               <span
-                className={styles.countdownTime}
+                className={`${styles.countdownTime} ${paused ? styles.countdownTimePaused : ''}`}
                 style={{
-                  color: finished ? '#BA1A1A' : running ? color : 'var(--md-on-surface)',
+                  color: finished ? '#BA1A1A' : running || paused ? color : 'var(--md-on-surface)',
                 }}
               >
                 {fmt(remaining)}
               </span>
+              {paused && <span className={styles.pausedLabel}>Пауза</span>}
               {finished && <span className={styles.finishedLabel}>Время вышло!</span>}
             </div>
           </div>
 
-          {!readOnly && !running && (
+          {!readOnly && !running && !paused && (
             <>
               <div className={styles.presets}>
                 {PRESETS.map((p) => (
@@ -346,12 +363,14 @@ export default function TimerWidget({
             </label>
           )}
 
-          {running && (
+          {(running || paused) && (
             <div className={styles.syncNote}>
               <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
-                sync
+                {paused ? 'pause' : 'sync'}
               </span>
-              {readOnly ? 'Управляет ведущий' : 'Синхронизован для всех'}
+              {paused
+                ? 'На паузе · нажмите Старт для продолжения'
+                : readOnly ? 'Управляет ведущий' : 'Синхронизован для всех'}
             </div>
           )}
         </div>
