@@ -7,8 +7,7 @@ import type { ActionItem, Card, CardGroup, Column } from '../types'
 
 type WsData = Record<string, unknown>
 
-export const asCard = (d: WsData) => d as unknown as Card
-export const asCards = (d: WsData) => (d as unknown as { cards: Card[] }).cards
-export const asColumn = (d: WsData) => d as unknown as Column
-export const asGroup = (d: WsData) => d as unknown as CardGroup
-export const asActionItem = (d: WsData) => d as unknown as ActionItem
+export const asCard = (d: WsData): Card => d as unknown as Card
+export const asColumn = (d: WsData): Column => d as unknown as Column
+export const asGroup = (d: WsData): CardGroup => d as unknown as CardGroup
+export const asActionItem = (d: WsData): ActionItem => d as unknown as ActionItem

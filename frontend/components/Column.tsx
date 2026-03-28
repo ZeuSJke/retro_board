@@ -22,6 +22,7 @@ import s from './Column.module.css'
 interface ColumnProps {
   column: ColumnType
   canVote?: boolean
+  readOnly?: boolean
   cardCreationDisabled?: boolean
   brainstormHidden?: boolean
   currentUser?: string
@@ -43,6 +44,7 @@ interface ColumnProps {
 export default memo(function Column({
   column,
   canVote = true,
+  readOnly = false,
   cardCreationDisabled = false,
   brainstormHidden = false,
   currentUser,
@@ -60,7 +62,7 @@ export default memo(function Column({
   onToggleCollapse,
   usedCardIds,
 }: ColumnProps) {
-  const { username } = useAppStore()
+  const username = useAppStore((s) => s.username)
   const [addOpen, setAddOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [cardText, setCardText] = useState('')
@@ -209,25 +211,27 @@ export default memo(function Column({
           ) : (
             <span
               className={s.title}
-              onDoubleClick={() => {
+              onDoubleClick={readOnly ? undefined : () => {
                 setTitleVal(column.title)
                 setEditingTitle(true)
               }}
-              title="Двойной клик чтобы редактировать"
+              title={readOnly ? column.title : 'Двойной клик чтобы редактировать'}
             >
               {column.title}
             </span>
           )}
           <span className={s.count}>{(column.cards || []).length}</span>
-          <button
-            className={`${s.iconBtn} col-del-btn`}
-            onClick={() => setDeleteOpen(true)}
-            title="Удалить колонку"
-          >
-            <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-              close
-            </span>
-          </button>
+          {!readOnly && (
+            <button
+              className={`${s.iconBtn} col-del-btn`}
+              onClick={() => setDeleteOpen(true)}
+              title="Удалить колонку"
+            >
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
+                close
+              </span>
+            </button>
+          )}
         </div>
 
         <div ref={setNodeRef} className={s.cards}>
@@ -237,6 +241,7 @@ export default memo(function Column({
               group={group}
               columnId={column.id}
               canVote={canVote}
+              readOnly={readOnly}
               brainstormHidden={brainstormHidden}
               currentUser={currentUser}
               isFacilitator={isFacilitator}
@@ -259,12 +264,13 @@ export default memo(function Column({
                   key={card.id}
                   card={card}
                   canVote={canVote}
+                  readOnly={readOnly}
                   hidden={hidden}
                   usedInAction={usedCardIds?.has(card.id)}
                   onUpdate={(updated) => onCardUpdated(column.id, updated)}
                   onDelete={(id) => onCardDeleted(column.id, id)}
                   groups={groups}
-                  onAssignGroup={openGroupAssign}
+                  onAssignGroup={readOnly ? undefined : openGroupAssign}
                   isGroupTarget={card.id === groupTargetId}
                 />
               )
@@ -280,8 +286,8 @@ export default memo(function Column({
           <button
             className={s.addBtn}
             onClick={() => setAddOpen(true)}
-            disabled={cardCreationDisabled}
-            title={cardCreationDisabled ? 'Дождитесь начала сессии (фасилитатор ещё не назначен)' : undefined}
+            disabled={readOnly || cardCreationDisabled}
+            title={readOnly ? 'Ретро завершено' : cardCreationDisabled ? 'Дождитесь начала сессии (фасилитатор ещё не назначен)' : undefined}
           >
             <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
               add

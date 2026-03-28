@@ -10,7 +10,7 @@ interface WelcomeDialogProps {
 }
 
 export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
-  const { username: savedName } = useAppStore()
+  const savedName = useAppStore((s) => s.username)
   const [name, setName] = useState(savedName === 'Аноним' ? '' : savedName)
   const [visible, setVisible] = useState(false)
 

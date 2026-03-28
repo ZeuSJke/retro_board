@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import styles from './PhaseProgress.module.css'
 
 const PHASES = [
@@ -15,7 +16,7 @@ interface PhaseProgressProps {
   onPhaseChange?: (phase: string) => void
 }
 
-export default function PhaseProgress({ phase, isFacilitator, onPhaseChange }: PhaseProgressProps) {
+export default memo(function PhaseProgress({ phase, isFacilitator, onPhaseChange }: PhaseProgressProps) {
   if (!phase) return null
 
   const currentIdx = PHASES.findIndex((p) => p.key === phase)
@@ -76,4 +77,4 @@ export default function PhaseProgress({ phase, isFacilitator, onPhaseChange }: P
       })}
     </div>
   )
-}
+})

@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useMemo } from 'react'
 import { createBoard, deleteBoard } from '../api'
+import { boardToBoardListItem } from '../utils/boardMapper'
+import { getApiErrorMessage } from '../utils/apiError'
 import type { BoardListItem } from '../types'
 import Dialog from './Dialog'
 import styles from './BoardsPanel.module.css'
@@ -53,10 +55,9 @@ export default function BoardsPanel({
       setNewName('')
       setCreating(false)
       setCreateError(null)
-      onCreated(board as unknown as BoardListItem)
+      onCreated(boardToBoardListItem(board))
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } }
-      setCreateError(err?.response?.data?.detail || 'Ошибка создания доски')
+      setCreateError(getApiErrorMessage(e, 'Ошибка создания доски'))
     }
   }
 

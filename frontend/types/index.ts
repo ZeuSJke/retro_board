@@ -85,6 +85,73 @@ export interface WsMessage {
   data: Record<string, unknown>
 }
 
+// ── Typed WS event payloads ────────────────────────────────────────────────
+// These cover the most common WS events for type-safe access in handlers.
+
+export interface WsCursorMoveData {
+  username: string
+  x: number
+  y: number
+}
+
+export interface WsCursorLeaveData {
+  username: string
+}
+
+export interface WsPresenceData {
+  users: string[]
+}
+
+export interface WsFacilitatorData {
+  facilitator: string | null
+  phase: string | null
+}
+
+export interface WsPhaseData {
+  phase: string
+}
+
+export interface WsTimerStartData {
+  duration: number
+  remaining: number
+  ts: number
+}
+
+export interface WsTimerPauseData {
+  duration?: number
+  remaining: number
+}
+
+export interface WsTimerResetData {
+  duration: number
+}
+
+export interface WsGroupCollapseData {
+  group_id: string
+  collapsed: boolean
+}
+
+export interface WsCardMovedData {
+  card: Card
+  old_column_id: string
+}
+
+export interface WsGroupMovedData {
+  group: CardGroup
+  old_column_id: string
+  cards: Card[]
+}
+
+export interface WsDeletedData {
+  id: string
+}
+
+export interface WsGroupDeletedData {
+  id: string
+  column_id: string
+  card_ids?: string[]
+}
+
 export interface TimerState {
   duration: number
   remaining: number

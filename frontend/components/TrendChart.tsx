@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import {
   ResponsiveContainer,
   BarChart,
@@ -45,7 +46,7 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
   )
 }
 
-export default function TrendChart({ data }: Props) {
+export default memo(function TrendChart({ data }: Props) {
   if (data.length === 0) return null
 
   const chartData = data.map((d) => ({
@@ -87,4 +88,4 @@ export default function TrendChart({ data }: Props) {
       </ResponsiveContainer>
     </div>
   )
-}
+})

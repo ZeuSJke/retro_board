@@ -24,6 +24,15 @@
   letter-spacing: 1px;
 }
 
+.pillTimePaused {
+  animation: pauseBlink 2s ease-in-out infinite;
+}
+
+@keyframes pauseBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 .dot {
   width: 6px;
   height: 6px;
@@ -99,6 +108,19 @@
   font-weight: 700;
   letter-spacing: 1px;
   transition: color 0.5s;
+}
+
+.countdownTimePaused {
+  animation: pauseBlink 2s ease-in-out infinite;
+}
+
+.pausedLabel {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--md-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  animation: pauseBlink 2s ease-in-out infinite;
 }
 
 .finishedLabel {

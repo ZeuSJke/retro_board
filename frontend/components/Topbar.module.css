@@ -146,68 +146,6 @@
   border: 2px solid var(--md-surface-1);
 }
 
-/* Phase indicator */
-.phaseChip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  background: var(--md-primary-container);
-  color: var(--md-on-primary-container);
-  border-radius: 16px;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: 'Roboto', sans-serif;
-  white-space: nowrap;
-}
-
-/* Facilitator controls */
-.facControls {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  background: var(--md-surface-variant);
-  border-radius: 20px;
-  padding: 2px;
-  flex-shrink: 0;
-}
-
-.facBtn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  color: var(--md-on-surface-variant);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--transition);
-}
-
-.facBtn:hover {
-  background: var(--md-outline-variant);
-}
-
-.facBtnActive {
-  background: var(--md-primary);
-  color: var(--md-on-primary);
-}
-
-.facBtnActive:hover {
-  background: var(--md-primary);
-  opacity: 0.9;
-}
-
-.facBtnStop {
-  color: var(--md-error);
-}
-
-.facBtnStop:hover {
-  background: color-mix(in srgb, var(--md-error) 15%, transparent);
-}
-
 /* Facilitator stop button */
 .facStopBtn {
   color: var(--md-error);

@@ -15,6 +15,7 @@ interface CardGroupWidgetProps {
   collapsed: boolean
   columnId: string
   canVote?: boolean
+  readOnly?: boolean
   brainstormHidden?: boolean
   currentUser?: string
   isFacilitator?: boolean
@@ -32,6 +33,7 @@ export default function CardGroupWidget({
   collapsed,
   columnId,
   canVote = true,
+  readOnly = false,
   brainstormHidden = false,
   currentUser,
   isFacilitator = false,
@@ -135,11 +137,11 @@ export default function CardGroupWidget({
           ) : (
             <span
               className={styles.title}
-              onDoubleClick={() => {
+              onDoubleClick={readOnly ? undefined : () => {
                 setTitleVal(group.title)
                 setEditingTitle(true)
               }}
-              title="Двойной клик — переименовать"
+              title={readOnly ? group.title : 'Двойной клик — переименовать'}
             >
               {group.title}
             </span>
@@ -156,15 +158,17 @@ export default function CardGroupWidget({
             </span>
           )}
 
-          <button
-            className={styles.delBtn}
-            onClick={() => setDeleteOpen(true)}
-            title="Удалить группу"
-          >
-            <span className="material-symbols-rounded" style={{ fontSize: 15 }}>
-              close
-            </span>
-          </button>
+          {!readOnly && (
+            <button
+              className={styles.delBtn}
+              onClick={() => setDeleteOpen(true)}
+              title="Удалить группу"
+            >
+              <span className="material-symbols-rounded" style={{ fontSize: 15 }}>
+                close
+              </span>
+            </button>
+          )}
         </div>
 
         {!collapsed && (
@@ -179,6 +183,7 @@ export default function CardGroupWidget({
                     key={card.id}
                     card={card}
                     canVote={canVote}
+                    readOnly={readOnly}
                     hidden={hidden}
                     usedInAction={usedCardIds?.has(card.id)}
                     onUpdate={onCardUpdated}

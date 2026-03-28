@@ -13,6 +13,22 @@ WS_RATE_WINDOW = 1.0  # seconds
 
 VALID_PHASES = ("brainstorm", "reveal", "discuss", "vote")
 
+KNOWN_EVENTS = frozenset({
+    "identify",
+    "cursor_move",
+    "cursor_leave",
+    "group_collapse",
+    "timer_start",
+    "timer_pause",
+    "timer_reset",
+    "facilitator_start",
+    "facilitator_stop",
+    "phase_change",
+})
+
+MAX_USERNAME_LENGTH = 100
+MAX_COORD_VALUE = 10000
+
 
 def _origin_allowed(websocket: WebSocket) -> bool:
     origin = (websocket.headers.get("origin") or "").rstrip("/")
@@ -88,6 +104,30 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                 msg = json.loads(data)
                 event = msg.get("event")
                 payload = msg.get("data", {})
+
+                # Validate event type
+                if not isinstance(event, str) or event not in KNOWN_EVENTS:
+                    continue
+
+                # Validate cursor_move coordinates
+                if event == "cursor_move":
+                    x, y = payload.get("x"), payload.get("y")
+                    if (
+                        not isinstance(x, (int, float))
+                        or not isinstance(y, (int, float))
+                        or not (0 <= x <= MAX_COORD_VALUE)
+                        or not (0 <= y <= MAX_COORD_VALUE)
+                    ):
+                        continue
+
+                # Validate username length for identify / cursor_move
+                if event in ("identify", "cursor_move"):
+                    uname = payload.get("username")
+                    if uname and (
+                        not isinstance(uname, str)
+                        or len(uname) > MAX_USERNAME_LENGTH
+                    ):
+                        continue
 
                 if event == "identify":
                     uname = payload.get("username")

@@ -22,7 +22,17 @@ vi.mock('@dnd-kit/utilities', () => ({
 
 // Mock store
 vi.mock('../../store', () => ({
-  useAppStore: () => ({ username: 'TestUser' }),
+  useAppStore: (selector: (s: Record<string, unknown>) => unknown) =>
+    selector({ username: 'TestUser', theme: { primary: '#6750A4', dark: false }, setUsername: vi.fn(), setCurrentBoard: vi.fn(), setTheme: vi.fn(), currentBoardId: null }),
+}))
+
+// Mock theme utils
+vi.mock('../../utils/theme', () => ({
+  isLight: () => true,
+  userColor: () => '#6750A4',
+  initials: (name: string) => name.slice(0, 2),
+  applyTheme: vi.fn(),
+  CARD_COLORS: ['#FFFFFF'],
 }))
 
 // Mock API
