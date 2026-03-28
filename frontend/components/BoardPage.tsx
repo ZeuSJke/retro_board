@@ -83,17 +83,23 @@ export default function BoardPage({
   const username = useAppStore((s) => s.username)
 
   // Track if retro session ended (facilitator was active then stopped)
+  // Persisted to localStorage so state survives navigation (dashboard → board)
+  const lockKey = `retro_locked_${board.id}`
   const hadFacilitatorRef = useRef(false)
-  const [boardLocked, setBoardLocked] = useState(false)
+  const [boardLocked, setBoardLocked] = useState(() => {
+    try { return localStorage.getItem(lockKey) === '1' } catch { return false }
+  })
 
   useEffect(() => {
     if (facilitator) {
       hadFacilitatorRef.current = true
       setBoardLocked(false)
+      try { localStorage.removeItem(lockKey) } catch { /* ignore */ }
     } else if (hadFacilitatorRef.current) {
       setBoardLocked(true)
+      try { localStorage.setItem(lockKey, '1') } catch { /* ignore */ }
     }
-  }, [facilitator])
+  }, [facilitator, lockKey])
 
   // Initialize columns from board prop
   useEffect(() => {
