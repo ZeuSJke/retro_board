@@ -141,6 +141,7 @@ async def create_action_item(request: Request, body: schemas.ActionItemCreate, d
         title=body.title,
         text=body.text,
         assignee=body.assignee,
+        source_card_ids=body.source_card_ids,
         status=body.status,
     )
     db.add(item)

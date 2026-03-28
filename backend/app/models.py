@@ -112,6 +112,7 @@ class ActionItem(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     assignee: Mapped[str | None] = mapped_column(String(60), nullable=True)
     jira_issue_key: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    source_card_ids: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

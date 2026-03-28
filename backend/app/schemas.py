@@ -150,6 +150,7 @@ class ActionItemCreate(BaseModel):
     title: str = Field(default="", max_length=200)
     text: str = Field(..., min_length=1, max_length=2000)
     assignee: Optional[str] = Field(default=None, max_length=60)
+    source_card_ids: list[str] = []
     status: ActionItemStatus = "open"
 
 class ActionItemUpdate(BaseModel):
@@ -165,6 +166,7 @@ class ActionItemOut(BaseModel):
     text: str
     assignee: Optional[str] = None
     jira_issue_key: Optional[str] = None
+    source_card_ids: list[str] = []
     status: str = "open"
     completed_at: Optional[datetime] = None
     created_at: datetime
