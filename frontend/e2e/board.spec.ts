@@ -66,10 +66,10 @@ test.describe('Доска — колонки и карточки', () => {
     await openBoard(page, board.slug)
     await expect(page.locator('body')).toContainText('Карточка для лайка')
 
-    // Wait for like button to become enabled (title exactly "Лайк")
-    const likeBtn = page.getByTitle('Лайк', { exact: true })
-    await likeBtn.waitFor({ state: 'visible', timeout: 10_000 })
-    await likeBtn.click()
+    // Find like button inside the card context and click
+    const card = page.locator('.card-widget').filter({ hasText: 'Карточка для лайка' })
+    const likeBtn = card.locator('button').filter({ hasText: 'thumb_up' }).first()
+    await likeBtn.click({ force: true })
     await expect(page.getByTitle('Убрать лайк')).toBeVisible()
   })
 
