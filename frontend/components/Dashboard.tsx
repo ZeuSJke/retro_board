@@ -59,16 +59,18 @@ export default function Dashboard() {
     async function load() {
       setLoading(true)
       try {
-        const [boardsData, itemsData, trendsData] = await Promise.all([
+        const [boardsData, itemsData] = await Promise.all([
           getBoards(),
           getAllActionItems(),
-          getTrends(),
         ])
         if (!cancelled) {
           setBoards(boardsData)
           setItems(itemsData)
-          setTrends(trendsData)
         }
+        // Non-critical: trends and Jira status load independently
+        getTrends()
+          .then((d) => { if (!cancelled) setTrends(d) })
+          .catch(() => {})
         getJiraStatus()
           .then((s) => { if (!cancelled) setJiraConfigured(s.configured) })
           .catch(() => {})
