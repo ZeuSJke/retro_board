@@ -7,23 +7,8 @@ import { userColor, initials } from '../utils/theme'
 import type { TimerState } from '../types'
 import Dialog from './Dialog'
 import TimerWidget from './TimerWidget'
+import PhaseProgress from './PhaseProgress'
 import styles from './Topbar.module.css'
-
-const PHASE_LABELS: Record<string, string> = {
-  brainstorm: 'Мозговой штурм',
-  reveal: 'Обсуждение',
-  discuss: 'Дискуссия',
-  vote: 'Голосование',
-}
-
-const PHASE_ICONS: Record<string, string> = {
-  brainstorm: 'edit_note',
-  reveal: 'visibility',
-  discuss: 'forum',
-  vote: 'how_to_vote',
-}
-
-const PHASE_ORDER = ['brainstorm', 'reveal', 'discuss', 'vote']
 
 interface TopbarProps {
   boardName: string
@@ -37,6 +22,9 @@ interface TopbarProps {
   onTimerStart: (duration: number, remaining: number) => void
   onTimerPause: () => void
   onTimerReset: (duration: number) => void
+  autoAdvance?: boolean
+  onAutoAdvanceChange?: (value: boolean) => void
+  onNextPhase?: () => void
   activeUsers: string[]
   facilitator: string | null
   phase: string | null
@@ -57,6 +45,9 @@ export default function Topbar({
   onTimerStart,
   onTimerPause,
   onTimerReset,
+  autoAdvance,
+  onAutoAdvanceChange,
+  onNextPhase,
   activeUsers,
   facilitator,
   phase,
@@ -98,39 +89,24 @@ export default function Topbar({
           {boardName}
         </button>
         <div className={styles.actions}>
-          {/* Phase indicator */}
+          {/* Phase progress stepper */}
           {phase && (
-            <div className={styles.phaseChip} title={PHASE_LABELS[phase] || phase}>
-              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-                {PHASE_ICONS[phase] || 'flag'}
-              </span>
-              {PHASE_LABELS[phase] || phase}
-            </div>
+            <PhaseProgress
+              phase={phase}
+              isFacilitator={isFacilitator}
+              onPhaseChange={onPhaseChange}
+            />
           )}
 
-          {/* Facilitator controls */}
+          {/* Facilitator stop button */}
           {isFacilitator && (
-            <div className={styles.facControls}>
-              {PHASE_ORDER.map((p) => (
-                <button
-                  key={p}
-                  className={`${styles.facBtn} ${phase === p ? styles.facBtnActive : ''}`}
-                  onClick={() => onPhaseChange(p)}
-                  title={PHASE_LABELS[p]}
-                >
-                  <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-                    {PHASE_ICONS[p]}
-                  </span>
-                </button>
-              ))}
-              <button
-                className={`${styles.facBtn} ${styles.facBtnStop}`}
-                onClick={onFacilitatorStop}
-                title="Завершить режим ведущего"
-              >
-                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>close</span>
-              </button>
-            </div>
+            <button
+              className={`${styles.iconBtn} ${styles.facStopBtn}`}
+              onClick={onFacilitatorStop}
+              title="Завершить режим ведущего"
+            >
+              <span className="material-symbols-rounded">close</span>
+            </button>
           )}
 
           {/* Become facilitator button */}
@@ -155,6 +131,10 @@ export default function Topbar({
               onPause={onTimerPause}
               onReset={onTimerReset}
               readOnly={!!facilitator && !isFacilitator}
+              phase={phase}
+              autoAdvance={autoAdvance}
+              onAutoAdvanceChange={onAutoAdvanceChange}
+              onNextPhase={onNextPhase}
             />
           )}
 

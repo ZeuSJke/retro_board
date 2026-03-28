@@ -208,6 +208,17 @@
   background: color-mix(in srgb, var(--md-error) 15%, transparent);
 }
 
+/* Facilitator stop button */
+.facStopBtn {
+  color: var(--md-error);
+  width: 32px;
+  height: 32px;
+}
+
+.facStopBtn:hover {
+  background: color-mix(in srgb, var(--md-error) 12%, transparent);
+}
+
 /* Facilitator badge */
 .facBadge {
   display: flex;

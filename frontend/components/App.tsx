@@ -40,6 +40,7 @@ export default function App({ boardId }: AppProps) {
   } | null>(null)
 
   const [timer, setTimer] = useState<TimerState>({ duration: 300, remaining: 300, running: false })
+  const [autoAdvance, setAutoAdvance] = useState(false)
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const sendTimerRef = useRef<{
     start: (duration: number, remaining: number) => void
@@ -232,6 +233,18 @@ export default function App({ boardId }: AppProps) {
     sendFacilitatorRef.current?.changePhase(p)
   }, [])
 
+  const handleNextPhase = useCallback(() => {
+    if (!phase) return
+    const PHASE_ORDER = ['brainstorm', 'reveal', 'discuss', 'vote']
+    const idx = PHASE_ORDER.indexOf(phase)
+    if (idx >= 0 && idx < PHASE_ORDER.length - 1) {
+      const next = PHASE_ORDER[idx + 1]
+      sendFacilitatorRef.current?.changePhase(next)
+      // Reset timer for new phase
+      sendTimerRef.current?.reset(timer.duration)
+    }
+  }, [phase, timer.duration])
+
   const handleFacilitatorChanged = useCallback((f: string | null, p: string | null) => {
     setFacilitator(f)
     setPhase(p)
@@ -289,6 +302,9 @@ export default function App({ boardId }: AppProps) {
         onTimerStart={handleTimerStart}
         onTimerPause={handleTimerPause}
         onTimerReset={handleTimerReset}
+        autoAdvance={autoAdvance}
+        onAutoAdvanceChange={setAutoAdvance}
+        onNextPhase={handleNextPhase}
         activeUsers={activeUsers}
         facilitator={facilitator}
         phase={phase}

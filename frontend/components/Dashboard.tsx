@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { getBoards, getAllActionItems, updateActionItem, deleteActionItem, getJiraStatus, getTrends } from '../api'
+import { getBoards, getAllActionItems, updateActionItem, deleteActionItem, getJiraStatus } from '../api'
 import { userColor, initials } from '../utils/theme'
-import type { BoardListItem, DashboardActionItem, ActionItemStatus, TrendPoint } from '../types'
+import type { BoardListItem, DashboardActionItem, ActionItemStatus } from '../types'
 import Dialog from './Dialog'
 import JiraDialog from './JiraDialog'
 import TrendChart from './TrendChart'
@@ -44,7 +44,6 @@ export default function Dashboard() {
 
   const [boards, setBoards] = useState<BoardListItem[]>([])
   const [items, setItems] = useState<DashboardActionItem[]>([])
-  const [trends, setTrends] = useState<TrendPoint[]>([])
   const [loading, setLoading] = useState(true)
 
   // Filters
@@ -67,10 +66,6 @@ export default function Dashboard() {
           setBoards(boardsData)
           setItems(itemsData)
         }
-        // Non-critical: trends and Jira status load independently
-        getTrends()
-          .then((d) => { if (!cancelled) setTrends(d) })
-          .catch(() => {})
         getJiraStatus()
           .then((s) => { if (!cancelled) setJiraConfigured(s.configured) })
           .catch(() => {})
@@ -82,6 +77,34 @@ export default function Dashboard() {
     load()
     return () => { cancelled = true }
   }, [])
+
+  // Compute trend data from local items + boards (updates in real-time)
+  const trends = useMemo(() => {
+    const boardMap = new Map(boards.map((b) => [b.id, b]))
+    const grouped = new Map<string, { open: number; in_progress: number; done: number }>()
+    for (const item of items) {
+      let counts = grouped.get(item.board_id)
+      if (!counts) {
+        counts = { open: 0, in_progress: 0, done: 0 }
+        grouped.set(item.board_id, counts)
+      }
+      if (item.status in counts) counts[item.status as keyof typeof counts]++
+    }
+    return boards
+      .filter((b) => grouped.has(b.id))
+      .map((b) => {
+        const c = grouped.get(b.id)!
+        return {
+          board_id: b.id,
+          board_name: b.name,
+          created_at: b.created_at,
+          open: c.open,
+          in_progress: c.in_progress,
+          done: c.done,
+          total: c.open + c.in_progress + c.done,
+        }
+      })
+  }, [items, boards])
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
