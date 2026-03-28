@@ -63,13 +63,15 @@ test.describe('Доска — колонки и карточки', () => {
       data: { column_id: col.id, text: 'Карточка для лайка' },
     })
 
-    await openBoard(page, board.slug)
+    // Navigate WITHOUT becoming facilitator — voting is allowed when no facilitator is set
+    await page.goto(`/board/${board.slug}`)
+    await dismissWelcome(page)
     await expect(page.locator('body')).toContainText('Карточка для лайка')
 
     // Find like button inside the card context and click
     const card = page.locator('.card-widget').filter({ hasText: 'Карточка для лайка' })
     const likeBtn = card.locator('button').filter({ hasText: 'thumb_up' }).first()
-    await likeBtn.click({ force: true })
+    await likeBtn.click()
     await expect(page.getByTitle('Убрать лайк')).toBeVisible()
   })
 
