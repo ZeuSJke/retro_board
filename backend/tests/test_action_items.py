@@ -277,6 +277,50 @@ class TestListAllActionItems:
         assert items[0]["assignee"] == "Alice"
 
 
+class TestTrends:
+    def test_empty_boards(self, client):
+        resp = client.get("/api/action-items/trends")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_boards_with_mixed_statuses(self, client):
+        board = client.post("/api/boards/", json={"name": "Sprint 1"}).json()
+        client.post("/api/action-items/", json={"board_id": board["id"], "text": "T1"})
+        item2 = client.post("/api/action-items/", json={"board_id": board["id"], "text": "T2"}).json()
+        client.patch(f"/api/action-items/{item2['id']}", json={"status": "in_progress"})
+        item3 = client.post("/api/action-items/", json={"board_id": board["id"], "text": "T3"}).json()
+        client.patch(f"/api/action-items/{item3['id']}", json={"status": "done"})
+
+        resp = client.get("/api/action-items/trends")
+        data = resp.json()
+        assert len(data) == 1
+        point = data[0]
+        assert point["board_name"] == "Sprint 1"
+        assert point["open"] == 1
+        assert point["in_progress"] == 1
+        assert point["done"] == 1
+        assert point["total"] == 3
+
+    def test_board_without_items_shows_zeros(self, client, sample_board):
+        resp = client.get("/api/action-items/trends")
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["total"] == 0
+        assert data[0]["open"] == 0
+
+    def test_multiple_boards_sorted_by_date(self, client):
+        b1 = client.post("/api/boards/", json={"name": "First"}).json()
+        b2 = client.post("/api/boards/", json={"name": "Second"}).json()
+        client.post("/api/action-items/", json={"board_id": b1["id"], "text": "T"})
+        client.post("/api/action-items/", json={"board_id": b2["id"], "text": "T"})
+
+        resp = client.get("/api/action-items/trends")
+        data = resp.json()
+        assert len(data) == 2
+        assert data[0]["board_name"] == "First"
+        assert data[1]["board_name"] == "Second"
+
+
 class TestCarryForward:
     def test_copies_open_items(self, client):
         src = client.post("/api/boards/", json={"name": "Source"}).json()

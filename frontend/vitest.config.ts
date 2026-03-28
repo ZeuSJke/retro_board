@@ -14,5 +14,6 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./tests/setup.ts'],
     css: { modules: { classNameStrategy: 'non-scoped' } },
+    exclude: ['e2e/**', 'node_modules/**'],
   },
 })

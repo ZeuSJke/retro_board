@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { getBoards, getAllActionItems, updateActionItem, deleteActionItem, getJiraStatus } from '../api'
+import { getBoards, getAllActionItems, updateActionItem, deleteActionItem, getJiraStatus, getTrends } from '../api'
 import { userColor, initials } from '../utils/theme'
-import type { BoardListItem, DashboardActionItem, ActionItemStatus } from '../types'
+import type { BoardListItem, DashboardActionItem, ActionItemStatus, TrendPoint } from '../types'
 import Dialog from './Dialog'
 import JiraDialog from './JiraDialog'
+import TrendChart from './TrendChart'
 import s from './Dashboard.module.css'
 
 type StatusFilter = 'all' | 'open' | 'in_progress' | 'done'
@@ -43,6 +44,7 @@ export default function Dashboard() {
 
   const [boards, setBoards] = useState<BoardListItem[]>([])
   const [items, setItems] = useState<DashboardActionItem[]>([])
+  const [trends, setTrends] = useState<TrendPoint[]>([])
   const [loading, setLoading] = useState(true)
 
   // Filters
@@ -57,13 +59,15 @@ export default function Dashboard() {
     async function load() {
       setLoading(true)
       try {
-        const [boardsData, itemsData] = await Promise.all([
+        const [boardsData, itemsData, trendsData] = await Promise.all([
           getBoards(),
           getAllActionItems(),
+          getTrends(),
         ])
         if (!cancelled) {
           setBoards(boardsData)
           setItems(itemsData)
+          setTrends(trendsData)
         }
         getJiraStatus()
           .then((s) => { if (!cancelled) setJiraConfigured(s.configured) })
@@ -359,6 +363,17 @@ export default function Dashboard() {
           </div>
         )}
       </section>
+
+      {/* Trends chart */}
+      {trends.length > 0 && (
+        <section className={s.section}>
+          <div className={s.sectionTitle}>
+            <span className="material-symbols-rounded" style={{ fontSize: 20 }}>trending_up</span>
+            Тренды задач по ретро
+          </div>
+          <TrendChart data={trends} />
+        </section>
+      )}
 
       {/* Action items section */}
       <section className={s.section}>

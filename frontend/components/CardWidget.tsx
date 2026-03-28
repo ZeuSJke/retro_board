@@ -57,8 +57,13 @@ export default memo(function CardWidget({
   const handleColorChange = async (color: string) => {
     setColorOpen(false)
     if (color === card.color) return
-    const updated = await updateCard(card.id, { color })
-    onUpdate(updated)
+    const prev = card
+    onUpdate({ ...card, color })
+    try {
+      await updateCard(card.id, { color })
+    } catch {
+      onUpdate(prev)
+    }
   }
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -76,11 +81,15 @@ export default memo(function CardWidget({
 
   const handleLike = async (e: React.MouseEvent) => {
     e.stopPropagation()
+    const prev = card
+    const newLikes = liked
+      ? (card.likes || []).filter((u) => u !== username)
+      : [...(card.likes || []), username]
+    onUpdate({ ...card, likes: newLikes })
     try {
-      const updated = await toggleLike(card.id, username)
-      onUpdate(updated)
+      await toggleLike(card.id, username)
     } catch {
-      // 403 vote limit → toast shown automatically by interceptor
+      onUpdate(prev)
     }
   }
 
@@ -89,11 +98,16 @@ export default memo(function CardWidget({
   const handleRemoveFromGroup = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!groupId) return
-    const updated = await removeCardFromGroup(groupId, card.id)
-    if (updated.group_id === null && onGroupDeleted) {
-      onGroupDeleted(updated.column_id, groupId)
+    const prev = card
+    onUpdate({ ...card, group_id: null })
+    try {
+      const updated = await removeCardFromGroup(groupId, card.id)
+      if (updated.group_id === null && onGroupDeleted) {
+        onGroupDeleted(updated.column_id, groupId)
+      }
+    } catch {
+      onUpdate(prev)
     }
-    onUpdate(updated)
   }
 
   const handleEditSave = async () => {
@@ -103,8 +117,14 @@ export default memo(function CardWidget({
       setEditText(card.text)
       return
     }
-    const updated = await updateCard(card.id, { text: trimmed })
-    onUpdate(updated)
+    const prev = card
+    onUpdate({ ...card, text: trimmed })
+    try {
+      await updateCard(card.id, { text: trimmed })
+    } catch {
+      onUpdate(prev)
+      setEditText(prev.text)
+    }
   }
 
   const handleEditKeyDown = (e: React.KeyboardEvent) => {
@@ -117,8 +137,12 @@ export default memo(function CardWidget({
 
   const confirmDelete = async () => {
     setDeleteOpen(false)
-    await deleteCard(card.id)
     onDelete(card.id)
+    try {
+      await deleteCard(card.id)
+    } catch {
+      // WS broadcast will restore if needed
+    }
   }
 
   const isLight = (hex: string): boolean => {

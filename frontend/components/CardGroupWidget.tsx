@@ -58,11 +58,13 @@ export default function CardGroupWidget({
 
   const saveTitle = async () => {
     setEditingTitle(false)
-    if (titleVal.trim() && titleVal !== group.title) {
+    const trimmed = titleVal.trim()
+    if (trimmed && trimmed !== group.title) {
+      onGroupUpdated({ ...group, title: trimmed })
       try {
-        const updated = await updateGroup(group.id, { title: titleVal.trim() })
-        onGroupUpdated(updated)
+        await updateGroup(group.id, { title: trimmed })
       } catch {
+        onGroupUpdated({ ...group })
         setTitleVal(group.title)
         showToast('Не удалось обновить название группы', 'error')
       }
@@ -71,9 +73,9 @@ export default function CardGroupWidget({
 
   const confirmDelete = async () => {
     setDeleteOpen(false)
+    onGroupDeleted(columnId, group.id)
     try {
       await deleteGroup(group.id)
-      onGroupDeleted(columnId, group.id)
     } catch {
       showToast('Не удалось удалить группу', 'error')
     }

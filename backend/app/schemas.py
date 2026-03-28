@@ -197,3 +197,15 @@ class JiraStatus(BaseModel):
 class CarryForwardRequest(BaseModel):
     source_board_id: str
     target_board_id: str
+
+
+# ── Trends ────────────────────────────────────────────────────────────────────
+
+class TrendPoint(BaseModel):
+    board_id: str
+    board_name: str
+    created_at: datetime
+    open: int = 0
+    in_progress: int = 0
+    done: int = 0
+    total: int = 0

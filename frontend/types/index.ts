@@ -69,6 +69,16 @@ export interface CarryForwardRequest {
   target_board_id: string
 }
 
+export interface TrendPoint {
+  board_id: string
+  board_name: string
+  created_at: string
+  open: number
+  in_progress: number
+  done: number
+  total: number
+}
+
 export interface WsMessage {
   event: string
   data: Record<string, unknown>

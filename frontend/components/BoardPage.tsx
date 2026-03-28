@@ -359,14 +359,20 @@ export default function BoardPage({
   const confirmAddColumn = async () => {
     if (!newColTitle.trim()) return
     setAddColOpen(false)
-    const col = await createColumn({
-      board_id: board.id,
-      title: newColTitle.trim(),
-      color: newColColor,
-    })
-    setColumns((prev) =>
-      prev.find((c) => c.id === col.id) ? prev : [...prev, { ...col, cards: [], groups: [] }],
-    )
+    const title = newColTitle.trim()
+    const color = newColColor
+    // Optimistic: add temp column
+    const tempId = `temp-col-${Date.now()}`
+    const tempCol = { id: tempId, board_id: board.id, title, color, position: columns.length, cards: [], groups: [] }
+    setColumns((prev) => [...prev, tempCol])
+    try {
+      const col = await createColumn({ board_id: board.id, title, color })
+      setColumns((prev) =>
+        prev.map((c) => (c.id === tempId ? { ...col, cards: [], groups: [] } : c)),
+      )
+    } catch {
+      setColumns((prev) => prev.filter((c) => c.id !== tempId))
+    }
   }
 
   return (

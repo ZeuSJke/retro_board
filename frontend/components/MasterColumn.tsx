@@ -51,33 +51,55 @@ export default function MasterColumn({
     disabled: dropDisabled,
   })
 
+  const findItem = (id: string) => actionItems.find((i) => i.id === id)
+
   const saveTitle = async (id: string) => {
     setEditingTitleId(null)
-    if (editTitle.trim()) {
-      const updated = await updateActionItem(id, { title: editTitle.trim() })
-      onUpdated(updated)
+    const trimmed = editTitle.trim()
+    if (!trimmed) return
+    const prev = findItem(id)
+    if (prev) onUpdated({ ...prev, title: trimmed })
+    try {
+      await updateActionItem(id, { title: trimmed })
+    } catch {
+      if (prev) onUpdated(prev)
     }
   }
 
   const saveDesc = async (id: string) => {
     setEditingDescId(null)
-    if (editDesc.trim()) {
-      const updated = await updateActionItem(id, { text: editDesc.trim() })
-      onUpdated(updated)
+    const trimmed = editDesc.trim()
+    if (!trimmed) return
+    const prev = findItem(id)
+    if (prev) onUpdated({ ...prev, text: trimmed })
+    try {
+      await updateActionItem(id, { text: trimmed })
+    } catch {
+      if (prev) onUpdated(prev)
     }
   }
 
   const saveAssignee = async (id: string) => {
     setEditAssigneeId(null)
-    const updated = await updateActionItem(id, { assignee: editAssignee.trim() || null })
-    onUpdated(updated)
+    const val = editAssignee.trim() || null
+    const prev = findItem(id)
+    if (prev) onUpdated({ ...prev, assignee: val })
+    try {
+      await updateActionItem(id, { assignee: val })
+    } catch {
+      if (prev) onUpdated(prev)
+    }
   }
 
   const confirmDelete = async () => {
     if (!deleteTarget) return
-    await deleteActionItem(deleteTarget.id)
     onDeleted(deleteTarget.id)
     setDeleteTarget(null)
+    try {
+      await deleteActionItem(deleteTarget.id)
+    } catch {
+      // WS broadcast will restore if needed
+    }
   }
 
   return (
