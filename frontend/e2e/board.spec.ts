@@ -66,7 +66,10 @@ test.describe('Доска — колонки и карточки', () => {
     await openBoard(page, board.slug)
     await expect(page.locator('body')).toContainText('Карточка для лайка')
 
-    await page.getByTitle('Лайк').click()
+    // Wait for like button to become enabled (title exactly "Лайк")
+    const likeBtn = page.getByTitle('Лайк', { exact: true })
+    await likeBtn.waitFor({ state: 'visible', timeout: 10_000 })
+    await likeBtn.click()
     await expect(page.getByTitle('Убрать лайк')).toBeVisible()
   })
 
