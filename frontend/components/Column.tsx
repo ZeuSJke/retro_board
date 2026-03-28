@@ -82,11 +82,13 @@ export default memo(function Column({
 
   const saveTitle = async () => {
     setEditingTitle(false)
-    if (titleVal.trim() && titleVal !== column.title) {
+    const trimmed = titleVal.trim()
+    if (trimmed && trimmed !== column.title) {
+      onUpdate({ ...column, title: trimmed })
       try {
-        const updated = await updateColumn(column.id, { title: titleVal.trim() })
-        onUpdate(updated)
+        await updateColumn(column.id, { title: trimmed })
       } catch {
+        onUpdate({ ...column })
         setTitleVal(column.title)
         showToast('Не удалось обновить название', 'error')
       }
@@ -95,19 +97,21 @@ export default memo(function Column({
 
   const saveColor = async (color: string) => {
     setColorPickerOpen(false)
+    const prev = column
+    onUpdate({ ...column, color })
     try {
-      const updated = await updateColumn(column.id, { color })
-      onUpdate(updated)
+      await updateColumn(column.id, { color })
     } catch {
+      onUpdate(prev)
       showToast('Не удалось обновить цвет', 'error')
     }
   }
 
   const confirmDelete = async () => {
     setDeleteOpen(false)
+    onDelete(column.id)
     try {
       await deleteColumn(column.id)
-      onDelete(column.id)
     } catch {
       showToast('Не удалось удалить колонку', 'error')
     }
@@ -115,16 +119,33 @@ export default memo(function Column({
 
   const handleAddCard = async () => {
     if (!cardText.trim()) return
-    const card = await createCard({
+    const text = cardText.trim()
+    const color = cardColor
+    // Optimistic: add temp card immediately
+    const tempId = `temp-${Date.now()}`
+    const tempCard: Card = {
+      id: tempId,
       column_id: column.id,
-      text: cardText.trim(),
+      group_id: null,
+      text,
       author: username,
-      color: cardColor,
-    })
-    onCardCreated(column.id, card)
+      color,
+      position: (column.cards || []).length,
+      likes: [],
+      created_at: new Date().toISOString(),
+    }
+    onCardCreated(column.id, tempCard)
     setCardText('')
     setCardColor('#FFFFFF')
     setAddOpen(false)
+    try {
+      const card = await createCard({ column_id: column.id, text, author: username, color })
+      // Replace temp card with real one
+      onCardDeleted(column.id, tempId)
+      onCardCreated(column.id, card)
+    } catch {
+      onCardDeleted(column.id, tempId)
+    }
   }
 
   const handleAssignToGroup = async (groupId: string) => {

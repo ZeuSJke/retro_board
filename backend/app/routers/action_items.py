@@ -2,6 +2,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -12,6 +13,39 @@ from app.ws_manager import manager
 from app.limiter import limiter
 
 router = APIRouter()
+
+
+@router.get("/trends", response_model=list[schemas.TrendPoint])
+@limiter.limit("30/minute")
+async def get_trends(request: Request, db: Session = Depends(get_db)):
+    """Action item counts (open/in_progress/done) per board, sorted by board date."""
+    rows = (
+        db.query(
+            models.Board.id,
+            models.Board.name,
+            models.Board.created_at,
+            func.count(case((models.ActionItem.status == "open", 1))).label("open"),
+            func.count(case((models.ActionItem.status == "in_progress", 1))).label("in_progress"),
+            func.count(case((models.ActionItem.status == "done", 1))).label("done"),
+            func.count(models.ActionItem.id).label("total"),
+        )
+        .outerjoin(models.ActionItem, models.Board.id == models.ActionItem.board_id)
+        .group_by(models.Board.id, models.Board.name, models.Board.created_at)
+        .order_by(models.Board.created_at)
+        .all()
+    )
+    return [
+        schemas.TrendPoint(
+            board_id=r.id,
+            board_name=r.name,
+            created_at=r.created_at,
+            open=r.open,
+            in_progress=r.in_progress,
+            done=r.done,
+            total=r.total,
+        )
+        for r in rows
+    ]
 
 
 @router.get("/all", response_model=list[schemas.DashboardActionItem])

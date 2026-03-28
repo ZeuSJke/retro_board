@@ -1,0 +1,33 @@
+.chartWrap {
+  width: 100%;
+  min-height: 280px;
+}
+
+.tooltip {
+  background: var(--md-surface);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: var(--elevation-2);
+  font-size: 12px;
+  color: var(--md-on-surface);
+}
+
+.tooltipTitle {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.tooltipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.6;
+}
+
+.tooltipDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}

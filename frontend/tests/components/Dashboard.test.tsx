@@ -73,6 +73,10 @@ const mockItems = [
 vi.mock('../../api', () => ({
   getBoards: vi.fn(() => Promise.resolve(mockBoards)),
   getAllActionItems: vi.fn(() => Promise.resolve(mockItems)),
+  getTrends: vi.fn(() => Promise.resolve([
+    { board_id: 'b1', board_name: 'Sprint 1', created_at: '2026-01-10T10:00:00Z', open: 2, in_progress: 0, done: 1, total: 3 },
+    { board_id: 'b2', board_name: 'Sprint 2', created_at: '2026-02-10T10:00:00Z', open: 0, in_progress: 1, done: 0, total: 1 },
+  ])),
   updateActionItem: vi.fn((_id: string, data: Record<string, unknown>) => Promise.resolve({ ...mockItems[0], ...data })),
   deleteActionItem: vi.fn(() => Promise.resolve()),
   getJiraStatus: vi.fn(() => Promise.resolve({ configured: false })),
@@ -80,6 +84,9 @@ vi.mock('../../api', () => ({
 
 // Mock CSS modules
 vi.mock('../../components/Dashboard.module.css', () => ({
+  default: new Proxy({}, { get: (_, key) => key }),
+}))
+vi.mock('../../components/TrendChart.module.css', () => ({
   default: new Proxy({}, { get: (_, key) => key }),
 }))
 
