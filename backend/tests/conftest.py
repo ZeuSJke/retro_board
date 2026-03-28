@@ -42,7 +42,7 @@ class JSONEncodedList(TypeDecorator):
 # Import app AFTER env is set, then patch the likes column type
 # ---------------------------------------------------------------------------
 from app.database import Base, get_db
-from app.models import Card
+from app.models import Card, ActionItem
 
 # Import app but patch lifespan so alembic is not invoked during tests
 from contextlib import asynccontextmanager
@@ -66,6 +66,7 @@ def _test_500_endpoint():
 
 # Patch the underlying SA column type so SQLite can handle list<->json
 Card.__table__.c.likes.type = JSONEncodedList()
+ActionItem.__table__.c.source_card_ids.type = JSONEncodedList()
 
 # ---------------------------------------------------------------------------
 # Engine (single in-memory database shared across all threads)

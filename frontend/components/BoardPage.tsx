@@ -57,7 +57,6 @@ export default function BoardPage({
   const [addColOpen, setAddColOpen] = useState(false)
   const [newColTitle, setNewColTitle] = useState('')
   const [newColColor, setNewColColor] = useState('#6750A4')
-  const [usedCardIds, setUsedCardIds] = useState<Set<string>>(new Set())
   const boardRef = useRef<HTMLDivElement>(null)
   const lastSentRef = useRef(0)
 
@@ -87,6 +86,15 @@ export default function BoardPage({
   useEffect(() => {
     setColumns(board.columns || [])
   }, [board.columns, setColumns])
+
+  // Cards used in action items — from persisted source_card_ids
+  const usedCardIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const ai of actionItems) {
+      for (const cid of ai.source_card_ids || []) ids.add(cid)
+    }
+    return ids
+  }, [actionItems])
 
   // Count votes used by current user
   const votesUsed = useMemo(() => {
@@ -143,11 +151,11 @@ export default function BoardPage({
             title: 'Новая задача',
             text: activeCard.text,
             assignee: activeCard.author,
+            source_card_ids: [activeCard.id],
           })
           setActionItems((prev) =>
             prev.find((i) => i.id === item.id) ? prev : [...prev, item],
           )
-          setUsedCardIds((prev) => new Set(prev).add(activeCard.id))
         } catch { /* toast via interceptor */ }
         onDragEnd({ ...event, over: null } as DragEndEvent)
         return
@@ -169,15 +177,11 @@ export default function BoardPage({
             title: activeGroup.title,
             text: combinedText || activeGroup.title,
             assignee: groupCards[0]?.author ?? null,
+            source_card_ids: groupCards.map((c) => c.id),
           })
           setActionItems((prev) =>
             prev.find((i) => i.id === item.id) ? prev : [...prev, item],
           )
-          setUsedCardIds((prev) => {
-            const next = new Set(prev)
-            groupCards.forEach((c) => next.add(c.id))
-            return next
-          })
         } catch { /* toast via interceptor */ }
         onDragEnd({ ...event, over: null } as DragEndEvent)
         return
