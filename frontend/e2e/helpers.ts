@@ -11,9 +11,14 @@ export async function cleanupBoards(request: APIRequestContext) {
   }
 }
 
-/** Set username in localStorage to skip welcome dialog. */
+/** Set username in localStorage to skip welcome dialog. Clears stale state. */
 export async function setUsername(page: Page, name = 'E2E Тестер') {
   await page.addInitScript((n) => {
+    // Clear stale board lock flags and timer state from previous tests
+    const keysToRemove = Object.keys(localStorage).filter(
+      (k) => k.startsWith('retro_locked_') || k.startsWith('retro_timer_'),
+    )
+    keysToRemove.forEach((k) => localStorage.removeItem(k))
     const store = { state: { username: n, currentBoardId: null, theme: { primary: '#6750A4', dark: false } }, version: 0 }
     localStorage.setItem('retroboard-app', JSON.stringify(store))
   }, name)
