@@ -57,6 +57,7 @@ export default function BoardPage({
   const [addColOpen, setAddColOpen] = useState(false)
   const [newColTitle, setNewColTitle] = useState('')
   const [newColColor, setNewColColor] = useState('#6750A4')
+  const [colCreating, setColCreating] = useState(false)
   const [masterOpen, setMasterOpen] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
   const lastSentRef = useRef(0)
@@ -394,11 +395,11 @@ export default function BoardPage({
   }
 
   const confirmAddColumn = async () => {
-    if (!newColTitle.trim()) return
+    if (!newColTitle.trim() || colCreating) return
+    setColCreating(true)
     setAddColOpen(false)
     const title = newColTitle.trim()
     const color = newColColor
-    // Optimistic: add temp column
     const tempId = `temp-col-${Date.now()}`
     const tempCol = { id: tempId, board_id: board.id, title, color, position: columns.length, cards: [], groups: [] }
     setColumns((prev) => [...prev, tempCol])
@@ -409,6 +410,8 @@ export default function BoardPage({
       )
     } catch {
       setColumns((prev) => prev.filter((c) => c.id !== tempId))
+    } finally {
+      setColCreating(false)
     }
   }
 
@@ -503,6 +506,7 @@ export default function BoardPage({
         onClose={() => setAddColOpen(false)}
         onConfirm={confirmAddColumn}
         confirmLabel="Создать"
+        confirmDisabled={colCreating}
       >
         <div className={styles.field}>
           <label className={styles.label}>Название</label>
