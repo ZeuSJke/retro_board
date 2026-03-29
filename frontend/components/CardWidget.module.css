@@ -173,3 +173,20 @@
   font-family: 'Roboto', sans-serif;
 }
 
+@media (max-width: 767px) {
+  .iconBtn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .likeBtn {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+
+  .colorSwatch {
+    width: 44px;
+    height: 44px;
+  }
+}
+

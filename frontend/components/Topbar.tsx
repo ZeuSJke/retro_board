@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '../store'
 import { userColor, initials } from '../utils/theme'
@@ -67,7 +67,17 @@ export default function Topbar({
   const [renameError, setRenameError] = useState<string | null>(null)
 
   const isFacilitator = facilitator === username
-  const MAX_VISIBLE_AVATARS = 4
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 767px)')
+    setIsMobile(mql.matches)
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mql.addEventListener('change', handler)
+    return () => mql.removeEventListener('change', handler)
+  }, [])
+
+  const MAX_VISIBLE_AVATARS = isMobile ? 2 : 4
   const visibleUsers = activeUsers.slice(0, MAX_VISIBLE_AVATARS)
   const extraUsers = activeUsers.length - MAX_VISIBLE_AVATARS
 

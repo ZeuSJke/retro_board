@@ -57,6 +57,7 @@ export default function BoardPage({
   const [addColOpen, setAddColOpen] = useState(false)
   const [newColTitle, setNewColTitle] = useState('')
   const [newColColor, setNewColColor] = useState('#6750A4')
+  const [masterOpen, setMasterOpen] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
   const lastSentRef = useRef(0)
 
@@ -450,7 +451,14 @@ export default function BoardPage({
           />
         ))}
 
-        <div className={styles.masterWrapper}>
+        {masterOpen && (
+          <div
+            className={styles.masterOverlay}
+            onClick={() => setMasterOpen(false)}
+          />
+        )}
+
+        <div className={`${styles.masterWrapper} ${masterOpen ? styles.masterWrapperOpen : ''}`}>
           <MasterColumn
             actionItems={actionItems}
             dropDisabled={!!facilitator && facilitator !== username}
@@ -464,6 +472,19 @@ export default function BoardPage({
             }
           />
         </div>
+
+        <button
+          className={styles.masterToggle}
+          onClick={() => setMasterOpen((v) => !v)}
+          title="Итоги"
+        >
+          <span className="material-symbols-rounded" style={{ fontSize: 24 }}>
+            {masterOpen ? 'close' : 'assignment'}
+          </span>
+          {!masterOpen && actionItems.length > 0 && (
+            <span className={styles.masterBadge}>{actionItems.length}</span>
+          )}
+        </button>
 
         <button className={styles.addColBtn} onClick={openAddCol}>
           <span className="material-symbols-rounded">add</span>

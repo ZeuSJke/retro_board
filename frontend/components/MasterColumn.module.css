@@ -253,3 +253,11 @@
   line-height: 1.6;
   color: var(--md-on-surface-variant);
 }
+
+@media (max-width: 767px) {
+  .deleteBtn {
+    width: 44px;
+    height: 44px;
+    opacity: 1;
+  }
+}

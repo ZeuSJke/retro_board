@@ -157,6 +157,50 @@
   background: color-mix(in srgb, var(--md-error) 12%, transparent);
 }
 
+/* Mobile touch targets */
+@media (max-width: 767px) {
+  .iconBtn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .chip {
+    padding: 8px 14px;
+    min-height: 44px;
+  }
+
+  .avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 11px;
+  }
+
+  .avatarExtra {
+    width: 32px;
+    height: 32px;
+    font-size: 11px;
+  }
+
+  .facStopBtn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .bar {
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  .logo {
+    display: none;
+  }
+
+  .boardName {
+    max-width: 140px;
+    font-size: 14px;
+  }
+}
+
 /* Facilitator badge */
 .facBadge {
   display: flex;
