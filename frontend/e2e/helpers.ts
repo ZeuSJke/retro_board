@@ -41,8 +41,14 @@ export async function setUsername(page: Page, name = 'E2E Тестер') {
 
 /** Dismiss welcome dialog if it appears (Next.js hydration may show it). */
 export async function dismissWelcome(page: Page) {
+  // Wait until either the welcome dialog or the board toolbar appears (loading done)
+  await Promise.race([
+    page.getByText('Войти на доску').waitFor({ timeout: 15000 }),
+    page.getByText('Новая колонка').waitFor({ timeout: 15000 }),
+  ]).catch(() => {})
+
   const btn = page.getByText('Войти на доску')
-  if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
+  if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
     await btn.click()
   }
 }
