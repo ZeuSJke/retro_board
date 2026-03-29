@@ -5,7 +5,7 @@ Uses SQLite in-memory so no running PostgreSQL is needed.
 The ARRAY(String) column (Card.likes) is patched to use a JSON-based
 TypeDecorator that stores Python lists as JSON text in SQLite.
 """
-import os, json
+import os, json, bcrypt
 
 # Must be set before any app import — pydantic Settings needs it.
 os.environ.setdefault("DATABASE_URL", "sqlite://")
@@ -122,43 +122,100 @@ def client():
     app.dependency_overrides.clear()
 
 
+# ── Workspace fixtures ──────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def test_workspace(db_session):
+    """Создать тестовый workspace в БД напрямую."""
+    from app.models import Workspace
+    ws = Workspace(
+        id="test-workspace-id",
+        slug="test-team",
+        name="Test Team",
+        access_key_hash=bcrypt.hashpw(b"testkey123", bcrypt.gensalt(rounds=4)).decode(),
+    )
+    db_session.add(ws)
+    db_session.commit()
+    return ws
+
+
+@pytest.fixture()
+def workspace_headers(client, test_workspace):
+    """Получить заголовки с X-Workspace-Token для тестовых запросов."""
+    resp = client.post("/api/workspaces/login", json={
+        "workspace_slug": "test-team",
+        "access_key": "testkey123",
+    })
+    assert resp.status_code == 200
+    token = resp.json()["token"]
+    return {"X-Workspace-Token": token}
+
+
+@pytest.fixture()
+def admin_headers(client):
+    """Получить заголовки с admin_token cookie для тестовых запросов."""
+    from app.config import settings
+    resp = client.post("/api/admin/login", json={
+        "login": settings.admin_login,
+        "password": settings.admin_password,
+    })
+    assert resp.status_code == 200
+    # Приходится вручную вытащить cookie из ответа
+    token = resp.cookies["admin_token"]
+    return {"Cookie": f"admin_token={token}"}
+
+
+# ── DB session fixture ───────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def db_session():
+    """Предоставить сессию БД для фикстур."""
+    db = TestSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 # ── Helper fixtures ─────────────────────────────────────────────────────────
 
 
 @pytest.fixture()
-def sample_board(client):
+def sample_board(client, workspace_headers):
     """Create a board and return its JSON."""
-    resp = client.post("/api/boards/", json={"name": "Test Board"})
+    resp = client.post("/api/boards/", json={"name": "Test Board"}, headers=workspace_headers)
     assert resp.status_code == 201
     return resp.json()
 
 
 @pytest.fixture()
-def sample_column(client, sample_board):
+def sample_column(client, sample_board, workspace_headers):
     """Return the first default column of the sample board."""
-    board = client.get(f"/api/boards/{sample_board['id']}").json()
+    board = client.get(f"/api/boards/{sample_board['id']}", headers=workspace_headers).json()
     return board["columns"][0]
 
 
 @pytest.fixture()
-def sample_card(client, sample_column):
+def sample_card(client, sample_column, workspace_headers):
     """Create a card in the sample column and return its JSON."""
     resp = client.post("/api/cards/", json={
         "column_id": sample_column["id"],
         "text": "Test card",
         "author": "Tester",
         "color": "#FFEB3B",
-    })
+    }, headers=workspace_headers)
     assert resp.status_code == 201
     return resp.json()
 
 
 @pytest.fixture()
-def sample_group(client, sample_column):
+def sample_group(client, sample_column, workspace_headers):
     """Create a group in the sample column and return its JSON."""
     resp = client.post("/api/groups/", json={
         "column_id": sample_column["id"],
         "title": "Test Group",
-    })
+    }, headers=workspace_headers)
     assert resp.status_code == 201
     return resp.json()

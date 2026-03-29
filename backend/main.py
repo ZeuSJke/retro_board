@@ -9,7 +9,7 @@ from sqlalchemy import inspect
 
 from app.config import settings
 from app.database import engine
-from app.routers import action_items, boards, cards, columns, groups, jira, websocket
+from app.routers import action_items, boards, cards, columns, groups, jira, websocket, workspaces, admin
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -67,8 +67,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # Skip if disabled via settings
         if not settings.csrf_enabled:
             return await call_next(request)
-        # Skip CSRF for WebSocket upgrades and health checks
-        if request.url.path.startswith("/ws/") or request.url.path in ("/health", "/api/health"):
+        # Skip CSRF for WebSocket upgrades, health checks, and auth endpoints
+        if (request.url.path.startswith("/ws/") or
+            request.url.path in ("/health", "/api/health", "/api/workspaces/login",
+                                  "/api/admin/login", "/api/admin/logout")):
             return await call_next(request)
 
         if request.method in self.SAFE_METHODS:
@@ -107,6 +109,8 @@ app.add_middleware(
     allow_headers=["*", "x-csrf-token"],
 )
 
+app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(boards.router, prefix="/api/boards", tags=["boards"])
 app.include_router(columns.router, prefix="/api/columns", tags=["columns"])
 app.include_router(cards.router, prefix="/api/cards", tags=["cards"])
