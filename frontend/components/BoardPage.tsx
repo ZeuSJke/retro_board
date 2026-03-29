@@ -58,6 +58,7 @@ export default function BoardPage({
   const [newColTitle, setNewColTitle] = useState('')
   const [newColColor, setNewColColor] = useState('#6750A4')
   const [colCreating, setColCreating] = useState(false)
+  const colCreatingRef = useRef(false)
   const [masterOpen, setMasterOpen] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
   const lastSentRef = useRef(0)
@@ -395,7 +396,8 @@ export default function BoardPage({
   }
 
   const confirmAddColumn = async () => {
-    if (!newColTitle.trim() || colCreating) return
+    if (!newColTitle.trim() || colCreatingRef.current) return
+    colCreatingRef.current = true
     setColCreating(true)
     setAddColOpen(false)
     const title = newColTitle.trim()
@@ -405,12 +407,18 @@ export default function BoardPage({
     setColumns((prev) => [...prev, tempCol])
     try {
       const col = await createColumn({ board_id: board.id, title, color })
-      setColumns((prev) =>
-        prev.map((c) => (c.id === tempId ? { ...col, cards: [], groups: [] } : c)),
-      )
+      setColumns((prev) => {
+        if (prev.find((c) => c.id === col.id)) {
+          return prev.filter((c) => c.id !== tempId)
+        }
+        return prev.map((c) =>
+          c.id === tempId ? { ...col, cards: [], groups: [] } : c,
+        )
+      })
     } catch {
       setColumns((prev) => prev.filter((c) => c.id !== tempId))
     } finally {
+      colCreatingRef.current = false
       setColCreating(false)
     }
   }
@@ -506,7 +514,7 @@ export default function BoardPage({
         onClose={() => setAddColOpen(false)}
         onConfirm={confirmAddColumn}
         confirmLabel="Создать"
-        confirmDisabled={colCreating}
+        confirmDisabled={colCreatingRef.current}
       >
         <div className={styles.field}>
           <label className={styles.label}>Название</label>
@@ -517,7 +525,13 @@ export default function BoardPage({
             placeholder="Например: Что прошло хорошо?"
             maxLength={80}
             autoFocus
-            onKeyDown={(e) => e.key === 'Enter' && confirmAddColumn()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                e.stopPropagation()
+                confirmAddColumn()
+              }
+            }}
           />
         </div>
         <div className={styles.field}>

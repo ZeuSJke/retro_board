@@ -63,8 +63,9 @@ export default function Dialog({
           </button>
           {onConfirm && (
             <button
+              type="button"
               className={`${styles.filledBtn} ${danger ? styles.dangerBtn : ''}`}
-              onClick={onConfirm}
+              onClick={(e) => { e.preventDefault(); onConfirm() }}
               disabled={confirmDisabled}
             >
               {confirmLabel}
