@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 ActionItemStatus = Literal["open", "in_progress", "done"]
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 # ── Card ──────────────────────────────────────────────────────────────────────
@@ -98,12 +99,30 @@ class ColumnOut(ColumnBase):
 class BoardBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
 
+    @field_validator("name")
+    @classmethod
+    def name_no_html(cls, v: str) -> str:
+        v = v.strip()
+        if _HTML_TAG_RE.search(v):
+            raise ValueError("Название доски не должно содержать HTML-теги")
+        return v
+
 class BoardCreate(BoardBase):
     max_votes: int = Field(default=5, ge=1, le=99)
 
 class BoardUpdate(BaseModel):
     name: Optional[str] = None
     max_votes: Optional[int] = Field(default=None, ge=1, le=99)
+
+    @field_validator("name")
+    @classmethod
+    def name_no_html(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if _HTML_TAG_RE.search(v):
+            raise ValueError("Название доски не должно содержать HTML-теги")
+        return v
 
 class BoardOut(BoardBase):
     id: str

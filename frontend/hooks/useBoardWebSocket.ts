@@ -21,7 +21,7 @@ import type {
   WsGroupDeletedData,
 } from '../types'
 
-interface CursorPos {
+export interface CursorPos {
   x: number
   y: number
 }
@@ -36,7 +36,8 @@ interface UseBoardWebSocketParams {
 export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChanged, onPhaseChanged }: UseBoardWebSocketParams) {
   const username = useAppStore((s) => s.username)
   const [columns, setColumns] = useState<Column[]>([])
-  const [cursors, setCursors] = useState<Record<string, CursorPos>>({})
+  const cursorsRef = useRef<Record<string, CursorPos>>({})
+  const cursorListenersRef = useRef<Set<() => void>>(new Set())
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const [activeUsers, setActiveUsers] = useState<string[]>([])
   const [facilitator, setFacilitator] = useState<string | null>(null)
@@ -45,6 +46,15 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
   const cursorTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastCursorRef = useRef<CursorPos | null>(null)
   const sendMessageRef = useRef<((msg: WsMessage) => void) | null>(null)
+
+  const subscribeCursors = useCallback((cb: () => void) => {
+    cursorListenersRef.current.add(cb)
+    return () => { cursorListenersRef.current.delete(cb) }
+  }, [])
+
+  const notifyCursorListeners = useCallback(() => {
+    cursorListenersRef.current.forEach((cb) => cb())
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -70,14 +80,14 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       if (event === 'cursor_move') {
         const { username: u, x, y } = data as unknown as WsCursorMoveData
         if (!u) return
-        setCursors((prev) => ({ ...prev, [u]: { x, y } }))
+        cursorsRef.current = { ...cursorsRef.current, [u]: { x, y } }
+        notifyCursorListeners()
         clearTimeout(cursorTimeouts.current[u])
         cursorTimeouts.current[u] = setTimeout(() => {
-          setCursors((prev) => {
-            const n = { ...prev }
-            delete n[u]
-            return n
-          })
+          const n = { ...cursorsRef.current }
+          delete n[u]
+          cursorsRef.current = n
+          notifyCursorListeners()
         }, 6000)
         return
       }
@@ -86,11 +96,10 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
         const { username: u } = data as unknown as WsCursorLeaveData
         if (!u) return
         clearTimeout(cursorTimeouts.current[u])
-        setCursors((prev) => {
-          const n = { ...prev }
-          delete n[u]
-          return n
-        })
+        const n = { ...cursorsRef.current }
+        delete n[u]
+        cursorsRef.current = n
+        notifyCursorListeners()
         return
       }
 
@@ -272,7 +281,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
         }
       })
     },
-    [onTimerWsEvent, onFacilitatorChanged, onPhaseChanged],
+    [onTimerWsEvent, onFacilitatorChanged, onPhaseChanged, notifyCursorListeners],
   )
 
   const { sendMessage } = useWebSocket(
@@ -315,7 +324,8 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
   return {
     columns,
     setColumns,
-    cursors,
+    cursorsRef,
+    subscribeCursors,
     collapsedGroups,
     activeUsers,
     facilitator,

@@ -25,6 +25,9 @@ class Board(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
     columns: Mapped[list["Column"]] = relationship(
         "Column",

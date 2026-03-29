@@ -73,6 +73,26 @@ class TestCreateActionItem:
         assert resp.status_code == 404
 
 
+class TestSourceCardIdsValidation:
+    def test_create_with_invalid_source_card_ids_returns_400(self, client, sample_board):
+        resp = client.post("/api/action-items/", json={
+            "board_id": sample_board["id"],
+            "text": "Item with bad card ref",
+            "source_card_ids": ["nonexistent-card-id"],
+        })
+        assert resp.status_code == 400
+
+    def test_create_with_card_from_other_board_returns_400(self, client, sample_board, sample_card):
+        # Create another board and try to reference card from first board
+        other_board = client.post("/api/boards/", json={"name": "Other Board"}).json()
+        resp = client.post("/api/action-items/", json={
+            "board_id": other_board["id"],
+            "text": "Item referencing wrong board card",
+            "source_card_ids": [sample_card["id"]],
+        })
+        assert resp.status_code == 400
+
+
 class TestUpdateActionItem:
     def test_update_text(self, client, sample_board):
         item = client.post("/api/action-items/", json={

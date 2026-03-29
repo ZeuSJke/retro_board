@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react'
 import { DndContext, DragOverlay } from '@dnd-kit/core'
 import Column from './Column'
 import CardWidget from './CardWidget'
@@ -63,7 +63,8 @@ export default function BoardPage({
   const {
     columns,
     setColumns,
-    cursors,
+    cursorsRef,
+    subscribeCursors,
     collapsedGroups,
     activeUsers,
     facilitator,
@@ -79,6 +80,17 @@ export default function BoardPage({
     onFacilitatorChanged,
     onPhaseChanged,
   })
+
+  // Subscribe to cursor user list changes (add/remove only, not position)
+  const cursorUserKeys = useSyncExternalStore(
+    subscribeCursors,
+    () => Object.keys(cursorsRef.current).join('\n'),
+    () => '',
+  )
+  const cursorUsers = useMemo(
+    () => (cursorUserKeys ? cursorUserKeys.split('\n') : []),
+    [cursorUserKeys],
+  )
 
   const username = useAppStore((s) => s.username)
 
@@ -458,8 +470,8 @@ export default function BoardPage({
           Новая колонка
         </button>
 
-        {Object.entries(cursors).map(([u, pos]) => (
-          <CursorMarker key={u} username={u} x={pos.x} y={pos.y} />
+        {cursorUsers.map((u) => (
+          <CursorMarker key={u} username={u} posRef={cursorsRef} />
         ))}
       </div>
 

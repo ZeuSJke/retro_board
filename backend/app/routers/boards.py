@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from slugify import slugify
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session, selectinload
+from datetime import datetime, UTC
 
 from app.database import get_db
 from app import models, schemas
@@ -34,6 +35,7 @@ def list_boards(request: Request, db: Session = Depends(get_db)):
             ).label("action_items_open"),
         )
         .outerjoin(models.ActionItem)
+        .filter(models.Board.deleted_at.is_(None))
         .group_by(models.Board.id)
         .order_by(models.Board.created_at.desc())
         .all()
@@ -50,7 +52,10 @@ def list_boards(request: Request, db: Session = Depends(get_db)):
 @router.post("/", response_model=schemas.BoardOut, status_code=201)
 @limiter.limit("30/minute")
 def create_board(request: Request, body: schemas.BoardCreate, db: Session = Depends(get_db)):
-    existing = db.query(models.Board).filter(models.Board.name == body.name).first()
+    existing = db.query(models.Board).filter(
+        models.Board.name == body.name,
+        models.Board.deleted_at.is_(None),
+    ).first()
     if existing:
         raise HTTPException(409, "Измени название, такая доска уже есть")
     uid = str(uuid.uuid4())
@@ -83,7 +88,10 @@ def _board_query(db: Session):
 @router.get("/by-slug/{slug}", response_model=schemas.BoardOut)
 @limiter.limit("100/minute")
 def get_board_by_slug(request: Request, slug: str, db: Session = Depends(get_db)):
-    board = _board_query(db).filter(models.Board.slug == slug).first()
+    board = _board_query(db).filter(
+        models.Board.slug == slug,
+        models.Board.deleted_at.is_(None),
+    ).first()
     if not board:
         raise HTTPException(404, "Board not found")
     return board
@@ -92,7 +100,10 @@ def get_board_by_slug(request: Request, slug: str, db: Session = Depends(get_db)
 @router.get("/{board_id}", response_model=schemas.BoardOut)
 @limiter.limit("100/minute")
 def get_board(request: Request, board_id: str, db: Session = Depends(get_db)):
-    board = _board_query(db).filter(models.Board.id == board_id).first()
+    board = _board_query(db).filter(
+        models.Board.id == board_id,
+        models.Board.deleted_at.is_(None),
+    ).first()
     if not board:
         raise HTTPException(404, "Board not found")
     return board
@@ -104,7 +115,9 @@ def update_board(request: Request, board_id: str, body: schemas.BoardUpdate, db:
     board = get_or_404(db, models.Board, board_id, "Board not found")
     if body.name is not None:
         existing = db.query(models.Board).filter(
-            models.Board.name == body.name, models.Board.id != board_id
+            models.Board.name == body.name,
+            models.Board.id != board_id,
+            models.Board.deleted_at.is_(None),
         ).first()
         if existing:
             raise HTTPException(409, "Измени название, такая доска уже есть")
@@ -121,5 +134,10 @@ def update_board(request: Request, board_id: str, body: schemas.BoardUpdate, db:
 @limiter.limit("30/minute")
 def delete_board(request: Request, board_id: str, db: Session = Depends(get_db)):
     board = get_or_404(db, models.Board, board_id, "Board not found")
-    db.delete(board)
+    if board.deleted_at is not None:
+        raise HTTPException(404, "Board not found")
+    board.deleted_at = datetime.now(UTC)
+    # Clear unique fields so the name/slug can be reused
+    board.slug = None
+    board.name = f"__deleted__{board.id}"
     db.commit()

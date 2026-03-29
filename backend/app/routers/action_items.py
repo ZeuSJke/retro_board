@@ -30,6 +30,7 @@ async def get_trends(request: Request, db: Session = Depends(get_db)):
             func.count(models.ActionItem.id).label("total"),
         )
         .outerjoin(models.ActionItem, models.Board.id == models.ActionItem.board_id)
+        .filter(models.Board.deleted_at.is_(None))
         .group_by(models.Board.id, models.Board.name, models.Board.created_at)
         .order_by(models.Board.created_at)
         .all()
@@ -60,7 +61,7 @@ async def list_all_action_items(
     """List action items across all boards with optional filters."""
     q = db.query(models.ActionItem, models.Board.name).join(
         models.Board, models.ActionItem.board_id == models.Board.id
-    )
+    ).filter(models.Board.deleted_at.is_(None))
     if status:
         q = q.filter(models.ActionItem.status == status)
     if board_id:
@@ -135,6 +136,23 @@ async def list_action_items(request: Request, board_id: str, db: Session = Depen
 @limiter.limit("30/minute")
 async def create_action_item(request: Request, body: schemas.ActionItemCreate, db: Session = Depends(get_db)):
     get_or_404(db, models.Board, body.board_id, "Board not found")
+    if body.source_card_ids:
+        valid_cards = (
+            db.query(models.Card.id)
+            .join(models.Column, models.Card.column_id == models.Column.id)
+            .filter(
+                models.Column.board_id == body.board_id,
+                models.Card.id.in_(body.source_card_ids),
+            )
+            .all()
+        )
+        valid_ids = {row[0] for row in valid_cards}
+        invalid_ids = set(body.source_card_ids) - valid_ids
+        if invalid_ids:
+            raise HTTPException(
+                400,
+                f"Некорректные source_card_ids: {', '.join(sorted(invalid_ids))}",
+            )
     item = models.ActionItem(
         id=str(uuid.uuid4()),
         board_id=body.board_id,

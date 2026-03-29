@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI } from './helpers'
+import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, getCsrfHeaders } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
   await cleanupBoards(request)
@@ -37,8 +37,10 @@ test.describe('Доска — колонки и карточки', () => {
 
   test('создание карточки в колонке', async ({ page, request }) => {
     const board = await createBoardViaAPI(request, 'Доска с колонкой')
+    const csrf = await getCsrfHeaders(request)
     await request.post('http://localhost:8000/api/columns/', {
       data: { board_id: board.id, title: 'Что хорошо' },
+      headers: csrf,
     })
 
     await openBoard(page, board.slug)
@@ -55,12 +57,15 @@ test.describe('Доска — колонки и карточки', () => {
 
   test('лайк карточки', async ({ page, request }) => {
     const board = await createBoardViaAPI(request, 'Доска лайки')
+    const csrf = await getCsrfHeaders(request)
     const colRes = await request.post('http://localhost:8000/api/columns/', {
       data: { board_id: board.id, title: 'Колонка' },
+      headers: csrf,
     })
     const col = await colRes.json()
     await request.post('http://localhost:8000/api/cards/', {
       data: { column_id: col.id, text: 'Карточка для лайка' },
+      headers: csrf,
     })
 
     // Navigate WITHOUT becoming facilitator — voting is allowed when no facilitator is set
@@ -77,12 +82,15 @@ test.describe('Доска — колонки и карточки', () => {
 
   test('удаление карточки', async ({ page, request }) => {
     const board = await createBoardViaAPI(request, 'Доска удаление')
+    const csrf = await getCsrfHeaders(request)
     const colRes = await request.post('http://localhost:8000/api/columns/', {
       data: { board_id: board.id, title: 'Колонка' },
+      headers: csrf,
     })
     const col = await colRes.json()
     await request.post('http://localhost:8000/api/cards/', {
       data: { column_id: col.id, text: 'Удали меня' },
+      headers: csrf,
     })
 
     await openBoard(page, board.slug)
@@ -97,8 +105,10 @@ test.describe('Доска — колонки и карточки', () => {
 
   test('удаление колонки', async ({ page, request }) => {
     const board = await createBoardViaAPI(request, 'Доска удаление кол')
+    const csrf = await getCsrfHeaders(request)
     await request.post('http://localhost:8000/api/columns/', {
       data: { board_id: board.id, title: 'Ненужная колонка' },
+      headers: csrf,
     })
 
     await openBoard(page, board.slug)
