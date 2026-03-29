@@ -75,3 +75,32 @@
   background: var(--md-error);
   color: #ffffff;
 }
+
+@media (max-width: 767px) {
+  .overlay {
+    align-items: flex-end;
+  }
+
+  .dialog {
+    border-radius: 24px 24px 0 0;
+    padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
+    width: 100%;
+    max-height: 85vh;
+    overflow-y: auto;
+    animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .filledBtn,
+  .textBtn {
+    min-height: 44px;
+  }
+
+  @keyframes slideUp {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+}

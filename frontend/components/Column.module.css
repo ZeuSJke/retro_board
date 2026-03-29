@@ -227,3 +227,31 @@
   flex-shrink: 0;
   transition: opacity 0.15s;
 }
+
+@media (max-width: 767px) {
+  .iconBtn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .addBtn {
+    height: 44px;
+  }
+
+  .swatchSmall {
+    width: 44px;
+    height: 44px;
+  }
+
+  .column {
+    min-width: 220px;
+  }
+
+  .groupPickBtn {
+    min-height: 44px;
+  }
+
+  .newGroupBtn {
+    height: 44px;
+  }
+}
