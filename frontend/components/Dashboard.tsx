@@ -2,13 +2,18 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import { getBoards, getAllActionItems, updateActionItem, deleteActionItem, getJiraStatus } from '../api'
 import { userColor, initials } from '../utils/theme'
 import type { BoardListItem, DashboardActionItem, ActionItemStatus } from '../types'
 import Dialog from './Dialog'
 import JiraDialog from './JiraDialog'
-import TrendChart from './TrendChart'
 import s from './Dashboard.module.css'
+
+const TrendChart = dynamic(() => import('./TrendChart'), {
+  loading: () => <div style={{ height: 280 }} />,
+  ssr: false,
+})
 
 type StatusFilter = 'all' | 'open' | 'in_progress' | 'done'
 

@@ -2,12 +2,27 @@ import { type APIRequestContext, type Page } from '@playwright/test'
 
 const API = 'http://localhost:8000/api'
 
+/** Cache CSRF token per request context. */
+let csrfToken: string | null = null
+
+/** Obtain a CSRF token via GET, then return headers for mutating requests. */
+export async function getCsrfHeaders(request: APIRequestContext): Promise<Record<string, string>> {
+  if (!csrfToken) {
+    const res = await request.get(`${API}/boards/`)
+    const setCookie = res.headers()['set-cookie'] || ''
+    const match = setCookie.match(/csrf_token=([^;]+)/)
+    csrfToken = match ? match[1] : null
+  }
+  return csrfToken ? { 'X-CSRF-Token': csrfToken, Cookie: `csrf_token=${csrfToken}` } : {}
+}
+
 /** Delete all boards (and cascade-deletes columns, cards, action items). */
 export async function cleanupBoards(request: APIRequestContext) {
+  const csrfHeaders = await getCsrfHeaders(request)
   const res = await request.get(`${API}/boards/`)
   const boards = await res.json()
   for (const b of boards) {
-    await request.delete(`${API}/boards/${b.id}`)
+    await request.delete(`${API}/boards/${b.id}`, { headers: csrfHeaders })
   }
 }
 
@@ -34,7 +49,8 @@ export async function dismissWelcome(page: Page) {
 
 /** Create a board via API and return its data. */
 export async function createBoardViaAPI(request: APIRequestContext, name: string) {
-  const res = await request.post(`${API}/boards/`, { data: { name } })
+  const csrfHeaders = await getCsrfHeaders(request)
+  const res = await request.post(`${API}/boards/`, { data: { name }, headers: csrfHeaders })
   return res.json()
 }
 
@@ -45,8 +61,10 @@ export async function createActionItemViaAPI(
   text: string,
   opts?: { title?: string; assignee?: string; status?: string },
 ) {
+  const csrfHeaders = await getCsrfHeaders(request)
   const res = await request.post(`${API}/action-items/`, {
     data: { board_id: boardId, text, ...opts },
+    headers: csrfHeaders,
   })
   return res.json()
 }

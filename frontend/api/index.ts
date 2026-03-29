@@ -4,6 +4,18 @@ import { showToast } from '../store/toastStore'
 
 const api = axios.create({ baseURL: '/api' })
 
+function getCsrfToken(): string {
+  const match = document.cookie.match(/(^| )csrf_token=([^;]+)/)
+  return match ? match[2] : ''
+}
+
+api.interceptors.request.use((config) => {
+  if (config.method && !['get', 'head', 'options'].includes(config.method)) {
+    config.headers['X-CSRF-Token'] = getCsrfToken()
+  }
+  return config
+})
+
 api.interceptors.response.use(
   (r) => r,
   (error) => {

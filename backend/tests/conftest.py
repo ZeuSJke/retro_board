@@ -59,6 +59,10 @@ app = _main_module.app
 from app.limiter import limiter
 limiter.enabled = False
 
+# Disable CSRF in tests via settings
+from app.config import settings
+settings.csrf_enabled = False
+
 # Test-only endpoint to verify global error handler
 @app.get("/api/test-500")
 def _test_500_endpoint():

@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     # Example: "http://localhost:3000,http://localhost:5173"
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
+    # CSRF protection (disable for E2E tests via CSRF_ENABLED=false)
+    csrf_enabled: bool = True
+
     # Jira integration (optional)
     jira_url: str = ""
     jira_email: str = ""

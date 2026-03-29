@@ -1,25 +1,49 @@
 'use client'
 
-import { memo } from 'react'
+import { memo, useRef, useEffect } from 'react'
 import { userColor } from '../utils/theme'
+import type { CursorPos } from '../hooks/useBoardWebSocket'
 
 interface CursorMarkerProps {
   username: string
-  x: number
-  y: number
+  posRef: React.RefObject<Record<string, CursorPos>>
 }
 
-export default memo(function CursorMarker({ username, x, y }: CursorMarkerProps) {
+export default memo(function CursorMarker({ username, posRef }: CursorMarkerProps) {
   const color = userColor(username)
+  const nodeRef = useRef<HTMLDivElement>(null)
+  const rafRef = useRef<number>(0)
+
+  useEffect(() => {
+    let running = true
+
+    function tick() {
+      if (!running) return
+      const pos = posRef.current?.[username]
+      const el = nodeRef.current
+      if (el && pos) {
+        el.style.transform = `translate(${pos.x}px, ${pos.y}px)`
+      }
+      rafRef.current = requestAnimationFrame(tick)
+    }
+
+    rafRef.current = requestAnimationFrame(tick)
+    return () => {
+      running = false
+      cancelAnimationFrame(rafRef.current)
+    }
+  }, [username, posRef])
+
   return (
     <div
+      ref={nodeRef}
       style={{
         position: 'absolute',
-        left: x,
-        top: y,
+        left: 0,
+        top: 0,
         pointerEvents: 'none',
         zIndex: 500,
-        transition: 'left 0.08s linear, top 0.08s linear',
+        willChange: 'transform',
         userSelect: 'none',
       }}
     >

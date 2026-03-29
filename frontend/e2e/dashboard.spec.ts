@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, createBoardViaAPI, createActionItemViaAPI } from './helpers'
+import { cleanupBoards, setUsername, createBoardViaAPI, createActionItemViaAPI, getCsrfHeaders } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
   await cleanupBoards(request)
@@ -34,8 +34,10 @@ test.describe('Dashboard', () => {
     const board = await createBoardViaAPI(request, 'Тестовый спринт')
     await createActionItemViaAPI(request, board.id, 'Открытая задача', { title: 'Задача А' })
     const doneItem = await createActionItemViaAPI(request, board.id, 'Готовая задача', { title: 'Задача Б' })
+    const csrf = await getCsrfHeaders(request)
     await request.patch(`http://localhost:8000/api/action-items/${doneItem.id}`, {
       data: { status: 'done' },
+      headers: csrf,
     })
 
     await page.goto('/dashboard')

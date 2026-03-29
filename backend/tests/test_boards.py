@@ -119,6 +119,40 @@ class TestDeleteBoard:
         assert resp.status_code == 404
 
 
+class TestBoardNameValidation:
+    def test_create_board_with_html_name_returns_422(self, client):
+        resp = client.post("/api/boards/", json={"name": "<script>alert(1)</script>"})
+        assert resp.status_code == 422
+
+    def test_update_board_with_html_name_returns_422(self, client, sample_board):
+        resp = client.patch(
+            f"/api/boards/{sample_board['id']}",
+            json={"name": "<b>Bold</b>"},
+        )
+        assert resp.status_code == 422
+
+
+class TestSoftDelete:
+    def test_delete_board_soft_deletes(self, client, sample_board):
+        resp = client.delete(f"/api/boards/{sample_board['id']}")
+        assert resp.status_code == 204
+
+        # GET by id returns 404
+        assert client.get(f"/api/boards/{sample_board['id']}").status_code == 404
+
+        # List does not include deleted board
+        boards = client.get("/api/boards/").json()
+        assert not any(b["id"] == sample_board["id"] for b in boards)
+
+    def test_deleted_board_name_can_be_reused(self, client, sample_board):
+        name = sample_board["name"]
+        client.delete(f"/api/boards/{sample_board['id']}")
+
+        resp = client.post("/api/boards/", json={"name": name})
+        assert resp.status_code == 201
+        assert resp.json()["name"] == name
+
+
 class TestBoardListActionItemCounts:
     def test_list_includes_action_item_counts(self, client, sample_board):
         # Create 2 items, mark one done

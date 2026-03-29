@@ -1,4 +1,5 @@
 import logging
+import secrets
 import traceback
 from contextlib import asynccontextmanager
 
@@ -57,14 +58,53 @@ class GlobalErrorMiddleware(BaseHTTPMiddleware):
             )
 
 
+class CSRFMiddleware(BaseHTTPMiddleware):
+    SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+    COOKIE_NAME = "csrf_token"
+    HEADER_NAME = "x-csrf-token"
+
+    async def dispatch(self, request: Request, call_next):
+        # Skip if disabled via settings
+        if not settings.csrf_enabled:
+            return await call_next(request)
+        # Skip CSRF for WebSocket upgrades and health checks
+        if request.url.path.startswith("/ws/") or request.url.path in ("/health", "/api/health"):
+            return await call_next(request)
+
+        if request.method in self.SAFE_METHODS:
+            response = await call_next(request)
+            if self.COOKIE_NAME not in request.cookies:
+                token = secrets.token_urlsafe(32)
+                response.set_cookie(
+                    self.COOKIE_NAME,
+                    token,
+                    httponly=False,  # JS must read it
+                    samesite="lax",
+                    max_age=86400,
+                )
+            return response
+
+        cookie_token = request.cookies.get(self.COOKIE_NAME)
+        header_token = request.headers.get(self.HEADER_NAME)
+        if not cookie_token or cookie_token != header_token:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "CSRF token missing or invalid"},
+            )
+
+        return await call_next(request)
+
+
 app.add_middleware(GlobalErrorMiddleware)
+
+app.add_middleware(CSRFMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "x-csrf-token"],
 )
 
 app.include_router(boards.router, prefix="/api/boards", tags=["boards"])
