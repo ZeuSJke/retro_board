@@ -6,31 +6,31 @@ from app.config import settings
 
 
 class TestJiraStatus:
-    def test_returns_not_configured_by_default(self, client):
-        resp = client.get("/api/jira/status")
+    def test_returns_not_configured_by_default(self, client, workspace_headers):
+        resp = client.get("/api/jira/status", headers=workspace_headers)
         assert resp.status_code == 200
         assert resp.json() == {"configured": False}
 
-    def test_returns_configured_when_settings_set(self, client, monkeypatch):
+    def test_returns_configured_when_settings_set(self, client, workspace_headers, monkeypatch):
         monkeypatch.setattr(settings, "jira_url", "https://jira.example.com")
         monkeypatch.setattr(settings, "jira_email", "user@example.com")
         monkeypatch.setattr(settings, "jira_api_token", "token123")
 
-        resp = client.get("/api/jira/status")
+        resp = client.get("/api/jira/status", headers=workspace_headers)
         assert resp.status_code == 200
         assert resp.json() == {"configured": True}
 
 
 class TestCreateJiraIssue:
-    def test_returns_503_when_not_configured(self, client, sample_board):
+    def test_returns_503_when_not_configured(self, client, sample_board, workspace_headers):
         resp = client.post("/api/jira/create-issue", json={
             "action_item_id": "some-id",
             "project_key": "RB",
             "summary": "Test issue",
-        })
+        }, headers=workspace_headers)
         assert resp.status_code == 503
 
-    def test_returns_404_when_action_item_not_found(self, client, sample_board, monkeypatch):
+    def test_returns_404_when_action_item_not_found(self, client, sample_board, workspace_headers, monkeypatch):
         monkeypatch.setattr(settings, "jira_url", "https://jira.example.com")
         monkeypatch.setattr(settings, "jira_email", "user@example.com")
         monkeypatch.setattr(settings, "jira_api_token", "token123")
@@ -39,10 +39,10 @@ class TestCreateJiraIssue:
             "action_item_id": "nonexistent",
             "project_key": "RB",
             "summary": "Test issue",
-        })
+        }, headers=workspace_headers)
         assert resp.status_code == 404
 
-    def test_returns_409_when_already_linked(self, client, sample_board, monkeypatch):
+    def test_returns_409_when_already_linked(self, client, sample_board, workspace_headers, monkeypatch):
         monkeypatch.setattr(settings, "jira_url", "https://jira.example.com")
         monkeypatch.setattr(settings, "jira_email", "user@example.com")
         monkeypatch.setattr(settings, "jira_api_token", "token123")
@@ -51,7 +51,7 @@ class TestCreateJiraIssue:
         resp = client.post("/api/action-items/", json={
             "board_id": sample_board["id"],
             "text": "Fix the bug",
-        })
+        }, headers=workspace_headers)
         assert resp.status_code == 201
         item = resp.json()
 
@@ -70,7 +70,7 @@ class TestCreateJiraIssue:
                 "action_item_id": item["id"],
                 "project_key": "RB",
                 "summary": "First link",
-            })
+            }, headers=workspace_headers)
             assert resp.status_code == 200
             assert resp.json()["jira_issue_key"] == "RB-1"
 
@@ -79,10 +79,10 @@ class TestCreateJiraIssue:
             "action_item_id": item["id"],
             "project_key": "RB",
             "summary": "Duplicate link",
-        })
+        }, headers=workspace_headers)
         assert resp.status_code == 409
 
-    def test_successful_create_returns_key_and_url(self, client, sample_board, monkeypatch):
+    def test_successful_create_returns_key_and_url(self, client, sample_board, workspace_headers, monkeypatch):
         monkeypatch.setattr(settings, "jira_url", "https://jira.example.com")
         monkeypatch.setattr(settings, "jira_email", "user@example.com")
         monkeypatch.setattr(settings, "jira_api_token", "token123")
@@ -91,7 +91,7 @@ class TestCreateJiraIssue:
         resp = client.post("/api/action-items/", json={
             "board_id": sample_board["id"],
             "text": "Deploy to prod",
-        })
+        }, headers=workspace_headers)
         assert resp.status_code == 201
         item = resp.json()
 
@@ -111,7 +111,7 @@ class TestCreateJiraIssue:
                 "summary": "Deploy to prod",
                 "description": "Urgent deployment",
                 "issue_type": "Bug",
-            })
+            }, headers=workspace_headers)
             assert resp.status_code == 200
             data = resp.json()
             assert data["jira_issue_key"] == "RB-42"

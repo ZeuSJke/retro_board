@@ -10,6 +10,50 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
+# ── Workspace ─────────────────────────────────────────────────────────────────
+
+class WorkspaceLoginRequest(BaseModel):
+    workspace_slug: str = Field(..., min_length=1, max_length=80)
+    access_key: str = Field(..., min_length=1, max_length=100)
+
+
+class WorkspaceTokenResponse(BaseModel):
+    token: str
+    workspace_id: str
+    workspace_slug: str
+    workspace_name: str
+
+
+class WorkspaceCreate(BaseModel):
+    slug: str = Field(..., min_length=1, max_length=80, pattern=r'^[a-z0-9-]+$')
+    name: str = Field(..., min_length=1, max_length=120)
+    access_key: str = Field(..., min_length=4, max_length=100)
+
+
+class WorkspaceUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    access_key: Optional[str] = Field(default=None, min_length=4, max_length=100)
+
+
+class WorkspaceOut(BaseModel):
+    id: str
+    slug: str
+    name: str
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class WorkspaceListItem(WorkspaceOut):
+    boards_count: int = 0
+
+
+# ── Admin ────────────────────────────────────────────────────────────────────
+
+class AdminLoginRequest(BaseModel):
+    login: str
+    password: str
+
+
 # ── Card ──────────────────────────────────────────────────────────────────────
 
 class CardBase(BaseModel):
@@ -129,6 +173,7 @@ class BoardOut(BoardBase):
     slug: Optional[str] = None
     max_votes: int
     created_at: datetime
+    workspace_id: Optional[str] = None
     columns: list[ColumnOut] = []
 
     model_config = {"from_attributes": True}
@@ -138,6 +183,7 @@ class BoardListItem(BoardBase):
     slug: Optional[str] = None
     max_votes: int
     created_at: datetime
+    workspace_id: Optional[str] = None
     action_items_total: int = 0
     action_items_open: int = 0
     model_config = {"from_attributes": True}
