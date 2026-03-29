@@ -1,13 +1,16 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, getCsrfHeaders } from './helpers'
+import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, getCsrfHeaders, ensureE2EWorkspace, loginWorkspace } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
-  await cleanupBoards(request)
+  const wsData = await ensureE2EWorkspace(request)
+  await cleanupBoards(request, wsData.token)
   await setUsername(page)
+  await loginWorkspace(page, request)
 })
 
 test.afterAll(async ({ request }) => {
-  await cleanupBoards(request)
+  const wsData = await ensureE2EWorkspace(request)
+  await cleanupBoards(request, wsData.token)
 })
 
 /** Navigate to board and dismiss welcome + become facilitator. */

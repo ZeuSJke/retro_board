@@ -167,3 +167,58 @@
   margin: 0;
   font-family: 'Roboto', sans-serif;
 }
+
+.section {
+  width: 100%;
+  margin-bottom: 20px;
+}
+
+.sectionTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--md-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 12px;
+  font-family: 'Roboto', sans-serif;
+}
+
+.error {
+  font-size: 13px;
+  color: var(--md-error);
+  margin: 8px 0 0;
+  font-family: 'Roboto', sans-serif;
+}
+
+.workspaceInfo {
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--md-surface-dim);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.workspaceName {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--md-on-surface);
+  margin: 0 0 4px;
+  font-family: 'Roboto', sans-serif;
+}
+
+.workspaceChange {
+  font-size: 12px;
+  color: var(--md-primary);
+  cursor: pointer;
+  text-decoration: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: 'Roboto', sans-serif;
+  font-weight: 500;
+}
+
+.workspaceChange:hover {
+  text-decoration: underline;
+}
