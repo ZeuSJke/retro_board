@@ -61,7 +61,7 @@ test.describe('Drag and Drop', () => {
     await page.waitForTimeout(1000)
 
     // Verify the card moved to column B via API
-    const boardRes = await request.get(`http://localhost:8000/api/boards/${board.slug}`)
+    const boardRes = await request.get(`http://localhost:8000/api/boards/${board.id}`)
     const boardData = await boardRes.json()
     const colB = boardData.columns.find((c: { title: string }) => c.title === 'Колонка Б')
     const colA = boardData.columns.find((c: { title: string }) => c.title === 'Колонка А')

@@ -12,6 +12,7 @@ interface DialogProps {
   confirmLabel?: string
   danger?: boolean
   icon?: string | null
+  confirmDisabled?: boolean
 }
 
 export default function Dialog({
@@ -23,6 +24,7 @@ export default function Dialog({
   confirmLabel = 'Сохранить',
   danger = false,
   icon = null,
+  confirmDisabled = false,
 }: DialogProps) {
   if (!open) return null
 
@@ -63,6 +65,7 @@ export default function Dialog({
             <button
               className={`${styles.filledBtn} ${danger ? styles.dangerBtn : ''}`}
               onClick={onConfirm}
+              disabled={confirmDisabled}
             >
               {confirmLabel}
             </button>
