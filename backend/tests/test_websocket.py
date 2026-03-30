@@ -19,7 +19,7 @@ def recv_event(ws, target_event: str, max_messages: int = 10):
 class TestWebSocketConnect:
     def test_connect_and_receive(self, client, ws_token):
         with client.websocket_connect(
-            f"/ws/test-board?token={ws_token}",
+            f"/ws/test-board?workspace_token={ws_token}",
             headers={"origin": TEST_ORIGIN},
         ) as ws:
             ws.send_text("ping")
@@ -28,7 +28,7 @@ class TestWebSocketConnect:
 class TestWebSocketCursorMove:
     def test_cursor_broadcast_to_others(self, client, ws_token):
         """cursor_move should be broadcast to other clients, not the sender."""
-        url = f"/ws/board-1?token={ws_token}"
+        url = f"/ws/board-1?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 ws1.send_text(
@@ -48,7 +48,7 @@ class TestWebSocketCursorMove:
 class TestWebSocketCursorLeave:
     def test_cursor_leave_on_disconnect(self, client, ws_token):
         """When a client disconnects, cursor_leave is broadcast for their username."""
-        url = f"/ws/board-2?token={ws_token}"
+        url = f"/ws/board-2?workspace_token={ws_token}"
         with client.websocket_connect(
             url, headers={"origin": TEST_ORIGIN}
         ) as ws_listener:
@@ -72,7 +72,7 @@ class TestWebSocketCursorLeave:
 class TestWebSocketPresence:
     def test_presence_update_on_join(self, client, ws_token):
         """presence_update should be broadcast when a user first sends cursor_move."""
-        url = f"/ws/board-presence?token={ws_token}"
+        url = f"/ws/board-presence?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 ws1.send_text(
@@ -89,7 +89,7 @@ class TestWebSocketPresence:
 
     def test_presence_update_on_leave(self, client, ws_token):
         """presence_update should be broadcast when a user disconnects."""
-        url = f"/ws/board-presence2?token={ws_token}"
+        url = f"/ws/board-presence2?workspace_token={ws_token}"
         with client.websocket_connect(
             url, headers={"origin": TEST_ORIGIN}
         ) as ws_listener:
@@ -113,7 +113,7 @@ class TestWebSocketPresence:
 class TestWebSocketFacilitator:
     def test_facilitator_start(self, client, ws_token):
         """facilitator_start should set facilitator and broadcast."""
-        url = f"/ws/board-fac?token={ws_token}"
+        url = f"/ws/board-fac?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 ws1.send_text(
@@ -141,7 +141,7 @@ class TestWebSocketFacilitator:
 
     def test_facilitator_stop(self, client, ws_token):
         """facilitator_stop should clear facilitator and broadcast."""
-        url = f"/ws/board-fac2?token={ws_token}"
+        url = f"/ws/board-fac2?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 ws1.send_text(
@@ -164,7 +164,7 @@ class TestWebSocketFacilitator:
 
     def test_phase_change(self, client, ws_token):
         """phase_change should update phase and broadcast."""
-        url = f"/ws/board-fac3?token={ws_token}"
+        url = f"/ws/board-fac3?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 ws1.send_text(
@@ -194,7 +194,7 @@ class TestWebSocketFacilitator:
 
 class TestWebSocketTimerEvents:
     def test_timer_start_broadcast(self, client, ws_token):
-        url = f"/ws/board-t?token={ws_token}"
+        url = f"/ws/board-t?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 ws1.send_text(
@@ -212,7 +212,7 @@ class TestWebSocketTimerEvents:
                 assert msg2["event"] == "timer_start"
 
     def test_timer_pause_broadcast(self, client, ws_token):
-        url = f"/ws/board-tp?token={ws_token}"
+        url = f"/ws/board-tp?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 ws1.send_text(
@@ -231,7 +231,7 @@ class TestWebSocketTimerEvents:
                 assert msg2["data"]["remaining"] == 120
 
     def test_timer_reset_broadcast(self, client, ws_token):
-        url = f"/ws/board-tr?token={ws_token}"
+        url = f"/ws/board-tr?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws:
             ws.send_text(
                 json.dumps(
@@ -252,7 +252,7 @@ class TestWebSocketTimerSync:
 
     def test_running_timer_sent_on_connect(self, client, ws_token):
         """A client connecting while the timer is running should receive timer_start."""
-        url = f"/ws/board-tsync1?token={ws_token}"
+        url = f"/ws/board-tsync1?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             ws1.send_text(
                 json.dumps(
@@ -271,7 +271,7 @@ class TestWebSocketTimerSync:
 
     def test_paused_timer_sent_on_connect(self, client, ws_token):
         """A client connecting while the timer is paused should receive timer_pause."""
-        url = f"/ws/board-tsync2?token={ws_token}"
+        url = f"/ws/board-tsync2?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             ws1.send_text(
                 json.dumps(
@@ -300,7 +300,7 @@ class TestWebSocketTimerSync:
 
     def test_reset_timer_not_sent_on_connect(self, client, ws_token):
         """After reset to 0 remaining, no timer state should be sent to new clients."""
-        url = f"/ws/board-tsync3?token={ws_token}"
+        url = f"/ws/board-tsync3?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             ws1.send_text(
                 json.dumps(
@@ -318,7 +318,7 @@ class TestWebSocketTimerSync:
 
 class TestWebSocketGroupCollapse:
     def test_group_collapse_broadcast_to_all(self, client, ws_token):
-        url = f"/ws/board-gc?token={ws_token}"
+        url = f"/ws/board-gc?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 ws1.send_text(
@@ -344,7 +344,7 @@ class TestWebSocketOriginValidation:
         """Connecting with an origin not in cors_origins should close with 1008."""
         try:
             with client.websocket_connect(
-                f"/ws/board-origin1?token={ws_token}",
+                f"/ws/board-origin1?workspace_token={ws_token}",
                 headers={"origin": "http://evil.example.com"},
             ) as ws:
                 pytest.fail("Expected WebSocket to be closed with 1008")
@@ -354,7 +354,7 @@ class TestWebSocketOriginValidation:
     def test_valid_origin_accepted(self, client, ws_token):
         """Connecting with a valid origin (from CORS_ORIGINS) should succeed."""
         with client.websocket_connect(
-            f"/ws/board-origin2?token={ws_token}",
+            f"/ws/board-origin2?workspace_token={ws_token}",
             headers={"origin": TEST_ORIGIN},
         ) as ws:
             ws.send_text("ping")
@@ -362,7 +362,7 @@ class TestWebSocketOriginValidation:
     def test_no_origin_rejected(self, client, ws_token):
         """Connecting without an Origin header should be rejected for security."""
         try:
-            with client.websocket_connect(f"/ws/board-origin3?token={ws_token}") as ws:
+            with client.websocket_connect(f"/ws/board-origin3?workspace_token={ws_token}") as ws:
                 ws.send_text("ping")
                 pytest.fail("Expected WebSocket to be closed when no origin provided")
         except Exception:
@@ -374,7 +374,7 @@ class TestWebSocketTimerRequiresFacilitator:
 
     def test_non_facilitator_timer_ignored(self, client, ws_token):
         """When facilitator is active, non-facilitator timer_start should be ignored."""
-        url = f"/ws/board-tfac1?token={ws_token}"
+        url = f"/ws/board-tfac1?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_fac:
             with client.websocket_connect(
                 url, headers={"origin": TEST_ORIGIN}
@@ -435,7 +435,7 @@ class TestWebSocketTimerRequiresFacilitator:
 
     def test_no_facilitator_anyone_can_send_timer(self, client, ws_token):
         """When no facilitator is active, anyone can send timer events."""
-        url = f"/ws/board-tfac2?token={ws_token}"
+        url = f"/ws/board-tfac2?workspace_token={ws_token}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 ws1.send_text(
