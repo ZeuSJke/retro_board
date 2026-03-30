@@ -31,9 +31,8 @@ api.interceptors.response.use(
     const detail = error.response?.data?.detail || ''
 
     if (status === 401 && detail.toLowerCase().includes('workspace')) {
-      // Workspace session expired/invalid
+      // Workspace session expired/invalid — clear state, App.tsx will show WelcomeDialog
       useAppStore.setState({ workspace: null })
-      window.location.reload()
       return Promise.reject(error)
     }
 

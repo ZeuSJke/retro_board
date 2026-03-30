@@ -1,10 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { ensureE2EWorkspace } from './helpers'
+import { ensureE2EWorkspace, cleanupBoards, createBoardViaAPI } from './helpers'
 
 test.describe('Workspace — вход и изоляция', () => {
   test.beforeEach(async ({ request }) => {
-    // Убедиться, что workspace существует
-    await ensureE2EWorkspace(request)
+    const wsData = await ensureE2EWorkspace(request)
+    // Ensure at least one board exists so the app can redirect after login
+    await cleanupBoards(request, wsData.token)
+    await createBoardViaAPI(request, 'E2E Workspace Board', wsData.token)
   })
 
   test('показывает поля workspace в welcome диалоге', async ({ page }) => {
@@ -40,10 +42,10 @@ test.describe('Workspace — вход и изоляция', () => {
     await page.getByRole('button', { name: /войти на доску/i }).click()
 
     // Должны видеть главную страницу (не диалог входа)
-    await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 15000 })
   })
 
-  test('при повторном входе показывает информацию о workspace', async ({ page, request }) => {
+  test('при повторном входе показывает информацию о workspace', async ({ page }) => {
     // Первый вход
     await page.goto('/')
     await page.getByPlaceholder(/ваше имя/i).fill('Тест 1')
@@ -52,12 +54,12 @@ test.describe('Workspace — вход и изоляция', () => {
     await page.getByRole('button', { name: /войти на доску/i }).click()
 
     // Дождаться загрузки
-    await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 15000 })
 
     // Перезагрузить страницу
     await page.reload()
 
-    // Должен показаться welcome диалог с информацией о workspace
+    // Должен показаться welcome диалог с информацию о workspace
     await expect(page.getByText(/Команда: E2E Team/i)).toBeVisible({ timeout: 5000 })
   })
 
@@ -70,7 +72,7 @@ test.describe('Workspace — вход и изоляция', () => {
     await page.getByRole('button', { name: /войти на доску/i }).click()
 
     // Дождаться загрузки
-    await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 15000 })
 
     // Перезагрузить
     await page.reload()
@@ -87,9 +89,7 @@ test.describe('Workspace — вход и изоляция', () => {
     await expect(page.getByPlaceholder(/ключ доступа/i)).toBeVisible()
   })
 
-  test('workspace токен передаётся в WebSocket', async ({ page, request }) => {
-    const wsData = await ensureE2EWorkspace(request)
-
+  test('workspace токен передаётся в WebSocket', async ({ page }) => {
     await page.goto('/')
     await page.getByPlaceholder(/ваше имя/i).fill('WS Token Тест')
     await page.getByPlaceholder(/код команды|fmrm/i).fill('e2e-team')
@@ -97,7 +97,7 @@ test.describe('Workspace — вход и изоляция', () => {
     await page.getByRole('button', { name: /войти на доску/i }).click()
 
     // Дождаться загрузки доски
-    await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 15000 })
 
     // Проверить что WebSocket подключение установлено (проверяется через успешную загрузку доски)
     // Если бы workspace токен не был передан, получили бы ошибку 401

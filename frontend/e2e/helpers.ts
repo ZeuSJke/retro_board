@@ -3,8 +3,17 @@ import { type APIRequestContext, type Page } from '@playwright/test'
 const API = 'http://localhost:8000/api'
 const ADMIN_API = 'http://localhost:8000/api/admin'
 
+const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'admin'
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme'
+
 /** Cache CSRF token per request context. */
 let csrfToken: string | null = null
+
+/** Cache workspace session to avoid rate-limited login calls. */
+let cachedWorkspaceSession: Record<string, unknown> | null = null
+
+/** Cache admin cookie for admin API calls. */
+let cachedAdminCookie: string | null = null
 
 /** Obtain a CSRF token via GET, then return headers for mutating requests. */
 export async function getCsrfHeaders(request: APIRequestContext): Promise<Record<string, string>> {
@@ -52,22 +61,25 @@ export async function setUsername(page: Page, name = 'E2E Тестер') {
   }, name)
 }
 
-/** Login to workspace and set token in localStorage. */
+/** Login to workspace and set token in localStorage. Uses cached session when available. */
 export async function loginWorkspace(
   page: Page,
   request: APIRequestContext,
   workspaceSlug = 'e2e-team',
   accessKey = 'e2e-test-key',
 ) {
-  const res = await request.post(`${API}/workspaces/login`, {
-    data: { workspace_slug: workspaceSlug, access_key: accessKey },
-  })
-
-  if (!res.ok()) {
-    throw new Error(`Failed to login to workspace: ${res.status()}`)
+  // Reuse cached session from ensureE2EWorkspace to avoid rate limiting
+  let data = cachedWorkspaceSession
+  if (!data) {
+    const res = await request.post(`${API}/workspaces/login`, {
+      data: { workspace_slug: workspaceSlug, access_key: accessKey },
+    })
+    if (!res.ok()) {
+      throw new Error(`Failed to login to workspace: ${res.status()}`)
+    }
+    data = await res.json()
+    cachedWorkspaceSession = data
   }
-
-  const data = await res.json()
 
   await page.addInitScript((session) => {
     const stored = localStorage.getItem('retroboard-app')
@@ -75,11 +87,32 @@ export async function loginWorkspace(
     state.state.workspace = session
     localStorage.setItem('retroboard-app', JSON.stringify(state))
   }, {
-    token: data.token,
-    workspaceId: data.workspace_id,
-    workspaceSlug: data.workspace_slug,
-    workspaceName: data.workspace_name,
+    token: (data as Record<string, unknown>).token,
+    workspaceId: (data as Record<string, unknown>).workspace_id,
+    workspaceSlug: (data as Record<string, unknown>).workspace_slug,
+    workspaceName: (data as Record<string, unknown>).workspace_name,
   })
+}
+
+/** Helper: retry a login request with delays to handle rate limiting (429). */
+async function loginWithRetry(
+  request: APIRequestContext,
+  workspaceSlug: string,
+  accessKey: string,
+  maxRetries = 3,
+) {
+  for (let i = 0; i <= maxRetries; i++) {
+    const res = await request.post(`${API}/workspaces/login`, {
+      data: { workspace_slug: workspaceSlug, access_key: accessKey },
+    })
+    if (res.ok()) return await res.json()
+    if (res.status() === 429 && i < maxRetries) {
+      await new Promise((r) => setTimeout(r, 2000 * (i + 1)))
+      continue
+    }
+    if (res.status() !== 429) return null // non-retryable failure
+  }
+  return null
 }
 
 /** Ensure E2E workspace exists, create if needed. Returns workspace session. */
@@ -89,58 +122,99 @@ export async function ensureE2EWorkspace(
   accessKey = 'e2e-test-key',
   workspaceName = 'E2E Team',
 ) {
-  // Try to login first
-  const loginRes = await request.post(`${API}/workspaces/login`, {
-    data: { workspace_slug: workspaceSlug, access_key: accessKey },
-  })
+  // Return cached session to avoid hitting rate limits
+  if (cachedWorkspaceSession) return cachedWorkspaceSession
 
-  if (loginRes.ok()) {
-    return await loginRes.json()
+  // Try to login first (with retry for rate limiting)
+  const loginResult = await loginWithRetry(request, workspaceSlug, accessKey)
+  if (loginResult) {
+    cachedWorkspaceSession = loginResult
+    return loginResult
   }
 
   // Need to create via admin
   const adminLoginRes = await request.post(`${ADMIN_API}/login`, {
-    data: { login: 'admin', password: 'changeme' },
+    data: { login: ADMIN_LOGIN, password: ADMIN_PASSWORD },
   })
 
   if (!adminLoginRes.ok()) {
     throw new Error(`Failed to login as admin: ${adminLoginRes.status()}`)
   }
 
-  // Extract admin token from cookies
   const setCookies = adminLoginRes.headers()['set-cookie'] || ''
   const adminCookie = setCookies
 
-  // Create workspace
+  // Create workspace (ignore 409 — already exists)
   const createRes = await request.post(`${ADMIN_API}/workspaces`, {
     data: { slug: workspaceSlug, name: workspaceName, access_key: accessKey },
     headers: { Cookie: adminCookie },
   })
 
-  if (!createRes.ok()) {
-    const status = createRes.status()
-    if (status === 409) {
-      // Already exists, try to login again
-      const retryLoginRes = await request.post(`${API}/workspaces/login`, {
-        data: { workspace_slug: workspaceSlug, access_key: accessKey },
-      })
-      if (retryLoginRes.ok()) {
-        return await retryLoginRes.json()
-      }
-    }
-    throw new Error(`Failed to create workspace: ${status}`)
+  if (!createRes.ok() && createRes.status() !== 409) {
+    throw new Error(`Failed to create workspace: ${createRes.status()}`)
   }
 
-  // Now login
-  const finalLoginRes = await request.post(`${API}/workspaces/login`, {
-    data: { workspace_slug: workspaceSlug, access_key: accessKey },
+  // Login (with retry for rate limiting)
+  const finalResult = await loginWithRetry(request, workspaceSlug, accessKey)
+  if (!finalResult) {
+    throw new Error('Failed to login to workspace after creation (rate limited or auth error)')
+  }
+  cachedWorkspaceSession = finalResult
+  return finalResult
+}
+
+/** Get cached admin cookie, login if needed. */
+export async function getAdminCookie(request: APIRequestContext): Promise<string> {
+  if (cachedAdminCookie) return cachedAdminCookie
+
+  const loginRes = await request.post(`${ADMIN_API}/login`, {
+    data: { login: ADMIN_LOGIN, password: ADMIN_PASSWORD },
   })
+  if (!loginRes.ok()) throw new Error(`Failed to admin login: ${loginRes.status()}`)
 
-  if (!finalLoginRes.ok()) {
-    throw new Error(`Failed to login after creating workspace: ${finalLoginRes.status()}`)
-  }
+  const setCookie = loginRes.headers()['set-cookie'] || ''
+  const match = setCookie.match(/admin_token=([^;]+)/)
+  if (!match) throw new Error('No admin_token in cookie')
+  cachedAdminCookie = match[0]
+  return cachedAdminCookie
+}
 
-  return await finalLoginRes.json()
+/** Get workspace by slug from admin API. */
+export async function getWorkspaceBySlug(
+  request: APIRequestContext,
+  slug: string,
+): Promise<{ id: string; name: string } | null> {
+  const cookie = await getAdminCookie(request)
+  const res = await request.get(`${ADMIN_API}/workspaces`, {
+    headers: { Cookie: cookie },
+  })
+  if (!res.ok()) return null
+  const workspaces: Array<{ id: string; slug: string; name: string }> = await res.json()
+  return workspaces.find((ws) => ws.slug === slug) || null
+}
+
+/** Update workspace name via admin API. */
+export async function updateWorkspaceName(
+  request: APIRequestContext,
+  workspaceId: string,
+  newName: string,
+): Promise<void> {
+  const cookie = await getAdminCookie(request)
+  await request.patch(`${ADMIN_API}/workspaces/${workspaceId}`, {
+    data: { name: newName },
+    headers: { Cookie: cookie },
+  })
+}
+
+/** Delete workspace via admin API. */
+export async function deleteWorkspace(
+  request: APIRequestContext,
+  workspaceId: string,
+): Promise<void> {
+  const cookie = await getAdminCookie(request)
+  await request.delete(`${ADMIN_API}/workspaces/${workspaceId}`, {
+    headers: { Cookie: cookie },
+  })
 }
 
 /** Dismiss welcome dialog if it appears (Next.js hydration may show it). */

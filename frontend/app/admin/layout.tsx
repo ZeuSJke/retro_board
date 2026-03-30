@@ -1,3 +1,5 @@
+import '../globals.css'
+
 export const metadata = {
   title: 'Admin - RetroBoard',
   description: 'Управление пространствами RetroBoard',

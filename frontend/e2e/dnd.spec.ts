@@ -66,7 +66,6 @@ test.describe('Drag and Drop', () => {
     await page.waitForTimeout(1000)
 
     // Verify the card moved to column B via API
-    const wsData = await ensureE2EWorkspace(request)
     const boardRes = await request.get(`http://localhost:8000/api/boards/${board.id}`, {
       headers: { 'X-Workspace-Token': wsData.token },
     })

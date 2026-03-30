@@ -69,8 +69,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         # Skip CSRF for WebSocket upgrades, health checks, and auth endpoints
         if (request.url.path.startswith("/ws/") or
-            request.url.path in ("/health", "/api/health", "/api/workspaces/login",
-                                  "/api/admin/login", "/api/admin/logout")):
+            request.url.path.startswith("/api/admin/") or
+            request.url.path in ("/health", "/api/health", "/api/workspaces/login")):
             return await call_next(request)
 
         if request.method in self.SAFE_METHODS:

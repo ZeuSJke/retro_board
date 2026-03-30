@@ -9,9 +9,16 @@ import { boardToBoardListItem } from '../utils/boardMapper'
 export default function HomePage() {
   const router = useRouter()
   const currentBoardId = useAppStore((s) => s.currentBoardId)
+  const workspace = useAppStore((s) => s.workspace)
 
   useEffect(() => {
     ;(async () => {
+      // Without workspace token API calls will fail — redirect to board page
+      // so App.tsx can show WelcomeDialog
+      if (!workspace) {
+        router.replace(currentBoardId ? `/board/${currentBoardId}` : '/board/start')
+        return
+      }
       try {
         let list = await getBoards()
         if (list.length === 0) {

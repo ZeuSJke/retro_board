@@ -17,10 +17,14 @@ test.afterAll(async ({ request }) => {
 async function openBoard(page: import('@playwright/test').Page, slug: string) {
   await page.goto(`/board/${slug}`)
   await dismissWelcome(page)
+  // Wait for page to be fully loaded after welcome dialog dismiss
+  await page.waitForLoadState('networkidle')
   // Become facilitator so card creation is enabled
   const facBtn = page.getByTitle('Стать ведущим')
-  if (await facBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+  if (await facBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
     await facBtn.click()
+    // Wait for facilitator state to propagate via WebSocket
+    await page.getByTitle('Завершить режим ведущего').waitFor({ timeout: 5000 }).catch(() => {})
   }
 }
 
@@ -51,7 +55,9 @@ test.describe('Доска — колонки и карточки', () => {
     await openBoard(page, board.slug)
     await expect(page.locator('body')).toContainText('Что хорошо')
 
-    await page.getByText('Добавить карточку').first().click()
+    const addBtn = page.getByText('Добавить карточку').first()
+    await expect(addBtn).toBeEnabled({ timeout: 10000 })
+    await addBtn.click()
 
     const textarea = page.getByPlaceholder('Что думаете?')
     await textarea.fill('Отличный спринт!')

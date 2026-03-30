@@ -28,6 +28,19 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
     return () => clearTimeout(t)
   }, [])
 
+  // Sync with Zustand state after async hydration (Next.js SSR uses default state on first render)
+  useEffect(() => {
+    if (workspace) {
+      setShowWorkspaceFields(false)
+    }
+  }, [workspace])
+
+  useEffect(() => {
+    if (savedName && savedName !== 'Аноним') {
+      setName((prev) => prev || savedName)
+    }
+  }, [savedName])
+
   const handleConfirm = async () => {
     if (!workspace) {
       // Need to login to workspace
