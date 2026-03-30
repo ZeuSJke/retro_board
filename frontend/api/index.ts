@@ -6,8 +6,8 @@ import { useAppStore } from '../store'
 const api = axios.create({ baseURL: '/api' })
 
 function getCsrfToken(): string {
-  const match = document.cookie.match(/(^| )csrf_token=([^;]+)/)
-  return match ? match[2] : ''
+  const match = document.cookie.match(/csrf_token=([^;]+)/)
+  return match ? match[1] : ''
 }
 
 api.interceptors.request.use((config) => {

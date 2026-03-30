@@ -9,7 +9,17 @@ from sqlalchemy import inspect
 
 from app.config import settings
 from app.database import engine
-from app.routers import action_items, boards, cards, columns, groups, jira, websocket, workspaces, admin
+from app.routers import (
+    action_items,
+    boards,
+    cards,
+    columns,
+    groups,
+    jira,
+    websocket,
+    workspaces,
+    admin,
+)
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -51,7 +61,11 @@ class GlobalErrorMiddleware(BaseHTTPMiddleware):
         try:
             return await call_next(request)
         except Exception as exc:
-            logger.error("Unhandled exception: %s\n%s", exc, traceback.format_exc())
+            logger.error(
+                "Unhandled exception: %s: %s",
+                type(exc).__name__,
+                str(exc),
+            )
             return JSONResponse(
                 status_code=500,
                 content={"detail": "Внутренняя ошибка сервера"},
@@ -68,9 +82,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if not settings.csrf_enabled:
             return await call_next(request)
         # Skip CSRF for WebSocket upgrades, health checks, and auth endpoints
-        if (request.url.path.startswith("/ws/") or
-            request.url.path.startswith("/api/admin/") or
-            request.url.path in ("/health", "/api/health", "/api/workspaces/login")):
+        if (
+            request.url.path.startswith("/ws/")
+            or request.url.path.startswith("/api/admin/")
+            or request.url.path in ("/health", "/api/health", "/api/workspaces/login")
+        ):
             return await call_next(request)
 
         if request.method in self.SAFE_METHODS:
@@ -115,7 +131,9 @@ app.include_router(boards.router, prefix="/api/boards", tags=["boards"])
 app.include_router(columns.router, prefix="/api/columns", tags=["columns"])
 app.include_router(cards.router, prefix="/api/cards", tags=["cards"])
 app.include_router(groups.router, prefix="/api/groups", tags=["groups"])
-app.include_router(action_items.router, prefix="/api/action-items", tags=["action_items"])
+app.include_router(
+    action_items.router, prefix="/api/action-items", tags=["action_items"]
+)
 app.include_router(jira.router, prefix="/api/jira", tags=["jira"])
 app.include_router(websocket.router, tags=["websocket"])
 
