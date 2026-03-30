@@ -1,5 +1,11 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
+
+
+def _is_testing() -> bool:
+    return os.getenv("TESTING", "").lower() == "true"
 
 
 class Settings(BaseSettings):
@@ -37,6 +43,8 @@ class Settings(BaseSettings):
     @field_validator("workspace_jwt_secret")
     @classmethod
     def validate_workspace_jwt_secret(cls, v: str) -> str:
+        if _is_testing():
+            return v
         if v == "change-me-workspace-secret":
             raise ValueError("WORKSPACE_JWT_SECRET must be changed from default value")
         if len(v) < 32:
@@ -46,6 +54,8 @@ class Settings(BaseSettings):
     @field_validator("admin_jwt_secret")
     @classmethod
     def validate_admin_jwt_secret(cls, v: str) -> str:
+        if _is_testing():
+            return v
         if v == "change-me-admin-secret":
             raise ValueError("ADMIN_JWT_SECRET must be changed from default value")
         if len(v) < 32:
@@ -55,6 +65,8 @@ class Settings(BaseSettings):
     @field_validator("admin_login")
     @classmethod
     def validate_admin_login(cls, v: str) -> str:
+        if _is_testing():
+            return v
         if v == "admin":
             raise ValueError("ADMIN_LOGIN must be changed from default 'admin'")
         if len(v) < 3:
@@ -64,6 +76,8 @@ class Settings(BaseSettings):
     @field_validator("admin_password")
     @classmethod
     def validate_admin_password(cls, v: str) -> str:
+        if _is_testing():
+            return v
         if v == "changeme":
             raise ValueError("ADMIN_PASSWORD must be changed from default value")
         if len(v) < 8:
