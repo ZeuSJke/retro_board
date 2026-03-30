@@ -76,6 +76,11 @@ jobs:
           POSTGRES_DB: retro
           POSTGRES_USER: retro
           POSTGRES_PASSWORD: retro
+          TESTING: "true"
+          WORKSPACE_JWT_SECRET: "test-workspace-jwt-secret-at-least-32-chars"
+          ADMIN_JWT_SECRET: "test-admin-jwt-secret-at-least-32-chars"
+          ADMIN_LOGIN: "testadmin"
+          ADMIN_PASSWORD: "testpassword123"
       - name: Wait for backend health
         run: |
           for i in $(seq 1 30); do
