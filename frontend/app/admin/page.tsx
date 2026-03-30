@@ -242,7 +242,7 @@ export default function AdminPage() {
                   type="text"
                   value={login}
                   onChange={(e) => setLogin(e.target.value)}
-                  placeholder="Администратор"
+                  placeholder="Логин"
                   disabled={loginLoading}
                   autoFocus
                 />
@@ -429,7 +429,7 @@ export default function AdminPage() {
                     type="text"
                     value={renameName}
                     onChange={(e) => setRenameName(e.target.value)}
-                    placeholder="Название"
+                    placeholder="Новое название"
                     disabled={dialogLoading}
                     autoFocus
                   />

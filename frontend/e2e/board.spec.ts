@@ -26,7 +26,8 @@ async function openBoard(page: import('@playwright/test').Page, slug: string) {
 
 test.describe('Доска — колонки и карточки', () => {
   test('создание колонки', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'E2E Доска')
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'E2E Доска', wsData.token)
     await openBoard(page, board.slug)
 
     await page.getByText('Новая колонка').click()
@@ -39,11 +40,12 @@ test.describe('Доска — колонки и карточки', () => {
   })
 
   test('создание карточки в колонке', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'Доска с колонкой')
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Доска с колонкой', wsData.token)
     const csrf = await getCsrfHeaders(request)
     await request.post('http://localhost:8000/api/columns/', {
       data: { board_id: board.id, title: 'Что хорошо' },
-      headers: csrf,
+      headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
 
     await openBoard(page, board.slug)
@@ -59,16 +61,17 @@ test.describe('Доска — колонки и карточки', () => {
   })
 
   test('лайк карточки', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'Доска лайки')
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Доска лайки', wsData.token)
     const csrf = await getCsrfHeaders(request)
     const colRes = await request.post('http://localhost:8000/api/columns/', {
       data: { board_id: board.id, title: 'Колонка' },
-      headers: csrf,
+      headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
     const col = await colRes.json()
     await request.post('http://localhost:8000/api/cards/', {
       data: { column_id: col.id, text: 'Карточка для лайка' },
-      headers: csrf,
+      headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
 
     // Navigate WITHOUT becoming facilitator — voting is allowed when no facilitator is set
@@ -84,16 +87,17 @@ test.describe('Доска — колонки и карточки', () => {
   })
 
   test('удаление карточки', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'Доска удаление')
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Доска удаление', wsData.token)
     const csrf = await getCsrfHeaders(request)
     const colRes = await request.post('http://localhost:8000/api/columns/', {
       data: { board_id: board.id, title: 'Колонка' },
-      headers: csrf,
+      headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
     const col = await colRes.json()
     await request.post('http://localhost:8000/api/cards/', {
       data: { column_id: col.id, text: 'Удали меня' },
-      headers: csrf,
+      headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
 
     await openBoard(page, board.slug)
@@ -107,11 +111,12 @@ test.describe('Доска — колонки и карточки', () => {
   })
 
   test('удаление колонки', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'Доска удаление кол')
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Доска удаление кол', wsData.token)
     const csrf = await getCsrfHeaders(request)
     await request.post('http://localhost:8000/api/columns/', {
       data: { board_id: board.id, title: 'Ненужная колонка' },
-      headers: csrf,
+      headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
 
     await openBoard(page, board.slug)

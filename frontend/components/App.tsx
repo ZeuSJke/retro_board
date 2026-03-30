@@ -35,8 +35,12 @@ export default function App({ boardId }: AppProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showWelcome, setShowWelcome] = useState(!workspace || username === 'Аноним')
+  const [showCreateBoardDialog, setShowCreateBoardDialog] = useState(false)
+  const [createBoardLoading, setCreateBoardLoading] = useState(false)
+  const [newBoardName, setNewBoardName] = useState('')
 
   const exportRef = useRef<(() => void) | null>(null)
+  const initializedRef = useRef(false)
   const [votesUsed, setVotesUsed] = useState(0)
   const [activeUsers, setActiveUsers] = useState<string[]>([])
 
@@ -67,6 +71,7 @@ export default function App({ boardId }: AppProps) {
   const handleWelcomeConfirm = (name: string) => {
     setUsername(name)
     setShowWelcome(false)
+    loadBoards()
   }
 
   useEffect(() => {
@@ -74,25 +79,44 @@ export default function App({ boardId }: AppProps) {
   }, [theme])
 
   useEffect(() => {
-    loadBoards()
+    if (workspace) {
+      initializedRef.current = true
+      loadBoards()
+    }
   }, [])
 
   useEffect(() => {
-    if (boardId) {
+    if (boardId && boardId !== 'start' && workspace) {
       loadBoard(boardId)
     }
-  }, [boardId])
+  }, [boardId, workspace])
+
+  // Handle case where Zustand hydrates asynchronously (after SSR initial render)
+  useEffect(() => {
+    if (!workspace || initializedRef.current || username === 'Аноним') return
+    initializedRef.current = true
+    setShowWelcome(false)
+    loadBoards()
+    if (boardId && boardId !== 'start') loadBoard(boardId)
+  }, [workspace, username])
 
   const loadBoards = async () => {
     try {
       setError(null)
-      let list = await getBoards()
-      if (list.length === 0) {
-        const board = await createBoard('Моя первая ретро-доска')
-        list = [boardToBoardListItem(board)]
-        router.replace(`/board/${board.slug || board.id}`)
-      }
+      const list = await getBoards()
       setBoards(list)
+      if (list.length === 0) {
+        setShowCreateBoardDialog(true)
+      } else {
+        const inList = list.find((b) => b.slug === boardId || b.id === boardId)
+        if (!inList) {
+          const target =
+            currentBoardId && list.find((b) => b.id === currentBoardId)
+              ? list.find((b) => b.id === currentBoardId)!
+              : list[0]
+          router.replace(`/board/${target.slug || target.id}`)
+        }
+      }
     } catch {
       setError('Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен.')
     }
@@ -150,6 +174,26 @@ export default function App({ boardId }: AppProps) {
     setThemePanelOpen(false)
   }
 
+  const handleCreateFirstBoard = async () => {
+    const name = newBoardName.trim() || 'Моя первая ретро-доска'
+    setCreateBoardLoading(true)
+    try {
+      const board = await createBoard(name)
+      const item = boardToBoardListItem(board)
+      setBoards([item])
+      setShowCreateBoardDialog(false)
+      router.replace(`/board/${board.slug || board.id}`)
+    } catch {
+      setError('Не удалось создать доску')
+    } finally {
+      setCreateBoardLoading(false)
+    }
+  }
+
+  if (showWelcome) {
+    return <WelcomeDialog onConfirm={handleWelcomeConfirm} />
+  }
+
   if (error)
     return (
       <div className={styles.centered}>
@@ -166,6 +210,39 @@ export default function App({ boardId }: AppProps) {
       </div>
     )
 
+  if (showCreateBoardDialog) {
+    return (
+      <div className={styles.centered}>
+        <div className={styles.createBoardDialog}>
+          <div className={styles.createBoardIcon}>
+            <span className="material-symbols-rounded" style={{ fontSize: 48 }}>
+              dashboard
+            </span>
+          </div>
+          <h2>Создайте первую доску</h2>
+          <p>Введите название вашей ретро-доски</p>
+          <input
+            type="text"
+            className={styles.createBoardInput}
+            value={newBoardName}
+            onChange={(e) => setNewBoardName(e.target.value)}
+            placeholder="Моя первая ретро-доска"
+            maxLength={120}
+            autoFocus
+            onKeyDown={(e) => e.key === 'Enter' && handleCreateFirstBoard()}
+          />
+          <button
+            className={styles.createBoardBtn}
+            onClick={handleCreateFirstBoard}
+            disabled={createBoardLoading}
+          >
+            {createBoardLoading ? 'Создание...' : 'Создать доску'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (loading || !currentBoard)
     return (
       <div className={styles.centered}>
@@ -173,10 +250,6 @@ export default function App({ boardId }: AppProps) {
         <p style={{ color: 'var(--md-on-surface-variant)', fontSize: 14 }}>Загрузка...</p>
       </div>
     )
-
-  if (showWelcome) {
-    return <WelcomeDialog onConfirm={handleWelcomeConfirm} />
-  }
 
   return (
     <>

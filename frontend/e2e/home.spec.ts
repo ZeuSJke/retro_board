@@ -27,6 +27,8 @@ test.describe('Главная страница', () => {
     await expect(page.getByPlaceholder('Ваше имя')).toBeVisible()
 
     await page.getByPlaceholder('Ваше имя').fill('Иван')
+    await page.getByPlaceholder(/код команды|fmrm/i).fill('e2e-team')
+    await page.getByPlaceholder(/ключ доступа/i).fill('e2e-test-key')
     await page.getByText('Войти на доску').click()
 
     await expect(page.locator('body')).toContainText('Добавить карточку')
