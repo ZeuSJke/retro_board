@@ -31,7 +31,7 @@ def upgrade() -> None:
     )
     op.create_index('ix_workspaces_slug', 'workspaces', ['slug'])
 
-    # 2. Вставить workspace "FMRM Core" с ключом "123098"
+    # 2. Вставить workspace "FMRM Core" с ключом.
     fmrm_id = 'fmrm-core-workspace-001'
     key_hash = '$2b$12$fFOMt/d1BUt31NtML2PuMe5K//qI1xOJt2kyXmwBcibLEKMbkhUNC'
     op.execute(
