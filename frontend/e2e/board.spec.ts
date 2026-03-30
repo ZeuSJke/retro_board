@@ -17,14 +17,28 @@ test.afterAll(async ({ request }) => {
 async function openBoard(page: import('@playwright/test').Page, slug: string) {
   await page.goto(`/board/${slug}`)
   await dismissWelcome(page)
-  // Wait for page to be fully loaded after welcome dialog dismiss
+  // Wait for WebSocket to connect and page to stabilize
   await page.waitForLoadState('networkidle')
-  // Become facilitator so card creation is enabled
-  const facBtn = page.getByTitle('Стать ведущим')
-  if (await facBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await facBtn.click()
-    // Wait for facilitator state to propagate via WebSocket
-    await page.getByTitle('Завершить режим ведущего').waitFor({ timeout: 5000 }).catch(() => {})
+  await page.waitForTimeout(1000)
+  
+  // Become facilitator — retry a few times in case of race conditions
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const facBtn = page.getByTitle('Стать ведущим')
+    if (await facBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await facBtn.click()
+      // Wait for the button to change to "Завершить режим ведущего"
+      const doneBtn = page.getByTitle('Завершить режим ведущего')
+      if (await doneBtn.waitFor({ timeout: 5000 }).catch(() => null)) {
+        break // Success
+      }
+    }
+    // If we're already facilitator, the button won't be visible
+    const doneBtn = page.getByTitle('Завершить режим ведущего')
+    if (await doneBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      break // Already facilitator
+    }
+    // Small delay before retry
+    await page.waitForTimeout(500)
   }
 }
 
