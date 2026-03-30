@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef } from 'react'
+import { useAppStore } from '../store'
 import type { WsMessage } from '../types'
 
 export function useWebSocket(
@@ -32,7 +33,10 @@ export function useWebSocket(
 
       const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
       const wsHost = process.env.NEXT_PUBLIC_WS_HOST || location.host
-      const ws = new WebSocket(`${protocol}://${wsHost}/ws/${boardId}`)
+      const workspace = useAppStore.getState().workspace
+      const wsToken = workspace?.token || ''
+      const wsUrl = `${protocol}://${wsHost}/ws/${boardId}?workspace_token=${encodeURIComponent(wsToken)}`
+      const ws = new WebSocket(wsUrl)
 
       ws.onopen = () => {
         onOpenRef.current?.()

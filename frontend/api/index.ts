@@ -1,6 +1,7 @@
 import axios from 'axios'
-import type { Board, BoardListItem, Column, Card, CardGroup, ActionItem, DashboardActionItem, CarryForwardRequest, ActionItemStatus } from '../types'
+import type { Board, BoardListItem, Column, Card, CardGroup, ActionItem, DashboardActionItem, CarryForwardRequest, ActionItemStatus, WorkspaceSession } from '../types'
 import { showToast } from '../store/toastStore'
+import { useAppStore } from '../store'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -13,6 +14,13 @@ api.interceptors.request.use((config) => {
   if (config.method && !['get', 'head', 'options'].includes(config.method)) {
     config.headers['X-CSRF-Token'] = getCsrfToken()
   }
+
+  // Add workspace token if available
+  const workspace = useAppStore.getState().workspace
+  if (workspace?.token) {
+    config.headers['X-Workspace-Token'] = workspace.token
+  }
+
   return config
 })
 
@@ -20,10 +28,18 @@ api.interceptors.response.use(
   (r) => r,
   (error) => {
     const status = error.response?.status
+    const detail = error.response?.data?.detail || ''
+
+    if (status === 401 && detail.toLowerCase().includes('workspace')) {
+      // Workspace session expired/invalid — clear state, App.tsx will show WelcomeDialog
+      useAppStore.setState({ workspace: null })
+      return Promise.reject(error)
+    }
+
     if (status === 429) {
       showToast('Слишком много запросов. Подождите немного.', 'error')
     } else if (status === 403) {
-      const msg = error.response?.data?.detail || 'Доступ запрещён'
+      const msg = detail || 'Доступ запрещён'
       showToast(msg, 'error')
     } else if (status && status >= 500) {
       showToast('Что-то пошло не так', 'error')
@@ -84,3 +100,15 @@ export const createJiraIssue = (data: {
   action_item_id: string; project_key: string; summary: string; description?: string; issue_type?: string
 }): Promise<{ jira_issue_key: string; jira_url: string }> =>
   api.post('/jira/create-issue', data).then((r) => r.data)
+
+// ── Workspace ───────────────────────────────────────────────────────────────
+export const loginToWorkspace = (data: {
+  workspace_slug: string
+  access_key: string
+}): Promise<WorkspaceSession> =>
+  api.post('/workspaces/login', data).then((r) => ({
+    token: r.data.token,
+    workspaceId: r.data.workspace_id,
+    workspaceSlug: r.data.workspace_slug,
+    workspaceName: r.data.workspace_name,
+  }))

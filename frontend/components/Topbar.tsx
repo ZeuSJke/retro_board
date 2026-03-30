@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useAppStore } from '../store'
 import { userColor, initials } from '../utils/theme'
 import { getApiErrorMessage } from '../utils/apiError'
+import { loginToWorkspace } from '../api'
 import type { TimerState } from '../types'
 import Dialog from './Dialog'
 import TimerWidget from './TimerWidget'
@@ -59,12 +60,19 @@ export default function Topbar({
   const router = useRouter()
   const username = useAppStore((s) => s.username)
   const setUsername = useAppStore((s) => s.setUsername)
+  const workspace = useAppStore((s) => s.workspace)
+  const setWorkspace = useAppStore((s) => s.setWorkspace)
   const [usernameOpen, setUsernameOpen] = useState(false)
   const [nameOpen, setNameOpen] = useState(false)
   const [tempName, setTempName] = useState('')
   const [tempBoard, setTempBoard] = useState('')
   const [tempMaxVotes, setTempMaxVotes] = useState(5)
   const [renameError, setRenameError] = useState<string | null>(null)
+  const [workspaceSlug, setWorkspaceSlug] = useState('')
+  const [accessKey, setAccessKey] = useState('')
+  const [showWorkspaceFields, setShowWorkspaceFields] = useState(false)
+  const [workspaceLoading, setWorkspaceLoading] = useState(false)
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
 
   const isFacilitator = facilitator === username
   const [isMobile, setIsMobile] = useState(false)
@@ -201,24 +209,102 @@ export default function Topbar({
 
       <Dialog
         open={usernameOpen}
-        title="Ваше имя"
-        onClose={() => setUsernameOpen(false)}
-        onConfirm={() => {
+        title="Настройки пользователя"
+        onClose={() => {
+          setUsernameOpen(false)
+          setShowWorkspaceFields(false)
+          setWorkspaceError(null)
+        }}
+        onConfirm={async () => {
+          if (showWorkspaceFields && workspaceSlug.trim() && accessKey) {
+            setWorkspaceLoading(true)
+            setWorkspaceError(null)
+            try {
+              const session = await loginToWorkspace({
+                workspace_slug: workspaceSlug.trim(),
+                access_key: accessKey,
+              })
+              setWorkspace(session)
+            } catch (err: unknown) {
+              const errorMsg =
+                err instanceof Error && 'response' in err && (err as any).response?.status === 401
+                  ? 'Неверный код команды или ключ доступа'
+                  : 'Ошибка при подключении к команде'
+              setWorkspaceError(errorMsg)
+              setWorkspaceLoading(false)
+              return
+            }
+          }
           if (tempName.trim()) setUsername(tempName.trim())
           setUsernameOpen(false)
+          setShowWorkspaceFields(false)
+          setWorkspaceError(null)
         }}
       >
-        <input
-          className={styles.input}
-          value={tempName}
-          onChange={(e) => setTempName(e.target.value)}
-          placeholder="Введите имя"
-          maxLength={60}
-          onKeyDown={(e) =>
-            e.key === 'Enter' && (setUsername(tempName.trim()), setUsernameOpen(false))
-          }
-          autoFocus
-        />
+        {workspace && !showWorkspaceFields && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, padding: '10px 12px', background: 'var(--md-surface-container-highest)', borderRadius: 8 }}>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--md-on-surface-variant)', marginBottom: 2 }}>Текущая команда</div>
+              <div style={{ fontWeight: 500 }}>{workspace.workspaceName}</div>
+            </div>
+            <button
+              style={{ background: 'var(--md-secondary-container)', border: 'none', borderRadius: 16, color: 'var(--md-on-secondary-container)', cursor: 'pointer', fontSize: 12, padding: '6px 14px', fontWeight: 500 }}
+              onClick={() => setShowWorkspaceFields(true)}
+            >
+              Сменить
+            </button>
+          </div>
+        )}
+
+        {showWorkspaceFields && (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--md-on-surface-variant)', display: 'block', marginBottom: 6 }}>Код команды</label>
+              <input
+                className={styles.input}
+                value={workspaceSlug}
+                onChange={(e) => { setWorkspaceSlug(e.target.value); setWorkspaceError(null) }}
+                placeholder="Например: fmrm-core"
+                maxLength={100}
+                autoFocus
+              />
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--md-on-surface-variant)', display: 'block', marginBottom: 6 }}>Ключ доступа</label>
+              <input
+                type="password"
+                className={styles.input}
+                value={accessKey}
+                onChange={(e) => { setAccessKey(e.target.value); setWorkspaceError(null) }}
+                placeholder="Ключ доступа"
+                maxLength={100}
+              />
+            </div>
+            {workspaceError && (
+              <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--md-error)' }}>{workspaceError}</p>
+            )}
+            <button
+              style={{ background: 'none', border: 'none', color: 'var(--md-primary)', cursor: 'pointer', fontSize: 13, padding: 0, marginBottom: 16 }}
+              onClick={() => { setShowWorkspaceFields(false); setWorkspaceError(null) }}
+            >
+              Отмена
+            </button>
+          </>
+        )}
+
+        <div style={{ marginBottom: 0 }}>
+          <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--md-on-surface-variant)', display: 'block', marginBottom: 6 }}>Ваше имя</label>
+          <input
+            className={styles.input}
+            value={tempName}
+            onChange={(e) => setTempName(e.target.value)}
+            placeholder="Введите имя"
+            maxLength={60}
+            onKeyDown={(e) =>
+              e.key === 'Enter' && !showWorkspaceFields && (setUsername(tempName.trim()), setUsernameOpen(false))
+            }
+          />
+        </div>
       </Dialog>
 
       <Dialog

@@ -1,13 +1,16 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, getCsrfHeaders } from './helpers'
+import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, getCsrfHeaders, ensureE2EWorkspace, loginWorkspace } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
-  await cleanupBoards(request)
+  const wsData = await ensureE2EWorkspace(request)
+  await cleanupBoards(request, wsData.token)
   await setUsername(page)
+  await loginWorkspace(page, request)
 })
 
 test.afterAll(async ({ request }) => {
-  await cleanupBoards(request)
+  const wsData = await ensureE2EWorkspace(request)
+  await cleanupBoards(request, wsData.token)
 })
 
 /** Navigate to board and become facilitator. */
@@ -22,25 +25,27 @@ async function openBoard(page: import('@playwright/test').Page, slug: string) {
 
 test.describe('Drag and Drop', () => {
   test('перетаскивание карточки между колонками', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'DnD Доска')
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'DnD Доска', wsData.token)
     const csrf = await getCsrfHeaders(request)
+    const headers = { ...csrf, 'X-Workspace-Token': wsData.token }
 
     // Create two columns
     const col1Res = await request.post('http://localhost:8000/api/columns/', {
       data: { board_id: board.id, title: 'Колонка А' },
-      headers: csrf,
+      headers,
     })
     const col1 = await col1Res.json()
 
     await request.post('http://localhost:8000/api/columns/', {
       data: { board_id: board.id, title: 'Колонка Б' },
-      headers: csrf,
+      headers,
     })
 
     // Create a card in column A
     await request.post('http://localhost:8000/api/cards/', {
       data: { column_id: col1.id, text: 'Перетащи меня' },
-      headers: csrf,
+      headers,
     })
 
     await openBoard(page, board.slug)
@@ -61,7 +66,9 @@ test.describe('Drag and Drop', () => {
     await page.waitForTimeout(1000)
 
     // Verify the card moved to column B via API
-    const boardRes = await request.get(`http://localhost:8000/api/boards/${board.id}`)
+    const boardRes = await request.get(`http://localhost:8000/api/boards/${board.id}`, {
+      headers: { 'X-Workspace-Token': wsData.token },
+    })
     const boardData = await boardRes.json()
     const colB = boardData.columns.find((c: { title: string }) => c.title === 'Колонка Б')
     const colA = boardData.columns.find((c: { title: string }) => c.title === 'Колонка А')

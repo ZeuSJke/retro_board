@@ -163,11 +163,20 @@ export interface Theme {
   dark: boolean
 }
 
+export interface WorkspaceSession {
+  token: string
+  workspaceId: string
+  workspaceSlug: string
+  workspaceName: string
+}
+
 export interface AppStore {
   username: string
   currentBoardId: string | null
   theme: Theme
+  workspace: WorkspaceSession | null
   setUsername: (name: string) => void
   setCurrentBoard: (id: string) => void
   setTheme: (theme: Theme) => void
+  setWorkspace: (ws: WorkspaceSession | null) => void
 }

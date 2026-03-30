@@ -26,6 +26,11 @@ services:
       JIRA_EMAIL: ${JIRA_EMAIL:-}
       JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
       JIRA_VERIFY_SSL: ${JIRA_VERIFY_SSL:-true}
+      ADMIN_LOGIN: ${ADMIN_LOGIN:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      WORKSPACE_JWT_SECRET: ${WORKSPACE_JWT_SECRET:-change-me-workspace-secret}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-change-me-admin-secret}
+      WORKSPACE_JWT_EXPIRE_HOURS: ${WORKSPACE_JWT_EXPIRE_HOURS:-168}
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"

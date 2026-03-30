@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime
+from typing import Optional
 
 from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -15,10 +16,27 @@ def now_utc() -> datetime:
     return datetime.now(UTC)
 
 
+class Workspace(Base):
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    access_key_hash: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+    boards: Mapped[list["Board"]] = relationship(
+        "Board", back_populates="workspace", cascade="all, delete-orphan"
+    )
+
+
 class Board(Base):
     __tablename__ = "boards"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    workspace_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     slug: Mapped[str | None] = mapped_column(String(150), unique=True, nullable=True, index=True)
     max_votes: Mapped[int] = mapped_column(Integer, default=5)
@@ -29,6 +47,7 @@ class Board(Base):
         DateTime(timezone=True), nullable=True, default=None
     )
 
+    workspace: Mapped[Optional["Workspace"]] = relationship("Workspace", back_populates="boards")
     columns: Mapped[list["Column"]] = relationship(
         "Column",
         back_populates="board",

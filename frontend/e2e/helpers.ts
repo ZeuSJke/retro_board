@@ -1,9 +1,19 @@
 import { type APIRequestContext, type Page } from '@playwright/test'
 
 const API = 'http://localhost:8000/api'
+const ADMIN_API = 'http://localhost:8000/api/admin'
+
+const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'admin'
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme'
 
 /** Cache CSRF token per request context. */
 let csrfToken: string | null = null
+
+/** Cache workspace session to avoid rate-limited login calls. */
+let cachedWorkspaceSession: Record<string, unknown> | null = null
+
+/** Cache admin cookie for admin API calls. */
+let cachedAdminCookie: string | null = null
 
 /** Obtain a CSRF token via GET, then return headers for mutating requests. */
 export async function getCsrfHeaders(request: APIRequestContext): Promise<Record<string, string>> {
@@ -17,12 +27,16 @@ export async function getCsrfHeaders(request: APIRequestContext): Promise<Record
 }
 
 /** Delete all boards (and cascade-deletes columns, cards, action items). */
-export async function cleanupBoards(request: APIRequestContext) {
+export async function cleanupBoards(request: APIRequestContext, workspaceToken?: string) {
   const csrfHeaders = await getCsrfHeaders(request)
-  const res = await request.get(`${API}/boards/`)
+  const headers = workspaceToken
+    ? { ...csrfHeaders, 'X-Workspace-Token': workspaceToken }
+    : csrfHeaders
+
+  const res = await request.get(`${API}/boards/`, { headers })
   const boards = await res.json()
   for (const b of boards) {
-    await request.delete(`${API}/boards/${b.id}`, { headers: csrfHeaders })
+    await request.delete(`${API}/boards/${b.id}`, { headers })
   }
 }
 
@@ -34,9 +48,173 @@ export async function setUsername(page: Page, name = 'E2E Тестер') {
       (k) => k.startsWith('retro_locked_') || k.startsWith('retro_timer_'),
     )
     keysToRemove.forEach((k) => localStorage.removeItem(k))
-    const store = { state: { username: n, currentBoardId: null, theme: { primary: '#6750A4', dark: false } }, version: 0 }
+    const store = {
+      state: {
+        username: n,
+        currentBoardId: null,
+        theme: { primary: '#6750A4', dark: false },
+        workspace: null,
+      },
+      version: 0,
+    }
     localStorage.setItem('retroboard-app', JSON.stringify(store))
   }, name)
+}
+
+/** Login to workspace and set token in localStorage. Uses cached session when available. */
+export async function loginWorkspace(
+  page: Page,
+  request: APIRequestContext,
+  workspaceSlug = 'e2e-team',
+  accessKey = 'e2e-test-key',
+) {
+  // Reuse cached session from ensureE2EWorkspace to avoid rate limiting
+  let data = cachedWorkspaceSession
+  if (!data) {
+    const res = await request.post(`${API}/workspaces/login`, {
+      data: { workspace_slug: workspaceSlug, access_key: accessKey },
+    })
+    if (!res.ok()) {
+      throw new Error(`Failed to login to workspace: ${res.status()}`)
+    }
+    data = await res.json()
+    cachedWorkspaceSession = data
+  }
+
+  await page.addInitScript((session) => {
+    const stored = localStorage.getItem('retroboard-app')
+    const state = stored ? JSON.parse(stored) : { state: {}, version: 0 }
+    state.state.workspace = session
+    localStorage.setItem('retroboard-app', JSON.stringify(state))
+  }, {
+    token: (data as Record<string, unknown>).token,
+    workspaceId: (data as Record<string, unknown>).workspace_id,
+    workspaceSlug: (data as Record<string, unknown>).workspace_slug,
+    workspaceName: (data as Record<string, unknown>).workspace_name,
+  })
+}
+
+/** Helper: retry a login request with delays to handle rate limiting (429). */
+async function loginWithRetry(
+  request: APIRequestContext,
+  workspaceSlug: string,
+  accessKey: string,
+  maxRetries = 3,
+) {
+  for (let i = 0; i <= maxRetries; i++) {
+    const res = await request.post(`${API}/workspaces/login`, {
+      data: { workspace_slug: workspaceSlug, access_key: accessKey },
+    })
+    if (res.ok()) return await res.json()
+    if (res.status() === 429 && i < maxRetries) {
+      await new Promise((r) => setTimeout(r, 2000 * (i + 1)))
+      continue
+    }
+    if (res.status() !== 429) return null // non-retryable failure
+  }
+  return null
+}
+
+/** Ensure E2E workspace exists, create if needed. Returns workspace session. */
+export async function ensureE2EWorkspace(
+  request: APIRequestContext,
+  workspaceSlug = 'e2e-team',
+  accessKey = 'e2e-test-key',
+  workspaceName = 'E2E Team',
+) {
+  // Return cached session to avoid hitting rate limits
+  if (cachedWorkspaceSession) return cachedWorkspaceSession
+
+  // Try to login first (with retry for rate limiting)
+  const loginResult = await loginWithRetry(request, workspaceSlug, accessKey)
+  if (loginResult) {
+    cachedWorkspaceSession = loginResult
+    return loginResult
+  }
+
+  // Need to create via admin
+  const adminLoginRes = await request.post(`${ADMIN_API}/login`, {
+    data: { login: ADMIN_LOGIN, password: ADMIN_PASSWORD },
+  })
+
+  if (!adminLoginRes.ok()) {
+    throw new Error(`Failed to login as admin: ${adminLoginRes.status()}`)
+  }
+
+  const setCookies = adminLoginRes.headers()['set-cookie'] || ''
+  const adminCookie = setCookies
+
+  // Create workspace (ignore 409 — already exists)
+  const createRes = await request.post(`${ADMIN_API}/workspaces`, {
+    data: { slug: workspaceSlug, name: workspaceName, access_key: accessKey },
+    headers: { Cookie: adminCookie },
+  })
+
+  if (!createRes.ok() && createRes.status() !== 409) {
+    throw new Error(`Failed to create workspace: ${createRes.status()}`)
+  }
+
+  // Login (with retry for rate limiting)
+  const finalResult = await loginWithRetry(request, workspaceSlug, accessKey)
+  if (!finalResult) {
+    throw new Error('Failed to login to workspace after creation (rate limited or auth error)')
+  }
+  cachedWorkspaceSession = finalResult
+  return finalResult
+}
+
+/** Get cached admin cookie, login if needed. */
+export async function getAdminCookie(request: APIRequestContext): Promise<string> {
+  if (cachedAdminCookie) return cachedAdminCookie
+
+  const loginRes = await request.post(`${ADMIN_API}/login`, {
+    data: { login: ADMIN_LOGIN, password: ADMIN_PASSWORD },
+  })
+  if (!loginRes.ok()) throw new Error(`Failed to admin login: ${loginRes.status()}`)
+
+  const setCookie = loginRes.headers()['set-cookie'] || ''
+  const match = setCookie.match(/admin_token=([^;]+)/)
+  if (!match) throw new Error('No admin_token in cookie')
+  cachedAdminCookie = match[0]
+  return cachedAdminCookie
+}
+
+/** Get workspace by slug from admin API. */
+export async function getWorkspaceBySlug(
+  request: APIRequestContext,
+  slug: string,
+): Promise<{ id: string; name: string } | null> {
+  const cookie = await getAdminCookie(request)
+  const res = await request.get(`${ADMIN_API}/workspaces`, {
+    headers: { Cookie: cookie },
+  })
+  if (!res.ok()) return null
+  const workspaces: Array<{ id: string; slug: string; name: string }> = await res.json()
+  return workspaces.find((ws) => ws.slug === slug) || null
+}
+
+/** Update workspace name via admin API. */
+export async function updateWorkspaceName(
+  request: APIRequestContext,
+  workspaceId: string,
+  newName: string,
+): Promise<void> {
+  const cookie = await getAdminCookie(request)
+  await request.patch(`${ADMIN_API}/workspaces/${workspaceId}`, {
+    data: { name: newName },
+    headers: { Cookie: cookie },
+  })
+}
+
+/** Delete workspace via admin API. */
+export async function deleteWorkspace(
+  request: APIRequestContext,
+  workspaceId: string,
+): Promise<void> {
+  const cookie = await getAdminCookie(request)
+  await request.delete(`${ADMIN_API}/workspaces/${workspaceId}`, {
+    headers: { Cookie: cookie },
+  })
 }
 
 /** Dismiss welcome dialog if it appears (Next.js hydration may show it). */
@@ -54,9 +232,12 @@ export async function dismissWelcome(page: Page) {
 }
 
 /** Create a board via API and return its data. */
-export async function createBoardViaAPI(request: APIRequestContext, name: string) {
+export async function createBoardViaAPI(request: APIRequestContext, name: string, workspaceToken?: string) {
   const csrfHeaders = await getCsrfHeaders(request)
-  const res = await request.post(`${API}/boards/`, { data: { name }, headers: csrfHeaders })
+  const headers = workspaceToken
+    ? { ...csrfHeaders, 'X-Workspace-Token': workspaceToken }
+    : csrfHeaders
+  const res = await request.post(`${API}/boards/`, { data: { name }, headers })
   return res.json()
 }
 
@@ -65,12 +246,16 @@ export async function createActionItemViaAPI(
   request: APIRequestContext,
   boardId: string,
   text: string,
+  workspaceToken?: string,
   opts?: { title?: string; assignee?: string; status?: string },
 ) {
   const csrfHeaders = await getCsrfHeaders(request)
+  const headers = workspaceToken
+    ? { ...csrfHeaders, 'X-Workspace-Token': workspaceToken }
+    : csrfHeaders
   const res = await request.post(`${API}/action-items/`, {
     data: { board_id: boardId, text, ...opts },
-    headers: csrfHeaders,
+    headers,
   })
   return res.json()
 }

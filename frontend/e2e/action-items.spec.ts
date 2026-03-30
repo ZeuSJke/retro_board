@@ -1,19 +1,23 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, createBoardViaAPI, createActionItemViaAPI } from './helpers'
+import { cleanupBoards, setUsername, createBoardViaAPI, createActionItemViaAPI, ensureE2EWorkspace, loginWorkspace } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
-  await cleanupBoards(request)
+  const wsData = await ensureE2EWorkspace(request)
+  await cleanupBoards(request, wsData.token)
   await setUsername(page)
+  await loginWorkspace(page, request)
 })
 
 test.afterAll(async ({ request }) => {
-  await cleanupBoards(request)
+  const wsData = await ensureE2EWorkspace(request)
+  await cleanupBoards(request, wsData.token)
 })
 
 test.describe('Action items — CRUD и статусы', () => {
   test('смена статуса open -> in_progress -> done', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'Статусы')
-    await createActionItemViaAPI(request, board.id, 'Тестовая задача', { title: 'Сменить статус' })
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Статусы', wsData.token)
+    await createActionItemViaAPI(request, board.id, 'Тестовая задача', wsData.token, { title: 'Сменить статус' })
 
     await page.goto('/dashboard')
     await expect(page.locator('body')).toContainText('Сменить статус')
@@ -30,8 +34,9 @@ test.describe('Action items — CRUD и статусы', () => {
   })
 
   test('удаление задачи', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'Удаление задач')
-    await createActionItemViaAPI(request, board.id, 'Удаляемая задача', { title: 'Надо удалить' })
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Удаление задач', wsData.token)
+    await createActionItemViaAPI(request, board.id, 'Удаляемая задача', wsData.token, { title: 'Надо удалить' })
 
     await page.goto('/dashboard')
     await expect(page.locator('body')).toContainText('Надо удалить')
@@ -48,8 +53,9 @@ test.describe('Action items — CRUD и статусы', () => {
   })
 
   test('задача с ответственным', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'API задачи')
-    await createActionItemViaAPI(request, board.id, 'Задача через API', {
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'API задачи', wsData.token)
+    await createActionItemViaAPI(request, board.id, 'Задача через API', wsData.token, {
       title: 'API задача',
       assignee: 'Иванов',
     })
@@ -61,12 +67,13 @@ test.describe('Action items — CRUD и статусы', () => {
   })
 
   test('фильтр по ответственному', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'Фильтр')
-    await createActionItemViaAPI(request, board.id, 'Задача Алисы', {
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Фильтр', wsData.token)
+    await createActionItemViaAPI(request, board.id, 'Задача Алисы', wsData.token, {
       title: 'Алиса работает',
       assignee: 'Алиса',
     })
-    await createActionItemViaAPI(request, board.id, 'Задача Боба', {
+    await createActionItemViaAPI(request, board.id, 'Задача Боба', wsData.token, {
       title: 'Боб работает',
       assignee: 'Боб',
     })

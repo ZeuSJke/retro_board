@@ -8,24 +8,27 @@
 
 ## Возможности
 
-- Несколько досок — создавай, переключайся, удаляй; новая доска создаётся с тремя колонками по умолчанию
-- Колонки — добавляй любое количество, меняй название (двойной клик) и цвет метки
-- Карточки — с именем автора, цветом фона, лайками и drag & drop
-- Группы карточек — объединяй карточки в именованные группы, перемещай группу целиком в другую колонку
-- Drag & Drop — перетаскивай карточки и группы между колонками (@dnd-kit, мышь + тач)
-- Таймер — обратный отсчёт для временных слотов ретро (старт / пауза / сброс), синхронизируется через WebSocket
-- Real-time — все участники видят изменения мгновенно через WebSocket
-- Курсоры участников — позиции курсоров транслируются в реальном времени
-- Лимит голосов — настраиваемый лимит голосов на участника (по умолчанию 5), бейдж использования в топбаре
-- Обработка ошибок — глобальный middleware на бэкенде, toast-уведомления и ErrorBoundary на фронтенде
-- Rate Limiting — ограничение частоты запросов (100/мин чтение, 30/мин мутации, 20 сообщений/сек WebSocket)
-- Тема — Material Design 3, меняй акцентный цвет и тёмный/светлый режим
-- Итоги (Action Items) — мастер-колонка на доске для фиксации решений и задач (статус read-only); полное управление (редактирование, статусы, удаление, Jira) — на странице Dashboard
-- Dashboard — история ретро, кросс-доска список задач с фильтрами (статус, доска, ответственный), карточки задач с inline-редактированием, секция выполненных задач
-- Jira-интеграция — создавай задачи в Jira из Dashboard (бэкенд-прокси, ключи не утекают в браузер)
-- Экспорт в PDF — сохрани содержимое доски одним кликом; итоги выводятся отдельным блоком с детализацией (ответственный, дата, номер задачи Jira)
-- Персистентность — данные хранятся в PostgreSQL
-- Адаптивность — колонки масштабируются под размер экрана
+- **Несколько досок** — создавай, переключайся, удаляй; новая доска создаётся с тремя колонками по умолчанию
+- **Колонки** — добавляй любое количество, меняй название (двойной клик) и цвет метки
+- **Карточки** — с именем автора, цветом фона, лайками и drag & drop
+- **Группы карточек** — объединяй карточки в именованные группы, перемещай группу целиком в другую колонку
+- **Drag & Drop** — перетаскивай карточки и группы между колонками (@dnd-kit, мышь + тач)
+- **Real-time** — все участники видят изменения мгновенно через WebSocket
+- **Курсоры участников** — позиции курсоров транслируются в реальном времени
+- **Фасилитатор** — режим ведущего: фазы ретро (мозговой штурм → обсуждение → голосование), управление таймером
+- **Таймер** — обратный отсчёт для временных слотов ретро (старт / пауза / сброс), синхронизируется через WebSocket
+- **Лимит голосов** — настраиваемый лимит голосов на участника (по умолчанию 5), бейдж использования в топбаре
+- **Итоги (Action Items)** — мастер-колонка на доске для фиксации решений и задач (статус read-only); полное управление (редактирование, статусы, удаление, Jira) — на странице Dashboard
+- **Dashboard** — история ретро, кросс-доска список задач с фильтрами (статус, доска, ответственный), карточки задач с inline-редактированием, секция выполненных задач, график трендов
+- **Jira-интеграция** — создавай задачи в Jira из Dashboard (бэкенд-прокси, ключи не утекают в браузер)
+- **Экспорт в PDF** — сохрани содержимое доски одним кликом
+- ** workspaces** — изолированные рабочие пространства для разных команд, каждый с собственным набором досок
+- **Admin-панель** — управление workspaces (создание, переименование, смена ключа доступа, удаление)
+- **Тема** — Material Design 3, меняй акцентный цвет и тёмный/светлый режим
+- **Обработка ошибок** — глобальный middleware на бэкенде, toast-уведомления и ErrorBoundary на фронтенде
+- **Rate Limiting** — ограничение частоты запросов (100/мин чтение, 30/мин мутации, 20 сообщений/сек WebSocket)
+- **Адаптивность** — колонки масштабируются под размер экрана
+- **Персистентность** — данные хранятся в PostgreSQL
 
 ---
 
@@ -60,6 +63,7 @@ docker compose up --build
 | http://localhost:3080 | Приложение |
 | http://localhost:8000/docs | Swagger UI (API) |
 | http://localhost:8000/redoc | ReDoc (API) |
+| http://localhost:3080/admin | Admin-панель (управление workspaces) |
 
 ---
 
@@ -88,7 +92,7 @@ cp .env.example .env
 alembic upgrade head
 
 # Запусти с hot reload
-uvicorn main:app --reload
+uvorn main:app --reload
 # -> http://localhost:8000
 # -> Swagger: http://localhost:8000/docs
 ```
@@ -125,38 +129,47 @@ retro_board/
 ├── .github/workflows/ci.yml     # CI: тесты бэкенда + линт и тесты фронтенда
 ├── .github/workflows/deploy.yml # CD: автодеплой на сервер через SSH
 ├── docker-compose.yml
-├── docker-compose.prod.yml      # Prod-оверрайд: без --reload, лимиты памяти
+├── docker-compose.override.yml   # Dev-оверрайд: volume mount для hot-reload
+├── docker-compose.prod.yml       # Prod-оверрайд: без --reload, лимиты памяти
 │
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── main.py                   # FastAPI app, CORS, миграции, rate limiter, error middleware
+│   ├── main.py                   # FastAPI app, CORS, миграции, rate limiter
 │   ├── alembic.ini               # Конфигурация Alembic
-│   ├── alembic/                  # Миграции базы данных
+│   ├── alembic/
 │   │   ├── env.py
-│   │   └── versions/
+│   │   └── versions/             # Миграции БД
 │   ├── tests/                    # Тесты pytest
 │   │   ├── conftest.py
 │   │   ├── test_boards.py
 │   │   ├── test_cards.py
 │   │   ├── test_columns.py
 │   │   ├── test_groups.py
+│   │   ├── test_action_items.py
+│   │   ├── test_workspaces.py
+│   │   ├── test_admin.py
+│   │   ├── test_jira.py
+│   │   ├── test_csrf.py
+│   │   ├── test_websocket.py
 │   │   ├── test_error_handling.py
-│   │   ├── test_rate_limiting.py
-│   │   └── test_websocket.py
+│   │   └── test_rate_limiting.py
 │   └── app/
 │       ├── config.py             # Pydantic Settings
 │       ├── database.py           # SQLAlchemy engine + сессия
 │       ├── limiter.py            # Конфигурация slowapi rate limiter
-│       ├── models.py             # ORM-модели: Board, Column, Card, CardGroup, ActionItem
-│       ├── schemas.py            # Pydantic-схемы с валидацией цветов
+│       ├── models.py             # ORM-модели
+│       ├── schemas.py            # Pydantic-схемы с валидацией
 │       ├── ws_manager.py         # WebSocket connection manager
+│       ├── workspace_auth.py     # Валидация workspace токена
 │       └── routers/
 │           ├── boards.py
 │           ├── columns.py
 │           ├── cards.py
 │           ├── groups.py
-│           ├── action_items.py   # CRUD итогов (action items)
+│           ├── action_items.py
+│           ├── workspaces.py     # Вход в workspace
+│           ├── admin.py          # Admin API (CRUD workspaces)
 │           ├── jira.py           # Jira-интеграция (прокси)
 │           └── websocket.py
 │
@@ -166,72 +179,75 @@ retro_board/
     ├── next.config.mjs           # Next.js: standalone output, API rewrite
     ├── tsconfig.json             # TypeScript strict конфиг
     ├── .eslintrc.json            # ESLint + next/core-web-vitals
+    ├── playwright.config.ts      # Playwright E2E конфиг
     ├── start.sh                  # Запуск node server.js + nginx
-    ├── vitest.config.ts            # Конфигурация Vitest для тестов
-    ├── tests/                      # Фронтенд-тесты (Vitest + Testing Library)
+    ├── vitest.config.ts          # Конфигурация Vitest
+    ├── .env.local                # Локальные env переменные
+    ├── api/
+    │   ├── index.ts              # Main API, workspace functions, interceptors
+    │   └── admin.ts             # Admin API (separate axios instance)
+    ├── app/
+    │   ├── layout.tsx           # Root layout: шрифты, ErrorBoundary, Toast
+    │   ├── globals.css           # CSS-переменные MD3, глобальные стили
+    │   ├── page.tsx             # Главная: список досок, редирект
+    │   ├── dashboard/page.tsx   # Dashboard: история ретро, задачи
+    │   ├── board/[id]/page.tsx # Страница доски
+    │   └── admin/
+    │       ├── page.tsx         # Admin-панель: управление workspaces
+    │       ├── layout.tsx
+    │       └── admin.module.css
+    ├── components/
+    │   ├── App.tsx              # Корневой компонент
+    │   ├── BoardPage.tsx        # Доска с DnD-контекстом
+    │   ├── BoardsPanel.tsx      # Боковая панель со списком досок
+    │   ├── CardGroupWidget.tsx  # Группа карточек с DnD
+    │   ├── CardWidget.tsx       # Карточка с DnD, лайками
+    │   ├── Column.tsx           # Колонка с карточками
+    │   ├── Dashboard.tsx        # Dashboard: задачи, фильтры, Jira
+    │   ├── MasterColumn.tsx     # Мастер-колонка итогов (read-only)
+    │   ├── PhaseProgress.tsx    # Визуальный индикатор фаз ретро
+    │   ├── TimerWidget.tsx      # Таймер обратного отсчёта
+    │   ├── Topbar.tsx           # Верхняя панель навигации
+    │   ├── WelcomeDialog.tsx    # Диалог входа (имя + workspace)
+    │   ├── ThemePanel.tsx       # Панель смены темы
+    │   ├── TrendChart.tsx       # График трендов на Dashboard
+    │   ├── CursorMarker.tsx     # Индикатор курсора участника
+    │   ├── JiraDialog.tsx       # Диалог создания задачи в Jira
+    │   ├── Dialog.tsx           # Переиспользуемый диалог
+    │   ├── ErrorBoundary.tsx    # Обработка ошибок рендера
+    │   └── Toast.tsx            # Toast-уведомления
+    ├── hooks/
+    │   ├── useWebSocket.ts      # WS с автореконнектом
+    │   ├── useBoardWebSocket.ts # WS доски: CRUD, курсоры, фасилитатор
+    │   ├── useBoardDragDrop.ts  # DnD сенсоры, коллизии
+    │   ├── useTimer.ts          # Таймер с localStorage
+    │   └── useFacilitator.ts    # Управление фазами
+    ├── store/
+    │   ├── index.ts             # Zustand: username, theme, workspace
+    │   └── toastStore.ts        # Toast-уведомления
+    ├── types/
+    │   └── index.ts             # TypeScript интерфейсы, WS events
+    ├── utils/
+    │   ├── boardMapper.ts       # Преобразование типов
+    │   ├── apiError.ts          # Обработка ошибок API
+    │   ├── theme.ts             # Цвета, тема, initials
+    │   ├── wsData.ts            # WS data converters
+    │   └── exportPDF.ts         # Экспорт в PDF
+    ├── tests/                   # Vitest + Testing Library
     │   ├── setup.ts
     │   ├── store/
-    │   │   ├── index.test.ts
-    │   │   └── toastStore.test.ts
     │   ├── api/
-    │   │   └── index.test.ts
-    │   └── components/
-    │       ├── CardWidget.test.tsx
-    │       ├── Column.test.tsx
-    │       └── Dashboard.test.tsx
-    ├── app/
-    │   ├── layout.tsx            # Root layout: шрифты, ErrorBoundary, Toast
-    │   ├── globals.css           # CSS-переменные MD3, глобальные стили
-    │   ├── page.tsx              # Главная: список досок, редирект
-    │   ├── dashboard/page.tsx    # Dashboard: история ретро, задачи
-    │   └── board/[id]/page.tsx   # Страница доски по ID/slug
-    ├── components/
-    │   ├── App.tsx               # Корневой компонент: состояние, таймер
-    │   ├── App.module.css
-    │   ├── BoardPage.tsx         # Доска с DnD-контекстом (оркестратор)
-    │   ├── BoardPage.module.css
-    │   ├── BoardsPanel.tsx       # Боковая панель со списком досок
-    │   ├── BoardsPanel.module.css
-    │   ├── CardGroupWidget.tsx   # Группа карточек с DnD
-    │   ├── CardGroupWidget.module.css
-    │   ├── CardWidget.tsx        # Карточка с DnD, лимит голосов
-    │   ├── CardWidget.module.css
-    │   ├── Column.tsx            # Колонка с карточками
-    │   ├── Column.module.css
-    │   ├── Dashboard.tsx          # Страница Dashboard: задачи, фильтры, Jira
-│   ├── Dashboard.module.css
-│   ├── MasterColumn.tsx      # Мастер-колонка итогов (action items, read-only статус)
-    │   ├── MasterColumn.module.css
-    │   ├── JiraDialog.tsx        # Диалог создания задачи в Jira
-    │   ├── CursorMarker.tsx      # Индикатор курсора участника
-    │   ├── CursorMarker.module.css
-    │   ├── Dialog.tsx            # Переиспользуемый диалог (+ danger-режим)
-    │   ├── Dialog.module.css
-    │   ├── ErrorBoundary.tsx    # Обработка ошибок рендера (fallback UI)
-    │   ├── Toast.tsx            # Toast-уведомления (ошибки, инфо)
-    │   ├── Toast.module.css
-    │   ├── ThemePanel.tsx        # Панель смены темы
-    │   ├── ThemePanel.module.css
-    │   ├── TimerWidget.tsx       # Таймер обратного отсчёта
-    │   ├── TimerWidget.module.css
-    │   ├── Topbar.tsx            # Верхняя панель навигации
-    │   ├── Topbar.module.css
-    │   ├── WelcomeDialog.tsx     # Диалог ввода имени при первом входе
-    │   └── WelcomeDialog.module.css
-    ├── hooks/
-    │   ├── useWebSocket.ts       # WS с автореконнектом
-    │   ├── useBoardWebSocket.ts  # WS доски: сообщения, курсоры, группы
-    │   └── useBoardDragDrop.ts   # DnD сенсоры, коллизии, обработчики
-    ├── store/
-    │   ├── index.ts              # Zustand: username, theme, currentBoard
-    │   └── toastStore.ts         # Standalone store для toast-уведомлений
-    ├── api/
-    │   └── index.ts              # Типизированный Axios-клиент
-    ├── types/
-    │   └── index.ts              # TypeScript интерфейсы
-    └── utils/
-        ├── exportPDF.ts          # Экспорт доски в PDF
-        └── theme.ts              # Цвета, applyTheme, initials
+    │   ├── components/
+    │   └── hooks/
+    └── e2e/                      # Playwright E2E тесты
+        ├── helpers.ts           # Утилиты для тестов
+        ├── admin.spec.ts
+        ├── board.spec.ts
+        ├── workspace.spec.ts
+        ├── dashboard.spec.ts
+        ├── action-items.spec.ts
+        ├── dnd.spec.ts
+        └── home.spec.ts
 ```
 
 ---
@@ -240,44 +256,18 @@ retro_board/
 
 ### CI — тесты и линт (`.github/workflows/ci.yml`)
 
-Запускается на push/PR в `main`:
-
-| Job | Окружение | Команда | Что проверяет |
-|---|---|---|---|
-| **backend-tests** | Python 3.12 | `pytest -v` | API-эндпоинты, модели, WebSocket, обработка ошибок, rate limiting, лимит голосов (SQLite in-memory) |
-| **frontend-lint** | Node 20 | `npm run lint` | ESLint + next/core-web-vitals |
-| **frontend-tests** | Node 20 | `npm test` | Компоненты, store, API-клиент (Vitest + Testing Library + jsdom) |
+| Job | Окружение | Команда |
+|---|---|---|
+| **backend-tests** | Python 3.12 | `pytest -v` |
+| **frontend-lint** | Node 20 | `npm run lint` |
+| **frontend-tests** | Node 20 | `npm test` |
+| **frontend-e2e** | Node 20 | `npm run test:e2e` |
 
 ### CD — автодеплой (`.github/workflows/deploy.yml`)
 
-После успешного CI на `main` автоматически деплоит на сервер через SSH. Также можно запустить вручную через Actions → Deploy → Run workflow.
+После успешного CI на `main` автоматически деплоит на сервер через SSH.
 
-**Требуемые секреты в GitHub (Settings → Secrets → Actions):**
-
-| Секрет | Описание |
-|---|---|
-| `TRUENAS_HOST` | IP или домен сервера |
-| `TRUENAS_USER` | SSH-пользователь |
-| `TRUENAS_SSH_KEY` | Приватный SSH-ключ (ed25519) |
-| `TRUENAS_SSH_PORT` | Порт SSH (обычно 22) |
-| `TRUENAS_PROJECT_DIR` | Путь к проекту на сервере |
-
----
-
-## Миграции базы данных (Alembic)
-
-```bash
-cd backend
-
-# Создать новую миграцию после изменения моделей
-alembic revision --autogenerate -m "описание"
-
-# Применить миграции
-alembic upgrade head
-
-# Для существующих баз без таблицы alembic_version:
-# Приложение автоматически определяет это и выполняет stamp head при старте
-```
+**Требуемые секреты:** `TRUENAS_HOST`, `TRUENAS_USER`, `TRUENAS_SSH_KEY`, `TRUENAS_SSH_PORT`, `TRUENAS_PROJECT_DIR`
 
 ---
 
@@ -289,7 +279,7 @@ alembic upgrade head
 |---|---|---|
 | `GET` | `/api/boards/` | Список всех досок |
 | `POST` | `/api/boards/` | Создать доску (+ 3 колонки по умолчанию) |
-| `GET` | `/api/boards/{id}` | Получить доску со всеми колонками и карточками |
+| `GET` | `/api/boards/{id}` | Получить доску со всеми данными |
 | `GET` | `/api/boards/by-slug/{slug}` | Получить доску по slug |
 | `PATCH` | `/api/boards/{id}` | Обновить доску (название, лимит голосов) |
 | `DELETE` | `/api/boards/{id}` | Удалить доску (каскадно) |
@@ -309,172 +299,143 @@ alembic upgrade head
 | `POST` | `/api/cards/` | Создать карточку |
 | `PATCH` | `/api/cards/{id}` | Обновить текст / цвет |
 | `POST` | `/api/cards/{id}/move` | Переместить в другую колонку |
-| `POST` | `/api/cards/{id}/like` | Добавить / убрать лайк (с проверкой лимита голосов) |
+| `POST` | `/api/cards/{id}/like` | Добавить / убрать лайк |
 | `DELETE` | `/api/cards/{id}` | Удалить карточку |
 
 ### Groups
 
 | Метод | Путь | Описание |
 |---|---|---|
-| `POST` | `/api/groups/` | Создать группу карточек |
+| `POST` | `/api/groups/` | Создать группу |
 | `PATCH` | `/api/groups/{id}` | Переименовать группу |
 | `DELETE` | `/api/groups/{id}` | Удалить группу |
 | `POST` | `/api/groups/{id}/set_card/{card_id}` | Добавить карточку в группу |
-| `DELETE` | `/api/groups/{id}/remove_card/{card_id}` | Убрать карточку из группы |
-| `PATCH` | `/api/groups/{id}/move` | Переместить группу в другую колонку |
+| `DELETE` | `/api/groups/{id}/remove_card/{card_id}` | Убрать из группы |
+| `PATCH` | `/api/groups/{id}/move` | Переместить группу |
 
-### Action Items (Итоги)
+### Action Items
 
 | Метод | Путь | Описание |
 |---|---|---|
 | `GET` | `/api/action-items/?board_id=...` | Список итогов доски |
-| `POST` | `/api/action-items/` | Создать итог (text, assignee) |
-| `PATCH` | `/api/action-items/{id}` | Обновить текст / ответственного |
+| `POST` | `/api/action-items/` | Создать итог |
+| `PATCH` | `/api/action-items/{id}` | Обновить текст / ответственного / статус |
 | `DELETE` | `/api/action-items/{id}` | Удалить итог |
+
+### Workspaces
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/api/workspaces/login` | Вход в workspace (slug + access_key) |
+
+### Admin
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/api/admin/login` | Вход администратора |
+| `POST` | `/api/admin/logout` | Выход администратора |
+| `GET` | `/api/admin/workspaces` | Список всех workspaces |
+| `POST` | `/api/admin/workspaces` | Создать workspace |
+| `PATCH` | `/api/admin/workspaces/{id}` | Обновить workspace |
+| `DELETE` | `/api/admin/workspaces/{id}` | Удалить workspace |
 
 ### Jira
 
 | Метод | Путь | Описание |
 |---|---|---|
-| `GET` | `/api/jira/status` | Проверить, настроена ли Jira-интеграция |
-| `POST` | `/api/jira/create-issue` | Создать задачу в Jira из итога |
+| `GET` | `/api/jira/status` | Проверить настройку Jira |
+| `POST` | `/api/jira/create-issue` | Создать задачу в Jira |
 
 ### WebSocket
 
 ```
-ws://localhost/ws/{board_id}
+ws://localhost/ws/{board_id}?workspace_token={token}
 ```
-
-Все изменения транслируются всем подключённым клиентам:
-
-```json
-{ "event": "card_created", "data": { ...card } }
-```
-
-| Событие | Когда |
-|---|---|
-| `column_created` | Создана новая колонка |
-| `column_updated` | Изменено название или цвет колонки |
-| `column_deleted` | Колонка удалена |
-| `card_created` | Создана карточка |
-| `card_updated` | Изменён текст, цвет или лайки |
-| `card_moved` | Карточка перемещена |
-| `card_deleted` | Карточка удалена |
-| `group_created` | Создана группа карточек |
-| `group_updated` | Переименована группа |
-| `group_moved` | Группа перемещена в другую колонку |
-| `group_deleted` | Группа удалена |
-| `group_collapse` | Группа свёрнута / развёрнута |
-| `cursor_move` | Обновлена позиция курсора участника |
-| `cursor_leave` | Участник покинул доску |
-| `action_item_created` | Создан итог |
-| `action_item_updated` | Обновлён итог |
-| `action_item_deleted` | Удалён итог |
-| `timer_start` | Таймер запущен |
-| `timer_pause` | Таймер приостановлен |
-| `timer_reset` | Таймер сброшен |
 
 ---
 
 ## Переменные окружения
 
-### Корневой `.env` (для Docker Compose)
+### Корневой `.env` (Docker Compose)
 
-| Переменная | Описание | Пример |
-|---|---|---|
-| `POSTGRES_DB` | Имя базы данных | `retroboard` |
-| `POSTGRES_USER` | Пользователь PostgreSQL | `retro` |
-| `POSTGRES_PASSWORD` | Пароль PostgreSQL | `super_secret` |
-| `CORS_ORIGINS` | Разрешённые CORS-источники (через запятую) | `http://localhost:3080` |
-| `JIRA_URL` | URL Jira-инстанса (необязательно) | `https://org.atlassian.net` |
-| `JIRA_EMAIL` | Email для Jira API (необязательно) | `user@example.com` |
-| `JIRA_API_TOKEN` | API-токен Jira (необязательно) | `...` |
+| Переменная | Описание |
+|---|---|
+| `POSTGRES_DB` | Имя базы данных |
+| `POSTGRES_USER` | Пользователь PostgreSQL |
+| `POSTGRES_PASSWORD` | Пароль PostgreSQL |
+| `CORS_ORIGINS` | Разрешённые CORS-источники |
+| `ADMIN_LOGIN` | Логин админа (по умолчанию: admin) |
+| `ADMIN_PASSWORD` | Пароль админа (по умолчанию: changeme) |
+| `JIRA_URL` | URL Jira-инстанса (опционально) |
+| `JIRA_EMAIL` | Email для Jira API (опционально) |
+| `JIRA_API_TOKEN` | API-токен Jira (опционально) |
 
-### `backend/.env` (для локальной разработки без Docker)
+### `backend/.env` (локальная разработка)
 
-| Переменная | Описание | Пример |
-|---|---|---|
-| `DATABASE_URL` | Строка подключения к PostgreSQL | `postgresql://retro:pass@localhost:5432/retroboard` |
-| `CORS_ORIGINS` | Разрешённые CORS-источники | `http://localhost:3000` |
+| Переменная | Описание |
+|---|---|
+| `DATABASE_URL` | Строка подключения к PostgreSQL |
+| `CORS_ORIGINS` | Разрешённые CORS-источники |
 
-### `frontend/.env.local` (для локальной разработки без Docker)
+### `frontend/.env.local` (локальная разработка)
 
-| Переменная | Описание | Пример |
-|---|---|---|
-| `BACKEND_URL` | URL бэкенда для серверных rewrites | `http://localhost:8000` |
-| `NEXT_PUBLIC_WS_HOST` | Хост WebSocket (доступен в браузере) | `localhost:8000` |
+| Переменная | Описание |
+|---|---|
+| `BACKEND_URL` | URL бэкенда |
+| `NEXT_PUBLIC_WS_HOST` | Хост WebSocket |
 
 ---
 
 ## Полезные команды
 
 ```bash
-# Запустить только базу данных
-docker compose up db -d
+# Docker
+docker compose up --build          # Собрать и запустить
+docker compose up --build -d       # Фоновый режим
+docker compose up db -d           # Только БД
+docker compose down -v             # Полный сброс (включая данные)
 
-# Пересобрать и запустить всё
-docker compose up --build
+# Бэкенд
+cd backend && pytest -v             # Тесты
+cd backend && alembic upgrade head  # Миграции
 
-# Посмотреть логи бэкенда
-docker compose logs -f backend
+# Фронтенд
+cd frontend && npm run dev          # Dev сервер
+cd frontend && npm run build        # Production build
+cd frontend && npm run lint         # ESLint
+cd frontend && npm test             # Vitest тесты
+cd frontend && npm run test:e2e    # Playwright E2E
 
-# Запустить тесты бэкенда
-cd backend && pytest -v
-
-# Запустить тесты фронтенда
-cd frontend && npm test
-
-# Запустить тесты фронтенда в watch-режиме
-cd frontend && npm run test:watch
-
-# Запустить линтер фронтенда
-cd frontend && npm run lint
-
-# Остановить все контейнеры
-docker compose down
-
-# Полный сброс (включая данные БД)
-docker compose down -v
-
-# Бэкап базы данных
+# Бэкап БД
 docker compose exec db pg_dump -U retro retroboard > backup_$(date +%Y%m%d).sql
 ```
 
 ---
 
-## Деплой на домашний сервер (TrueNAS + Nginx Proxy Manager)
+## Деплой
 
-Деплой происходит автоматически через GitHub Actions (см. CI/CD выше). При пуше в `main` после прохождения тестов сервер обновляется по SSH.
-
-Prod-оверрайд (`docker-compose.prod.yml`) убирает `--reload` и ограничивает память контейнеров.
+Деплой автоматический через GitHub Actions. При пуше в `main` после прохождения тестов сервер обновляется по SSH.
 
 ### Ручное управление на сервере
-
-`deploy.sh` — утилита для управления контейнерами на сервере:
 
 ```bash
 ./deploy.sh            # собрать и запустить
 ./deploy.sh stop       # остановить
-./deploy.sh restart    # перезапустить без пересборки
-./deploy.sh logs       # логи в реальном времени
-./deploy.sh status     # статус контейнеров
+./deploy.sh restart    # перезапустить
+./deploy.sh logs       # логи
 ./deploy.sh update     # git pull + пересборка
 ```
 
-Приложение доступно на `http://<IP-сервера>:3080`. NPM проксирует трафик с 80/443 на этот порт с включённой поддержкой WebSocket.
+Приложение доступно на `http://<IP>:3080`.
 
 ---
 
 ## Безопасность
 
-- Файл `.env` добавлен в `.gitignore` — секреты не попадут в репозиторий
+- `.env` добавлен в `.gitignore` — секреты не попадут в репозиторий
 - `.env.example` показывает структуру без реальных значений
-- Смени `POSTGRES_PASSWORD` перед деплоем на продакшн
-- Настрой `CORS_ORIGINS` на реальный домен фронтенда
-- В продакшне порт `5432` (PostgreSQL) не проброшен наружу
-- Поля цвета валидируются паттерном hex (`#RRGGBB`)
-- Rate Limiting — slowapi ограничивает частоту HTTP-запросов по IP (100/мин GET, 30/мин мутации)
-- WebSocket Rate Limiting — скользящее окно: максимум 20 сообщений/сек, лишние отбрасываются
-- Лимит голосов — серверная проверка: при превышении лимита возвращается HTTP 403
-- Jira-интеграция — запросы к Jira API проксируются через бэкенд; токен и email не попадают в браузер
-- Глобальный обработчик ошибок — необработанные исключения логируются, клиенту возвращается generic JSON-ответ без стектрейса
+- Rate Limiting — slowapi ограничивает частоту HTTP-запросов
+- WebSocket Rate Limiting — максимум 20 сообщений/сек
+- Лимит голосов — серверная проверка
+- Jira-интеграция — запросы проксируются через бэкенд
+- Workspace изоляция — токен в каждом запросе, отдельные данные

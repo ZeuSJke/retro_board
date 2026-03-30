@@ -1,18 +1,22 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI } from './helpers'
+import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, ensureE2EWorkspace, loginWorkspace } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
-  await cleanupBoards(request)
+  const wsData = await ensureE2EWorkspace(request)
+  await cleanupBoards(request, wsData.token)
   await setUsername(page)
+  await loginWorkspace(page, request)
 })
 
 test.afterAll(async ({ request }) => {
-  await cleanupBoards(request)
+  const wsData = await ensureE2EWorkspace(request)
+  await cleanupBoards(request, wsData.token)
 })
 
 test.describe('Главная страница', () => {
   test('welcome dialog при первом входе', async ({ page, request }) => {
-    await createBoardViaAPI(request, 'Тест доска')
+    const wsData = await ensureE2EWorkspace(request)
+    await createBoardViaAPI(request, 'Тест доска', wsData.token)
 
     await page.addInitScript(() => {
       localStorage.removeItem('retroboard-app')
@@ -23,13 +27,16 @@ test.describe('Главная страница', () => {
     await expect(page.getByPlaceholder('Ваше имя')).toBeVisible()
 
     await page.getByPlaceholder('Ваше имя').fill('Иван')
+    await page.getByPlaceholder(/код команды|fmrm/i).fill('e2e-team')
+    await page.getByPlaceholder(/ключ доступа/i).fill('e2e-test-key')
     await page.getByText('Войти на доску').click()
 
     await expect(page.locator('body')).toContainText('Добавить карточку')
   })
 
   test('/ редиректит на доску', async ({ page, request }) => {
-    await createBoardViaAPI(request, 'Мой спринт')
+    const wsData = await ensureE2EWorkspace(request)
+    await createBoardViaAPI(request, 'Мой спринт', wsData.token)
 
     await page.goto('/')
     await dismissWelcome(page)
@@ -37,7 +44,8 @@ test.describe('Главная страница', () => {
   })
 
   test('создание новой доски через сайдбар', async ({ page, request }) => {
-    await createBoardViaAPI(request, 'Первая доска')
+    const wsData = await ensureE2EWorkspace(request)
+    await createBoardViaAPI(request, 'Первая доска', wsData.token)
 
     await page.goto('/')
     await dismissWelcome(page)

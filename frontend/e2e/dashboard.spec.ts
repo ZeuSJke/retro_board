@@ -1,13 +1,16 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, createBoardViaAPI, createActionItemViaAPI, getCsrfHeaders } from './helpers'
+import { cleanupBoards, setUsername, createBoardViaAPI, createActionItemViaAPI, getCsrfHeaders, ensureE2EWorkspace, loginWorkspace } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
-  await cleanupBoards(request)
+  const wsData = await ensureE2EWorkspace(request)
+  await cleanupBoards(request, wsData.token)
   await setUsername(page)
+  await loginWorkspace(page, request)
 })
 
 test.afterAll(async ({ request }) => {
-  await cleanupBoards(request)
+  const wsData = await ensureE2EWorkspace(request)
+  await cleanupBoards(request, wsData.token)
 })
 
 test.describe('Dashboard', () => {
@@ -21,8 +24,9 @@ test.describe('Dashboard', () => {
   })
 
   test('отображает доски в секции "Прошлые ретро"', async ({ page, request }) => {
-    await createBoardViaAPI(request, 'Спринт 10')
-    await createBoardViaAPI(request, 'Спринт 11')
+    const wsData = await ensureE2EWorkspace(request)
+    await createBoardViaAPI(request, 'Спринт 10', wsData.token)
+    await createBoardViaAPI(request, 'Спринт 11', wsData.token)
 
     await page.goto('/dashboard')
 
@@ -31,13 +35,14 @@ test.describe('Dashboard', () => {
   })
 
   test('отображает задачи и сворачивает выполненные', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'Тестовый спринт')
-    await createActionItemViaAPI(request, board.id, 'Открытая задача', { title: 'Задача А' })
-    const doneItem = await createActionItemViaAPI(request, board.id, 'Готовая задача', { title: 'Задача Б' })
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Тестовый спринт', wsData.token)
+    await createActionItemViaAPI(request, board.id, 'Открытая задача', wsData.token, { title: 'Задача А' })
+    const doneItem = await createActionItemViaAPI(request, board.id, 'Готовая задача', wsData.token, { title: 'Задача Б' })
     const csrf = await getCsrfHeaders(request)
     await request.patch(`http://localhost:8000/api/action-items/${doneItem.id}`, {
       data: { status: 'done' },
-      headers: csrf,
+      headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
 
     await page.goto('/dashboard')
@@ -52,10 +57,11 @@ test.describe('Dashboard', () => {
   })
 
   test('фильтр по доске', async ({ page, request }) => {
-    const board1 = await createBoardViaAPI(request, 'Доска Один')
-    const board2 = await createBoardViaAPI(request, 'Доска Два')
-    await createActionItemViaAPI(request, board1.id, 'Задача из первой', { title: 'Первая' })
-    await createActionItemViaAPI(request, board2.id, 'Задача из второй', { title: 'Вторая' })
+    const wsData = await ensureE2EWorkspace(request)
+    const board1 = await createBoardViaAPI(request, 'Доска Один', wsData.token)
+    const board2 = await createBoardViaAPI(request, 'Доска Два', wsData.token)
+    await createActionItemViaAPI(request, board1.id, 'Задача из первой', wsData.token, { title: 'Первая' })
+    await createActionItemViaAPI(request, board2.id, 'Задача из второй', wsData.token, { title: 'Вторая' })
 
     await page.goto('/dashboard')
     await expect(page.locator('body')).toContainText('Первая')
@@ -69,9 +75,10 @@ test.describe('Dashboard', () => {
   })
 
   test('отображает график трендов', async ({ page, request }) => {
-    const board = await createBoardViaAPI(request, 'Спринт с задачами')
-    await createActionItemViaAPI(request, board.id, 'Задача 1')
-    await createActionItemViaAPI(request, board.id, 'Задача 2')
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Спринт с задачами', wsData.token)
+    await createActionItemViaAPI(request, board.id, 'Задача 1', wsData.token)
+    await createActionItemViaAPI(request, board.id, 'Задача 2', wsData.token)
 
     await page.goto('/dashboard')
 
@@ -81,7 +88,8 @@ test.describe('Dashboard', () => {
   })
 
   test('навигация на доску по клику', async ({ page, request }) => {
-    await createBoardViaAPI(request, 'Кликни меня')
+    const wsData = await ensureE2EWorkspace(request)
+    await createBoardViaAPI(request, 'Кликни меня', wsData.token)
 
     await page.goto('/dashboard')
     // Board name appears in both board card and select — click the card name specifically

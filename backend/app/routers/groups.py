@@ -8,14 +8,23 @@ from app import models, schemas
 from app.utils import get_or_404
 from app.ws_manager import manager
 from app.limiter import limiter
+from app.workspace_auth import get_current_workspace
 
 router = APIRouter()
 
 
 @router.post("/", response_model=schemas.CardGroupOut, status_code=201)
 @limiter.limit("30/minute")
-async def create_group(request: Request, body: schemas.CardGroupCreate, db: Session = Depends(get_db)):
+async def create_group(
+    request: Request,
+    body: schemas.CardGroupCreate,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
     col = get_or_404(db, models.Column, body.column_id, "Column not found")
+    board = db.get(models.Board, col.board_id)
+    if not board or board.workspace_id != workspace.id:
+        raise HTTPException(404, "Column not found")
     pos = db.query(func.count(models.CardGroup.id)).filter(models.CardGroup.column_id == body.column_id).scalar() or 0
     group = models.CardGroup(
         id=str(uuid.uuid4()),
@@ -34,9 +43,17 @@ async def create_group(request: Request, body: schemas.CardGroupCreate, db: Sess
 @router.patch("/{group_id}", response_model=schemas.CardGroupOut)
 @limiter.limit("30/minute")
 async def update_group(
-    request: Request, group_id: str, body: schemas.CardGroupUpdate, db: Session = Depends(get_db)
+    request: Request,
+    group_id: str,
+    body: schemas.CardGroupUpdate,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
 ):
     group = get_or_404(db, models.CardGroup, group_id, "Group not found")
+    col = db.get(models.Column, group.column_id)
+    board = db.get(models.Board, col.board_id)
+    if not board or board.workspace_id != workspace.id:
+        raise HTTPException(404, "Group not found")
     if body.title is not None:
         group.title = body.title
     db.commit()
@@ -49,8 +66,17 @@ async def update_group(
 
 @router.delete("/{group_id}", status_code=204)
 @limiter.limit("30/minute")
-async def delete_group(request: Request, group_id: str, db: Session = Depends(get_db)):
+async def delete_group(
+    request: Request,
+    group_id: str,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
     group = get_or_404(db, models.CardGroup, group_id, "Group not found")
+    col = db.get(models.Column, group.column_id)
+    board = db.get(models.Board, col.board_id)
+    if not board or board.workspace_id != workspace.id:
+        raise HTTPException(404, "Group not found")
     col = db.get(models.Column, group.column_id)
     board_id = col.board_id
     col_id = group.column_id  # capture before deletion
@@ -72,9 +98,19 @@ async def delete_group(request: Request, group_id: str, db: Session = Depends(ge
 
 @router.post("/{group_id}/set_card/{card_id}", response_model=schemas.CardOut)
 @limiter.limit("30/minute")
-async def set_card_group(request: Request, group_id: str, card_id: str, db: Session = Depends(get_db)):
+async def set_card_group(
+    request: Request,
+    group_id: str,
+    card_id: str,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
     """Add a card to a group."""
     group = get_or_404(db, models.CardGroup, group_id, "Group not found")
+    col = db.get(models.Column, group.column_id)
+    board = db.get(models.Board, col.board_id)
+    if not board or board.workspace_id != workspace.id:
+        raise HTTPException(404, "Group not found")
     card = get_or_404(db, models.Card, card_id, "Card not found")
     if card.column_id != group.column_id:
         raise HTTPException(400, "Card and group must be in the same column")
@@ -89,9 +125,19 @@ async def set_card_group(request: Request, group_id: str, card_id: str, db: Sess
 
 @router.patch("/{group_id}/move", response_model=schemas.CardGroupOut)
 @limiter.limit("30/minute")
-async def move_group(request: Request, group_id: str, body: schemas.GroupMove, db: Session = Depends(get_db)):
+async def move_group(
+    request: Request,
+    group_id: str,
+    body: schemas.GroupMove,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
     """Move a group (and all its cards) to a different column."""
     group = get_or_404(db, models.CardGroup, group_id, "Group not found")
+    col = db.get(models.Column, group.column_id)
+    board = db.get(models.Board, col.board_id)
+    if not board or board.workspace_id != workspace.id:
+        raise HTTPException(404, "Group not found")
     old_col = db.get(models.Column, group.column_id)
     new_col = get_or_404(db, models.Column, body.column_id, "Column not found")
     if old_col.board_id != new_col.board_id:
@@ -123,10 +169,18 @@ async def move_group(request: Request, group_id: str, body: schemas.GroupMove, d
 @router.delete("/{group_id}/remove_card/{card_id}", response_model=schemas.CardOut)
 @limiter.limit("30/minute")
 async def remove_card_from_group(
-    request: Request, group_id: str, card_id: str, db: Session = Depends(get_db)
+    request: Request,
+    group_id: str,
+    card_id: str,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Remove a card from its group. Auto-deletes the group if it becomes empty."""
     card = get_or_404(db, models.Card, card_id, "Card not found")
+    col = db.get(models.Column, card.column_id)
+    board = db.get(models.Board, col.board_id)
+    if not board or board.workspace_id != workspace.id:
+        raise HTTPException(404, "Card not found")
     card.group_id = None
     db.commit()
     db.refresh(card)

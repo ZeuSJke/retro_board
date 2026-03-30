@@ -27,15 +27,17 @@ export default function App({ boardId }: AppProps) {
   const setCurrentBoard = useAppStore((s) => s.setCurrentBoard)
   const setUsername = useAppStore((s) => s.setUsername)
   const username = useAppStore((s) => s.username)
+  const workspace = useAppStore((s) => s.workspace)
   const [boards, setBoards] = useState<BoardListItem[]>([])
   const [currentBoard, setCurrentBoardData] = useState<Board | null>(null)
   const [boardsPanelOpen, setBoardsPanelOpen] = useState(false)
   const [themePanelOpen, setThemePanelOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [showWelcome, setShowWelcome] = useState(username === 'Аноним')
+  const [showWelcome, setShowWelcome] = useState(!workspace || username === 'Аноним')
 
   const exportRef = useRef<(() => void) | null>(null)
+  const initializedRef = useRef(false)
   const [votesUsed, setVotesUsed] = useState(0)
   const [activeUsers, setActiveUsers] = useState<string[]>([])
 
@@ -66,6 +68,9 @@ export default function App({ boardId }: AppProps) {
   const handleWelcomeConfirm = (name: string) => {
     setUsername(name)
     setShowWelcome(false)
+    initializedRef.current = true // Prevent async hydration effect from double-loading
+    loadBoards()
+    if (boardId && boardId !== 'start') loadBoard(boardId)
   }
 
   useEffect(() => {
@@ -73,11 +78,14 @@ export default function App({ boardId }: AppProps) {
   }, [theme])
 
   useEffect(() => {
-    loadBoards()
+    if (workspace) {
+      initializedRef.current = true
+      loadBoards()
+    }
   }, [])
 
   useEffect(() => {
-    if (boardId) {
+    if (boardId && boardId !== 'start' && workspace) {
       loadBoard(boardId)
     }
   }, [boardId])
@@ -90,6 +98,15 @@ export default function App({ boardId }: AppProps) {
         const board = await createBoard('Моя первая ретро-доска')
         list = [boardToBoardListItem(board)]
         router.replace(`/board/${board.slug || board.id}`)
+      } else {
+        const inList = list.find((b) => b.slug === boardId || b.id === boardId)
+        if (!inList) {
+          const target =
+            currentBoardId && list.find((b) => b.id === currentBoardId)
+              ? list.find((b) => b.id === currentBoardId)!
+              : list[0]
+          router.replace(`/board/${target.slug || target.id}`)
+        }
       }
       setBoards(list)
     } catch {
@@ -149,6 +166,10 @@ export default function App({ boardId }: AppProps) {
     setThemePanelOpen(false)
   }
 
+  if (showWelcome) {
+    return <WelcomeDialog onConfirm={handleWelcomeConfirm} />
+  }
+
   if (error)
     return (
       <div className={styles.centered}>
@@ -172,10 +193,6 @@ export default function App({ boardId }: AppProps) {
         <p style={{ color: 'var(--md-on-surface-variant)', fontSize: 14 }}>Загрузка...</p>
       </div>
     )
-
-  if (showWelcome) {
-    return <WelcomeDialog onConfirm={handleWelcomeConfirm} />
-  }
 
   return (
     <>
