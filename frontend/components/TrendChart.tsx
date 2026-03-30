@@ -49,14 +49,17 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 export default memo(function TrendChart({ data }: Props) {
   if (data.length === 0) return null
 
-  const chartData = data.map((d) => ({
-    name: d.board_name.length > 18 ? d.board_name.slice(0, 16) + '...' : d.board_name,
-    fullName: d.board_name,
-    date: shortDate(d.created_at),
-    'Открыто': d.open,
-    'В работе': d.in_progress,
-    'Выполнено': d.done,
-  }))
+  const chartData = data
+    .slice()
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    .map((d) => ({
+      name: d.board_name.length > 18 ? d.board_name.slice(0, 16) + '...' : d.board_name,
+      fullName: d.board_name,
+      date: shortDate(d.created_at),
+      'Открыто': d.open,
+      'В работе': d.in_progress,
+      'Выполнено': d.done,
+    }))
 
   return (
     <div className={s.chartWrap}>
