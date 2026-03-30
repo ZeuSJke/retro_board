@@ -1,13 +1,14 @@
 """Tests for workspace login and auth."""
+
 import pytest
 
 
 def test_workspace_login_success(client, test_workspace):
     """Успешный вход в workspace."""
-    resp = client.post("/api/workspaces/login", json={
-        "workspace_slug": "test-team",
-        "access_key": "testkey123"
-    })
+    resp = client.post(
+        "/api/workspaces/login",
+        json={"workspace_slug": "test-team", "access_key": "testkey123"},
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert "token" in data
@@ -18,20 +19,20 @@ def test_workspace_login_success(client, test_workspace):
 
 def test_workspace_login_wrong_key(client, test_workspace):
     """Вход с неверным ключом → 401."""
-    resp = client.post("/api/workspaces/login", json={
-        "workspace_slug": "test-team",
-        "access_key": "wrongkey"
-    })
+    resp = client.post(
+        "/api/workspaces/login",
+        json={"workspace_slug": "test-team", "access_key": "wrongkey"},
+    )
     assert resp.status_code == 401
     assert "Неверный код команды или ключ доступа" in resp.json()["detail"]
 
 
 def test_workspace_login_unknown_slug(client):
     """Вход в несуществующий workspace → 401."""
-    resp = client.post("/api/workspaces/login", json={
-        "workspace_slug": "nonexistent",
-        "access_key": "anykey"
-    })
+    resp = client.post(
+        "/api/workspaces/login",
+        json={"workspace_slug": "nonexistent", "access_key": "anykey"},
+    )
     assert resp.status_code == 401
 
 
@@ -39,7 +40,7 @@ def test_list_boards_requires_workspace_token(client, workspace_headers):
     """GET /api/boards/ без токена → 401."""
     resp = client.get("/api/boards/")
     assert resp.status_code == 401
-    assert "X-Workspace-Token header required" in resp.json()["detail"]
+    assert "Workspace authentication required" in resp.json()["detail"]
 
 
 def test_list_boards_with_workspace_token(client, workspace_headers, sample_board):
@@ -59,7 +60,9 @@ def test_create_board_without_workspace_token(client):
 
 def test_create_board_with_workspace_token(client, workspace_headers):
     """POST /api/boards/ с токеном → успех."""
-    resp = client.post("/api/boards/", json={"name": "New Board"}, headers=workspace_headers)
+    resp = client.post(
+        "/api/boards/", json={"name": "New Board"}, headers=workspace_headers
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["name"] == "New Board"
@@ -69,12 +72,15 @@ def test_create_board_with_workspace_token(client, workspace_headers):
 def test_board_isolation_between_workspaces(client, db_session, workspace_headers):
     """Доски одного workspace не видны в другом."""
     # Создать доску в первом workspace
-    resp1 = client.post("/api/boards/", json={"name": "Board A"}, headers=workspace_headers)
+    resp1 = client.post(
+        "/api/boards/", json={"name": "Board A"}, headers=workspace_headers
+    )
     assert resp1.status_code == 201
 
     # Создать второй workspace
     import bcrypt
     from app.models import Workspace
+
     ws2 = Workspace(
         id="workspace-2",
         slug="team-2",
@@ -85,10 +91,9 @@ def test_board_isolation_between_workspaces(client, db_session, workspace_header
     db_session.commit()
 
     # Получить токен для второго workspace
-    resp_login = client.post("/api/workspaces/login", json={
-        "workspace_slug": "team-2",
-        "access_key": "key2"
-    })
+    resp_login = client.post(
+        "/api/workspaces/login", json={"workspace_slug": "team-2", "access_key": "key2"}
+    )
     assert resp_login.status_code == 200
     token2 = resp_login.json()["token"]
     headers2 = {"X-Workspace-Token": token2}
@@ -99,11 +104,14 @@ def test_board_isolation_between_workspaces(client, db_session, workspace_header
     assert len(resp2.json()) == 0
 
 
-def test_get_board_cross_workspace_fails(client, db_session, workspace_headers, sample_board):
+def test_get_board_cross_workspace_fails(
+    client, db_session, workspace_headers, sample_board
+):
     """Доступ к доске из другого workspace → 404."""
     # Создать второй workspace
     import bcrypt
     from app.models import Workspace
+
     ws2 = Workspace(
         id="workspace-2",
         slug="team-2",
@@ -114,10 +122,9 @@ def test_get_board_cross_workspace_fails(client, db_session, workspace_headers, 
     db_session.commit()
 
     # Получить токен для второго workspace
-    resp_login = client.post("/api/workspaces/login", json={
-        "workspace_slug": "team-2",
-        "access_key": "key2"
-    })
+    resp_login = client.post(
+        "/api/workspaces/login", json={"workspace_slug": "team-2", "access_key": "key2"}
+    )
     token2 = resp_login.json()["token"]
     headers2 = {"X-Workspace-Token": token2}
 

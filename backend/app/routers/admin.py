@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -15,7 +17,9 @@ router = APIRouter()
 @limiter.limit("10/minute")
 def admin_login(request: Request, body: schemas.AdminLoginRequest, response: Response):
     """Администраторский вход."""
-    if body.login != settings.admin_login or body.password != settings.admin_password:
+    login_ok = secrets.compare_digest(body.login, settings.admin_login)
+    password_ok = secrets.compare_digest(body.password, settings.admin_password)
+    if not (login_ok and password_ok):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
     token = create_admin_token()
     response.set_cookie(
@@ -24,6 +28,7 @@ def admin_login(request: Request, body: schemas.AdminLoginRequest, response: Res
         httponly=True,
         samesite="lax",
         max_age=86400,
+        secure=True,
     )
     return {"ok": True}
 
@@ -46,10 +51,14 @@ def list_workspaces(
     workspaces = db.query(models.Workspace).all()
     result = []
     for ws in workspaces:
-        count = db.query(func.count(models.Board.id)).filter(
-            models.Board.workspace_id == ws.id,
-            models.Board.deleted_at.is_(None),
-        ).scalar()
+        count = (
+            db.query(func.count(models.Board.id))
+            .filter(
+                models.Board.workspace_id == ws.id,
+                models.Board.deleted_at.is_(None),
+            )
+            .scalar()
+        )
         item = schemas.WorkspaceListItem.model_validate(ws)
         item.boards_count = count or 0
         result.append(item)
@@ -65,9 +74,13 @@ def create_workspace(
     _: bool = Depends(get_admin_user),
 ):
     """Создать новый workspace."""
-    existing = db.query(models.Workspace).filter(models.Workspace.slug == body.slug).first()
+    existing = (
+        db.query(models.Workspace).filter(models.Workspace.slug == body.slug).first()
+    )
     if existing:
-        raise HTTPException(status_code=409, detail="Workspace with this slug already exists")
+        raise HTTPException(
+            status_code=409, detail="Workspace with this slug already exists"
+        )
     ws = models.Workspace(
         slug=body.slug,
         name=body.name,

@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -16,7 +17,9 @@ class Settings(BaseSettings):
     jira_url: str = ""
     jira_email: str = ""
     jira_api_token: str = ""
-    jira_verify_ssl: bool = True  # False для on-premise Jira с самоподписанным сертификатом
+    jira_verify_ssl: bool = (
+        True  # False для on-premise Jira с самоподписанным сертификатом
+    )
 
     # Workspace JWT secrets and admin credentials
     workspace_jwt_secret: str = "change-me-workspace-secret"
@@ -30,6 +33,42 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
     )
+
+    @field_validator("workspace_jwt_secret")
+    @classmethod
+    def validate_workspace_jwt_secret(cls, v: str) -> str:
+        if v == "change-me-workspace-secret":
+            raise ValueError("WORKSPACE_JWT_SECRET must be changed from default value")
+        if len(v) < 32:
+            raise ValueError("WORKSPACE_JWT_SECRET must be at least 32 characters")
+        return v
+
+    @field_validator("admin_jwt_secret")
+    @classmethod
+    def validate_admin_jwt_secret(cls, v: str) -> str:
+        if v == "change-me-admin-secret":
+            raise ValueError("ADMIN_JWT_SECRET must be changed from default value")
+        if len(v) < 32:
+            raise ValueError("ADMIN_JWT_SECRET must be at least 32 characters")
+        return v
+
+    @field_validator("admin_login")
+    @classmethod
+    def validate_admin_login(cls, v: str) -> str:
+        if v == "admin":
+            raise ValueError("ADMIN_LOGIN must be changed from default 'admin'")
+        if len(v) < 3:
+            raise ValueError("ADMIN_LOGIN must be at least 3 characters")
+        return v
+
+    @field_validator("admin_password")
+    @classmethod
+    def validate_admin_password(cls, v: str) -> str:
+        if v == "changeme":
+            raise ValueError("ADMIN_PASSWORD must be changed from default value")
+        if len(v) < 8:
+            raise ValueError("ADMIN_PASSWORD must be at least 8 characters")
+        return v
 
     @property
     def jira_configured(self) -> bool:

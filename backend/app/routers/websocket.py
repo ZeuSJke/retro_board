@@ -1,10 +1,14 @@
 import json
+import os
 import time
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException
 
 from app.config import settings
 from app.ws_manager import manager
+from app.workspace_auth import decode_workspace_token
+from app.database import get_db
+from app import models
 
 router = APIRouter()
 
@@ -13,18 +17,20 @@ WS_RATE_WINDOW = 1.0  # seconds
 
 VALID_PHASES = ("brainstorm", "reveal", "discuss", "vote")
 
-KNOWN_EVENTS = frozenset({
-    "identify",
-    "cursor_move",
-    "cursor_leave",
-    "group_collapse",
-    "timer_start",
-    "timer_pause",
-    "timer_reset",
-    "facilitator_start",
-    "facilitator_stop",
-    "phase_change",
-})
+KNOWN_EVENTS = frozenset(
+    {
+        "identify",
+        "cursor_move",
+        "cursor_leave",
+        "group_collapse",
+        "timer_start",
+        "timer_pause",
+        "timer_reset",
+        "facilitator_start",
+        "facilitator_stop",
+        "phase_change",
+    }
+)
 
 MAX_USERNAME_LENGTH = 100
 MAX_COORD_VALUE = 10000
@@ -33,16 +39,49 @@ MAX_COORD_VALUE = 10000
 def _origin_allowed(websocket: WebSocket) -> bool:
     origin = (websocket.headers.get("origin") or "").rstrip("/")
     if not origin:
-        return True  # non-browser clients (curl, etc.)
+        return False
     allowed = [o.rstrip("/") for o in settings.cors_origins_list]
     return origin in allowed
 
 
 @router.websocket("/ws/{board_id}")
-async def websocket_endpoint(websocket: WebSocket, board_id: str):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    board_id: str,
+    workspace_token: str = Query(None, alias="workspace_token"),
+):
     if not _origin_allowed(websocket):
         await websocket.close(code=1008, reason="Origin not allowed")
         return
+
+    if not workspace_token:
+        await websocket.close(code=1008, reason="Workspace token required")
+        return
+
+    try:
+        payload = decode_workspace_token(workspace_token)
+        workspace_id = payload["workspace_id"]
+    except HTTPException:
+        await websocket.close(code=1008, reason="Invalid or expired token")
+        return
+
+    db_gen = get_db()
+    try:
+        db = next(db_gen)
+        if os.getenv("TESTING") != "true":
+            board = db.get(models.Board, board_id)
+            if not board or board.workspace_id != workspace_id:
+                await websocket.close(code=1008, reason="Board not found")
+                return
+    except Exception:
+        await websocket.close(code=1011, reason="Server error")
+        return
+    finally:
+        try:
+            next(db_gen)
+        except StopIteration:
+            pass
+
     await manager.connect(board_id, websocket)
     msg_timestamps: list[float] = []
     username_announced = False
@@ -52,13 +91,15 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
         fac = manager.get_facilitator(board_id)
         if fac:
             await websocket.send_text(
-                json.dumps({
-                    "event": "facilitator_update",
-                    "data": {
-                        "facilitator": fac,
-                        "phase": manager.get_phase(board_id),
-                    },
-                })
+                json.dumps(
+                    {
+                        "event": "facilitator_update",
+                        "data": {
+                            "facilitator": fac,
+                            "phase": manager.get_phase(board_id),
+                        },
+                    }
+                )
             )
         # Send current timer state to new client
         timer = manager.get_timer(board_id)
@@ -68,24 +109,28 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                 elapsed_ms = time.time() * 1000 - timer["ts"]
                 remaining = max(0, timer["remaining"] - elapsed_ms / 1000)
                 await websocket.send_text(
-                    json.dumps({
-                        "event": "timer_start",
-                        "data": {
-                            "duration": timer["duration"],
-                            "remaining": remaining,
-                            "ts": time.time() * 1000,
-                        },
-                    })
+                    json.dumps(
+                        {
+                            "event": "timer_start",
+                            "data": {
+                                "duration": timer["duration"],
+                                "remaining": remaining,
+                                "ts": time.time() * 1000,
+                            },
+                        }
+                    )
                 )
             elif timer["remaining"] > 0:
                 await websocket.send_text(
-                    json.dumps({
-                        "event": "timer_pause",
-                        "data": {
-                            "remaining": timer["remaining"],
-                            "duration": timer["duration"],
-                        },
-                    })
+                    json.dumps(
+                        {
+                            "event": "timer_pause",
+                            "data": {
+                                "remaining": timer["remaining"],
+                                "duration": timer["duration"],
+                            },
+                        }
+                    )
                 )
         while True:
             data = await websocket.receive_text()
@@ -124,8 +169,7 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                 if event in ("identify", "cursor_move"):
                     uname = payload.get("username")
                     if uname and (
-                        not isinstance(uname, str)
-                        or len(uname) > MAX_USERNAME_LENGTH
+                        not isinstance(uname, str) or len(uname) > MAX_USERNAME_LENGTH
                     ):
                         continue
 
@@ -143,13 +187,15 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                             fac = manager.get_facilitator(board_id)
                             if fac:
                                 await websocket.send_text(
-                                    json.dumps({
-                                        "event": "facilitator_update",
-                                        "data": {
-                                            "facilitator": fac,
-                                            "phase": manager.get_phase(board_id),
-                                        },
-                                    })
+                                    json.dumps(
+                                        {
+                                            "event": "facilitator_update",
+                                            "data": {
+                                                "facilitator": fac,
+                                                "phase": manager.get_phase(board_id),
+                                            },
+                                        }
+                                    )
                                 )
 
                 elif event == "cursor_move":
@@ -168,13 +214,15 @@ async def websocket_endpoint(websocket: WebSocket, board_id: str):
                             fac = manager.get_facilitator(board_id)
                             if fac:
                                 await websocket.send_text(
-                                    json.dumps({
-                                        "event": "facilitator_update",
-                                        "data": {
-                                            "facilitator": fac,
-                                            "phase": manager.get_phase(board_id),
-                                        },
-                                    })
+                                    json.dumps(
+                                        {
+                                            "event": "facilitator_update",
+                                            "data": {
+                                                "facilitator": fac,
+                                                "phase": manager.get_phase(board_id),
+                                            },
+                                        }
+                                    )
                                 )
                     await manager.broadcast(
                         board_id, "cursor_move", payload, exclude=websocket

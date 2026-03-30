@@ -6,11 +6,15 @@ from pydantic import BaseModel, Field, field_validator
 
 ActionItemStatus = Literal["open", "in_progress", "done"]
 
+JiraIssueType = Literal["Task", "Bug", "Story", "Epic", "Subtask"]
+
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_JIRA_PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]{0,19}$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 # ── Workspace ─────────────────────────────────────────────────────────────────
+
 
 class WorkspaceLoginRequest(BaseModel):
     workspace_slug: str = Field(..., min_length=1, max_length=80)
@@ -25,7 +29,7 @@ class WorkspaceTokenResponse(BaseModel):
 
 
 class WorkspaceCreate(BaseModel):
-    slug: str = Field(..., min_length=1, max_length=80, pattern=r'^[a-z0-9-]+$')
+    slug: str = Field(..., min_length=1, max_length=80, pattern=r"^[a-z0-9-]+$")
     name: str = Field(..., min_length=1, max_length=120)
     access_key: str = Field(..., min_length=4, max_length=100)
 
@@ -49,6 +53,7 @@ class WorkspaceListItem(WorkspaceOut):
 
 # ── Admin ────────────────────────────────────────────────────────────────────
 
+
 class AdminLoginRequest(BaseModel):
     login: str
     password: str
@@ -56,13 +61,16 @@ class AdminLoginRequest(BaseModel):
 
 # ── Card ──────────────────────────────────────────────────────────────────────
 
+
 class CardBase(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
     author: str = Field(default="Аноним", max_length=60)
     color: str = Field(default="#FFFFFF", pattern=r"^#[0-9a-fA-F]{6}$")
 
+
 class CardCreate(CardBase):
     column_id: str
+
 
 class CardUpdate(BaseModel):
     text: Optional[str] = None
@@ -78,6 +86,7 @@ class CardUpdate(BaseModel):
             raise ValueError("color must be a hex string like #RRGGBB")
         return v
 
+
 class CardOut(CardBase):
     id: str
     column_id: str
@@ -91,12 +100,15 @@ class CardOut(CardBase):
 
 # ── CardGroup ─────────────────────────────────────────────────────────────────
 
+
 class CardGroupCreate(BaseModel):
     column_id: str
     title: str = Field(default="Группа", min_length=1, max_length=120)
 
+
 class CardGroupUpdate(BaseModel):
     title: Optional[str] = None
+
 
 class CardGroupOut(BaseModel):
     id: str
@@ -109,12 +121,15 @@ class CardGroupOut(BaseModel):
 
 # ── Column ────────────────────────────────────────────────────────────────────
 
+
 class ColumnBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=80)
     color: str = Field(default="#6750A4", pattern=r"^#[0-9a-fA-F]{6}$")
 
+
 class ColumnCreate(ColumnBase):
     board_id: str
+
 
 class ColumnUpdate(BaseModel):
     title: Optional[str] = None
@@ -128,6 +143,7 @@ class ColumnUpdate(BaseModel):
             raise ValueError("color must be a hex string like #RRGGBB")
         return v
 
+
 class ColumnOut(ColumnBase):
     id: str
     board_id: str
@@ -140,6 +156,7 @@ class ColumnOut(ColumnBase):
 
 # ── Board ─────────────────────────────────────────────────────────────────────
 
+
 class BoardBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
 
@@ -151,8 +168,10 @@ class BoardBase(BaseModel):
             raise ValueError("Название доски не должно содержать HTML-теги")
         return v
 
+
 class BoardCreate(BoardBase):
     max_votes: int = Field(default=5, ge=1, le=99)
+
 
 class BoardUpdate(BaseModel):
     name: Optional[str] = None
@@ -168,6 +187,7 @@ class BoardUpdate(BaseModel):
             raise ValueError("Название доски не должно содержать HTML-теги")
         return v
 
+
 class BoardOut(BoardBase):
     id: str
     slug: Optional[str] = None
@@ -177,6 +197,7 @@ class BoardOut(BoardBase):
     columns: list[ColumnOut] = []
 
     model_config = {"from_attributes": True}
+
 
 class BoardListItem(BoardBase):
     id: str
@@ -191,6 +212,7 @@ class BoardListItem(BoardBase):
 
 # ── Move card ─────────────────────────────────────────────────────────────────
 
+
 class MoveCard(BaseModel):
     column_id: str
     position: int
@@ -198,17 +220,20 @@ class MoveCard(BaseModel):
 
 # ── Set card group ─────────────────────────────────────────────────────────────
 
+
 class SetCardGroup(BaseModel):
     group_id: Optional[str] = None
 
 
 # ── Move group ────────────────────────────────────────────────────────────────
 
+
 class GroupMove(BaseModel):
     column_id: str
 
 
 # ── ActionItem ───────────────────────────────────────────────────────────────
+
 
 class ActionItemCreate(BaseModel):
     board_id: str
@@ -218,11 +243,13 @@ class ActionItemCreate(BaseModel):
     source_card_ids: list[str] = []
     status: ActionItemStatus = "open"
 
+
 class ActionItemUpdate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=200)
     text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
     assignee: Optional[str] = None
     status: Optional[ActionItemStatus] = None
+
 
 class ActionItemOut(BaseModel):
     id: str
@@ -238,22 +265,40 @@ class ActionItemOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
+
 class DashboardActionItem(ActionItemOut):
     board_name: str = ""
 
 
 # ── Jira Integration ────────────────────────────────────────────────────────
 
+
 class JiraCreateIssue(BaseModel):
     action_item_id: str
-    project_key: str = Field(..., min_length=1, max_length=20)
+    project_key: str = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        pattern=r"^[A-Z][A-Z0-9]{0,19}$",
+    )
     summary: str = Field(..., min_length=1, max_length=255)
     description: str = ""
-    issue_type: str = "Task"
+    issue_type: JiraIssueType = "Task"
+
+    @field_validator("project_key")
+    @classmethod
+    def validate_project_key(cls, v: str) -> str:
+        if not _JIRA_PROJECT_KEY_RE.match(v):
+            raise ValueError(
+                "project_key must be a valid Jira project key (e.g., PROJ, ABC123)"
+            )
+        return v
+
 
 class JiraIssueResult(BaseModel):
     jira_issue_key: str
     jira_url: str
+
 
 class JiraStatus(BaseModel):
     configured: bool
@@ -261,12 +306,14 @@ class JiraStatus(BaseModel):
 
 # ── Carry Forward ──────────────────────────────────────────────────────────
 
+
 class CarryForwardRequest(BaseModel):
     source_board_id: str
     target_board_id: str
 
 
 # ── Trends ────────────────────────────────────────────────────────────────────
+
 
 class TrendPoint(BaseModel):
     board_id: str
