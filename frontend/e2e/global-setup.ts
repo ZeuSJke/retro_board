@@ -43,17 +43,35 @@ export default async function globalSetup() {
   }
 
   try {
-    // Wait for backend to be healthy
-    await new Promise((r) => setTimeout(r, 10000)) // 10 second delay for testing
     console.log('[setup] Waiting for backend to be ready...')
+    
+    // Wait for health endpoint
     const healthRes = await withRetry(() => context.get('/health'), 10, 2000)
     if (!healthRes?.ok()) {
       console.error('[setup] Backend not ready after retries')
       return
     }
-    console.log('[setup] Backend is ready')
+    console.log('[setup] Health check passed')
+    
+    // Extra wait to ensure migrations are complete and DB is ready
+    // Health endpoint doesn't verify DB connectivity, so we wait a bit more
+    console.log('[setup] Waiting for migrations to complete...')
+    await new Promise((r) => setTimeout(r, 5000))
+    
+    // Verify DB is ready by doing a simple API call
+    console.log('[setup] Verifying DB connectivity...')
+    const dbCheck = await withRetry(() =>
+      context.get('/api/boards/', { headers: {} }),
+    3, 2000,
+    )
+    if (!dbCheck?.ok()) {
+      console.error('[setup] DB not ready - API returned', dbCheck?.status())
+    } else {
+      console.log('[setup] DB is ready')
+    }
 
     // Try to login to e2e-team workspace
+    console.log('[setup] Attempting workspace login...')
     const loginRes = await context.post('/api/workspaces/login', {
       data: { workspace_slug: 'e2e-team', access_key: 'e2e-test-key' },
     })
@@ -61,6 +79,18 @@ export default async function globalSetup() {
     if (loginRes.ok()) {
       console.log('[setup] e2e-team workspace already exists and login works')
       return
+    }
+    
+    console.log(`[setup] Workspace login failed: ${loginRes.status()}`)
+    if (loginRes.status() === 500) {
+      const loginBody = await loginRes.text()
+      console.log(`[setup] Workspace login 500 response: ${loginBody}`)
+      console.error('[setup] Workspace login returned 500 - possible DB issue')
+    } else if (loginRes.status() === 401) {
+      console.log('[setup] Workspace exists but access key mismatch - will recreate')
+    } else {
+      const loginBody = await loginRes.text()
+      console.log(`[setup] Workspace login response: ${loginBody}`)
     }
 
     // Login failed — need admin to create/recreate workspace
