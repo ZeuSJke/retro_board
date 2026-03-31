@@ -78,6 +78,7 @@ def create_workspace(
 ):
     """Создать новый workspace."""
     try:
+        logger.info(f"Creating workspace: {body.slug}")
         existing = (
             db.query(models.Workspace)
             .filter(models.Workspace.slug == body.slug)
@@ -87,20 +88,26 @@ def create_workspace(
             raise HTTPException(
                 status_code=409, detail="Workspace with this slug already exists"
             )
+        logger.info(f"Hashing access key for {body.slug}")
+        hashed_key = hash_access_key(body.access_key)
+        logger.info(f"Creating Workspace model for {body.slug}")
         ws = models.Workspace(
             slug=body.slug,
             name=body.name,
-            access_key_hash=hash_access_key(body.access_key),
+            access_key_hash=hashed_key,
         )
+        logger.info(f"Adding workspace to session: {body.slug}")
         db.add(ws)
+        logger.info(f"Committing workspace: {body.slug}")
         db.commit()
+        logger.info(f"Refreshing workspace: {body.slug}")
         db.refresh(ws)
-        logger.info(f"Created workspace: {body.slug}")
+        logger.info(f"Successfully created workspace: {body.slug}")
         return ws
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to create workspace: {type(e).__name__}: {e}")
+        logger.error(f"Failed to create workspace {body.slug}: {type(e).__name__}: {e}")
         raise
 
 

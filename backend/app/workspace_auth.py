@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, UTC
 from typing import Optional
+import logging
 
 from fastapi import Depends, HTTPException, Request, Response
 from jose import JWTError, jwt
@@ -10,12 +11,19 @@ from app.database import get_db
 from app import models
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 ALGORITHM = "HS256"
 
 
 def hash_access_key(key: str) -> str:
     """Хэшировать ключ доступа using bcrypt."""
-    return bcrypt.hashpw(key.encode(), bcrypt.gensalt(rounds=12)).decode()
+    try:
+        hashed = bcrypt.hashpw(key.encode(), bcrypt.gensalt(rounds=12)).decode()
+        return hashed
+    except Exception as e:
+        logger.error(f"bcrypt hash error: {type(e).__name__}: {e}")
+        raise
 
 
 def verify_access_key(key: str, key_hash: str) -> bool:
