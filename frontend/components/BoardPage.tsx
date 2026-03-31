@@ -35,6 +35,7 @@ interface BoardPageProps {
   onPresenceChanged?: (users: string[]) => void
   onFacilitatorChanged?: (facilitator: string | null, phase: string | null) => void
   onPhaseChanged?: (phase: string) => void
+  onSummaryGenerated?: () => void
   sendFacilitatorRef: React.MutableRefObject<{
     start: () => void
     stop: () => void
@@ -52,6 +53,7 @@ export default function BoardPage({
   onPresenceChanged,
   onFacilitatorChanged,
   onPhaseChanged,
+  onSummaryGenerated,
   sendFacilitatorRef,
 }: BoardPageProps) {
   const [addColOpen, setAddColOpen] = useState(false)
@@ -82,6 +84,7 @@ export default function BoardPage({
     onTimerWsEvent,
     onFacilitatorChanged,
     onPhaseChanged,
+    onSummaryGenerated,
   })
 
   // Subscribe to cursor user list changes (add/remove only, not position)

@@ -12,6 +12,7 @@ class ConnectionManager:
         self.facilitators: dict[str, str] = {}  # board_id → username
         self.phases: dict[str, str] = {}  # board_id → phase
         self.timers: dict[str, dict] = {}  # board_id → timer state
+        self.session_ids: dict[str, int] = {}  # board_id → session_id (timestamp)
 
     async def connect(self, board_id: str, ws: WebSocket):
         await ws.accept()
@@ -38,14 +39,15 @@ class ConnectionManager:
         if ws in self.rooms[board_id]:
             self.rooms[board_id].remove(ws)
         username = self.usernames.pop(id(ws), None)
-        # If facilitator disconnects, clear facilitator state
+        # If facilitator disconnects, clear facilitator state and session
         if username and self.facilitators.get(board_id) == username:
-            self.facilitators.pop(board_id, None)
-            self.phases.pop(board_id, None)
+            self.clear_session(board_id)
 
     def set_facilitator(self, board_id: str, username: str):
         self.facilitators[board_id] = username
         self.phases[board_id] = "brainstorm"
+        # Generate new session_id when facilitator starts
+        self.session_ids[board_id] = int(time.time())
 
     def get_facilitator(self, board_id: str) -> str | None:
         return self.facilitators.get(board_id)
@@ -59,6 +61,21 @@ class ConnectionManager:
 
     def get_phase(self, board_id: str) -> str | None:
         return self.phases.get(board_id)
+
+    def set_session_id(self, board_id: str, session_id: int):
+        """Set session_id for a board."""
+        self.session_ids[board_id] = session_id
+
+    def get_session_id(self, board_id: str) -> int | None:
+        """Get current session_id for a board."""
+        return self.session_ids.get(board_id)
+
+    def clear_session(self, board_id: str):
+        """Clear all session-related state for a board."""
+        self.facilitators.pop(board_id, None)
+        self.phases.pop(board_id, None)
+        self.session_ids.pop(board_id, None)
+        self.timers.pop(board_id, None)
 
     def set_timer(self, board_id: str, event: str, data: dict):
         """Store timer state so new clients can catch up."""

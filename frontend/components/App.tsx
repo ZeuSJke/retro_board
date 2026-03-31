@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Topbar from './Topbar'
 import BoardsPanel from './BoardsPanel'
 import ThemePanel from './ThemePanel'
 import BoardPage from './BoardPage'
 import WelcomeDialog from './WelcomeDialog'
+import SummaryModal from './SummaryModal'
 import { useAppStore } from '../store'
 import { applyTheme } from '../utils/theme'
 import { getBoards, getBoardBySlug, updateBoard, createBoard } from '../api'
@@ -40,6 +41,8 @@ export default function App({ boardId }: AppProps) {
   const initializedRef = useRef(false)
   const [votesUsed, setVotesUsed] = useState(0)
   const [activeUsers, setActiveUsers] = useState<string[]>([])
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
 
   const {
     timer,
@@ -53,6 +56,14 @@ export default function App({ boardId }: AppProps) {
     handleTimerReset,
   } = useTimer(boardId)
 
+  const handleSummaryGenerated = useCallback(() => {
+    if (!currentBoard) return
+    setIsGeneratingSummary(false)
+    setBoards((prev) =>
+      prev.map((b) => (b.id === currentBoard.id ? { ...b, has_summary: true } : b))
+    )
+  }, [currentBoard])
+
   const {
     facilitator,
     phase,
@@ -64,6 +75,13 @@ export default function App({ boardId }: AppProps) {
     handleFacilitatorChanged,
     handlePhaseChanged,
   } = useFacilitator(sendTimerRef, timer.duration)
+
+  const handlePhaseChangedWrapper = useCallback((p: string) => {
+    handlePhaseChanged(p)
+    if (p === 'summary') {
+      setIsGeneratingSummary(true)
+    }
+  }, [handlePhaseChanged])
 
   const handleWelcomeConfirm = (name: string) => {
     setUsername(name)
@@ -194,6 +212,9 @@ export default function App({ boardId }: AppProps) {
       </div>
     )
 
+  const currentBoardItem = boards.find((b) => b.id === currentBoard.id)
+  const hasSummary = currentBoardItem?.has_summary ?? false
+
   return (
     <>
       <Topbar
@@ -223,6 +244,9 @@ export default function App({ boardId }: AppProps) {
         onFacilitatorStart={handleFacilitatorStart}
         onFacilitatorStop={handleFacilitatorStop}
         onPhaseChange={handlePhaseChange}
+        hasSummary={hasSummary}
+        isGeneratingSummary={isGeneratingSummary}
+        onSummaryClick={() => setSummaryOpen(true)}
       />
 
       {(boardsPanelOpen || themePanelOpen) && (
@@ -252,11 +276,21 @@ export default function App({ boardId }: AppProps) {
             onVotesChanged={setVotesUsed}
             onPresenceChanged={setActiveUsers}
             onFacilitatorChanged={handleFacilitatorChanged}
-            onPhaseChanged={handlePhaseChanged}
+            onPhaseChanged={handlePhaseChangedWrapper}
+            onSummaryGenerated={handleSummaryGenerated}
             sendFacilitatorRef={sendFacilitatorRef}
           />
         )}
       </main>
+
+      {currentBoard && summaryOpen && (
+        <SummaryModal
+          boardId={currentBoard.id}
+          hasSummary={hasSummary}
+          isGeneratingSummary={isGeneratingSummary}
+          onClose={() => setSummaryOpen(false)}
+        />
+      )}
     </>
   )
 }

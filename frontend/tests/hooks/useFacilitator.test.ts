@@ -134,7 +134,7 @@ describe('useFacilitator', () => {
     expect(mockChangePhase).toHaveBeenCalledWith('vote')
   })
 
-  it('handleNextPhase does nothing on last phase (vote)', () => {
+  it('handleNextPhase advances from vote to summary', () => {
     const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
     const mockChangePhase = vi.fn()
     result.current.sendFacilitatorRef.current = { start: vi.fn(), stop: vi.fn(), changePhase: mockChangePhase }
@@ -147,7 +147,7 @@ describe('useFacilitator', () => {
       result.current.handleNextPhase()
     })
 
-    expect(mockChangePhase).not.toHaveBeenCalled()
+    expect(mockChangePhase).toHaveBeenCalledWith('summary')
   })
 
   it('handleNextPhase does nothing when phase is null', () => {

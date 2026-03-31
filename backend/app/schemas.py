@@ -207,6 +207,7 @@ class BoardListItem(BoardBase):
     workspace_id: Optional[str] = None
     action_items_total: int = 0
     action_items_open: int = 0
+    has_summary: bool = False
     model_config = {"from_attributes": True}
 
 
@@ -331,3 +332,23 @@ class TrendPoint(BaseModel):
     in_progress: int = 0
     done: int = 0
     total: int = 0
+
+
+# ── Board Summary ────────────────────────────────────────────────────────────
+
+
+class BoardSummaryOut(BaseModel):
+    id: str
+    board_id: str
+    session_id: int
+    summary_text: str
+    key_themes: list[str] = []
+    recommendations: list[str] = []
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BoardSummaryGenerateResponse(BaseModel):
+    summary: BoardSummaryOut
+    generated: bool = True

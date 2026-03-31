@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 
@@ -10,12 +11,14 @@ from app.workspace_auth import decode_workspace_token
 from app.database import get_db
 from app import models
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 WS_RATE_LIMIT = 20  # max messages per second
 WS_RATE_WINDOW = 1.0  # seconds
 
-VALID_PHASES = ("brainstorm", "reveal", "discuss", "vote")
+VALID_PHASES = ("brainstorm", "reveal", "discuss", "vote", "summary")
 
 KNOWN_EVENTS = frozenset(
     {
@@ -29,6 +32,7 @@ KNOWN_EVENTS = frozenset(
         "facilitator_start",
         "facilitator_stop",
         "phase_change",
+        "summary_generated",
     }
 )
 
@@ -42,6 +46,37 @@ def _origin_allowed(websocket: WebSocket) -> bool:
         return False
     allowed = [o.rstrip("/") for o in settings.cors_origins_list]
     return origin in allowed
+
+
+async def _trigger_summary_generation(board_id: str, username: str):
+    """Trigger automatic summary generation when entering summary phase.
+
+    This function is called when facilitator changes phase to 'summary'.
+    The actual generation happens via the API endpoint to keep WS handler simple.
+    """
+    from app.routers.boards import _generate_summary_internal
+    from app.database import SessionLocal
+
+    logger.info(f"Starting summary generation for board {board_id} by {username}")
+
+    db = SessionLocal()
+    try:
+        summary_data = await _generate_summary_internal(db, board_id, username)
+        if summary_data:
+            logger.info(f"Summary generated for board {board_id}, broadcasting")
+            await manager.broadcast(
+                board_id,
+                "summary_generated",
+                summary_data,
+            )
+        else:
+            logger.warning(f"Summary generation returned None for board {board_id}")
+    except Exception as e:
+        logger.error(f"Summary generation failed for board {board_id}: {e}")
+        pass
+    finally:
+        db.close()
+        logger.info(f"Summary generation task completed for board {board_id}")
 
 
 @router.websocket("/ws/{board_id}")
@@ -97,6 +132,7 @@ async def websocket_endpoint(
                         "data": {
                             "facilitator": fac,
                             "phase": manager.get_phase(board_id),
+                            "session_id": manager.get_session_id(board_id),
                         },
                     }
                 )
@@ -193,6 +229,9 @@ async def websocket_endpoint(
                                             "data": {
                                                 "facilitator": fac,
                                                 "phase": manager.get_phase(board_id),
+                                                "session_id": manager.get_session_id(
+                                                    board_id
+                                                ),
                                             },
                                         }
                                     )
@@ -220,6 +259,9 @@ async def websocket_endpoint(
                                             "data": {
                                                 "facilitator": fac,
                                                 "phase": manager.get_phase(board_id),
+                                                "session_id": manager.get_session_id(
+                                                    board_id
+                                                ),
                                             },
                                         }
                                     )
@@ -253,22 +295,29 @@ async def websocket_endpoint(
                         await manager.broadcast(
                             board_id,
                             "facilitator_update",
-                            {"facilitator": username, "phase": "brainstorm"},
+                            {
+                                "facilitator": username,
+                                "phase": "brainstorm",
+                                "session_id": manager.get_session_id(board_id),
+                            },
                         )
 
                 elif event == "facilitator_stop":
                     username = manager.get_username(websocket)
                     if username and manager.get_facilitator(board_id) == username:
-                        manager.clear_facilitator(board_id)
+                        manager.clear_session(board_id)
                         await manager.broadcast(
                             board_id,
                             "facilitator_update",
-                            {"facilitator": None, "phase": None},
+                            {"facilitator": None, "phase": None, "session_id": None},
                         )
 
                 elif event == "phase_change":
                     username = manager.get_username(websocket)
                     phase = payload.get("phase")
+                    logger.info(
+                        f"phase_change: username={username}, facilitator={manager.get_facilitator(board_id)}, phase={phase}"
+                    )
                     if (
                         username
                         and manager.get_facilitator(board_id) == username
@@ -278,6 +327,35 @@ async def websocket_endpoint(
                         await manager.broadcast(
                             board_id, "phase_update", {"phase": phase}
                         )
+                        if phase == "summary":
+                            logger.info(
+                                f"Creating summary task for board {board_id}, user {username}"
+                            )
+                            import asyncio
+
+                            asyncio.create_task(
+                                _trigger_summary_generation(board_id, username)
+                            )
+                    if (
+                        username
+                        and manager.get_facilitator(board_id) == username
+                        and phase in VALID_PHASES
+                    ):
+                        manager.set_phase(board_id, phase)
+                        await manager.broadcast(
+                            board_id, "phase_update", {"phase": phase}
+                        )
+                        # Trigger auto-generation when entering summary phase
+                        if phase == "summary":
+                            logger.info(
+                                f"Creating summary generation task for board {board_id}"
+                            )
+                            # Run in background to not block WS
+                            import asyncio
+
+                            asyncio.create_task(
+                                _trigger_summary_generation(board_id, username)
+                            )
 
             except (json.JSONDecodeError, KeyError):
                 pass
@@ -297,5 +375,5 @@ async def websocket_endpoint(
             await manager.broadcast(
                 board_id,
                 "facilitator_update",
-                {"facilitator": None, "phase": None},
+                {"facilitator": None, "phase": None, "session_id": None},
             )

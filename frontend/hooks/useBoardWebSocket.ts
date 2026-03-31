@@ -31,9 +31,10 @@ interface UseBoardWebSocketParams {
   onTimerWsEvent?: (event: string, data: Record<string, unknown>) => void
   onFacilitatorChanged?: (facilitator: string | null, phase: string | null) => void
   onPhaseChanged?: (phase: string) => void
+  onSummaryGenerated?: () => void
 }
 
-export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChanged, onPhaseChanged }: UseBoardWebSocketParams) {
+export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChanged, onPhaseChanged, onSummaryGenerated }: UseBoardWebSocketParams) {
   const username = useAppStore((s) => s.username)
   const [columns, setColumns] = useState<Column[]>([])
   const cursorsRef = useRef<Record<string, CursorPos>>({})
@@ -148,6 +149,11 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       if (event === 'action_item_deleted') {
         const { id } = data as { id: string }
         setActionItems((prev) => prev.filter((i) => i.id !== id))
+        return
+      }
+
+      if (event === 'summary_generated') {
+        onSummaryGenerated?.()
         return
       }
 
@@ -281,7 +287,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
         }
       })
     },
-    [onTimerWsEvent, onFacilitatorChanged, onPhaseChanged, notifyCursorListeners],
+    [onTimerWsEvent, onFacilitatorChanged, onPhaseChanged, onSummaryGenerated, notifyCursorListeners],
   )
 
   const { sendMessage } = useWebSocket(

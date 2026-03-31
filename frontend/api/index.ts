@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Board, BoardListItem, Column, Card, CardGroup, ActionItem, DashboardActionItem, CarryForwardRequest, ActionItemStatus, WorkspaceSession } from '../types'
+import type { Board, BoardListItem, Column, Card, CardGroup, ActionItem, DashboardActionItem, CarryForwardRequest, ActionItemStatus, WorkspaceSession, BoardSummary } from '../types'
 import { showToast } from '../store/toastStore'
 import { useAppStore } from '../store'
 
@@ -102,6 +102,10 @@ export const createJiraIssue = (data: {
   action_item_id: string; project_key: string; summary: string; description?: string; issue_type?: string
 }): Promise<{ jira_issue_key: string; jira_url: string }> =>
   api.post('/jira/create-issue', data).then((r) => r.data)
+
+// ── Summary ─────────────────────────────────────────────────────────────────
+export const getBoardSummary = (boardId: string): Promise<BoardSummary | null> =>
+  api.get(`/boards/${boardId}/summary`).then((r) => r.data).catch(() => null)
 
 // ── Workspace ───────────────────────────────────────────────────────────────
 export const loginToWorkspace = (data: {

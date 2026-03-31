@@ -13,5 +13,6 @@ export function boardToBoardListItem(board: Board): BoardListItem {
     created_at: board.created_at,
     action_items_total: 0,
     action_items_open: 0,
+    has_summary: board.has_summary ?? false,
   }
 }

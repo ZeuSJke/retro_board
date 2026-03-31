@@ -8,6 +8,7 @@ import { userColor, initials } from '../utils/theme'
 import type { BoardListItem, DashboardActionItem, ActionItemStatus } from '../types'
 import Dialog from './Dialog'
 import JiraDialog from './JiraDialog'
+import SummaryModal from './SummaryModal'
 import s from './Dashboard.module.css'
 
 const TrendChart = dynamic(() => import('./TrendChart'), {
@@ -145,6 +146,7 @@ export default function Dashboard() {
   const [deleteTarget, setDeleteTarget] = useState<DashboardActionItem | null>(null)
   const [jiraConfigured, setJiraConfigured] = useState(false)
   const [jiraTarget, setJiraTarget] = useState<DashboardActionItem | null>(null)
+  const [summaryBoard, setSummaryBoard] = useState<BoardListItem | null>(null)
 
 
   async function toggleStatus(item: DashboardActionItem) {
@@ -375,19 +377,36 @@ export default function Dashboard() {
         ) : (
           <div className={s.boardGrid}>
             {boards.map((b) => (
-              <div key={b.id} className={s.boardCard} onClick={() => navigateToBoard(b)}>
-                <div className={s.boardCardName}>{b.name}</div>
-                <div className={s.boardCardMeta}>
-                  <span>{formatDate(b.created_at)}</span>
-                  {b.action_items_total > 0 && (
-                    <span className={s.badge}>
-                      <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
-                        task_alt
+              <div key={b.id} className={s.boardCard}>
+                <div className={s.boardCardContent} onClick={() => navigateToBoard(b)}>
+                  <div className={s.boardCardName}>{b.name}</div>
+                  <div className={s.boardCardMeta}>
+                    <span>{formatDate(b.created_at)}</span>
+                    {b.action_items_total > 0 && (
+                      <span className={s.badge}>
+                        <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
+                          task_alt
+                        </span>
+                        {b.action_items_open}/{b.action_items_total}
                       </span>
-                      {b.action_items_open}/{b.action_items_total}
-                    </span>
-                  )}
+                    )}
+                  </div>
                 </div>
+                <button
+                  className={`${s.summaryBtn} ${b.has_summary ? s.summaryBtnActive : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setSummaryBoard(b)
+                  }}
+                  title={b.has_summary ? 'Просмотреть резюме' : 'Резюме недоступно'}
+                >
+                  <span
+                    className="material-symbols-rounded"
+                    style={{ fontVariationSettings: b.has_summary ? "'FILL' 1" : "'FILL' 0" }}
+                  >
+                    summarize
+                  </span>
+                </button>
               </div>
             ))}
           </div>
@@ -515,6 +534,15 @@ export default function Dashboard() {
             setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
             setJiraTarget(null)
           }}
+        />
+      )}
+
+      {/* Summary modal */}
+      {summaryBoard && (
+        <SummaryModal
+          boardId={summaryBoard.id}
+          hasSummary={summaryBoard.has_summary}
+          onClose={() => setSummaryBoard(null)}
         />
       )}
 

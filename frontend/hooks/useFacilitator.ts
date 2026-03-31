@@ -32,7 +32,7 @@ export function useFacilitator(
 
   const handleNextPhase = useCallback(() => {
     if (!phase) return
-    const PHASE_ORDER = ['brainstorm', 'reveal', 'discuss', 'vote']
+    const PHASE_ORDER = ['brainstorm', 'reveal', 'discuss', 'vote', 'summary']
     const idx = PHASE_ORDER.indexOf(phase)
     if (idx >= 0 && idx < PHASE_ORDER.length - 1) {
       const next = PHASE_ORDER[idx + 1]

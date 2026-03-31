@@ -1,3 +1,4 @@
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Response, Request
@@ -9,6 +10,8 @@ from app import models, schemas
 from app.workspace_auth import hash_access_key, get_admin_user, create_admin_token
 from app.config import settings
 from app.limiter import limiter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -74,22 +77,51 @@ def create_workspace(
     _: bool = Depends(get_admin_user),
 ):
     """Создать новый workspace."""
-    existing = (
-        db.query(models.Workspace).filter(models.Workspace.slug == body.slug).first()
-    )
-    if existing:
-        raise HTTPException(
-            status_code=409, detail="Workspace with this slug already exists"
+    import traceback
+
+    try:
+        print(f"[DEBUG] create_workspace called with slug={body.slug}")
+        logger.info(f"Creating workspace: {body.slug}")
+        existing = (
+            db.query(models.Workspace)
+            .filter(models.Workspace.slug == body.slug)
+            .first()
         )
-    ws = models.Workspace(
-        slug=body.slug,
-        name=body.name,
-        access_key_hash=hash_access_key(body.access_key),
-    )
-    db.add(ws)
-    db.commit()
-    db.refresh(ws)
-    return ws
+        print(f"[DEBUG] existing workspace check: {existing}")
+        if existing:
+            raise HTTPException(
+                status_code=409, detail="Workspace with this slug already exists"
+            )
+        print(f"[DEBUG] hashing access key for {body.slug}")
+        logger.info(f"Hashing access key for {body.slug}")
+        hashed_key = hash_access_key(body.access_key)
+        print(f"[DEBUG] access key hashed: {hashed_key[:20]}...")
+        logger.info(f"Creating Workspace model for {body.slug}")
+        ws = models.Workspace(
+            slug=body.slug,
+            name=body.name,
+            access_key_hash=hashed_key,
+        )
+        print(f"[DEBUG] adding workspace to session")
+        logger.info(f"Adding workspace to session: {body.slug}")
+        db.add(ws)
+        print(f"[DEBUG] committing workspace")
+        logger.info(f"Committing workspace: {body.slug}")
+        db.commit()
+        print(f"[DEBUG] refreshing workspace")
+        logger.info(f"Refreshing workspace: {body.slug}")
+        db.refresh(ws)
+        print(f"[DEBUG] successfully created workspace: {ws.id}")
+        logger.info(f"Successfully created workspace: {body.slug}")
+        return ws
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] create_workspace exception: {type(e).__name__}: {e}")
+        print(traceback.format_exc())
+        logger.error(f"Failed to create workspace {body.slug}: {type(e).__name__}: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
 
 
 @router.patch("/workspaces/{workspace_id}", response_model=schemas.WorkspaceOut)

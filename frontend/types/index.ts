@@ -4,6 +4,7 @@ export interface Board {
   slug: string | null
   max_votes: number
   created_at: string
+  has_summary: boolean
   columns: Column[]
 }
 
@@ -15,6 +16,7 @@ export interface BoardListItem {
   created_at: string
   action_items_total: number
   action_items_open: number
+  has_summary: boolean
 }
 
 export interface Column {
@@ -168,6 +170,16 @@ export interface WorkspaceSession {
   workspaceId: string
   workspaceSlug: string
   workspaceName: string
+}
+
+export interface BoardSummary {
+  id: string
+  board_id: string
+  session_id: string | null
+  summary_text: string
+  key_themes: string[]
+  recommendations: string[]
+  created_at: string
 }
 
 export interface AppStore {

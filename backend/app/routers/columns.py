@@ -1,7 +1,7 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app import models, schemas
@@ -11,6 +11,56 @@ from app.limiter import limiter
 from app.workspace_auth import get_current_workspace
 
 router = APIRouter()
+
+
+def get_board_full(db: Session, board_id: str) -> dict:
+    """Get full board data with columns, cards and groups for AI processing.
+
+    Returns board as dictionary with nested columns and cards.
+    """
+    board = (
+        db.query(models.Board)
+        .options(
+            selectinload(models.Board.columns).selectinload(models.Column.cards),
+            selectinload(models.Board.columns).selectinload(models.Column.groups),
+        )
+        .filter(models.Board.id == board_id, models.Board.deleted_at.is_(None))
+        .first()
+    )
+
+    if not board:
+        return {}
+
+    return {
+        "id": board.id,
+        "name": board.name,
+        "columns": [
+            {
+                "id": col.id,
+                "title": col.title,
+                "position": col.position,
+                "cards": [
+                    {
+                        "id": card.id,
+                        "text": card.text,
+                        "author": card.author,
+                        "likes": card.likes or [],
+                        "position": card.position,
+                    }
+                    for card in col.cards
+                ],
+                "groups": [
+                    {
+                        "id": group.id,
+                        "title": group.title,
+                        "position": group.position,
+                    }
+                    for group in col.groups
+                ],
+            }
+            for col in board.columns
+        ],
+    }
 
 
 @router.post("/", response_model=schemas.ColumnOut, status_code=201)
@@ -24,7 +74,12 @@ async def create_column(
     board = get_or_404(db, models.Board, body.board_id, "Board not found")
     if board.workspace_id != workspace.id:
         raise HTTPException(404, "Board not found")
-    pos = db.query(func.count(models.Column.id)).filter(models.Column.board_id == body.board_id).scalar() or 0
+    pos = (
+        db.query(func.count(models.Column.id))
+        .filter(models.Column.board_id == body.board_id)
+        .scalar()
+        or 0
+    )
     col = models.Column(
         id=str(uuid.uuid4()),
         board_id=body.board_id,
