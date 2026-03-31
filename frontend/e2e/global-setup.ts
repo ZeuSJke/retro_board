@@ -98,17 +98,34 @@ export default async function globalSetup() {
 
     // Create workspace with retry
     console.log('[setup] Creating workspace...')
-    const createRes = await withRetry(() =>
-      context.post('/api/admin/workspaces', {
-        data: { slug: 'e2e-team', name: 'E2E Team', access_key: 'e2e-test-key' },
-        headers: { Cookie: adminCookie },
-      }),
-    )
-
-    if (createRes?.ok()) {
-      console.log('[setup] Created e2e-team workspace')
-    } else {
-      console.error(`[setup] Failed to create workspace after retries`)
+    let lastError = 'unknown'
+    for (let i = 0; i <= 3; i++) {
+      try {
+        const createRes = await context.post('/api/admin/workspaces', {
+          data: { slug: 'e2e-team', name: 'E2E Team', access_key: 'e2e-test-key' },
+          headers: { Cookie: adminCookie },
+        })
+        if (createRes.ok()) {
+          console.log('[setup] Created e2e-team workspace')
+          lastError = 'success'
+          break
+        }
+        const body = await createRes.text()
+        lastError = `${createRes.status()}: ${body}`
+        console.log(`[setup] Create attempt ${i + 1} failed: ${lastError}`)
+        if (i < 3) {
+          await new Promise((r) => setTimeout(r, 3000 * (i + 1)))
+        }
+      } catch (e) {
+        lastError = String(e)
+        console.log(`[setup] Create attempt ${i + 1} exception: ${lastError}`)
+        if (i < 3) {
+          await new Promise((r) => setTimeout(r, 3000 * (i + 1)))
+        }
+      }
+    }
+    if (lastError !== 'success') {
+      console.error(`[setup] Failed to create workspace: ${lastError}`)
     }
   } finally {
     await context.dispose()
