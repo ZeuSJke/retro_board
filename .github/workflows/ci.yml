@@ -114,6 +114,9 @@ jobs:
           name: playwright-results
           path: frontend/test-results/
           retention-days: 7
+      - name: Show backend logs on failure
+        if: failure()
+        run: docker compose logs backend --tail=100
       - name: Stop stack
         if: always()
         run: docker compose down -v
