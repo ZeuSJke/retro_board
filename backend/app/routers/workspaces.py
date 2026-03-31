@@ -23,22 +23,24 @@ def workspace_login(
     db: Session = Depends(get_db),
 ):
     """Вход в workspace с кодом команды и ключом доступа."""
+    print(f"[DEBUG] workspace_login called with slug={body.workspace_slug}")
     try:
         workspace = (
             db.query(models.Workspace)
             .filter(models.Workspace.slug == body.workspace_slug)
             .first()
         )
+        print(f"[DEBUG] workspace query result: {workspace}")
         if not workspace:
-            raise HTTPException(
-                status_code=401, detail="Неверный код команды или ключ доступа"
-            )
+            raise HTTPException(status_code=401, detail="Workspace not found")
 
+        print(f"[DEBUG] calling verify_access_key")
         if not verify_access_key(body.access_key, workspace.access_key_hash):
             raise HTTPException(
                 status_code=401, detail="Неверный код команды или ключ доступа"
             )
 
+        print(f"[DEBUG] calling create_workspace_token")
         token = create_workspace_token(workspace.id, workspace.slug, workspace.name)
 
         response.set_cookie(
@@ -57,6 +59,13 @@ def workspace_login(
             workspace_name=workspace.name,
         )
     except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+
+        print(f"[ERROR] Workspace login exception: {type(e).__name__}: {e}")
+        print(traceback.format_exc())
+        logger.error(f"Workspace login error: {type(e).__name__}: {e}")
         raise
     except Exception as e:
         logger.error(f"Workspace login error: {type(e).__name__}: {e}")

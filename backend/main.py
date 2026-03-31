@@ -61,10 +61,13 @@ class GlobalErrorMiddleware(BaseHTTPMiddleware):
         try:
             return await call_next(request)
         except Exception as exc:
+            print(f"[GLOBAL ERROR] {type(exc).__name__}: {exc}")
+            print(traceback.format_exc())
             logger.error(
-                "Unhandled exception: %s: %s",
+                "Unhandled exception: %s: %s\n%s",
                 type(exc).__name__,
                 str(exc),
+                traceback.format_exc(),
             )
             return JSONResponse(
                 status_code=500,
