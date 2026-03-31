@@ -1,3 +1,4 @@
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Response, Request
@@ -9,6 +10,8 @@ from app import models, schemas
 from app.workspace_auth import hash_access_key, get_admin_user, create_admin_token
 from app.config import settings
 from app.limiter import limiter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -74,22 +77,31 @@ def create_workspace(
     _: bool = Depends(get_admin_user),
 ):
     """Создать новый workspace."""
-    existing = (
-        db.query(models.Workspace).filter(models.Workspace.slug == body.slug).first()
-    )
-    if existing:
-        raise HTTPException(
-            status_code=409, detail="Workspace with this slug already exists"
+    try:
+        existing = (
+            db.query(models.Workspace)
+            .filter(models.Workspace.slug == body.slug)
+            .first()
         )
-    ws = models.Workspace(
-        slug=body.slug,
-        name=body.name,
-        access_key_hash=hash_access_key(body.access_key),
-    )
-    db.add(ws)
-    db.commit()
-    db.refresh(ws)
-    return ws
+        if existing:
+            raise HTTPException(
+                status_code=409, detail="Workspace with this slug already exists"
+            )
+        ws = models.Workspace(
+            slug=body.slug,
+            name=body.name,
+            access_key_hash=hash_access_key(body.access_key),
+        )
+        db.add(ws)
+        db.commit()
+        db.refresh(ws)
+        logger.info(f"Created workspace: {body.slug}")
+        return ws
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create workspace: {type(e).__name__}: {e}")
+        raise
 
 
 @router.patch("/workspaces/{workspace_id}", response_model=schemas.WorkspaceOut)
