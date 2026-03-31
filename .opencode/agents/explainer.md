@@ -2,9 +2,9 @@
 description: "Code Explainer. Используй когда нужно: объяснить как работает код, проанализировать архитектуру, найти root cause проблемы, понять зависимости. Примеры: 'объясни как работает drag & drop в BoardPage', 'что делает useBoardWebSocket hook', 'почему WS broadcast не работает'."
 mode: subagent
 model: opencode-go/kimi-k2.5
-color: gray
+#color: gray
 permission:
-  edit: false
+  edit: "deny"
   bash:
     "*": "deny"
     "git status *": "allow"

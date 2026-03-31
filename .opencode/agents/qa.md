@@ -2,7 +2,7 @@
 description: "QA Engineer. Используй когда нужно: написать unit тесты, написать e2e тесты, проверить coverage, проанализировать edge cases, запустить тесты. Примеры: 'напиши тесты для эндпоинта создания карточки', 'проверь coverage бэкенда', 'какие edge cases нужно покрыть для voting?'."
 mode: subagent
 model: opencode-go/minimax-m2.5
-color: green
+#color: green
 temperature: 0.2
 ---
 

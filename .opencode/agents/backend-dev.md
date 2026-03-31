@@ -2,7 +2,7 @@
 description: "Backend Developer. Используй когда нужно: реализовать API эндпоинт, создать/изменить модель или схему, работать с WebSocket, написать тесты для бэкенда, создать Alembic миграцию. Примеры: 'реализуй эндпоинт для экспорта доски', 'добавь поле created_by в карточки', 'напиши тесты для action items'."
 mode: subagent
 model: opencode-go/kimi-k2.5
-color: red
+#color: red
 temperature: 0.2
 ---
 

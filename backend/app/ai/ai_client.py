@@ -1,12 +1,13 @@
 import os
-import httpx
 from dataclasses import dataclass
 from typing import Optional
+
+import httpx
 
 
 @dataclass
 class AIModelConfig:
-    model: str = "openrouter/qwen-qwen2.5-72b-instruct"
+    model: str = "qwen/qwen2.5-coder-7b-instruct"
     temperature: float = 0.3
     max_tokens: int = 100
     timeout: int = 30
