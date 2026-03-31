@@ -115,6 +115,28 @@ async function loginWithRetry(
   return null
 }
 
+/** Helper: retry admin login with delays to handle rate limiting (429). */
+async function adminLoginWithRetry(
+  request: APIRequestContext,
+  maxRetries = 3,
+): Promise<string | null> {
+  for (let i = 0; i <= maxRetries; i++) {
+    const res = await request.post(`${ADMIN_API}/login`, {
+      data: { login: ADMIN_LOGIN, password: ADMIN_PASSWORD },
+    })
+    if (res.ok()) {
+      const setCookies = res.headers()['set-cookie'] || ''
+      return setCookies
+    }
+    if (res.status() === 429 && i < maxRetries) {
+      await new Promise((r) => setTimeout(r, 2000 * (i + 1)))
+      continue
+    }
+    return null
+  }
+  return null
+}
+
 /** Ensure E2E workspace exists, create if needed. Returns workspace session. */
 export async function ensureE2EWorkspace(
   request: APIRequestContext,
@@ -132,17 +154,11 @@ export async function ensureE2EWorkspace(
     return loginResult
   }
 
-  // Need to create via admin
-  const adminLoginRes = await request.post(`${ADMIN_API}/login`, {
-    data: { login: ADMIN_LOGIN, password: ADMIN_PASSWORD },
-  })
-
-  if (!adminLoginRes.ok()) {
-    throw new Error(`Failed to login as admin: ${adminLoginRes.status()}`)
+  // Need to create via admin (with retry for rate limiting)
+  const adminCookie = await adminLoginWithRetry(request)
+  if (!adminCookie) {
+    throw new Error(`Failed to login as admin after retries`)
   }
-
-  const setCookies = adminLoginRes.headers()['set-cookie'] || ''
-  const adminCookie = setCookies
 
   // Create workspace (ignore 409 — already exists)
   const createRes = await request.post(`${ADMIN_API}/workspaces`, {
@@ -167,13 +183,10 @@ export async function ensureE2EWorkspace(
 export async function getAdminCookie(request: APIRequestContext): Promise<string> {
   if (cachedAdminCookie) return cachedAdminCookie
 
-  const loginRes = await request.post(`${ADMIN_API}/login`, {
-    data: { login: ADMIN_LOGIN, password: ADMIN_PASSWORD },
-  })
-  if (!loginRes.ok()) throw new Error(`Failed to admin login: ${loginRes.status()}`)
+  const adminCookie = await adminLoginWithRetry(request)
+  if (!adminCookie) throw new Error(`Failed to admin login after retries`)
 
-  const setCookie = loginRes.headers()['set-cookie'] || ''
-  const match = setCookie.match(/admin_token=([^;]+)/)
+  const match = adminCookie.match(/admin_token=([^;]+)/)
   if (!match) throw new Error('No admin_token in cookie')
   cachedAdminCookie = match[0]
   return cachedAdminCookie
