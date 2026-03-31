@@ -50,7 +50,10 @@ class AIClient:
                     )
                     response.raise_for_status()
                     data = response.json()
-                    return data["choices"][0]["message"]["content"].strip()
+                    content = data["choices"][0]["message"]["content"].strip()
+                    if content.startswith("."):
+                        content = content[1:].strip()
+                    return content
             except (httpx.HTTPError, httpx.TimeoutException) as e:
                 last_error = e
                 if attempt < config.retries - 1:
