@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Topbar from './Topbar'
 import BoardsPanel from './BoardsPanel'
 import ThemePanel from './ThemePanel'
 import BoardPage from './BoardPage'
 import WelcomeDialog from './WelcomeDialog'
+import SummaryModal from './SummaryModal'
 import { useAppStore } from '../store'
 import { applyTheme } from '../utils/theme'
 import { getBoards, getBoardBySlug, updateBoard, createBoard } from '../api'
@@ -40,6 +41,7 @@ export default function App({ boardId }: AppProps) {
   const initializedRef = useRef(false)
   const [votesUsed, setVotesUsed] = useState(0)
   const [activeUsers, setActiveUsers] = useState<string[]>([])
+  const [summaryOpen, setSummaryOpen] = useState(false)
 
   const {
     timer,
@@ -52,6 +54,13 @@ export default function App({ boardId }: AppProps) {
     handleTimerPause,
     handleTimerReset,
   } = useTimer(boardId)
+
+  const handleSummaryGenerated = useCallback(() => {
+    // Обновляем has_summary для текущей доски
+    setBoards((prev) =>
+      prev.map((b) => (b.id === boardId ? { ...b, has_summary: true } : b))
+    )
+  }, [boardId])
 
   const {
     facilitator,
@@ -223,6 +232,8 @@ export default function App({ boardId }: AppProps) {
         onFacilitatorStart={handleFacilitatorStart}
         onFacilitatorStop={handleFacilitatorStop}
         onPhaseChange={handlePhaseChange}
+        hasSummary={currentBoard ? (boards.find((b) => b.id === currentBoard.id)?.has_summary ?? false) : false}
+        onSummaryClick={() => setSummaryOpen(true)}
       />
 
       {(boardsPanelOpen || themePanelOpen) && (
@@ -253,10 +264,19 @@ export default function App({ boardId }: AppProps) {
             onPresenceChanged={setActiveUsers}
             onFacilitatorChanged={handleFacilitatorChanged}
             onPhaseChanged={handlePhaseChanged}
+            onSummaryGenerated={handleSummaryGenerated}
             sendFacilitatorRef={sendFacilitatorRef}
           />
         )}
       </main>
+
+      {currentBoard && summaryOpen && (
+        <SummaryModal
+          boardId={currentBoard.id}
+          hasSummary={boards.find((b) => b.id === currentBoard.id)?.has_summary ?? false}
+          onClose={() => setSummaryOpen(false)}
+        />
+      )}
     </>
   )
 }

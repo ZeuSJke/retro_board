@@ -33,6 +33,8 @@ interface TopbarProps {
   onFacilitatorStart: () => void
   onFacilitatorStop: () => void
   onPhaseChange: (phase: string) => void
+  hasSummary?: boolean
+  onSummaryClick?: () => void
 }
 
 export default function Topbar({
@@ -56,6 +58,8 @@ export default function Topbar({
   onFacilitatorStart,
   onFacilitatorStop,
   onPhaseChange,
+  hasSummary,
+  onSummaryClick,
 }: TopbarProps) {
   const router = useRouter()
   const username = useAppStore((s) => s.username)
@@ -161,6 +165,19 @@ export default function Topbar({
           <button className={styles.iconBtn} onClick={() => router.push('/dashboard')} title="История ретро">
             <span className="material-symbols-rounded">analytics</span>
           </button>
+
+          {onSummaryClick && (
+            <button
+              className={styles.iconBtn}
+              onClick={onSummaryClick}
+              title={hasSummary ? 'Просмотреть резюме' : 'Резюме недоступно'}
+              style={{ color: hasSummary ? 'var(--md-primary)' : undefined }}
+            >
+              <span className="material-symbols-rounded" style={{ fontVariationSettings: hasSummary ? "'FILL' 1" : "'FILL' 0" }}>
+                summarize
+              </span>
+            </button>
+          )}
 
           {onExport && (
             <button className={styles.iconBtn} onClick={onExport} title="Экспорт в PDF">

@@ -331,3 +331,23 @@ class TrendPoint(BaseModel):
     in_progress: int = 0
     done: int = 0
     total: int = 0
+
+
+# ── Board Summary ────────────────────────────────────────────────────────────
+
+
+class BoardSummaryOut(BaseModel):
+    id: str
+    board_id: str
+    session_id: int
+    summary_text: str
+    key_themes: list[str] = []
+    recommendations: list[str] = []
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BoardSummaryGenerateResponse(BaseModel):
+    summary: BoardSummaryOut
+    generated: bool = True

@@ -8,6 +8,7 @@ const PHASES = [
   { key: 'reveal', label: 'Обзор', icon: 'visibility' },
   { key: 'discuss', label: 'Дискуссия', icon: 'forum' },
   { key: 'vote', label: 'Голосование', icon: 'how_to_vote' },
+  { key: 'summary', label: 'Итоги', icon: 'summarize' },
 ]
 
 interface PhaseProgressProps {

@@ -10,6 +10,8 @@ from app import models, schemas
 from app.utils import get_or_404
 from app.limiter import limiter
 from app.workspace_auth import get_current_workspace
+from app.ws_manager import manager
+from app.ai.prompts.summary_generation import generate_summary
 
 router = APIRouter()
 
@@ -35,9 +37,9 @@ def list_boards(
         db.query(
             models.Board,
             func.count(models.ActionItem.id).label("action_items_total"),
-            func.count(
-                case((models.ActionItem.status != "done", 1))
-            ).label("action_items_open"),
+            func.count(case((models.ActionItem.status != "done", 1))).label(
+                "action_items_open"
+            ),
         )
         .outerjoin(models.ActionItem)
         .filter(
@@ -65,11 +67,15 @@ def create_board(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    existing = db.query(models.Board).filter(
-        models.Board.name == body.name,
-        models.Board.deleted_at.is_(None),
-        models.Board.workspace_id == workspace.id,
-    ).first()
+    existing = (
+        db.query(models.Board)
+        .filter(
+            models.Board.name == body.name,
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace.id,
+        )
+        .first()
+    )
     if existing:
         raise HTTPException(409, "Измени название, такая доска уже есть")
     uid = str(uuid.uuid4())
@@ -83,13 +89,15 @@ def create_board(
     db.add(board)
     db.flush()
     for i, col in enumerate(DEFAULT_COLUMNS):
-        db.add(models.Column(
-            id=str(uuid.uuid4()),
-            board_id=board.id,
-            title=col["title"],
-            color=col["color"],
-            position=i,
-        ))
+        db.add(
+            models.Column(
+                id=str(uuid.uuid4()),
+                board_id=board.id,
+                title=col["title"],
+                color=col["color"],
+                position=i,
+            )
+        )
     db.commit()
     db.refresh(board)
     return board
@@ -98,10 +106,8 @@ def create_board(
 def _board_query(db: Session):
     """Board query with eager-loaded columns → cards + groups (avoids N+1)."""
     return db.query(models.Board).options(
-        selectinload(models.Board.columns)
-        .selectinload(models.Column.cards),
-        selectinload(models.Board.columns)
-        .selectinload(models.Column.groups),
+        selectinload(models.Board.columns).selectinload(models.Column.cards),
+        selectinload(models.Board.columns).selectinload(models.Column.groups),
     )
 
 
@@ -113,11 +119,15 @@ def get_board_by_slug(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    board = _board_query(db).filter(
-        models.Board.slug == slug,
-        models.Board.deleted_at.is_(None),
-        models.Board.workspace_id == workspace.id,
-    ).first()
+    board = (
+        _board_query(db)
+        .filter(
+            models.Board.slug == slug,
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace.id,
+        )
+        .first()
+    )
     if not board:
         raise HTTPException(404, "Board not found")
     return board
@@ -131,11 +141,15 @@ def get_board(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    board = _board_query(db).filter(
-        models.Board.id == board_id,
-        models.Board.deleted_at.is_(None),
-        models.Board.workspace_id == workspace.id,
-    ).first()
+    board = (
+        _board_query(db)
+        .filter(
+            models.Board.id == board_id,
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace.id,
+        )
+        .first()
+    )
     if not board:
         raise HTTPException(404, "Board not found")
     return board
@@ -154,12 +168,16 @@ def update_board(
     if board.workspace_id != workspace.id:
         raise HTTPException(404, "Board not found")
     if body.name is not None:
-        existing = db.query(models.Board).filter(
-            models.Board.name == body.name,
-            models.Board.id != board_id,
-            models.Board.deleted_at.is_(None),
-            models.Board.workspace_id == workspace.id,
-        ).first()
+        existing = (
+            db.query(models.Board)
+            .filter(
+                models.Board.name == body.name,
+                models.Board.id != board_id,
+                models.Board.deleted_at.is_(None),
+                models.Board.workspace_id == workspace.id,
+            )
+            .first()
+        )
         if existing:
             raise HTTPException(409, "Измени название, такая доска уже есть")
         board.name = body.name
@@ -187,3 +205,155 @@ def delete_board(
     board.slug = None
     board.name = f"__deleted__{board.id}"
     db.commit()
+
+
+# ── Summary Endpoints ────────────────────────────────────────────────────────
+
+
+def _get_board_full_data(db: Session, board_id: str) -> dict:
+    """Get full board data with columns and cards for AI processing."""
+    board = (
+        db.query(models.Board)
+        .options(
+            selectinload(models.Board.columns).selectinload(models.Column.cards),
+        )
+        .filter(models.Board.id == board_id, models.Board.deleted_at.is_(None))
+        .first()
+    )
+
+    if not board:
+        return {}
+
+    return {
+        "id": board.id,
+        "name": board.name,
+        "columns": [
+            {
+                "id": col.id,
+                "title": col.title,
+                "position": col.position,
+                "cards": [
+                    {
+                        "id": card.id,
+                        "text": card.text,
+                        "author": card.author,
+                        "likes": card.likes or [],
+                        "position": card.position,
+                    }
+                    for card in col.cards
+                ],
+            }
+            for col in board.columns
+        ],
+    }
+
+
+async def _generate_summary_internal(
+    db: Session,
+    board_id: str,
+    username: str,
+) -> dict | None:
+    """Internal function to generate and save summary.
+
+    Returns summary data dict or None if generation failed.
+    """
+    # Check if user is facilitator
+    if manager.get_facilitator(board_id) != username:
+        return None
+
+    # Get current session_id
+    session_id = manager.get_session_id(board_id)
+    if not session_id:
+        session_id = int(datetime.now(UTC).timestamp())
+        manager.set_session_id(board_id, session_id)
+
+    # Check if summary already exists for this session
+    existing = (
+        db.query(models.BoardSummary)
+        .filter(
+            models.BoardSummary.board_id == board_id,
+            models.BoardSummary.session_id == session_id,
+        )
+        .first()
+    )
+
+    if existing:
+        return schemas.BoardSummaryOut.model_validate(existing).model_dump(mode="json")
+
+    # Get board data
+    board_data = _get_board_full_data(db, board_id)
+    if not board_data:
+        return None
+
+    # Generate summary using AI
+    try:
+        ai_result = generate_summary(board_data)
+    except Exception:
+        return None
+
+    # Save summary to database
+    summary = models.BoardSummary(
+        id=str(uuid.uuid4()),
+        board_id=board_id,
+        session_id=session_id,
+        summary_text=ai_result.get("summary_text", ""),
+        key_themes=ai_result.get("key_themes", []),
+        recommendations=ai_result.get("recommendations", []),
+    )
+    db.add(summary)
+    db.commit()
+    db.refresh(summary)
+
+    # Use mode="json" to serialize datetime to string
+    return schemas.BoardSummaryOut.model_validate(summary).model_dump(mode="json")
+
+
+@router.get("/{board_id}/summary", response_model=schemas.BoardSummaryOut)
+@limiter.limit("30/minute")
+async def get_summary(
+    request: Request,
+    board_id: str,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Get the latest summary for a board.
+
+    Returns the most recent summary for the current or last session.
+    """
+    board = get_or_404(db, models.Board, board_id, "Board not found")
+    if board.workspace_id != workspace.id:
+        raise HTTPException(404, "Board not found")
+
+    # Get current session_id if active
+    session_id = manager.get_session_id(board_id)
+
+    query = db.query(models.BoardSummary).filter(
+        models.BoardSummary.board_id == board_id
+    )
+
+    if session_id:
+        # Prefer current session
+        summary = (
+            query.filter(models.BoardSummary.session_id == session_id)
+            .order_by(models.BoardSummary.created_at.desc())
+            .first()
+        )
+        if summary:
+            return summary
+
+    # Fall back to latest summary
+    summary = query.order_by(models.BoardSummary.created_at.desc()).first()
+
+    if not summary:
+        raise HTTPException(404, "Summary not found")
+
+    return summary
+
+
+# NOTE: POST /{board_id}/summary/generate removed
+# Generation happens automatically when facilitator transitions to 'summary' phase
+# via WebSocket phase_change event. Manual generation via HTTP is not supported.
+#
+# Security: The facilitator check is done in websocket.py when handling
+# phase_change event - only the actual facilitator can trigger the phase change.
+# Full user_id based authorization requires adding User model to the system.

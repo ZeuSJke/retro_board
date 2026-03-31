@@ -20,10 +20,14 @@ class Workspace(Base):
     __tablename__ = "workspaces"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
-    slug: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
+    slug: Mapped[str] = mapped_column(
+        String(80), nullable=False, unique=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     access_key_hash: Mapped[str] = mapped_column(String(200), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc
+    )
 
     boards: Mapped[list["Board"]] = relationship(
         "Board", back_populates="workspace", cascade="all, delete-orphan"
@@ -35,10 +39,15 @@ class Board(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     workspace_id: Mapped[Optional[str]] = mapped_column(
-        String, ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+        String,
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
-    slug: Mapped[str | None] = mapped_column(String(150), unique=True, nullable=True, index=True)
+    slug: Mapped[str | None] = mapped_column(
+        String(150), unique=True, nullable=True, index=True
+    )
     max_votes: Mapped[int] = mapped_column(Integer, default=5)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
@@ -47,7 +56,9 @@ class Board(Base):
         DateTime(timezone=True), nullable=True, default=None
     )
 
-    workspace: Mapped[Optional["Workspace"]] = relationship("Workspace", back_populates="boards")
+    workspace: Mapped[Optional["Workspace"]] = relationship(
+        "Workspace", back_populates="boards"
+    )
     columns: Mapped[list["Column"]] = relationship(
         "Column",
         back_populates="board",
@@ -59,6 +70,12 @@ class Board(Base):
         back_populates="board",
         cascade="all, delete-orphan",
         order_by="ActionItem.created_at",
+    )
+    summaries: Mapped[list["BoardSummary"]] = relationship(
+        "BoardSummary",
+        back_populates="board",
+        cascade="all, delete-orphan",
+        order_by="BoardSummary.created_at.desc()",
     )
 
 
@@ -109,7 +126,10 @@ class Card(Base):
         String, ForeignKey("columns.id", ondelete="CASCADE"), index=True
     )
     group_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("card_groups.id", ondelete="SET NULL"), nullable=True, index=True
+        String,
+        ForeignKey("card_groups.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
     author: Mapped[str] = mapped_column(String(60), default="Аноним")
@@ -144,3 +164,21 @@ class ActionItem(Base):
     )
 
     board: Mapped["Board"] = relationship("Board", back_populates="action_items")
+
+
+class BoardSummary(Base):
+    __tablename__ = "board_summaries"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    board_id: Mapped[str] = mapped_column(
+        String, ForeignKey("boards.id", ondelete="CASCADE"), index=True
+    )
+    session_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    summary_text: Mapped[str] = mapped_column(Text, nullable=False)
+    key_themes: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    recommendations: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc
+    )
+
+    board: Mapped["Board"] = relationship("Board", back_populates="summaries")
