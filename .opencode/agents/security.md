@@ -2,11 +2,11 @@
 description: "Security Engineer. Используй когда нужно: провести аудит кода на уязвимости, проверить эндпоинт на безопасность, проверить зависимости на уязвимости, проверить аутентификацию/авторизацию. Примеры: 'аудит эндпоинта /api/cards/{id}/move', 'проверь зависимости на уязвимости', 'аудит JWT токенов'."
 mode: subagent
 model: opencode-go/minimax-m2.7
-color: red
+#color: red
 permission:
-  edit: false
-  bash: false
-color: red
+  edit: "deny"
+  bash: "deny"
+#color: red
 temperature: 0.1
 ---
 

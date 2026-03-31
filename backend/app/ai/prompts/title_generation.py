@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 from app.ai.ai_client import AIModelConfig
 
-
 TITLE_GENERATION_PROMPT = """Сгенерируй краткое название задачи (до 50 символов) на основе текста ниже.
 
 Требования:
@@ -15,7 +14,7 @@ TITLE_GENERATION_PROMPT = """Сгенерируй краткое названи�
 Ответ: только название задачи, без кавычек и пояснений."""
 
 TITLE_GENERATION_CONFIG = AIModelConfig(
-    model="qwen/qwen3.5-9b",
+    model="qwen/qwen2.5-coder-7b-instruct",
     temperature=0.3,
     max_tokens=50,
 )

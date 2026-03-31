@@ -2,7 +2,7 @@
 description: "DevOps Engineer. Используй когда нужно: настроить Docker, изменить CI/CD, добавить healthcheck, настроить мониторинг, подготовить deploy. Примеры: 'добавь healthcheck для backend', 'настрой CI/CD для нового сервиса', 'оптимизируй docker build'."
 mode: subagent
 model: opencode-go/minimax-m2.5
-color: orange
+#color: orange
 temperature: 0.1
 ---
 

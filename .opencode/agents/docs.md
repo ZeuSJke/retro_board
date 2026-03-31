@@ -2,10 +2,10 @@
 description: "Technical Writer. Используй когда нужно: обновить README, написать документацию API, создать guide или tutorial, задокументировать architectural decision. Примеры: 'обнови документацию по WebSocket событиям', 'напиши guide по деплою', 'документируй ADR по выбору PostgreSQL'."
 mode: subagent
 model: opencode-go/minimax-m2.5
-color: cyan
+#color: cyan
 permission:
-  edit: true
-  bash: false
+  edit: "allow"
+  bash: "deny"
 temperature: 0.2
 ---
 

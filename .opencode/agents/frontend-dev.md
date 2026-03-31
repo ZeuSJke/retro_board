@@ -2,7 +2,7 @@
 description: "Frontend Developer. Используй когда нужно: создать/изменить React компонент, добавить страницу, работать с Zustand store, реализовать drag & drop, добавить WebSocket логику на клиенте. Примеры: 'добавь кнопку экспорта в PDF', 'создай компонент сводной таблицы', 'исправь баг с drag & drop карточек'."
 mode: subagent
 model: opencode-go/kimi-k2.5
-color: blue
+#color: blue
 temperature: 0.2
 ---
 

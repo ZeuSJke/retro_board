@@ -2,7 +2,7 @@
 description: "Refactorer. Используй когда нужно: улучшить code quality, устранить дублирование, оптимизировать производительность, уменьшить complexity. Примеры: 'рефакторинг useBoardDragDrop — слишком много логики', 'оптимизируй запрос GET /api/boards/{id}', 'устрани дублирование в роутерах'."
 mode: subagent
 model: opencode-go/minimax-m2.7
-color: yellow
+#color: yellow
 temperature: 0.1
 ---
 
