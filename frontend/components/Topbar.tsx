@@ -34,6 +34,7 @@ interface TopbarProps {
   onFacilitatorStop: () => void
   onPhaseChange: (phase: string) => void
   hasSummary?: boolean
+  isGeneratingSummary?: boolean
   onSummaryClick?: () => void
 }
 
@@ -59,6 +60,7 @@ export default function Topbar({
   onFacilitatorStop,
   onPhaseChange,
   hasSummary,
+  isGeneratingSummary,
   onSummaryClick,
 }: TopbarProps) {
   const router = useRouter()
@@ -170,12 +172,18 @@ export default function Topbar({
             <button
               className={styles.iconBtn}
               onClick={onSummaryClick}
-              title={hasSummary ? 'Просмотреть резюме' : 'Резюме недоступно'}
-              style={{ color: hasSummary ? 'var(--md-primary)' : undefined }}
+              title={hasSummary ? 'Просмотреть резюме' : isGeneratingSummary ? 'Генерация итогов...' : 'Резюме недоступно'}
+              style={{ color: hasSummary ? 'var(--md-primary)' : isGeneratingSummary ? 'var(--md-tertiary)' : undefined }}
             >
-              <span className="material-symbols-rounded" style={{ fontVariationSettings: hasSummary ? "'FILL' 1" : "'FILL' 0" }}>
-                summarize
-              </span>
+              {isGeneratingSummary ? (
+                <span className="material-symbols-rounded" style={{ animation: 'spin 1s linear infinite' }}>
+                  hourglass_empty
+                </span>
+              ) : (
+                <span className="material-symbols-rounded" style={{ fontVariationSettings: hasSummary ? "'FILL' 1" : "'FILL' 0" }}>
+                  summarize
+                </span>
+              )}
             </button>
           )}
 

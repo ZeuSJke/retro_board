@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 
@@ -9,6 +10,8 @@ from app.ws_manager import manager
 from app.workspace_auth import decode_workspace_token
 from app.database import get_db
 from app import models
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -54,20 +57,26 @@ async def _trigger_summary_generation(board_id: str, username: str):
     from app.routers.boards import _generate_summary_internal
     from app.database import SessionLocal
 
+    logger.info(f"Starting summary generation for board {board_id} by {username}")
+
     db = SessionLocal()
     try:
         summary_data = await _generate_summary_internal(db, board_id, username)
         if summary_data:
+            logger.info(f"Summary generated for board {board_id}, broadcasting")
             await manager.broadcast(
                 board_id,
                 "summary_generated",
                 summary_data,
             )
-    except Exception:
-        # Silently fail - summary generation is not critical
+        else:
+            logger.warning(f"Summary generation returned None for board {board_id}")
+    except Exception as e:
+        logger.error(f"Summary generation failed for board {board_id}: {e}")
         pass
     finally:
         db.close()
+        logger.info(f"Summary generation task completed for board {board_id}")
 
 
 @router.websocket("/ws/{board_id}")
@@ -306,6 +315,27 @@ async def websocket_endpoint(
                 elif event == "phase_change":
                     username = manager.get_username(websocket)
                     phase = payload.get("phase")
+                    logger.info(
+                        f"phase_change: username={username}, facilitator={manager.get_facilitator(board_id)}, phase={phase}"
+                    )
+                    if (
+                        username
+                        and manager.get_facilitator(board_id) == username
+                        and phase in VALID_PHASES
+                    ):
+                        manager.set_phase(board_id, phase)
+                        await manager.broadcast(
+                            board_id, "phase_update", {"phase": phase}
+                        )
+                        if phase == "summary":
+                            logger.info(
+                                f"Creating summary task for board {board_id}, user {username}"
+                            )
+                            import asyncio
+
+                            asyncio.create_task(
+                                _trigger_summary_generation(board_id, username)
+                            )
                     if (
                         username
                         and manager.get_facilitator(board_id) == username
@@ -317,6 +347,9 @@ async def websocket_endpoint(
                         )
                         # Trigger auto-generation when entering summary phase
                         if phase == "summary":
+                            logger.info(
+                                f"Creating summary generation task for board {board_id}"
+                            )
                             # Run in background to not block WS
                             import asyncio
 

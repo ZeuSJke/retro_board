@@ -42,6 +42,7 @@ export default function App({ boardId }: AppProps) {
   const [votesUsed, setVotesUsed] = useState(0)
   const [activeUsers, setActiveUsers] = useState<string[]>([])
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
 
   const {
     timer,
@@ -56,11 +57,12 @@ export default function App({ boardId }: AppProps) {
   } = useTimer(boardId)
 
   const handleSummaryGenerated = useCallback(() => {
-    // Обновляем has_summary для текущей доски
+    if (!currentBoard) return
+    setIsGeneratingSummary(false)
     setBoards((prev) =>
-      prev.map((b) => (b.id === boardId ? { ...b, has_summary: true } : b))
+      prev.map((b) => (b.id === currentBoard.id ? { ...b, has_summary: true } : b))
     )
-  }, [boardId])
+  }, [currentBoard])
 
   const {
     facilitator,
@@ -73,6 +75,13 @@ export default function App({ boardId }: AppProps) {
     handleFacilitatorChanged,
     handlePhaseChanged,
   } = useFacilitator(sendTimerRef, timer.duration)
+
+  const handlePhaseChangedWrapper = useCallback((p: string) => {
+    handlePhaseChanged(p)
+    if (p === 'summary') {
+      setIsGeneratingSummary(true)
+    }
+  }, [handlePhaseChanged])
 
   const handleWelcomeConfirm = (name: string) => {
     setUsername(name)
@@ -203,6 +212,9 @@ export default function App({ boardId }: AppProps) {
       </div>
     )
 
+  const currentBoardItem = boards.find((b) => b.id === currentBoard.id)
+  const hasSummary = currentBoardItem?.has_summary ?? false
+
   return (
     <>
       <Topbar
@@ -232,7 +244,8 @@ export default function App({ boardId }: AppProps) {
         onFacilitatorStart={handleFacilitatorStart}
         onFacilitatorStop={handleFacilitatorStop}
         onPhaseChange={handlePhaseChange}
-        hasSummary={currentBoard ? (boards.find((b) => b.id === currentBoard.id)?.has_summary ?? false) : false}
+        hasSummary={hasSummary}
+        isGeneratingSummary={isGeneratingSummary}
         onSummaryClick={() => setSummaryOpen(true)}
       />
 
@@ -263,7 +276,7 @@ export default function App({ boardId }: AppProps) {
             onVotesChanged={setVotesUsed}
             onPresenceChanged={setActiveUsers}
             onFacilitatorChanged={handleFacilitatorChanged}
-            onPhaseChanged={handlePhaseChanged}
+            onPhaseChanged={handlePhaseChangedWrapper}
             onSummaryGenerated={handleSummaryGenerated}
             sendFacilitatorRef={sendFacilitatorRef}
           />
@@ -273,7 +286,8 @@ export default function App({ boardId }: AppProps) {
       {currentBoard && summaryOpen && (
         <SummaryModal
           boardId={currentBoard.id}
-          hasSummary={boards.find((b) => b.id === currentBoard.id)?.has_summary ?? false}
+          hasSummary={hasSummary}
+          isGeneratingSummary={isGeneratingSummary}
           onClose={() => setSummaryOpen(false)}
         />
       )}

@@ -207,6 +207,7 @@ class BoardListItem(BoardBase):
     workspace_id: Optional[str] = None
     action_items_total: int = 0
     action_items_open: int = 0
+    has_summary: bool = False
     model_config = {"from_attributes": True}
 
 

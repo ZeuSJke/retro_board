@@ -1,3 +1,4 @@
+import logging
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slugify import slugify
@@ -12,6 +13,8 @@ from app.limiter import limiter
 from app.workspace_auth import get_current_workspace
 from app.ws_manager import manager
 from app.ai.prompts.summary_generation import generate_summary
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -40,8 +43,10 @@ def list_boards(
             func.count(case((models.ActionItem.status != "done", 1))).label(
                 "action_items_open"
             ),
+            func.max(models.BoardSummary.id).label("has_summary_id"),
         )
         .outerjoin(models.ActionItem)
+        .outerjoin(models.BoardSummary)
         .filter(
             models.Board.deleted_at.is_(None),
             models.Board.workspace_id == workspace.id,
@@ -51,10 +56,11 @@ def list_boards(
         .all()
     )
     result = []
-    for board, total, open_count in rows:
+    for board, total, open_count, has_summary_id in rows:
         item = schemas.BoardListItem.model_validate(board)
         item.action_items_total = total
         item.action_items_open = open_count
+        item.has_summary = has_summary_id is not None
         result.append(item)
     return result
 
@@ -212,12 +218,20 @@ def delete_board(
 
 def _get_board_full_data(db: Session, board_id: str) -> dict:
     """Get full board data with columns and cards for AI processing."""
+    from sqlalchemy import or_
+
     board = (
         db.query(models.Board)
         .options(
             selectinload(models.Board.columns).selectinload(models.Column.cards),
         )
-        .filter(models.Board.id == board_id, models.Board.deleted_at.is_(None))
+        .filter(
+            or_(
+                models.Board.slug == board_id,
+                models.Board.id == board_id,
+            ),
+            models.Board.deleted_at.is_(None),
+        )
         .first()
     )
 
@@ -257,17 +271,18 @@ async def _generate_summary_internal(
 
     Returns summary data dict or None if generation failed.
     """
-    # Check if user is facilitator
+    logger.info(f"Starting summary generation for board {board_id}")
+
     if manager.get_facilitator(board_id) != username:
+        logger.warning(f"User {username} is not facilitator of board {board_id}")
         return None
 
-    # Get current session_id
     session_id = manager.get_session_id(board_id)
     if not session_id:
         session_id = int(datetime.now(UTC).timestamp())
         manager.set_session_id(board_id, session_id)
+        logger.info(f"Created new session ID: {session_id}")
 
-    # Check if summary already exists for this session
     existing = (
         db.query(models.BoardSummary)
         .filter(
@@ -278,20 +293,23 @@ async def _generate_summary_internal(
     )
 
     if existing:
+        logger.info(
+            f"Summary already exists for board {board_id}, session {session_id}"
+        )
         return schemas.BoardSummaryOut.model_validate(existing).model_dump(mode="json")
 
-    # Get board data
     board_data = _get_board_full_data(db, board_id)
     if not board_data:
+        logger.warning(f"No board data for {board_id}")
         return None
 
-    # Generate summary using AI
     try:
         ai_result = generate_summary(board_data)
-    except Exception:
+        logger.info(f"AI summary generated for board {board_id}")
+    except Exception as e:
+        logger.error(f"AI summary generation failed for board {board_id}: {e}")
         return None
 
-    # Save summary to database
     summary = models.BoardSummary(
         id=str(uuid.uuid4()),
         board_id=board_id,
@@ -303,8 +321,8 @@ async def _generate_summary_internal(
     db.add(summary)
     db.commit()
     db.refresh(summary)
+    logger.info(f"Summary saved to DB for board {board_id}")
 
-    # Use mode="json" to serialize datetime to string
     return schemas.BoardSummaryOut.model_validate(summary).model_dump(mode="json")
 
 
