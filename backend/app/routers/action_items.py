@@ -9,6 +9,11 @@ from app.database import get_db
 from app import models, schemas
 from app.models import now_utc
 from app.utils import get_or_404
+from app.ai import ai_client
+from app.ai.prompts.title_generation import (
+    TITLE_GENERATION_PROMPT,
+    TITLE_GENERATION_CONFIG,
+)
 from app.ws_manager import manager
 from app.limiter import limiter
 from app.workspace_auth import get_current_workspace
@@ -30,7 +35,9 @@ async def get_trends(
             models.Board.name,
             models.Board.created_at,
             func.count(case((models.ActionItem.status == "open", 1))).label("open"),
-            func.count(case((models.ActionItem.status == "in_progress", 1))).label("in_progress"),
+            func.count(case((models.ActionItem.status == "in_progress", 1))).label(
+                "in_progress"
+            ),
             func.count(case((models.ActionItem.status == "done", 1))).label("done"),
             func.count(models.ActionItem.id).label("total"),
         )
@@ -68,11 +75,13 @@ async def list_all_action_items(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """List action items across all boards with optional filters."""
-    q = db.query(models.ActionItem, models.Board.name).join(
-        models.Board, models.ActionItem.board_id == models.Board.id
-    ).filter(
-        models.Board.deleted_at.is_(None),
-        models.Board.workspace_id == workspace.id,
+    q = (
+        db.query(models.ActionItem, models.Board.name)
+        .join(models.Board, models.ActionItem.board_id == models.Board.id)
+        .filter(
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace.id,
+        )
     )
     if status:
         q = q.filter(models.ActionItem.status == status)
@@ -91,7 +100,9 @@ async def list_all_action_items(
     ]
 
 
-@router.post("/carry-forward", response_model=list[schemas.ActionItemOut], status_code=201)
+@router.post(
+    "/carry-forward", response_model=list[schemas.ActionItemOut], status_code=201
+)
 @limiter.limit("10/minute")
 async def carry_forward(
     request: Request,
@@ -100,10 +111,14 @@ async def carry_forward(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Copy unresolved action items from source board to target board."""
-    src_board = get_or_404(db, models.Board, body.source_board_id, "Source board not found")
+    src_board = get_or_404(
+        db, models.Board, body.source_board_id, "Source board not found"
+    )
     if src_board.workspace_id != workspace.id:
         raise HTTPException(404, "Source board not found")
-    tgt_board = get_or_404(db, models.Board, body.target_board_id, "Target board not found")
+    tgt_board = get_or_404(
+        db, models.Board, body.target_board_id, "Target board not found"
+    )
     if tgt_board.workspace_id != workspace.id:
         raise HTTPException(404, "Target board not found")
 
@@ -135,7 +150,9 @@ async def carry_forward(
     db.commit()
 
     for out in created:
-        await manager.broadcast(body.target_board_id, "action_item_created", out.model_dump(mode="json"))
+        await manager.broadcast(
+            body.target_board_id, "action_item_created", out.model_dump(mode="json")
+        )
 
     return created
 
@@ -158,6 +175,22 @@ async def list_action_items(
         .all()
     )
     return [schemas.ActionItemOut.model_validate(i) for i in items]
+
+
+@router.post("/generate-title", response_model=schemas.GenerateTitleResponse)
+@limiter.limit("30/minute")
+async def generate_action_item_title(
+    request: Request,
+    body: schemas.GenerateTitleRequest,
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Generate action item title from card text using AI."""
+    prompt = TITLE_GENERATION_PROMPT.format(card_text=body.text)
+    try:
+        title = ai_client.generate(prompt, TITLE_GENERATION_CONFIG)
+        return schemas.GenerateTitleResponse(title=title)
+    except Exception:
+        return schemas.GenerateTitleResponse(title=body.text[:50])
 
 
 @router.post("/", response_model=schemas.ActionItemOut, status_code=201)
@@ -201,7 +234,9 @@ async def create_action_item(
     db.commit()
     db.refresh(item)
     out = schemas.ActionItemOut.model_validate(item)
-    await manager.broadcast(body.board_id, "action_item_created", out.model_dump(mode="json"))
+    await manager.broadcast(
+        body.board_id, "action_item_created", out.model_dump(mode="json")
+    )
     return out
 
 
@@ -233,7 +268,9 @@ async def update_action_item(
     db.commit()
     db.refresh(item)
     out = schemas.ActionItemOut.model_validate(item)
-    await manager.broadcast(item.board_id, "action_item_updated", out.model_dump(mode="json"))
+    await manager.broadcast(
+        item.board_id, "action_item_updated", out.model_dump(mode="json")
+    )
     return out
 
 
@@ -252,4 +289,6 @@ async def delete_action_item(
     board_id = item.board_id
     db.delete(item)
     db.commit()
-    await manager.broadcast(board_id, "action_item_deleted", {"id": item_id, "board_id": board_id})
+    await manager.broadcast(
+        board_id, "action_item_deleted", {"id": item_id, "board_id": board_id}
+    )

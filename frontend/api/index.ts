@@ -92,6 +92,8 @@ export const getAllActionItems = (params?: { status?: string; board_id?: string;
   api.get('/action-items/all', { params }).then((r) => r.data)
 export const carryForward = (data: CarryForwardRequest): Promise<ActionItem[]> =>
   api.post('/action-items/carry-forward', data).then((r) => r.data)
+export const generateActionItemTitle = (text: string): Promise<string> =>
+  api.post('/action-items/generate-title', { text }).then((r) => r.data.title)
 
 // ── Jira Integration ────────────────────────────────────────────────────────
 export const getJiraStatus = (): Promise<{ configured: boolean }> =>
