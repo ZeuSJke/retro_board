@@ -27,13 +27,14 @@ export default async function globalSetup() {
   async function withRetry<T>(
     fn: () => Promise<T>,
     maxRetries = 5,
-    delayMs = 2000,
+    delayMs = 3000,
   ): Promise<T | null> {
     for (let i = 0; i <= maxRetries; i++) {
       try {
         return await fn()
       } catch {
         if (i < maxRetries) {
+          console.log(`[setup] Retry ${i + 1}/${maxRetries}...`)
           await new Promise((r) => setTimeout(r, delayMs * (i + 1)))
         }
       }
@@ -42,6 +43,16 @@ export default async function globalSetup() {
   }
 
   try {
+    // Wait for backend to be healthy
+    await new Promise((r) => setTimeout(r, 10000)) // 10 second delay for testing
+    console.log('[setup] Waiting for backend to be ready...')
+    const healthRes = await withRetry(() => context.get('/health'), 10, 2000)
+    if (!healthRes?.ok()) {
+      console.error('[setup] Backend not ready after retries')
+      return
+    }
+    console.log('[setup] Backend is ready')
+
     // Try to login to e2e-team workspace
     const loginRes = await context.post('/api/workspaces/login', {
       data: { workspace_slug: 'e2e-team', access_key: 'e2e-test-key' },
@@ -53,6 +64,7 @@ export default async function globalSetup() {
     }
 
     // Login failed — need admin to create/recreate workspace
+    console.log('[setup] Admin login...')
     const adminLoginRes = await withRetry(() =>
       context.post('/api/admin/login', {
         data: { login: ADMIN_LOGIN, password: ADMIN_PASSWORD },
@@ -85,6 +97,7 @@ export default async function globalSetup() {
     }
 
     // Create workspace with retry
+    console.log('[setup] Creating workspace...')
     const createRes = await withRetry(() =>
       context.post('/api/admin/workspaces', {
         data: { slug: 'e2e-team', name: 'E2E Team', access_key: 'e2e-test-key' },
