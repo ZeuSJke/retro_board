@@ -23,6 +23,24 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme'
 export default async function globalSetup() {
   const context = await request.newContext({ baseURL: 'http://localhost:8000' })
 
+  // Helper: retry with delays
+  async function withRetry<T>(
+    fn: () => Promise<T>,
+    maxRetries = 5,
+    delayMs = 2000,
+  ): Promise<T | null> {
+    for (let i = 0; i <= maxRetries; i++) {
+      try {
+        return await fn()
+      } catch {
+        if (i < maxRetries) {
+          await new Promise((r) => setTimeout(r, delayMs * (i + 1)))
+        }
+      }
+    }
+    return null
+  }
+
   try {
     // Try to login to e2e-team workspace
     const loginRes = await context.post('/api/workspaces/login', {
@@ -35,12 +53,14 @@ export default async function globalSetup() {
     }
 
     // Login failed — need admin to create/recreate workspace
-    const adminLoginRes = await context.post('/api/admin/login', {
-      data: { login: ADMIN_LOGIN, password: ADMIN_PASSWORD },
-    })
+    const adminLoginRes = await withRetry(() =>
+      context.post('/api/admin/login', {
+        data: { login: ADMIN_LOGIN, password: ADMIN_PASSWORD },
+      }),
+    )
 
-    if (!adminLoginRes.ok()) {
-      console.error(`[setup] Admin login failed: ${adminLoginRes.status()}`)
+    if (!adminLoginRes?.ok()) {
+      console.error(`[setup] Admin login failed after retries`)
       return
     }
 
@@ -64,15 +84,18 @@ export default async function globalSetup() {
       }
     }
 
-    const createRes = await context.post('/api/admin/workspaces', {
-      data: { slug: 'e2e-team', name: 'E2E Team', access_key: 'e2e-test-key' },
-      headers: { Cookie: adminCookie },
-    })
+    // Create workspace with retry
+    const createRes = await withRetry(() =>
+      context.post('/api/admin/workspaces', {
+        data: { slug: 'e2e-team', name: 'E2E Team', access_key: 'e2e-test-key' },
+        headers: { Cookie: adminCookie },
+      }),
+    )
 
-    if (createRes.ok()) {
+    if (createRes?.ok()) {
       console.log('[setup] Created e2e-team workspace')
     } else {
-      console.error(`[setup] Failed to create workspace: ${createRes.status()}`)
+      console.error(`[setup] Failed to create workspace after retries`)
     }
   } finally {
     await context.dispose()
