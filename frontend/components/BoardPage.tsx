@@ -8,7 +8,7 @@ import CursorMarker from './CursorMarker'
 import MasterColumn from './MasterColumn'
 import Dialog from './Dialog'
 import type { DragEndEvent } from '@dnd-kit/core'
-import { createColumn, createActionItem } from '../api'
+import { createColumn, createActionItem, updateActionItem, generateActionItemTitle } from '../api'
 import { useAppStore } from '../store'
 import { useBoardWebSocket } from '../hooks/useBoardWebSocket'
 import { useBoardDragDrop } from '../hooks/useBoardDragDrop'
@@ -182,7 +182,7 @@ export default function BoardPage({
         try {
           const item = await createActionItem({
             board_id: board.id,
-            title: 'Новая задача',
+            title: 'Генерация...',
             text: activeCard.text,
             assignee: activeCard.author,
             source_card_ids: [activeCard.id],
@@ -190,6 +190,18 @@ export default function BoardPage({
           setActionItems((prev) =>
             prev.find((i) => i.id === item.id) ? prev : [...prev, item],
           )
+          generateActionItemTitle(activeCard.text)
+            .then((generatedTitle) => {
+              updateActionItem(item.id, { title: generatedTitle })
+                .then((updated) => {
+                  setActionItems((prev) =>
+                    prev.map((i) => i.id === item.id ? updated : i),
+                  )
+                })
+            })
+            .catch(() => {
+              updateActionItem(item.id, { title: activeCard.text.slice(0, 50) || 'Новая задача' })
+            })
         } catch { /* toast via interceptor */ }
         onDragEnd({ ...event, over: null } as DragEndEvent)
         return
@@ -200,7 +212,6 @@ export default function BoardPage({
           onDragEnd({ ...event, over: null } as DragEndEvent)
           return
         }
-        // Collect all cards from this group
         const groupCards = columns
           .flatMap((col) => col.cards)
           .filter((c) => c.group_id === activeGroup.id)
@@ -208,7 +219,7 @@ export default function BoardPage({
         try {
           const item = await createActionItem({
             board_id: board.id,
-            title: activeGroup.title,
+            title: 'Генерация...',
             text: combinedText || activeGroup.title,
             assignee: groupCards[0]?.author ?? null,
             source_card_ids: groupCards.map((c) => c.id),
@@ -216,6 +227,18 @@ export default function BoardPage({
           setActionItems((prev) =>
             prev.find((i) => i.id === item.id) ? prev : [...prev, item],
           )
+          generateActionItemTitle(combinedText || activeGroup.title)
+            .then((generatedTitle) => {
+              updateActionItem(item.id, { title: generatedTitle })
+                .then((updated) => {
+                  setActionItems((prev) =>
+                    prev.map((i) => i.id === item.id ? updated : i),
+                  )
+                })
+            })
+            .catch(() => {
+              updateActionItem(item.id, { title: combinedText.slice(0, 50) || activeGroup.title })
+            })
         } catch { /* toast via interceptor */ }
         onDragEnd({ ...event, over: null } as DragEndEvent)
         return

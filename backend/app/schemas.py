@@ -270,6 +270,14 @@ class DashboardActionItem(ActionItemOut):
     board_name: str = ""
 
 
+class GenerateTitleRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000)
+
+
+class GenerateTitleResponse(BaseModel):
+    title: str
+
+
 # ── Jira Integration ────────────────────────────────────────────────────────
 
 
