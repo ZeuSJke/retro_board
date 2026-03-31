@@ -34,14 +34,15 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
+
     alembic_cfg = Config("alembic.ini")
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     if tables and "alembic_version" not in tables:
-        # Existing DB without Alembic — stamp current state
-        command.stamp(alembic_cfg, "head")
+        await asyncio.to_thread(command.stamp, alembic_cfg, "head")
     else:
-        command.upgrade(alembic_cfg, "head")
+        await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
     yield
 
 
