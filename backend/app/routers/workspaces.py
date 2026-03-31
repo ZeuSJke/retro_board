@@ -30,10 +30,14 @@ def workspace_login(
             .first()
         )
         if not workspace:
-            raise HTTPException(status_code=401, detail="Workspace not found")
+            raise HTTPException(
+                status_code=401, detail="Неверный код команды или ключ доступа"
+            )
 
         if not verify_access_key(body.access_key, workspace.access_key_hash):
-            raise HTTPException(status_code=401, detail="Invalid access key")
+            raise HTTPException(
+                status_code=401, detail="Неверный код команды или ключ доступа"
+            )
 
         token = create_workspace_token(workspace.id, workspace.slug, workspace.name)
 
