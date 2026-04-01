@@ -2,7 +2,15 @@ import uuid
 from datetime import UTC, datetime
 from typing import Optional
 
-from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    ARRAY,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -36,6 +44,9 @@ class Workspace(Base):
 
 class Board(Base):
     __tablename__ = "boards"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "name", name="uq_board_workspace_name"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     workspace_id: Mapped[Optional[str]] = mapped_column(
@@ -44,7 +55,7 @@ class Board(Base):
         nullable=True,
         index=True,
     )
-    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
     slug: Mapped[str | None] = mapped_column(
         String(150), unique=True, nullable=True, index=True
     )
