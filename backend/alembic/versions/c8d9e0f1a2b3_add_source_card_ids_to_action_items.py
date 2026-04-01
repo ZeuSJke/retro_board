@@ -9,7 +9,6 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
@@ -28,7 +27,10 @@ def upgrade() -> None:
         op.add_column(
             "action_items",
             sa.Column(
-                "source_card_ids", ARRAY(sa.String), nullable=True, server_default="{}"
+                "source_card_ids",
+                sa.ARRAY(sa.String()),
+                nullable=True,
+                server_default="{}",
             ),
         )
         # Backfill: match existing action items to cards by text

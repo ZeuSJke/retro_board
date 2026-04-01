@@ -1,7 +1,7 @@
 """add workspace_id to boards
 
-Revision ID: add_workspace_id_to_boards
-Revises: add_workspaces
+Revision ID: ws0000000002
+Revises: ws0000000001
 Create Date: 2026-03-31 23:25:00.000000
 
 """
@@ -14,8 +14,8 @@ from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
-revision: str = "add_workspace_id_to_boards"
-down_revision: Union[str, None] = "add_workspaces"
+revision: str = "ws0000000002"
+down_revision: Union[str, None] = "ws0000000001"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -36,7 +36,7 @@ def upgrade() -> None:
             ),
         )
         op.create_index(
-            "ix_boards_workspace_id", "boards", ["workspace_id"], unique=False
+            op.f("ix_boards_workspace_id"), "boards", ["workspace_id"], unique=False
         )
 
 

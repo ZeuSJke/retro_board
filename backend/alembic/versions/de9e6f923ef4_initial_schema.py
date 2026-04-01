@@ -42,7 +42,9 @@ def upgrade() -> None:
             sa.Column("id", sa.String(), nullable=False),
             sa.Column("board_id", sa.String(), nullable=False),
             sa.Column("title", sa.String(length=80), nullable=False),
-            sa.Column("color", sa.String(length=20), nullable=False),
+            sa.Column(
+                "color", sa.String(length=20), nullable=False, server_default="#6750A4"
+            ),
             sa.Column("position", sa.Integer(), nullable=False),
             sa.ForeignKeyConstraint(["board_id"], ["boards.id"], ondelete="CASCADE"),
             sa.PrimaryKeyConstraint("id"),
@@ -59,7 +61,9 @@ def upgrade() -> None:
             "card_groups",
             sa.Column("id", sa.String(), nullable=False),
             sa.Column("column_id", sa.String(), nullable=False),
-            sa.Column("title", sa.String(length=120), nullable=False),
+            sa.Column(
+                "title", sa.String(length=120), nullable=False, server_default="Группа"
+            ),
             sa.Column("position", sa.Integer(), nullable=False),
             sa.ForeignKeyConstraint(["column_id"], ["columns.id"], ondelete="CASCADE"),
             sa.PrimaryKeyConstraint("id"),
@@ -78,8 +82,12 @@ def upgrade() -> None:
             sa.Column("column_id", sa.String(), nullable=False),
             sa.Column("group_id", sa.String(), nullable=True),
             sa.Column("text", sa.Text(), nullable=False),
-            sa.Column("author", sa.String(length=60), nullable=False),
-            sa.Column("color", sa.String(length=20), nullable=False),
+            sa.Column(
+                "author", sa.String(length=60), nullable=False, server_default="Аноним"
+            ),
+            sa.Column(
+                "color", sa.String(length=20), nullable=False, server_default="#FFFFFF"
+            ),
             sa.Column("position", sa.Integer(), nullable=False),
             sa.Column("likes", sa.ARRAY(sa.String()), nullable=False),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
