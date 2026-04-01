@@ -10,7 +10,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = "be1d3d296f64"
@@ -20,10 +20,20 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "boards", sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True)
-    )
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    columns = [c["name"] for c in inspector.get_columns("boards")]
+
+    if "deleted_at" not in columns:
+        op.add_column(
+            "boards", sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True)
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("boards", "deleted_at")
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    columns = [c["name"] for c in inspector.get_columns("boards")]
+
+    if "deleted_at" in columns:
+        op.drop_column("boards", "deleted_at")
