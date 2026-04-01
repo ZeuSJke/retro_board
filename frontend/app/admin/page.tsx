@@ -359,8 +359,27 @@ export default function AdminPage() {
       </div>
 
       {showDialog && (
-        <div className={styles.dialogOverlay} onClick={() => !dialogLoading && setShowDialog(null)}>
-          <div className={styles.dialog} onClick={(e) => e.stopPropagation()}>
+        <div
+          className={styles.dialogOverlay}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              e.currentTarget.setAttribute('data-clicking-overlay', 'true')
+            } else {
+              e.currentTarget.removeAttribute('data-clicking-overlay')
+            }
+          }}
+          onMouseUp={(e) => {
+            if (
+              !dialogLoading &&
+              e.target === e.currentTarget &&
+              e.currentTarget.getAttribute('data-clicking-overlay') === 'true'
+            ) {
+              setShowDialog(null)
+            }
+            e.currentTarget.removeAttribute('data-clicking-overlay')
+          }}
+        >
+          <div className={styles.dialog} onMouseDown={(e) => e.stopPropagation()} onMouseUp={(e) => e.stopPropagation()}>
             <div className={styles.dialogHeader}>
               <h2>
                 {showDialog === 'create'

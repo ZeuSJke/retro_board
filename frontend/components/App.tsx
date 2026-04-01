@@ -256,7 +256,25 @@ export default function App({ boardId }: AppProps) {
       />
 
       {(boardsPanelOpen || themePanelOpen) && (
-        <div className={styles.overlay} onClick={closePanels} />
+        <div
+          className={styles.overlay}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              e.currentTarget.setAttribute('data-clicking-overlay', 'true')
+            } else {
+              e.currentTarget.removeAttribute('data-clicking-overlay')
+            }
+          }}
+          onMouseUp={(e) => {
+            if (
+              e.target === e.currentTarget &&
+              e.currentTarget.getAttribute('data-clicking-overlay') === 'true'
+            ) {
+              closePanels()
+            }
+            e.currentTarget.removeAttribute('data-clicking-overlay')
+          }}
+        />
       )}
 
       <BoardsPanel
