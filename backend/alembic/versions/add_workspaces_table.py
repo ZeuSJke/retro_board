@@ -14,7 +14,7 @@ from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
-revision: str = "add_workspaces"
+revision: str = "ws0000000001"
 down_revision: Union[str, None] = "d9f0a1b2c3d4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

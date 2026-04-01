@@ -9,7 +9,6 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
@@ -32,11 +31,11 @@ def upgrade() -> None:
             sa.Column("session_id", sa.Integer(), nullable=False),
             sa.Column("summary_text", sa.Text(), nullable=False),
             sa.Column(
-                "key_themes", ARRAY(sa.String()), nullable=True, server_default="{}"
+                "key_themes", sa.ARRAY(sa.String()), nullable=True, server_default="{}"
             ),
             sa.Column(
                 "recommendations",
-                ARRAY(sa.String()),
+                sa.ARRAY(sa.String()),
                 nullable=True,
                 server_default="{}",
             ),
