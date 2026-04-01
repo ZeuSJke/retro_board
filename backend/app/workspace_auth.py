@@ -22,7 +22,7 @@ def hash_access_key(key: str) -> str:
         hashed = bcrypt.hashpw(key.encode(), bcrypt.gensalt(rounds=12)).decode()
         return hashed
     except Exception as e:
-        logger.error(f"bcrypt hash error: {type(e).__name__}: {e}")
+        logger.error("bcrypt hash error: %s: %s", type(e).__name__, e)
         raise
 
 

@@ -322,11 +322,11 @@ def ws_board(db_session, ws_workspace):
     db_session.commit()
 
     default_columns = [
-        ("Что прошло хорошо", "positive"),
-        ("Что можно улучшить", "negative"),
-        ("Благодарности", "neutral"),
+        "Что прошло хорошо",
+        "Что можно улучшить",
+        "Благодарности",
     ]
-    for i, (title, col_type) in enumerate(default_columns):
+    for i, title in enumerate(default_columns):
         col = Column(
             board_id=board.id,
             title=title,
