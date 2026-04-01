@@ -58,7 +58,6 @@ async def update_group(
         group.title = body.title
     db.commit()
     db.refresh(group)
-    col = db.get(models.Column, group.column_id)
     out = schemas.CardGroupOut.model_validate(group)
     await manager.broadcast(col.board_id, "group_updated", out.model_dump(mode="json"))
     return out
@@ -77,7 +76,6 @@ async def delete_group(
     board = db.get(models.Board, col.board_id)
     if not board or board.workspace_id != workspace.id:
         raise HTTPException(404, "Group not found")
-    col = db.get(models.Column, group.column_id)
     board_id = col.board_id
     col_id = group.column_id  # capture before deletion
 
@@ -117,7 +115,6 @@ async def set_card_group(
     card.group_id = group_id
     db.commit()
     db.refresh(card)
-    col = db.get(models.Column, card.column_id)
     out = schemas.CardOut.model_validate(card)
     await manager.broadcast(col.board_id, "card_updated", out.model_dump(mode="json"))
     return out
@@ -184,7 +181,6 @@ async def remove_card_from_group(
     card.group_id = None
     db.commit()
     db.refresh(card)
-    col = db.get(models.Column, card.column_id)
     out = schemas.CardOut.model_validate(card)
     await manager.broadcast(col.board_id, "card_updated", out.model_dump(mode="json"))
 

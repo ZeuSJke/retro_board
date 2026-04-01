@@ -1,6 +1,5 @@
 import uuid
 from datetime import UTC, datetime
-from typing import Optional
 
 from sqlalchemy import (
     ARRAY,
@@ -50,7 +49,7 @@ class Board(Base):
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
-    workspace_id: Mapped[Optional[str]] = mapped_column(
+    workspace_id: Mapped[str | None] = mapped_column(
         String,
         ForeignKey("workspaces.id", ondelete="SET NULL"),
         nullable=True,
@@ -66,7 +65,7 @@ class Board(Base):
         DateTime(timezone=True), nullable=True, default=None
     )
 
-    workspace: Mapped[Optional["Workspace"]] = relationship(
+    workspace: Mapped["Workspace | None"] = relationship(
         "Workspace", back_populates="boards"
     )
     columns: Mapped[list["Column"]] = relationship(

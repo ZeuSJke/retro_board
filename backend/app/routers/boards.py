@@ -271,17 +271,17 @@ async def _generate_summary_internal(
 
     Returns summary data dict or None if generation failed.
     """
-    logger.info(f"Starting summary generation for board {board_id}")
+    logger.info("Starting summary generation for board %s", board_id)
 
     if manager.get_facilitator(board_id) != username:
-        logger.warning(f"User {username} is not facilitator of board {board_id}")
+        logger.warning("User %s is not facilitator of board %s", username, board_id)
         return None
 
     session_id = manager.get_session_id(board_id)
     if not session_id:
         session_id = int(datetime.now(UTC).timestamp())
         manager.set_session_id(board_id, session_id)
-        logger.info(f"Created new session ID: {session_id}")
+        logger.info("Created new session ID: %s", session_id)
 
     existing = (
         db.query(models.BoardSummary)
@@ -294,20 +294,20 @@ async def _generate_summary_internal(
 
     if existing:
         logger.info(
-            f"Summary already exists for board {board_id}, session {session_id}"
+            "Summary already exists for board %s, session %s", board_id, session_id
         )
         return schemas.BoardSummaryOut.model_validate(existing).model_dump(mode="json")
 
     board_data = _get_board_full_data(db, board_id)
     if not board_data:
-        logger.warning(f"No board data for {board_id}")
+        logger.warning("No board data for %s", board_id)
         return None
 
     try:
         ai_result = generate_summary(board_data)
-        logger.info(f"AI summary generated for board {board_id}")
+        logger.info("AI summary generated for board %s", board_id)
     except Exception as e:
-        logger.error(f"AI summary generation failed for board {board_id}: {e}")
+        logger.error("AI summary generation failed for board %s: %s", board_id, e)
         return None
 
     summary = models.BoardSummary(
@@ -321,7 +321,7 @@ async def _generate_summary_internal(
     db.add(summary)
     db.commit()
     db.refresh(summary)
-    logger.info(f"Summary saved to DB for board {board_id}")
+    logger.info("Summary saved to DB for board %s", board_id)
 
     return schemas.BoardSummaryOut.model_validate(summary).model_dump(mode="json")
 

@@ -76,7 +76,6 @@ async def update_card(
         card.group_id = body.group_id
     db.commit()
     db.refresh(card)
-    col = db.get(models.Column, card.column_id)
     out = schemas.CardOut.model_validate(card)
     await manager.broadcast(col.board_id, "card_updated", out.model_dump(mode="json"))
     return out
@@ -157,7 +156,6 @@ async def toggle_like(
             card = None
     if not card:
         raise HTTPException(404, "Card not found")
-    col = db.get(models.Column, card.column_id)
     likes = list(card.likes or [])
     if username in likes:
         likes.remove(username)
@@ -188,7 +186,6 @@ async def delete_card(
     board = db.get(models.Board, col.board_id)
     if not board or board.workspace_id != workspace.id:
         raise HTTPException(404, "Card not found")
-    col = db.get(models.Column, card.column_id)
     board_id = col.board_id
     group_id = card.group_id
     db.delete(card)

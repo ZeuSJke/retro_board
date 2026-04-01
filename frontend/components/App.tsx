@@ -103,6 +103,12 @@ export default function App({ boardId }: AppProps) {
   }, [])
 
   useEffect(() => {
+    if (initializedRef.current && workspace) {
+      loadBoards()
+    }
+  }, [workspace])
+
+  useEffect(() => {
     if (boardId && boardId !== 'start' && workspace) {
       loadBoard(boardId)
     }
