@@ -249,7 +249,15 @@ export default function Topbar({
                 workspace_slug: workspaceSlug.trim(),
                 access_key: accessKey,
               })
+              // Reset current board because it belongs to the old workspace
+              useAppStore.setState({ currentBoardId: null })
               setWorkspace(session)
+              setWorkspaceSlug('')
+              setAccessKey('')
+              setShowWorkspaceFields(false)
+              setUsernameOpen(false)
+              router.push('/')
+              return
             } catch (err: unknown) {
               const errorMsg =
                 err instanceof Error && 'response' in err && (err as any).response?.status === 401
