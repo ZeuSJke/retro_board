@@ -88,8 +88,26 @@ export default function SummaryModal({ boardId, hasSummary, isGeneratingSummary,
   const isLoading = loading || isGeneratingSummary
 
   return (
-    <div className={styles.overlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={styles.dialog}>
+    <div
+      className={styles.overlay}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          e.currentTarget.setAttribute('data-clicking-overlay', 'true')
+        } else {
+          e.currentTarget.removeAttribute('data-clicking-overlay')
+        }
+      }}
+      onMouseUp={(e) => {
+        if (
+          e.target === e.currentTarget &&
+          e.currentTarget.getAttribute('data-clicking-overlay') === 'true'
+        ) {
+          onClose()
+        }
+        e.currentTarget.removeAttribute('data-clicking-overlay')
+      }}
+    >
+      <div className={styles.dialog} onMouseDown={(e) => e.stopPropagation()} onMouseUp={(e) => e.stopPropagation()}>
         <div className={styles.header}>
           <div className={`${styles.iconWrap} ${hasSummary ? styles.hasSummary : ''}`}>
             <span className={`material-symbols-rounded ${styles.icon}`}>
