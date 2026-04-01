@@ -46,6 +46,7 @@ class Board(Base):
     __tablename__ = "boards"
     __table_args__ = (
         UniqueConstraint("workspace_id", "name", name="uq_board_workspace_name"),
+        UniqueConstraint("workspace_id", "slug", name="uq_board_workspace_slug"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
@@ -56,9 +57,7 @@ class Board(Base):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    slug: Mapped[str | None] = mapped_column(
-        String(150), unique=True, nullable=True, index=True
-    )
+    slug: Mapped[str | None] = mapped_column(String(150), nullable=True, index=True)
     max_votes: Mapped[int] = mapped_column(Integer, default=5)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
