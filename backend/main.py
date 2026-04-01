@@ -3,12 +3,8 @@ import secrets
 import traceback
 from contextlib import asynccontextmanager
 
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import inspect
 
 from app.config import settings
-from app.database import engine
 from app.routers import (
     action_items,
     boards,
@@ -34,15 +30,6 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import asyncio
-
-    alembic_cfg = Config("alembic.ini")
-    inspector = inspect(engine)
-    tables = inspector.get_table_names()
-    if tables and "alembic_version" not in tables:
-        await asyncio.to_thread(command.stamp, alembic_cfg, "head")
-    else:
-        await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
     yield
 
 
