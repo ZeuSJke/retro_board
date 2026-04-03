@@ -12,14 +12,18 @@
 - **Колонки** — добавляй любое количество, меняй название (двойной клик) и цвет метки
 - **Карточки** — с именем автора, цветом фона, лайками и drag & drop
 - **Группы карточек** — объединяй карточки в именованные группы, перемещай группу целиком в другую колонку
+- **AI-возможности** (OpenRouter):
+  - **Кластеризация** — кнопка «Сгруппировать похожие (AI)» в заголовке колонки: AI автоматически находит семантически похожие карточки и создаёт группы
+  - **Резюме ретро** — автоматическая генерация summary, ключевых тем и рекомендаций при переходе в фазу «Итоги»
+  - **Генерация названий задач** — AI создаёт краткие заголовки для Action Items из текста карточек
 - **Drag & Drop** — перетаскивай карточки и группы между колонками (@dnd-kit, мышь + тач)
 - **Real-time** — все участники видят изменения мгновенно через WebSocket
 - **Курсоры участников** — позиции курсоров транслируются в реальном времени
 - **Фасилитатор** — режим ведущего: фазы ретро (мозговой штурм → обсуждение → голосование), управление таймером
 - **Таймер** — обратный отсчёт для временных слотов ретро (старт / пауза / сброс), синхронизируется через WebSocket
 - **Лимит голосов** — настраиваемый лимит голосов на участника (по умолчанию 5), бейдж использования в топбаре
-- **Итоги (Action Items)** — мастер-колонка на доске для фиксации решений и задач (статус read-only); полное управление (редактирование, статусы, удаление, Jira) — на странице Dashboard
-- **Dashboard** — история ретро, кросс-доска список задач с фильтрами (статус, доска, ответственный), карточки задач с inline-редактированием, секция выполненных задач, график трендов
+- **Итоги (Action Items)** — мастер-колонка на доске для фиксации решений и задач (статус read-only); полное управление (редактирование, статусы, удаление, Jira) — на странице Dashboard; перенос незакрытых задач между досками (carry-forward)
+- **Dashboard** — история ретро, кросс-доска список задач с фильтрами (статус, доска, ответственный), карточки задач с inline-редактированием, секция выполненных задач, график трендов, просмотр AI-резюме
 - **Jira-интеграция** — создавай задачи в Jira из Dashboard (бэкенд-прокси, ключи не утекают в браузер)
 - **Экспорт в PDF** — сохрани содержимое доски одним кликом
 - **Workspaces** — изолированные рабочие пространства для разных команд, каждый с собственным набором досок
@@ -28,6 +32,8 @@
 - **Обработка ошибок** — глобальный middleware на бэкенде, toast-уведомления и ErrorBoundary на фронтенде
 - **Rate Limiting** — ограничение частоты запросов (100/мин чтение, 30/мин мутации, 20 сообщений/сек WebSocket)
 - **Адаптивность** — колонки масштабируются под размер экрана
+- **Мягкое удаление досок** — доски помечаются `deleted_at`, а не удаляются физически
+- **CSRF-защита** — cookie token + заголовок `X-CSRF-Token` на мутациях
 - **Персистентность** — данные хранятся в PostgreSQL
 
 ---
@@ -84,6 +90,7 @@ python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
+pip install -r requirements-dev.txt  # для тестов
 
 cp .env.example .env
 # Укажи DATABASE_URL для localhost в backend/.env
@@ -92,7 +99,7 @@ cp .env.example .env
 alembic upgrade head
 
 # Запусти с hot reload
-uvorn main:app --reload
+uvicorn main:app --reload
 # -> http://localhost:8000
 # -> Swagger: http://localhost:8000/docs
 ```
@@ -134,7 +141,9 @@ retro_board/
 │
 ├── backend/
 │   ├── Dockerfile
+│   ├── entrypoint.sh             # Docker entrypoint: миграции + запуск uvicorn
 │   ├── requirements.txt
+│   ├── requirements-dev.txt      # Зависимости для тестов (pytest, etc.)
 │   ├── main.py                   # FastAPI app, CORS, миграции, rate limiter
 │   ├── alembic.ini               # Конфигурация Alembic
 │   ├── alembic/
@@ -153,7 +162,9 @@ retro_board/
 │   │   ├── test_csrf.py
 │   │   ├── test_websocket.py
 │   │   ├── test_error_handling.py
-│   │   └── test_rate_limiting.py
+│   │   ├── test_rate_limiting.py
+│   │   ├── test_auto_cluster.py
+│   │   └── test_summary.py
 │   └── app/
 │       ├── config.py             # Pydantic Settings
 │       ├── database.py           # SQLAlchemy engine + сессия
@@ -162,6 +173,10 @@ retro_board/
 │       ├── schemas.py            # Pydantic-схемы с валидацией
 │       ├── ws_manager.py         # WebSocket connection manager
 │       ├── workspace_auth.py     # Валидация workspace токена
+│       ├── ai/
+│       │   ├── ai_client.py      # OpenRouter AI клиент
+│       │   ├── clustering.py     # AI-кластеризация карточек
+│       │   └── prompts/          # Промпты для summary, title generation
 │       └── routers/
 │           ├── boards.py
 │           ├── columns.py
@@ -213,6 +228,7 @@ retro_board/
     │   ├── TrendChart.tsx       # График трендов на Dashboard
     │   ├── CursorMarker.tsx     # Индикатор курсора участника
     │   ├── JiraDialog.tsx       # Диалог создания задачи в Jira
+    │   ├── SummaryModal.tsx     # Просмотр AI-резюме ретро
     │   ├── Dialog.tsx           # Переиспользуемый диалог
     │   ├── ErrorBoundary.tsx    # Обработка ошибок рендера
     │   └── Toast.tsx            # Toast-уведомления
@@ -261,7 +277,7 @@ retro_board/
 | **backend-tests** | Python 3.12 | `pytest -v` |
 | **frontend-lint** | Node 20 | `npm run lint` |
 | **frontend-tests** | Node 20 | `npm test` |
-| **frontend-e2e** | Node 20 | `npm run test:e2e` |
+| **frontend-e2e** | Docker Compose | Playwright против полного стека |
 
 ### CD — автодеплой (`.github/workflows/deploy.yml`)
 
@@ -282,7 +298,8 @@ retro_board/
 | `GET` | `/api/boards/{id}` | Получить доску со всеми данными |
 | `GET` | `/api/boards/by-slug/{slug}` | Получить доску по slug |
 | `PATCH` | `/api/boards/{id}` | Обновить доску (название, лимит голосов) |
-| `DELETE` | `/api/boards/{id}` | Удалить доску (каскадно) |
+| `DELETE` | `/api/boards/{id}` | Удалить доску (soft delete) |
+| `GET` | `/api/boards/{id}/summary` | Получить AI-резюме доски |
 
 ### Columns
 
@@ -312,13 +329,18 @@ retro_board/
 | `POST` | `/api/groups/{id}/set_card/{card_id}` | Добавить карточку в группу |
 | `DELETE` | `/api/groups/{id}/remove_card/{card_id}` | Убрать из группы |
 | `PATCH` | `/api/groups/{id}/move` | Переместить группу |
+| `POST` | `/api/groups/auto-cluster` | AI-кластеризация карточек в колонке |
 
 ### Action Items
 
 | Метод | Путь | Описание |
 |---|---|---|
 | `GET` | `/api/action-items/?board_id=...` | Список итогов доски |
+| `GET` | `/api/action-items/all` | Все итоги со всех досок (для Dashboard) |
+| `GET` | `/api/action-items/trends` | Данные для графика трендов |
 | `POST` | `/api/action-items/` | Создать итог |
+| `POST` | `/api/action-items/generate-title` | Сгенерировать название через AI |
+| `POST` | `/api/action-items/carry-forward` | Перенести незакрытые итоги на другую доску |
 | `PATCH` | `/api/action-items/{id}` | Обновить текст / ответственного / статус |
 | `DELETE` | `/api/action-items/{id}` | Удалить итог |
 
@@ -346,11 +368,51 @@ retro_board/
 | `GET` | `/api/jira/status` | Проверить настройку Jira |
 | `POST` | `/api/jira/create-issue` | Создать задачу в Jira |
 
+### Health
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/health` | Проверка здоровья бэкенда |
+
 ### WebSocket
 
 ```
 ws://localhost/ws/{board_id}?workspace_token={token}
 ```
+
+#### События от клиента к серверу
+
+| Событие | Описание |
+|---|---|
+| `identify` | Регистрация пользователя (username) |
+| `cursor_move` | Позиция курсора (x, y) |
+| `cursor_leave` | Пользователь убрал курсор |
+| `facilitator_start` | Начать фасилитацию |
+| `facilitator_stop` | Завершить фасилитацию (закрывает доску) |
+| `phase_change` | Сменить фазу (brainstorm → reveal → discuss → vote → summary) |
+| `timer_start` | Запустить таймер (duration, remaining) |
+| `timer_pause` | Пауза таймера |
+| `timer_reset` | Сброс таймера |
+| `group_collapse` | Свернуть / развернуть группу |
+
+#### События от сервера к клиентам
+
+| Событие | Описание |
+|---|---|
+| `presence_update` | Список активных пользователей |
+| `facilitator_update` | Статус фасилитатора и текущая фаза |
+| `phase_update` | Смена фазы ретро |
+| `cursor_move` / `cursor_leave` | Курсоры других участников |
+| `timer_start` / `timer_pause` / `timer_reset` | Синхронизация таймера |
+| `card_created` / `card_updated` / `card_deleted` | CRUD карточек |
+| `card_moved` | Перемещение карточки между колонками |
+| `column_created` / `column_updated` / `column_deleted` | CRUD колонок |
+| `group_created` / `group_updated` / `group_deleted` | CRUD групп |
+| `group_moved` | Перемещение группы между колонками |
+| `group_collapse` | Свернуть/развернуть группу |
+| `action_item_created` / `action_item_updated` / `action_item_deleted` | CRUD итогов |
+| `summary_generated` | AI-резюме сгенерировано |
+| `auto_cluster_completed` | AI-кластеризация завершена |
 
 ---
 
@@ -369,6 +431,11 @@ ws://localhost/ws/{board_id}?workspace_token={token}
 | `JIRA_URL` | URL Jira-инстанса (опционально) |
 | `JIRA_EMAIL` | Email для Jira API (опционально) |
 | `JIRA_API_TOKEN` | API-токен Jira (опционально) |
+| `OPENROUTER_API_KEY` | API-ключ OpenRouter для AI-функций (опционально) |
+| `WORKSPACE_JWT_SECRET` | Секрет для JWT токенов workspace (обязательно, 32+ символов) |
+| `ADMIN_JWT_SECRET` | Секрет для JWT токенов админа (обязательно, 32+ символов) |
+| `WORKSPACE_JWT_EXPIRE_HOURS` | Срок жизни workspace токена (по умолчанию: 168 = 7 дней) |
+| `JIRA_VERIFY_SSL` | Проверка SSL при подключении к Jira (по умолчанию: true) |
 
 ### `backend/.env` (локальная разработка)
 
@@ -376,6 +443,9 @@ ws://localhost/ws/{board_id}?workspace_token={token}
 |---|---|
 | `DATABASE_URL` | Строка подключения к PostgreSQL |
 | `CORS_ORIGINS` | Разрешённые CORS-источники |
+| `WORKSPACE_JWT_SECRET` | Секрет для JWT токенов workspace |
+| `ADMIN_JWT_SECRET` | Секрет для JWT токенов админа |
+| `OPENROUTER_API_KEY` | API-ключ OpenRouter (опционально) |
 
 ### `frontend/.env.local` (локальная разработка)
 
@@ -390,8 +460,9 @@ ws://localhost/ws/{board_id}?workspace_token={token}
 
 ```bash
 # Docker
-docker compose up --build          # Собрать и запустить
+docker compose up --build          # Собрать и запустить (dev с hot-reload)
 docker compose up --build -d       # Фоновый режим
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build  # Production
 docker compose up db -d           # Только БД
 docker compose down -v             # Полный сброс (включая данные)
 
@@ -434,8 +505,11 @@ docker compose exec db pg_dump -U retro retroboard > backup_$(date +%Y%m%d).sql
 
 - `.env` добавлен в `.gitignore` — секреты не попадут в репозиторий
 - `.env.example` показывает структуру без реальных значений
-- Rate Limiting — slowapi ограничивает частоту HTTP-запросов
-- WebSocket Rate Limiting — максимум 20 сообщений/сек
-- Лимит голосов — серверная проверка
-- Jira-интеграция — запросы проксируются через бэкенд
-- Workspace изоляция — токен в каждом запросе, отдельные данные
+- **CSRF-защита** — cookie token + заголовок `X-CSRF-Token` на всех мутациях
+- **JWT-аутентификация** — workspace и admin токены с настраиваемым сроком жизни
+- **Rate Limiting** — slowapi: 100/мин чтение, 30/мин мутации, 5/мин AI-вызовы
+- **WebSocket Rate Limiting** — максимум 20 сообщений/сек на соединение
+- **Лимит голосов** — серверная проверка
+- **Jira-интеграция** — запросы проксируются через бэкенд, ключи не утекают
+- **Workspace изоляция** — JWT токен в каждом запросе, данные изолированы
+- **AI-безопасность** — санитизация текста карточек перед отправкой в AI, валидация ответов по белому списку ID

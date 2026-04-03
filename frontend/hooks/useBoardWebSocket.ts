@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useWebSocket } from './useWebSocket'
 import { useAppStore } from '../store'
+import { showToast } from '../store/toastStore'
 import { getActionItems } from '../api'
 import { asCard, asColumn, asGroup, asActionItem } from '../utils/wsData'
 import type {
@@ -149,6 +150,14 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       if (event === 'action_item_deleted') {
         const { id } = data as { id: string }
         setActionItems((prev) => prev.filter((i) => i.id !== id))
+        return
+      }
+
+      if (event === 'auto_cluster_completed') {
+        const u = data.username as string | undefined
+        if (u && u !== username) {
+          showToast(`${u} сгруппировал(а) карточки`, 'info')
+        }
         return
       }
 

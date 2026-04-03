@@ -154,6 +154,12 @@ export interface WsGroupDeletedData {
   card_ids?: string[]
 }
 
+export interface WsAutoClusterCompletedData {
+  column_id: string
+  username: string
+  groups_count: number
+}
+
 export interface TimerState {
   duration: number
   remaining: number

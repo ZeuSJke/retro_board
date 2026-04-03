@@ -12,6 +12,7 @@ import {
   createCard,
   createGroup,
   addCardToGroup,
+  autoClusterColumn,
 } from '../api'
 import { showToast } from '../store/toastStore'
 import { useAppStore } from '../store'
@@ -70,6 +71,8 @@ export default memo(function Column({
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleVal, setTitleVal] = useState(column.title)
   const [colorPickerOpen, setColorPickerOpen] = useState(false)
+
+  const [clustering, setClustering] = useState(false)
 
   const [groupAssignOpen, setGroupAssignOpen] = useState(false)
   const [assigningCardId, setAssigningCardId] = useState<string | null>(null)
@@ -176,6 +179,30 @@ export default memo(function Column({
     setGroupAssignOpen(true)
   }
 
+  const handleAutoCluster = async () => {
+    setClustering(true)
+    try {
+      const result = await autoClusterColumn(column.id, username)
+      if (result?.created_groups?.length > 0) {
+        showToast('Карточки сгруппированы', 'info')
+      } else {
+        showToast('AI не нашёл похожих карточек для группировки', 'info')
+      }
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number; data?: { detail?: string } } })?.response?.status
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      if (status === 503) {
+        showToast('AI-сервис временно недоступен', 'error')
+      } else if (status === 400 && detail) {
+        showToast(detail, 'error')
+      } else {
+        showToast('Не удалось сгруппировать карточки', 'error')
+      }
+    } finally {
+      setClustering(false)
+    }
+  }
+
   const groups = column.groups || []
   const ungroupedCards = (column.cards || []).filter((c) => !c.group_id)
   const cardIds = ungroupedCards.map((c) => c.id)
@@ -221,6 +248,27 @@ export default memo(function Column({
             </span>
           )}
           <span className={s.count}>{(column.cards || []).length}</span>
+          {!readOnly && ungroupedCards.length >= 2 && (
+            <button
+              className={s.iconBtn}
+              onClick={handleAutoCluster}
+              disabled={clustering}
+              title="Сгруппировать похожие (AI)"
+            >
+              {clustering ? (
+                <span
+                  className="material-symbols-rounded"
+                  style={{ fontSize: 16, animation: 'spin 1s linear infinite' }}
+                >
+                  progress_activity
+                </span>
+              ) : (
+                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
+                  auto_awesome
+                </span>
+              )}
+            </button>
+          )}
           {!readOnly && (
             <button
               className={`${s.iconBtn} col-del-btn`}
