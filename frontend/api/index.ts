@@ -78,6 +78,8 @@ export const addCardToGroup = (groupId: string, cardId: string): Promise<Card> =
 export const removeCardFromGroup = (groupId: string, cardId: string): Promise<Card> =>
   api.delete(`/groups/${groupId}/remove_card/${cardId}`).then((r) => r.data)
 export const moveGroup = (id: string, data: { column_id: string }): Promise<CardGroup> => api.patch(`/groups/${id}/move`, data).then((r) => r.data)
+export const autoClusterColumn = (columnId: string, username: string) =>
+  api.post('/groups/auto-cluster', { column_id: columnId, username }).then((r) => r.data)
 
 // ── Action Items ────────────────────────────────────────────────────────────
 export const getActionItems = (boardId: string): Promise<ActionItem[]> =>

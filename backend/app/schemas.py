@@ -352,3 +352,21 @@ class BoardSummaryOut(BaseModel):
 class BoardSummaryGenerateResponse(BaseModel):
     summary: BoardSummaryOut
     generated: bool = True
+
+
+# ── Auto Clustering ──────────────────────────────────────────────────────────
+
+
+class AutoClusterRequest(BaseModel):
+    column_id: str = Field(..., max_length=100)
+    username: str = Field("", max_length=100)
+
+
+class ClusterGroupInfo(BaseModel):
+    group: CardGroupOut
+    card_ids: list[str]
+
+
+class AutoClusterResult(BaseModel):
+    created_groups: list[ClusterGroupInfo]
+    ungrouped_card_ids: list[str]

@@ -54,7 +54,7 @@ class AIClient:
                     if content.startswith("."):
                         content = content[1:].strip()
                     return content
-            except (httpx.HTTPError, httpx.TimeoutException) as e:
+            except (httpx.HTTPError, httpx.TimeoutException, KeyError, IndexError) as e:
                 last_error = e
                 if attempt < config.retries - 1:
                     continue

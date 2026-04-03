@@ -3,7 +3,7 @@
 ## Описание проекта
 
 RetroBoard — Agile ретроспективная доска для real-time совместной работы.
-**Стек**: Next.js 15 · TypeScript · FastAPI · PostgreSQL · WebSocket · Docker
+**Стек**: Next.js 15 · TypeScript · FastAPI · PostgreSQL · WebSocket · Docker · OpenRouter AI · Jira API
 
 ---
 
@@ -34,11 +34,11 @@ npm test              # all tests, single run
 npm run test:watch    # watch mode
 
 # Один тест
-npx vitest run frontend/tests/store/toastStore.test.ts
-npx vitest run --reporter=verbose tests/store/index.test.ts
+npx vitest run tests/store/index.test.ts
 
 # E2E тесты (Playwright)
-npm run test:e2e
+# Важно: ADMIN_LOGIN/ADMIN_PASSWORD должны соответствовать .env
+$env:ADMIN_LOGIN='testadmin'; $env:ADMIN_PASSWORD='testpassword123'; npx playwright test
 ```
 
 ### Бэкенд (директория `backend/`)
@@ -52,35 +52,30 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # Установка зависимостей
 pip install -r requirements.txt
+pip install -r requirements-dev.txt # для тестов
 
 # Запуск сервера (dev, с hot-reload)
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-# Запуск без hot-reload (ПРОДАКШЕН — один воркер!)
-uvicorn main:app --host 0.0.0.0 --port 8000
-
 # Миграции Alembic
 alembic upgrade head
 alembic revision --autogenerate -m "description"
-alembic downgrade -1
 
 # Тесты (pytest)
-pytest -v                        # все тесты
-pytest -v tests/test_boards.py  # один файл
-pytest -v -k "test_name"        # один тест по имени
-pytest --tb=short               # короткий traceback
+# Для локального запуска используйте SQLite:
+$env:TESTING='true'; $env:DATABASE_URL='sqlite://'; pytest -v
 ```
 
 ### Docker
 
 ```bash
-# Полный стек (frontend + backend + db)
-docker compose up --build
-
-# Только база данных
-docker compose up db -d
+# Сборка и запуск (с гарантированным применением изменений)
+docker compose up -d --build --force-recreate
 
 # Остановка + удаление данных
+docker compose down
+
+# Полная очистка (ВНИМАНИЕ: удаляет БД и тома)
 docker compose down -v
 ```
 
@@ -98,11 +93,9 @@ docker compose down -v
 
 #### Именование
 - **Компоненты**: PascalCase (`BoardPage.tsx`, `CardWidget.tsx`)
-- **Хуки**: camelCase с префиксом `use` (`useWebSocket.ts`, `useBoardDragDrop.ts`)
-- **Утилиты/хелперы**: camelCase (`apiError.ts`, `wsData.ts`)
-- **Store (Zustand)**: camelCase (`toastStore.ts`, `index.ts`)
-- **Интерфейсы TypeScript**: PascalCase, без префикса `I` (`Board`, `Card`, `WsMessage`)
+- **Хуки**: camelCase с префиксом `use` (`useWebSocket.ts`)
 - **CSS Modules**: snake_case (`admin.module.css`)
+- **Интерфейсы**: PascalCase, без префикса `I` (`Board`, `Card`)
 
 #### Структура файлов
 ```
@@ -110,193 +103,106 @@ frontend/
 ├── app/                    # Next.js App Router страницы
 │   ├── layout.tsx          # Root layout
 │   ├── page.tsx           # Главная
+│   ├── admin/             # Панель управления (admin.module.css)
 │   └── board/[id]/page.tsx
-├── components/             # React компоненты
-├── hooks/                  # Кастомные хуки
-├── store/                  # Zustand stores
-├── types/                  # TypeScript интерфейсы
-├── utils/                  # Утилиты
+├── components/             # React компоненты (+ .module.css файлы)
+├── hooks/                  # Кастомные хуки (useTimer, useFacilitator)
+├── store/                  # Zustand stores (index.ts, toastStore.ts)
+├── types/                  # TypeScript интерфейсы (index.ts)
+├── utils/                  # Утилиты (theme.ts, apiError.ts, boardMapper.ts)
 └── tests/                  # Vitest unit тесты
     └── store/
     └── components/
-└── e2e/                    # Playwright E2E
+└── e2e/                    # Playwright E2E спецификации
 ```
 
 #### Импорты
 - **Path alias**: `@/*` указывает на корень `frontend/`
 - Порядок импортов: внешние → внутренние → типы → стили
-- Относительные импорты для соседних файлов
 
-```typescript
-import { useState, useEffect } from 'react'
-import axios from 'axios'
-import type { Card, Column } from '@/types'
-import { useAppStore } from '@/store'
-import { apiErrorHandler } from '@/utils/apiError'
-import './CardWidget.css'
-```
+#### Модальные окна и Оверлеи (ВАЖНО)
+Чтобы избежать ложного закрытия окон при выделении текста:
+- Используй комбинацию `onMouseDown` и `onMouseUp` на оверлее.
+- Закрывай окно только если оба события произошли на `e.currentTarget`.
+- Обязательно добавляй `e.stopPropagation()` на `onMouseDown/Up` контентной части окна.
+- Пример реализации: `frontend/components/Dialog.tsx`.
 
 #### React/Next.js паттерны
-- **Server Components по умолчанию** — добавляй `'use client'` только когда нужен browser API, event handlers или React state
-- **Обработка ошибок**: компонент `ErrorBoundary` оборачивает критичные секции
-- **Loading states**: создавай `loading.tsx` для каждой страницы
-- **Error states**: создавай `error.tsx` для каждой страницы
-- Используй `next/image`, `next/link`, `next/font` вместо нативных решений
-
-#### Состояние и данные
-- **Zustand** для глобального состояния (тема, username, workspace)
-- **React Hooks** для локального состояния
-- **API**: axios с interceptors для workspace token
-- **WebSocket**: кастомный `useBoardWebSocket` hook
-
-#### Тестирование
-- **Vitest** + **Testing Library** для unit тестов
-- **Playwright** для E2E тестов
-- Путь к тестам: рядом с компонентом (`CardWidget.test.tsx`) или в `tests/`
-- Моки: `vi.mock()`, `vi.spyOn()`
-
-```typescript
-import { describe, it, expect, vi } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
-```
-
-#### CSS и стили
-- **CSS Modules** для компонентов (`.module.css`)
-- **CSS Variables** для темы (Material Design 3)
-- **Глобальные стили**: `app/globals.css`
+- **Server Components** по умолчанию — `'use client'` только при необходимости.
+- **Обработка ошибок**: компонент `ErrorBoundary` и файлы `error.tsx`.
+- **Loading states**: файлы `loading.tsx` для страниц и локальные спиннеры.
 
 ---
 
 ### Бэкенд (Python / FastAPI)
 
-#### Типизация
-- **Все функции с аннотациями типов**
-- **Pydantic v2** для валидации данных и схем
-- Используй `model_validator`, `field_validator` для бизнес-логики
-
-#### Именование
-- **Модули и функции**: snake_case (`ws_manager.py`, `workspace_auth.py`)
-- **Pydantic схемы**: PascalCase с суффиксами `Base`, `Create`, `Update`, `Out`, `Response`
-- **Таблицы БД**: множественное число (`boards`, `cards`, `action_items`)
+#### Настройки (Pydantic v2)
+- В `app/config.py` всегда используй `extra="ignore"` в `model_config`. Это предотвращает ошибки при наличии лишних переменных окружения в Docker/CI.
 
 #### Структура файлов
 ```
 backend/
 ├── main.py                 # FastAPI app, CORS, middleware, rate limiter
 ├── app/
-│   ├── config.py          # Pydantic Settings
+│   ├── config.py          # Pydantic Settings (extra="ignore")
 │   ├── database.py        # SQLAlchemy engine + session
-│   ├── models.py          # ORM модели
+│   ├── models.py          # ORM модели (SQLAlchemy 2.0)
 │   ├── schemas.py         # Pydantic схемы
 │   ├── limiter.py         # slowapi rate limiter
-│   ├── ws_manager.py      # WebSocket connection manager
+│   ├── ws_manager.py      # WebSocket connection manager (RAM Singleton)
 │   ├── workspace_auth.py  # Workspace token validation
-│   └── routers/           # API роутеры
-│       ├── boards.py
-│       ├── cards.py
-│       ├── columns.py
-│       └── ...
-└── tests/                 # pytest тесты
-    └── conftest.py
+│   ├── ai/                # Интеграция с OpenRouter (ai_client.py)
+│   └── routers/           # API роутеры (boards, cards, jira, etc.)
+└── tests/                 # pytest тесты (conftest.py)
 ```
 
 #### Архитектурные правила
-1. **Один воркер uvicorn** — НИКОГДА не добавляй `--workers`. `ConnectionManager` — синглтон.
-2. **Async/sync**: Роутеры — `async def` (для `await manager.broadcast()`), SQLAlchemy сессии — синхронные.
-3. **WebSocket события**: формат `{ "event": "event_name", "data": { ... } }`
-4. **WS валидация**: все события проверяются против `KNOWN_EVENTS` frozenset в `websocket.py`
-5. **Миграции**: ВСЕГДА создавай Alembic миграцию при изменении схемы БД
-6. **Action item statuses**: хранятся как `String(20)`, не Enum (SQLite совместимость)
-7. **Rate limiter**: slowapi — не добавляй дублирующей защиты
-8. **CORS**: настроен в `main.py` — не дублируй в роутерах
-
-#### HTTP статусы
-- `201` — создание ресурса
-- `200` — успешное получение/обновление
-- `404` с `detail` — ресурс не найден
-- `422` — валидация (автоматически от Pydantic)
-
-#### Зависимости и DI
-- Используй `Depends(get_db)` паттерн
-- Сессия передаётся через dependency injection
-
-#### Тестирование
-- **pytest** + **httpx** + **TestClient**
-- **SQLite in-memory** для тестов (`DATABASE_URL=sqlite://`)
-- `JSONEncodedList` TypeDecorator для ARRAY колонок (SQLite)
-- Фикстуры в `conftest.py` — используй существующие, не дублируй
-
-```python
-import pytest
-from fastapi.testclient import TestClient
-
-def test_create_board(client, workspace_headers):
-    response = client.post("/api/boards/", json={"name": "Test"}, headers=workspace_headers)
-    assert response.status_code == 201
-```
+1. **Один воркер uvicorn**: `ConnectionManager` — синглтон в памяти.
+2. **WebSocket формат**: `{ "event": "name", "data": { ... } }`.
+3. **Миграции**: Каждое изменение `models.py` требует миграции Alembic.
+4. **Action item statuses**: Хранятся как `String(20)` для совместимости.
 
 ---
 
-## 3. Язык проекта
+## 3. Интеграции
 
-- **Комментарии, commit messages, UI тексты** — на **русском языке**
-- **Переменные и функции** — на английском (snake_case/camelCase)
+### AI Интеграция (OpenRouter)
+- **Функции**: Summary ретроспективы, Smart Titles для задач, AI-кластеризация карточек.
+- **Модели**: `google/gemma-2-9b-it`, `qwen/qwen2.5-72b-instruct`.
+- **Файлы**: `backend/app/ai/ai_client.py`, `backend/app/ai/clustering.py`, `backend/app/ai/prompts/`.
+- **Важно**: `ai_client.generate()` — синхронный. В async-эндпоинтах оборачивать в `asyncio.to_thread()`.
+
+### Jira Интеграция
+- Создание Issue из Action Items и синхронизация статусов.
+- Настройка через `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` в `.env`.
 
 ---
 
 ## 4. Переменные окружения
 
-### Фронтенд (`frontend/.env.local`)
-```env
-BACKEND_URL=http://localhost:8000
-NEXT_PUBLIC_WS_HOST=localhost:8000
-```
-
 ### Бэкенд (`backend/.env`)
 ```env
 DATABASE_URL=postgresql://user:pass@localhost:5432/retroboard
-CORS_ORIGINS=http://localhost:3080
-WORKSPACE_JWT_SECRET=your-secret-at-least-32-chars
-ADMIN_JWT_SECRET=your-admin-secret-at-least-32-chars
+OPENROUTER_API_KEY=sk-or-v1-...
+WORKSPACE_JWT_SECRET=your-secret...
+ADMIN_JWT_SECRET=your-admin-secret...
 ADMIN_LOGIN=admin
-ADMIN_PASSWORD=changeme
-```
-
-### Корневой `.env` (Docker Compose)
-```env
-POSTGRES_DB=retroboard
-POSTGRES_USER=retro
-POSTGRES_PASSWORD=your_secure_password
-CORS_ORIGINS=http://localhost:3080
+ADMIN_PASSWORD=password
 ```
 
 ---
 
-## 5. Полезные ресурсы
+## 5. CI/CD и Деплой
 
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-- **Приложение**: http://localhost:3080
-- **Admin панель**: http://localhost:3080/admin
-
----
-
-## 6. CI/CD
-
-GitHub Actions (`.github/workflows/ci.yml`):
-- `backend-tests`: `pytest -v`
-- `frontend-lint`: `npm run lint`
-- `frontend-tests`: `npm test`
-- `frontend-e2e`: `npm run test:e2e`
+### GitHub Actions
+- `backend-tests`: `pytest -v` (SQLite).
+- `deploy`: SSH деплой с командой `up -d --build --force-recreate`.
 
 ---
 
-## 7. AI Агенты (OpenCode)
-
-Проект использует систему специализированных AI агентов для разных задач разработки.
+## 6. AI Агенты (OpenCode)
 
 ### Структура
-
 ```
 .opencode/
 ├── agents/           # Конфигурации агентов (9 штук)
@@ -318,82 +224,13 @@ GitHub Actions (`.github/workflows/ci.yml`):
 | `@docs` | Документация | minimax-m2.5 |
 | `@explainer` | Анализ кода (read-only) | kimi-k2.5 |
 
-### Как использовать
-
-```bash
-# Вызвать агента через @
-@architect Спроектируй API для экспорта доски
-
-# Или в чате opencode:
-@backend-dev Реализуй эндпоинт для /api/boards/{id}/export
-
-# Security аудит
-@security Аудит изменений в cards.py
-```
-
 ### Workflows (цепочки агентов)
 
-Используйте workflows для структурированных задач:
-
-#### Feature Development
-```
-@architect → @backend-dev → @frontend-dev → @security → @qa
-```
-**Когда:** Новая функциональность, новая сущность, новый API.
-
-#### Bug Fix
-```
-@explainer → @backend-dev/@frontend-dev → @qa
-```
-**Когда:** Исправление бага.
-
-#### Code Review
-```
-@security → @refactorer → @qa
-```
-**Когда:** Pull Request opened, перед merge.
-
-#### Deployment
-```
-@devops → @qa (smoke) → @devops (deploy)
-```
-**Когда:** Деплой в staging/production.
-
-#### Security Audit
-```
-@security (full audit)
-```
-**Когда:** Периодический аудит (weekly/monthly).
+- **Feature Development**: `@architect → @backend-dev → @frontend-dev → @security → @qa → @docs`
+- **Bug Fix**: `@explainer → @backend-dev/@frontend-dev → @qa`
+- **Code Review**: `@security → @refactorer → @qa`
+- **Deployment**: `@devops → @qa (smoke) → @devops (deploy)`
+- **Security Audit**: `@security (full audit)`
 
 ### Agent Memory
-
-Агенты сохраняют институциональные знания в `.opencode/memory/`:
-
-- `architect/notes.md` — принятые архитектурные решения
-- `backend-dev/patterns.md` — паттерны бэкенда
-- `frontend-dev/components.md` — паттерны фронтенда
-- `security/vulnerabilities.md` — найденные уязвимости
-- `qa/test-patterns.md` — тестовые паттерны
-- `refactorer/code-smells.md` — code smells
-- `devops/infra-notes.md` — особенности инфраструктуры
-- `docs/docs-status.md` — статус документации
-- `explainer/architecture.md` — архитектурные диаграммы
-
-### CI/CD интеграция
-
-Рекомендуемый подход — **гибридный**:
-
-1. **Workflow файлы** — как документация для команды (mnemonics)
-2. **Ручной запуск** агентов — через `@agent` в чате opencode
-3. **Автоматические тесты** — GitHub Actions CI запускается автоматически
-
-Пример ручного использования:
-```bash
-@workflow feature-dev "добавить экспорт в PDF"
-```
-
-### Подробная документация
-
-Полное описание каждого агента и workflow находится в:
-- `.opencode/agents/*.md` — детальные инструкции агентов
-- `.opencode/workflows/*.md` — процедуры workflow
+Агенты сохраняют знания в `.opencode/memory/` (решения архитектора, паттерны фронтенда/бэкенда, найденные уязвимости).
