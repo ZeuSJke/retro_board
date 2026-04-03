@@ -215,6 +215,8 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 .claude/
+CLAUDE.md
+GEMINI.md
 
 # Marimo
 marimo/_static/
