@@ -7,7 +7,7 @@ import httpx
 
 @dataclass
 class AIModelConfig:
-    model: str = "qwen/qwen2.5-coder-7b-instruct"
+    model: str = "google/gemini-3-flash-preview"
     temperature: float = 0.3
     max_tokens: int = 100
     timeout: int = 30

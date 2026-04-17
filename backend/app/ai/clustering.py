@@ -23,7 +23,7 @@ Return ONLY valid JSON, no markdown, no explanations:
 {{"groups": [{{"title": "Group name", "card_ids": ["exact-id-1", "exact-id-2"]}}], "ungrouped": ["exact-id-3"]}}"""
 
 CLUSTERING_CONFIG = AIModelConfig(
-    model="google/gemma-2-9b-it",
+    model="google/gemini-3-flash-preview",
     temperature=0.1,
     max_tokens=2000,
     timeout=60,
