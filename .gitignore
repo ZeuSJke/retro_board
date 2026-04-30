@@ -215,8 +215,10 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 .claude/
-CLAUDE.md
 GEMINI.md
+
+# opencode (third-party AI tooling — config kept local per developer)
+.opencode/
 
 # Marimo
 marimo/_static/
