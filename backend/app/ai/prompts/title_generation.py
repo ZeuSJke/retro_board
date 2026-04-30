@@ -14,7 +14,7 @@ TITLE_GENERATION_PROMPT = """Сгенерируй краткое названи�
 Ответ: только название задачи, без кавычек и пояснений."""
 
 TITLE_GENERATION_CONFIG = AIModelConfig(
-    model="google/gemma-2-9b-it",
+    model="qwen/qwen3.6-flash",
     temperature=0.3,
     max_tokens=100,
 )
