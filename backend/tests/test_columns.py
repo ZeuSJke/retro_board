@@ -79,6 +79,15 @@ class TestUpdateColumn:
         resp = client.patch("/api/columns/no-id", json={"title": "X"}, headers=workspace_headers)
         assert resp.status_code == 404
 
+    def test_rename_column_with_cards(self, client, sample_card, sample_column, workspace_headers):
+        resp = client.patch(
+            f"/api/columns/{sample_column['id']}",
+            json={"title": "Renamed"},
+            headers=workspace_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "Renamed"
+
 
 class TestDeleteColumn:
     def test_returns_204(self, client, sample_column, workspace_headers):
