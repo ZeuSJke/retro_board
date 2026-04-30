@@ -110,7 +110,7 @@ class ConnectionManager:
         data: dict,
         exclude: WebSocket | None = None,
     ):
-        message = json.dumps({"event": event, "data": data})
+        message = json.dumps({"event": event, "data": data}, default=str)
         dead = []
         for ws in self.rooms.get(board_id, []):
             if ws is exclude:
