@@ -83,4 +83,4 @@ Every change to `models.py` requires an Alembic revision. Because tests run on S
 
 ### CI/CD
 - **CI** (`.github/workflows/ci.yml`): backend pytest, frontend lint/test, Playwright E2E.
-- **CD** (`.github/workflows/deploy.yml`): on green CI on `main`, auto-deploys to TrueNAS via SSH. There is no manual gate — anything merged to main ships.
+- **CD**: removed; deployment is performed manually through Dokploy. CI remains unchanged.
