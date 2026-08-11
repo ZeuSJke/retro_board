@@ -133,11 +133,10 @@ npm run dev
 ```
 retro_board/
 ├── .env.example                  # Шаблон переменных окружения
-├── .github/workflows/ci.yml     # CI: тесты бэкенда + линт и тесты фронтенда
-├── .github/workflows/deploy.yml # CD: автодеплой на сервер через SSH
+├── .github/workflows/ci.yml      # CI: тесты бэкенда + линт и тесты фронтенда
 ├── docker-compose.yml
 ├── docker-compose.override.yml   # Dev-оверрайд: volume mount для hot-reload
-├── docker-compose.prod.yml       # Prod-оверрайд: без --reload, лимиты памяти
+├── docker-compose.dokploy.yml    # Compose для развёртывания в Dokploy за Traefik
 │
 ├── backend/
 │   ├── Dockerfile
@@ -279,11 +278,9 @@ retro_board/
 | **frontend-tests** | Node 20 | `npm test` |
 | **frontend-e2e** | Docker Compose | Playwright против полного стека |
 
-### CD — автодеплой (`.github/workflows/deploy.yml`)
+### Деплой
 
-После успешного CI на `main` автоматически деплоит на сервер через SSH.
-
-**Требуемые секреты:** `TRUENAS_HOST`, `TRUENAS_USER`, `TRUENAS_SSH_KEY`, `TRUENAS_SSH_PORT`, `TRUENAS_PROJECT_DIR`
+Деплой выполняется вручную в Dokploy. Сервис собирается из этого репозитория по `docker-compose.dokploy.yml`, переменные окружения задаются в интерфейсе Dokploy. Автодеплой отключён.
 
 ---
 
@@ -462,7 +459,6 @@ ws://localhost/ws/{board_id}?workspace_token={token}
 # Docker
 docker compose up --build          # Собрать и запустить (dev с hot-reload)
 docker compose up --build -d       # Фоновый режим
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build  # Production
 docker compose up db -d           # Только БД
 docker compose down -v             # Полный сброс (включая данные)
 
@@ -485,19 +481,9 @@ docker compose exec db pg_dump -U retro retroboard > backup_$(date +%Y%m%d).sql
 
 ## Деплой
 
-Деплой автоматический через GitHub Actions. При пуше в `main` после прохождения тестов сервер обновляется по SSH.
+Деплой запускается вручную в интерфейсе Dokploy с использованием `docker-compose.dokploy.yml`. Переменные окружения задаются во вкладке Environment сервиса.
 
-### Ручное управление на сервере
-
-```bash
-./deploy.sh            # собрать и запустить
-./deploy.sh stop       # остановить
-./deploy.sh restart    # перезапустить
-./deploy.sh logs       # логи
-./deploy.sh update     # git pull + пересборка
-```
-
-Приложение доступно на `http://<IP>:3080`.
+Приложение доступно на `https://retro.kirillbessonov.ru`.
 
 ---
 

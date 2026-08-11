@@ -1,6 +1,6 @@
 # Локальная разработка: hot-reload бэкенда через volume mount.
 # Подхватывается автоматически при `docker compose up`.
-# НЕ используется в проде (деплой явно указывает -f docker-compose.prod.yml).
+# НЕ используется при развёртывании в Dokploy.
 services:
   backend:
     volumes:

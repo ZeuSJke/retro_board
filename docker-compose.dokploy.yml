@@ -1,0 +1,59 @@
+# Развёртывание в Dokploy: сборка из исходников, доступ только через Traefik.
+# Порты наружу не публикуются, фронтенд подключён к внешней сети dokploy-network.
+# Переменные окружения задаются во вкладке Environment сервиса в Dokploy.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ${PGDATA_HOST_PATH:-./pgdata}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    stop_grace_period: 60s
+    networks: [internal]
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      JIRA_URL: ${JIRA_URL:-}
+      JIRA_EMAIL: ${JIRA_EMAIL:-}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+      JIRA_VERIFY_SSL: ${JIRA_VERIFY_SSL:-true}
+      ADMIN_LOGIN: ${ADMIN_LOGIN}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      WORKSPACE_JWT_SECRET: ${WORKSPACE_JWT_SECRET}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
+      WORKSPACE_JWT_EXPIRE_HOURS: ${WORKSPACE_JWT_EXPIRE_HOURS:-168}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [internal]
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    networks: [internal, dokploy-network]
+    restart: unless-stopped
+
+networks:
+  internal:
+  dokploy-network:
+    external: true
