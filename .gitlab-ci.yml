@@ -10,7 +10,7 @@
 # в одном месте. Образ уже содержит node 24, uv+Python 3.12, pandoc,
 # helm, kubeconform, buildctl, git, jq, curl — ничего в джобах не ставим.
 variables:
-  CI_BASE_IMAGE: registry.kirillbessonov.ru/tools/ci-base:2026-08-20
+  CI_BASE_IMAGE: registry.kirillbessonov.ru/tools/ci-base:2026-08-20-1734
 
 # Общие настройки всех джоб. Раннер на стенде один (инстанс), тег homelab.
 default:
@@ -79,7 +79,8 @@ frontend-tests:
 # Поэтому стек разворачиваем без Docker:
 #   * PostgreSQL — как GitLab CI service (это штатная фича docker executor'а
 #     раннера, а не docker:dind и не docker CLI; образ тянется через зеркало);
-#   * бэкенд (uvicorn) и фронтенд (next start) — обычными процессами в джобе.
+#   * бэкенд (uvicorn) и фронтенд (standalone-сервер Next.js) — обычными
+#     процессами в джобе.
 e2e-tests:
   stage: test
   services:
@@ -99,12 +100,16 @@ e2e-tests:
     ADMIN_PASSWORD: testpassword123
     WORKSPACE_JWT_SECRET: test-workspace-jwt-secret-at-least-32-chars
     ADMIN_JWT_SECRET: test-admin-jwt-secret-at-least-32-chars
-    # Фронтенд (next start) проксирует /api на бэкенд через rewrite.
+    # Фронтенд (standalone-сервер) проксирует /api на бэкенд через rewrite.
     BACKEND_URL: http://localhost:8000
     # В Docker WS проксировал nginx, которого здесь нет, поэтому фронтенд ходит
     # по WebSocket напрямую на бэкенд. NEXT_PUBLIC_* инлайнится в клиентский
     # JS именно на этапе build (ниже), поэтому переменная задана в job.
     NEXT_PUBLIC_WS_HOST: localhost:8000
+    # Образ задаёт PLAYWRIGHT_BROWSERS_PATH=/cache/playwright, но дублируем её
+    # в джобе: каталог смонтирован раннером с хоста, и браузер должен лежать
+    # именно там, чтобы переживать джобы (а не в /root/.cache контейнера).
+    PLAYWRIGHT_BROWSERS_PATH: /cache/playwright
   script:
     - cd backend
     # То же, что в backend-tests: Python в образе управляется uv, ставим в venv.
