@@ -1,17 +1,9 @@
-сборка-в-zot:
-  image: docker.io/library/debian:12
+проверка-образа:
+  image: registry.kirillbessonov.ru/tools/ci-base:2026-08-20
   script:
-    - apt-get update -qq && apt-get install -y -qq curl ca-certificates
-    - |
-      curl --retry 3 --retry-all-errors --fail -sSL \
-        https://github.com/moby/buildkit/releases/download/v0.32.2/buildkit-v0.32.2.linux-amd64.tar.gz \
-        | tar -xz -C /usr/local bin/buildctl
-    - printf 'FROM docker.io/library/alpine:latest\nRUN echo "собрано в CI" > /proof\n' > Dockerfile
-    - |
-      buildctl build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=. \
-        --output type=image,name=registry.kirillbessonov.ru/test/buildkit-probe:$CI_COMMIT_SHORT_SHA,push=true \
-        --export-cache type=registry,ref=registry.kirillbessonov.ru/cache/buildkit-probe \
-        --import-cache type=registry,ref=registry.kirillbessonov.ru/cache/buildkit-probe
+    - node --version && pnpm --version && uv --version
+    - pandoc --version | head -1
+    - helm version --short && kubeconform -v
+    - buildctl debug workers
+    - echo "$UV_CACHE_DIR / $pnpm_config_store_dir"
+    - ls -la /cache/uv /cache/pnpm
