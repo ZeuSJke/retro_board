@@ -82,5 +82,22 @@ Every change to `models.py` requires an Alembic revision. Because tests run on S
 - **Toasts**: `import { showToast } from '../store/toastStore'` → `showToast('message', 'info' | 'error')`.
 
 ### CI/CD
-- **CI** (`.github/workflows/ci.yml`): backend pytest, frontend lint/test, Playwright E2E.
+- The repo lives on GitLab (`gitlab.kirillbessonov.ru/fmrm/retro_board`); GitHub is only a mirror. Work happens through **merge requests** (not pull requests), using **glab** instead of `gh`.
+- **CI** (`.gitlab-ci.yml`, GitLab CI): backend pytest, frontend lint/build/test, Playwright E2E. Runner is self-hosted (tag `homelab`), base image `registry.kirillbessonov.ru/tools/ci-base` (tag via `variables.CI_BASE_IMAGE`). No Docker daemon on the stand: image builds would go through buildctl, E2E runs processes directly + a PostgreSQL GitLab CI service.
 - **CD**: removed; deployment is performed manually through Dokploy. CI remains unchanged.
+
+### GitLab workflow (glab)
+```bash
+# Создать merge request из текущей ветки в main
+glab mr create --title "Краткое описание" --description "Что и зачем" --yes
+
+# Статус пайплайна текущей ветки (--live — следить в реальном времени)
+glab ci status --live
+glab ci status --wait          # дождаться завершения и выйти
+
+# Логи конкретной джобы (по имени или id)
+glab ci trace e2e-tests
+
+# Валидация .gitlab-ci.yml перед пушем
+glab ci lint
+```

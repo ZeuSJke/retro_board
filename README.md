@@ -133,7 +133,8 @@ npm run dev
 ```
 retro_board/
 ├── .env.example                  # Шаблон переменных окружения
-├── .github/workflows/ci.yml      # CI: тесты бэкенда + линт и тесты фронтенда
+├── .gitlab-ci.yml                # CI: тесты бэкенда + линт и тесты фронтенда
+├── ci/e2e-nginx.conf             # nginx для E2E (прокси /api и /ws, как в проде)
 ├── docker-compose.yml
 ├── docker-compose.override.yml   # Dev-оверрайд: volume mount для hot-reload
 ├── docker-compose.dokploy.yml    # Compose для развёртывания в Dokploy за Traefik
@@ -269,14 +270,20 @@ retro_board/
 
 ## CI/CD
 
-### CI — тесты и линт (`.github/workflows/ci.yml`)
+Репозиторий живёт на GitLab (`gitlab.kirillbessonov.ru/fmrm/retro_board`), GitHub — только зеркало. CI — GitLab CI (`.gitlab-ci.yml`), работа идёт через merge request'ы.
+
+### CI — тесты и линт (`.gitlab-ci.yml`)
+
+Пайплайн запускается на self-hosted раннере (тег `homelab`) для merge request'ов в `main` и пушей в `main`.
 
 | Job | Окружение | Команда |
 |---|---|---|
-| **backend-tests** | Python 3.12 | `pytest -v` |
-| **frontend-lint** | Node 20 | `npm run lint` |
-| **frontend-tests** | Node 20 | `npm test` |
-| **frontend-e2e** | Docker Compose | Playwright против полного стека |
+| **backend-tests** | Python 3.12 (uv) | `pytest -v` |
+| **frontend-lint** | Node 24 | `npm run build` + `npm run lint` |
+| **frontend-tests** | Node 24 | `npm test` |
+| **e2e-tests** | PostgreSQL (GitLab service) + Playwright | Playwright против полного стека |
+
+Базовый образ — `registry.kirillbessonov.ru/tools/ci-base` (тег задан переменной `CI_BASE_IMAGE` в `.gitlab-ci.yml`). Docker-демона на стенде нет, поэтому E2E поднимает PostgreSQL как GitLab CI service, а бэкенд, standalone Next.js и nginx (`ci/e2e-nginx.conf`) — процессами в джобе.
 
 ### Деплой
 

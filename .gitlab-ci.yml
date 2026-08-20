@@ -1,9 +1,191 @@
-проверка-образа:
-  image: registry.kirillbessonov.ru/tools/ci-base:2026-08-20
+# ─────────────────────────────────────────────────────────────────────────────
+# RetroBoard — CI на self-hosted GitLab (gitlab.kirillbessonov.ru, fmrm/retro_board)
+#
+# Перенесено с GitHub Actions (.github/workflows/ci.yml удалён).
+# Соответствия: runs-on → tags: [homelab]; actions/checkout не нужен — GitLab
+# сам клонирует репозиторий; all uses: actions/* → обычные shell-команды.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Имя базового образа вынесено в одну переменную вверху файла — тег меняется
+# в одном месте. Образ уже содержит node 24, uv+Python 3.12, pandoc,
+# helm, kubeconform, buildctl, git, jq, curl — ничего в джобах не ставим.
+variables:
+  CI_BASE_IMAGE: registry.kirillbessonov.ru/tools/ci-base:2026-08-20-1809
+
+# Общие настройки всех джоб. Раннер на стенде один (инстанс), тег homelab.
+default:
+  image: $CI_BASE_IMAGE
+  tags:
+    - homelab
+
+# Триггеры пайплайна повторяют GitHub Actions один в один:
+#   on.push.branches: [main]        → push в main
+#   on.pull_request.branches: [main] → merge request, нацеленный в main
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+
+stages:
+  - test
+
+# ── Бэкенд: pytest на SQLite ─────────────────────────────────────────────────
+backend-tests:
+  stage: test
+  variables:
+    # Как в GitHub Actions (env на уровне job): conftest.py тоже задаёт эти
+    # значения, но держим явно для паритета. Без DATABASE_URL Settings()
+    # упадёт — поле обязательное, .env в CI нет.
+    DATABASE_URL: sqlite://
+    TESTING: "true"
   script:
-    - node --version && pnpm --version && uv --version
-    - pandoc --version | head -1
-    - helm version --short && kubeconform -v
-    - buildctl debug workers
-    - echo "$UV_CACHE_DIR / $pnpm_config_store_dir"
-    - ls -la /cache/uv /cache/pnpm
+    - cd backend
+    # Python в базовом образе — управляемый uv (uv python install), поэтому
+    # --system запрещён ("externally managed"). Каноничный путь — venv:
+    #   uv venv → uv pip install → активируем venv и работаем из него.
+    # Кэш по-прежнему работает: UV_CACHE_DIR=/cache/uv смонтирован с хоста.
+    - uv venv
+    - uv pip install -r requirements-dev.txt
+    - . .venv/bin/activate
+    # Проверка целостности цепочки миграций — была в GitHub Actions.
+    - alembic heads --verbose
+    - pytest -v
+
+# ── Фронтенд: сборка + линт ──────────────────────────────────────────────────
+frontend-lint:
+  stage: test
+  script:
+    - cd frontend
+    # В репозитории npm-lockfile (package-lock.json) — ставим зависимости через
+    # npm ci. Кэш npm (npm_config_cache=/cache/npm) задан в образе и смонтирован
+    # раннером с хоста: со второго прогона npm ci заметно быстрее.
+    # node 24 в образе новее node 20 из GitHub Actions, но Next.js 15 его
+    # поддерживает.
+    - npm ci
+    - npm run build
+    - npm run lint
+
+# ── Фронтенд: юнит-тесты (Vitest) ────────────────────────────────────────────
+frontend-tests:
+  stage: test
+  script:
+    - cd frontend
+    - npm ci
+    - npm test
+
+# ── E2E: Playwright против полного стека ─────────────────────────────────────
+# В GitHub Actions E2E поднимал стек через docker compose up --build, но на этом
+# стенде Docker-демона нет и не будет (docker build/run/compose/dind запрещены).
+# Поэтому стек разворачиваем без Docker, повторяя продакшен-схему из
+# frontend/nginx.conf: standalone Next.js на 3000 + nginx на 3080:
+#   * PostgreSQL — как GitLab CI service (штатная фича docker executor'а
+#     раннера, а не docker:dind и не docker CLI; образ тянется через зеркало);
+#   * бэкенд (uvicorn), standalone Next.js и nginx — процессами в джобе.
+# nginx здесь не роскошь, а необходимость: Next-rewrite проксирует /api с
+# Host=localhost:8000, из-за чего редиректы бэкенда (redirect_slashes) утекают
+# на :8000, браузер теряет csrf_token cookie и мутации падают с 403. nginx
+# сохраняет Host клиента (см. ci/e2e-nginx.conf) — как в проде.
+e2e-tests:
+  stage: test
+  services:
+    # docker.io/library/... — подмена на зеркало Zot происходит на уровне стенда.
+    - name: docker.io/library/postgres:16-alpine
+      alias: postgres
+  variables:
+    # POSTGRES_* уходят в сервисный контейнер PostgreSQL.
+    POSTGRES_DB: retro
+    POSTGRES_USER: retro
+    POSTGRES_PASSWORD: retro
+    # Сервис в сети джобы доступен по алиасу postgres.
+    DATABASE_URL: postgresql://retro:retro@postgres:5432/retro
+    TESTING: "true"
+    CORS_ORIGINS: http://localhost:3080
+    ADMIN_LOGIN: testadmin
+    ADMIN_PASSWORD: testpassword123
+    WORKSPACE_JWT_SECRET: test-workspace-jwt-secret-at-least-32-chars
+    ADMIN_JWT_SECRET: test-admin-jwt-secret-at-least-32-chars
+    # Бэкенд слушает 8000; nginx (3080) проксирует /api на него.
+    BACKEND_URL: http://localhost:8000
+    # Образ задаёт PLAYWRIGHT_BROWSERS_PATH=/cache/playwright, но дублируем её
+    # в джобе: каталог смонтирован раннером с хоста, и браузер должен лежать
+    # именно там, чтобы переживать джобы (а не в /root/.cache контейнера).
+    PLAYWRIGHT_BROWSERS_PATH: /cache/playwright
+  script:
+    - cd backend
+    # То же, что в backend-tests: Python в образе управляется uv, ставим в venv.
+    - uv venv
+    - uv pip install -r requirements-dev.txt
+    - . .venv/bin/activate
+    # Ждём, пока сервис PostgreSQL примет соединения. pg_isready есть только
+    # внутри postgres-контейнера, в образе джобы его нет — ждём по TCP.
+    - |
+      python - <<'PY'
+      import socket, time
+      for i in range(30):
+          try:
+              socket.create_connection(("postgres", 5432), timeout=2).close()
+              print("Postgres is ready")
+              break
+          except OSError:
+              time.sleep(2)
+      else:
+          raise SystemExit("Postgres is not reachable after 60s")
+      PY
+    # Миграции — то же, что делает entrypoint.sh в Docker-образе бэкенда.
+    - alembic upgrade head
+    # Бэкенд в фоне; лог в файл, чтобы показать хвост при падении (аналог
+    # docker compose logs backend в GitHub Actions).
+    - uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/backend.log 2>&1 &
+    - cd ../frontend
+    - npm ci
+    - npm run build
+    # Фронтенд собирается с output: standalone — в проде (frontend/Dockerfile)
+    # сервер запускается как node .next/standalone/server.js, а статика лежит
+    # в .next/standalone/.next/static. Запускаем его на 3000 за nginx.
+    - cp -r .next/static .next/standalone/.next/static
+    - PORT=3000 HOSTNAME=127.0.0.1 node .next/standalone/server.js > /tmp/frontend.log 2>&1 &
+    - cd ..
+    # nginx на 3080 — единственная точка входа для браузера (как в проде).
+    # Конфиг в репозитории: ci/e2e-nginx.conf.
+    - nginx -t -c "$CI_PROJECT_DIR/ci/e2e-nginx.conf"
+    - nginx -c "$CI_PROJECT_DIR/ci/e2e-nginx.conf" -g 'daemon off;' > /tmp/nginx.log 2>&1 &
+    # Ждём готовности фронтенда и бэкенда — как wait-циклы в GitHub Actions.
+    # Бэкенд проверяем через nginx (http://localhost:3080/api/health) — заодно
+    # проверяется вся прокси-цепочка, а не только сам процесс uvicorn.
+    - |
+      for i in $(seq 1 30); do
+        if curl -sf http://localhost:3080 >/dev/null; then echo "Frontend ready"; break; fi
+        sleep 2
+      done
+      curl -sf http://localhost:3080 >/dev/null || { echo "Frontend did not start"; tail -n 50 /tmp/frontend.log; tail -n 50 /tmp/nginx.log; exit 1; }
+    - |
+      for i in $(seq 1 30); do
+        if curl -sf http://localhost:3080/api/health >/dev/null; then echo "Backend ready"; break; fi
+        sleep 2
+      done
+      curl -sf http://localhost:3080/api/health >/dev/null || { echo "Backend did not start"; tail -n 100 /tmp/backend.log; exit 1; }
+    - cd frontend
+    # Браузеры в образ не вшиты (версия должна совпадать с @playwright/test из
+    # package.json, поэтому держим её вне образа). PLAYWRIGHT_BROWSERS_PATH
+    # задан в образе и указывает на /cache/playwright — каталог смонтирован
+    # раннером с хоста: первый прогон качает ~30 секунд, дальше берётся из кэша.
+    # npx находит playwright локально в node_modules (после npm ci), в сеть не ходит.
+    - npx playwright install chromium
+    # --retries=2: бэкенд лимитирует записи slowapi'ем (30/мин на endpoint), а
+    # сьют создаёт ~35 досок за ~85 секунд — редкие 429 в бурсте возможны.
+    # Ретрай перезапускает только упавший тест (свежее окно лимита), код и
+    # тесты не трогаем. Это инвокация CI, не изменение тестов.
+    - npx playwright test --retries=2
+  after_script:
+    # Всегда показываем хвосты логов процессов — пригодится при отладке падений.
+    - |
+      if [ -f /tmp/backend.log ]; then echo "===== backend.log (tail) ====="; tail -n 100 /tmp/backend.log; fi
+      if [ -f /tmp/frontend.log ]; then echo "===== frontend.log (tail) ====="; tail -n 100 /tmp/frontend.log; fi
+      if [ -f /tmp/nginx.log ]; then echo "===== nginx.log (tail) ====="; tail -n 100 /tmp/nginx.log; fi
+  artifacts:
+    # Скриншоты/трейсы Playwright при падении — аналог actions/upload-artifact
+    # с if: failure() и retention-days: 7 в GitHub Actions.
+    when: on_failure
+    expire_in: 7 days
+    paths:
+      - frontend/test-results/
