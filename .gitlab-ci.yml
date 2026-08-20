@@ -8,3 +8,5 @@
     - id
     - echo "--- маппинг идентификаторов ---"
     - cat /proc/self/uid_map
+    - ls -la /cache/pnpm /cache/uv
+    - touch /cache/pnpm/.probe && echo "запись в кэш работает"
