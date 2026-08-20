@@ -1,12 +1,10 @@
-проверка-связности:
+проверка-buildkit:
   image: docker.io/library/debian:12
   script:
-    - echo "раннер жив"
-    - cat /etc/os-release | head -2
-    - nproc
-    - head -3 /proc/meminfo
-    - id
-    - echo "--- маппинг идентификаторов ---"
-    - cat /proc/self/uid_map
-    - ls -la /cache/pnpm /cache/uv
-    - touch /cache/pnpm/.probe && echo "запись в кэш работает"
+    - ls -la /run/buildkit/
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates
+    - |
+      curl --retry 3 --retry-all-errors --fail -sSL \
+        https://github.com/moby/buildkit/releases/download/v0.32.2/buildkit-v0.32.2.linux-amd64.tar.gz \
+        | tar -xz -C /usr/local bin/buildctl
+    - buildctl debug workers
