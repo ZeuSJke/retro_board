@@ -7,7 +7,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Имя базового образа вынесено в одну переменную вверху файла — тег меняется
-# в одном месте. Образ уже содержит node 24, pnpm, uv+Python 3.12, pandoc,
+# в одном месте. Образ уже содержит node 24, uv+Python 3.12, pandoc,
 # helm, kubeconform, buildctl, git, jq, curl — ничего в джобах не ставим.
 variables:
   CI_BASE_IMAGE: registry.kirillbessonov.ru/tools/ci-base:2026-08-20
@@ -56,9 +56,11 @@ frontend-lint:
   stage: test
   script:
     - cd frontend
-    # В репозитории npm-lockfile (package-lock.json), поэтому npm ci, а не pnpm —
-    # pnpm-кэш раннера к фронтенду не относится. node 24 в образе новее node 20
-    # из GitHub Actions, но Next.js 15 его поддерживает.
+    # В репозитории npm-lockfile (package-lock.json) — ставим зависимости через
+    # npm ci. Кэш npm (npm_config_cache=/cache/npm) задан в образе и смонтирован
+    # раннером с хоста: со второго прогона npm ci заметно быстрее.
+    # node 24 в образе новее node 20 из GitHub Actions, но Next.js 15 его
+    # поддерживает.
     - npm ci
     - npm run build
     - npm run lint
@@ -159,11 +161,9 @@ e2e-tests:
     # package.json, поэтому держим её вне образа). PLAYWRIGHT_BROWSERS_PATH
     # задан в образе и указывает на /cache/playwright — каталог смонтирован
     # раннером с хоста: первый прогон качает ~30 секунд, дальше берётся из кэша.
-    # Вызываем локальный бинарник из node_modules (не pnpm exec: pnpm 11 при
-    # exec сам запускает pnpm install, а у нас npm-lockfile, и повторное
-    # разрешение зависимостей из npm-реестра в джобе не нужно).
-    - ./node_modules/.bin/playwright install chromium
-    - ./node_modules/.bin/playwright test
+    # npx находит playwright локально в node_modules (после npm ci), в сеть не ходит.
+    - npx playwright install chromium
+    - npx playwright test
   after_script:
     # Всегда показываем хвосты логов процессов — пригодится при отладке падений.
     - |
