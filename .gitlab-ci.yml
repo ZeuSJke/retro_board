@@ -40,10 +40,13 @@ backend-tests:
     TESTING: "true"
   script:
     - cd backend
-    # uv уже в базовом образе, а UV_CACHE_DIR=/cache/uv смонтирован раннером
-    # с хоста и переживает джобу — установка зависимостей кэшируется между
-    # прогонами. --system: ставим в системный Python 3.12 образа, venv не нужен.
-    - uv pip install --system -r requirements-dev.txt
+    # Python в базовом образе — управляемый uv (uv python install), поэтому
+    # --system запрещён ("externally managed"). Каноничный путь — venv:
+    #   uv venv → uv pip install → активируем venv и работаем из него.
+    # Кэш по-прежнему работает: UV_CACHE_DIR=/cache/uv смонтирован с хоста.
+    - uv venv
+    - uv pip install -r requirements-dev.txt
+    - . .venv/bin/activate
     # Проверка целостности цепочки миграций — была в GitHub Actions.
     - alembic heads --verbose
     - pytest -v
@@ -102,7 +105,10 @@ e2e-tests:
     NEXT_PUBLIC_WS_HOST: localhost:8000
   script:
     - cd backend
-    - uv pip install --system -r requirements-dev.txt
+    # То же, что в backend-tests: Python в образе управляется uv, ставим в venv.
+    - uv venv
+    - uv pip install -r requirements-dev.txt
+    - . .venv/bin/activate
     # Ждём, пока сервис PostgreSQL примет соединения. pg_isready есть только
     # внутри postgres-контейнера, в образе джобы его нет — ждём по TCP.
     - |
