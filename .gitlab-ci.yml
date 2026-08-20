@@ -1,9 +1,163 @@
-проверка-образа:
-  image: registry.kirillbessonov.ru/tools/ci-base:2026-08-20
+# ─────────────────────────────────────────────────────────────────────────────
+# RetroBoard — CI на self-hosted GitLab (gitlab.kirillbessonov.ru, fmrm/retro_board)
+#
+# Перенесено с GitHub Actions (.github/workflows/ci.yml удалён).
+# Соответствия: runs-on → tags: [homelab]; actions/checkout не нужен — GitLab
+# сам клонирует репозиторий; all uses: actions/* → обычные shell-команды.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Имя базового образа вынесено в одну переменную вверху файла — тег меняется
+# в одном месте. Образ уже содержит node 24, pnpm, uv+Python 3.12, pandoc,
+# helm, kubeconform, buildctl, git, jq, curl — ничего в джобах не ставим.
+variables:
+  CI_BASE_IMAGE: registry.kirillbessonov.ru/tools/ci-base:2026-08-20
+
+# Общие настройки всех джоб. Раннер на стенде один (инстанс), тег homelab.
+default:
+  image: $CI_BASE_IMAGE
+  tags:
+    - homelab
+
+# Триггеры пайплайна повторяют GitHub Actions один в один:
+#   on.push.branches: [main]        → push в main
+#   on.pull_request.branches: [main] → merge request, нацеленный в main
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+
+stages:
+  - test
+
+# ── Бэкенд: pytest на SQLite ─────────────────────────────────────────────────
+backend-tests:
+  stage: test
+  variables:
+    # Как в GitHub Actions (env на уровне job): conftest.py тоже задаёт эти
+    # значения, но держим явно для паритета. Без DATABASE_URL Settings()
+    # упадёт — поле обязательное, .env в CI нет.
+    DATABASE_URL: sqlite://
+    TESTING: "true"
   script:
-    - node --version && pnpm --version && uv --version
-    - pandoc --version | head -1
-    - helm version --short && kubeconform -v
-    - buildctl debug workers
-    - echo "$UV_CACHE_DIR / $pnpm_config_store_dir"
-    - ls -la /cache/uv /cache/pnpm
+    - cd backend
+    # uv уже в базовом образе, а UV_CACHE_DIR=/cache/uv смонтирован раннером
+    # с хоста и переживает джобу — установка зависимостей кэшируется между
+    # прогонами. --system: ставим в системный Python 3.12 образа, venv не нужен.
+    - uv pip install --system -r requirements-dev.txt
+    # Проверка целостности цепочки миграций — была в GitHub Actions.
+    - alembic heads --verbose
+    - pytest -v
+
+# ── Фронтенд: сборка + линт ──────────────────────────────────────────────────
+frontend-lint:
+  stage: test
+  script:
+    - cd frontend
+    # В репозитории npm-lockfile (package-lock.json), поэтому npm ci, а не pnpm —
+    # pnpm-кэш раннера к фронтенду не относится. node 24 в образе новее node 20
+    # из GitHub Actions, но Next.js 15 его поддерживает.
+    - npm ci
+    - npm run build
+    - npm run lint
+
+# ── Фронтенд: юнит-тесты (Vitest) ────────────────────────────────────────────
+frontend-tests:
+  stage: test
+  script:
+    - cd frontend
+    - npm ci
+    - npm test
+
+# ── E2E: Playwright против полного стека ─────────────────────────────────────
+# В GitHub Actions E2E поднимал стек через docker compose up --build, но на этом
+# стенде Docker-демона нет и не будет (docker build/run/compose/dind запрещены).
+# Поэтому стек разворачиваем без Docker:
+#   * PostgreSQL — как GitLab CI service (это штатная фича docker executor'а
+#     раннера, а не docker:dind и не docker CLI; образ тянется через зеркало);
+#   * бэкенд (uvicorn) и фронтенд (next start) — обычными процессами в джобе.
+e2e-tests:
+  stage: test
+  services:
+    # docker.io/library/... — подмена на зеркало Zot происходит на уровне стенда.
+    - name: docker.io/library/postgres:16-alpine
+      alias: postgres
+  variables:
+    # POSTGRES_* уходят в сервисный контейнер PostgreSQL.
+    POSTGRES_DB: retro
+    POSTGRES_USER: retro
+    POSTGRES_PASSWORD: retro
+    # Сервис в сети джобы доступен по алиасу postgres.
+    DATABASE_URL: postgresql://retro:retro@postgres:5432/retro
+    TESTING: "true"
+    CORS_ORIGINS: http://localhost:3080
+    ADMIN_LOGIN: testadmin
+    ADMIN_PASSWORD: testpassword123
+    WORKSPACE_JWT_SECRET: test-workspace-jwt-secret-at-least-32-chars
+    ADMIN_JWT_SECRET: test-admin-jwt-secret-at-least-32-chars
+    # Фронтенд (next start) проксирует /api на бэкенд через rewrite.
+    BACKEND_URL: http://localhost:8000
+    # В Docker WS проксировал nginx, которого здесь нет, поэтому фронтенд ходит
+    # по WebSocket напрямую на бэкенд. NEXT_PUBLIC_* инлайнится в клиентский
+    # JS именно на этапе build (ниже), поэтому переменная задана в job.
+    NEXT_PUBLIC_WS_HOST: localhost:8000
+  script:
+    - cd backend
+    - uv pip install --system -r requirements-dev.txt
+    # Ждём, пока сервис PostgreSQL примет соединения. pg_isready есть только
+    # внутри postgres-контейнера, в образе джобы его нет — ждём по TCP.
+    - |
+      python - <<'PY'
+      import socket, time
+      for i in range(30):
+          try:
+              socket.create_connection(("postgres", 5432), timeout=2).close()
+              print("Postgres is ready")
+              break
+          except OSError:
+              time.sleep(2)
+      else:
+          raise SystemExit("Postgres is not reachable after 60s")
+      PY
+    # Миграции — то же, что делает entrypoint.sh в Docker-образе бэкенда.
+    - alembic upgrade head
+    # Бэкенд в фоне; лог в файл, чтобы показать хвост при падении (аналог
+    # docker compose logs backend в GitHub Actions).
+    - uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/backend.log 2>&1 &
+    - cd ../frontend
+    - npm ci
+    - npm run build
+    # Playwright ожидает фронтенд по http://localhost:3080 (baseURL в
+    # playwright.config.ts) — поднимаем next start именно на этом порту.
+    - npm run start -- -p 3080 > /tmp/frontend.log 2>&1 &
+    - cd ..
+    # Ждём готовности бэкенда и фронтенда — как wait-циклы в GitHub Actions.
+    - |
+      for i in $(seq 1 30); do
+        if curl -sf http://localhost:8000/api/health >/dev/null; then echo "Backend ready"; break; fi
+        sleep 2
+      done
+      curl -sf http://localhost:8000/api/health >/dev/null || { echo "Backend did not start"; tail -n 100 /tmp/backend.log; exit 1; }
+    - |
+      for i in $(seq 1 30); do
+        if curl -sf http://localhost:3080 >/dev/null; then echo "Frontend ready"; break; fi
+        sleep 2
+      done
+      curl -sf http://localhost:3080 >/dev/null || { echo "Frontend did not start"; tail -n 100 /tmp/frontend.log; exit 1; }
+    - cd frontend
+    # Браузеров в базовом образе нет — качаем chromium средствами Playwright.
+    # Без --with-deps: системные библиотеки для chromium, если их не хватает,
+    # добавляем в базовый образ (по договорённости со стендом), а не в before_script.
+    - npx playwright install chromium
+    - npx playwright test
+  after_script:
+    # Всегда показываем хвосты логов процессов — пригодится при отладке падений.
+    - |
+      if [ -f /tmp/backend.log ]; then echo "===== backend.log (tail) ====="; tail -n 100 /tmp/backend.log; fi
+      if [ -f /tmp/frontend.log ]; then echo "===== frontend.log (tail) ====="; tail -n 100 /tmp/frontend.log; fi
+  artifacts:
+    # Скриншоты/трейсы Playwright при падении — аналог actions/upload-artifact
+    # с if: failure() и retention-days: 7 в GitHub Actions.
+    when: on_failure
+    expire_in: 7 days
+    paths:
+      - frontend/test-results/
