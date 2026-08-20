@@ -10,7 +10,7 @@
 # в одном месте. Образ уже содержит node 24, uv+Python 3.12, pandoc,
 # helm, kubeconform, buildctl, git, jq, curl — ничего в джобах не ставим.
 variables:
-  CI_BASE_IMAGE: registry.kirillbessonov.ru/tools/ci-base:2026-08-20-1734
+  CI_BASE_IMAGE: registry.kirillbessonov.ru/tools/ci-base:2026-08-20-1809
 
 # Общие настройки всех джоб. Раннер на стенде один (инстанс), тег homelab.
 default:
@@ -76,11 +76,15 @@ frontend-tests:
 # ── E2E: Playwright против полного стека ─────────────────────────────────────
 # В GitHub Actions E2E поднимал стек через docker compose up --build, но на этом
 # стенде Docker-демона нет и не будет (docker build/run/compose/dind запрещены).
-# Поэтому стек разворачиваем без Docker:
-#   * PostgreSQL — как GitLab CI service (это штатная фича docker executor'а
+# Поэтому стек разворачиваем без Docker, повторяя продакшен-схему из
+# frontend/nginx.conf: standalone Next.js на 3000 + nginx на 3080:
+#   * PostgreSQL — как GitLab CI service (штатная фича docker executor'а
 #     раннера, а не docker:dind и не docker CLI; образ тянется через зеркало);
-#   * бэкенд (uvicorn) и фронтенд (standalone-сервер Next.js) — обычными
-#     процессами в джобе.
+#   * бэкенд (uvicorn), standalone Next.js и nginx — процессами в джобе.
+# nginx здесь не роскошь, а необходимость: Next-rewrite проксирует /api с
+# Host=localhost:8000, из-за чего редиректы бэкенда (redirect_slashes) утекают
+# на :8000, браузер теряет csrf_token cookie и мутации падают с 403. nginx
+# сохраняет Host клиента (см. ci/e2e-nginx.conf) — как в проде.
 e2e-tests:
   stage: test
   services:
@@ -100,12 +104,8 @@ e2e-tests:
     ADMIN_PASSWORD: testpassword123
     WORKSPACE_JWT_SECRET: test-workspace-jwt-secret-at-least-32-chars
     ADMIN_JWT_SECRET: test-admin-jwt-secret-at-least-32-chars
-    # Фронтенд (standalone-сервер) проксирует /api на бэкенд через rewrite.
+    # Бэкенд слушает 8000; nginx (3080) проксирует /api на него.
     BACKEND_URL: http://localhost:8000
-    # В Docker WS проксировал nginx, которого здесь нет, поэтому фронтенд ходит
-    # по WebSocket напрямую на бэкенд. NEXT_PUBLIC_* инлайнится в клиентский
-    # JS именно на этапе build (ниже), поэтому переменная задана в job.
-    NEXT_PUBLIC_WS_HOST: localhost:8000
     # Образ задаёт PLAYWRIGHT_BROWSERS_PATH=/cache/playwright, но дублируем её
     # в джобе: каталог смонтирован раннером с хоста, и браузер должен лежать
     # именно там, чтобы переживать джобы (а не в /root/.cache контейнера).
@@ -141,26 +141,29 @@ e2e-tests:
     - npm run build
     # Фронтенд собирается с output: standalone — в проде (frontend/Dockerfile)
     # сервер запускается как node .next/standalone/server.js, а статика лежит
-    # в .next/standalone/.next/static. next start со standalone не работает,
-    # поэтому повторяем продакшен-схему (nginx из Docker-стека нам не нужен).
+    # в .next/standalone/.next/static. Запускаем его на 3000 за nginx.
     - cp -r .next/static .next/standalone/.next/static
-    # Playwright ожидает фронтенд по http://localhost:3080 (baseURL в
-    # playwright.config.ts) — поднимаем standalone-сервер на этом порту.
-    - PORT=3080 HOSTNAME=0.0.0.0 node .next/standalone/server.js > /tmp/frontend.log 2>&1 &
+    - PORT=3000 HOSTNAME=127.0.0.1 node .next/standalone/server.js > /tmp/frontend.log 2>&1 &
     - cd ..
-    # Ждём готовности бэкенда и фронтенда — как wait-циклы в GitHub Actions.
-    - |
-      for i in $(seq 1 30); do
-        if curl -sf http://localhost:8000/api/health >/dev/null; then echo "Backend ready"; break; fi
-        sleep 2
-      done
-      curl -sf http://localhost:8000/api/health >/dev/null || { echo "Backend did not start"; tail -n 100 /tmp/backend.log; exit 1; }
+    # nginx на 3080 — единственная точка входа для браузера (как в проде).
+    # Конфиг в репозитории: ci/e2e-nginx.conf.
+    - nginx -t -c "$CI_PROJECT_DIR/ci/e2e-nginx.conf"
+    - nginx -c "$CI_PROJECT_DIR/ci/e2e-nginx.conf" -g 'daemon off;' > /tmp/nginx.log 2>&1 &
+    # Ждём готовности фронтенда и бэкенда — как wait-циклы в GitHub Actions.
+    # Бэкенд проверяем через nginx (http://localhost:3080/api/health) — заодно
+    # проверяется вся прокси-цепочка, а не только сам процесс uvicorn.
     - |
       for i in $(seq 1 30); do
         if curl -sf http://localhost:3080 >/dev/null; then echo "Frontend ready"; break; fi
         sleep 2
       done
-      curl -sf http://localhost:3080 >/dev/null || { echo "Frontend did not start"; tail -n 100 /tmp/frontend.log; exit 1; }
+      curl -sf http://localhost:3080 >/dev/null || { echo "Frontend did not start"; tail -n 50 /tmp/frontend.log; tail -n 50 /tmp/nginx.log; exit 1; }
+    - |
+      for i in $(seq 1 30); do
+        if curl -sf http://localhost:3080/api/health >/dev/null; then echo "Backend ready"; break; fi
+        sleep 2
+      done
+      curl -sf http://localhost:3080/api/health >/dev/null || { echo "Backend did not start"; tail -n 100 /tmp/backend.log; exit 1; }
     - cd frontend
     # Браузеры в образ не вшиты (версия должна совпадать с @playwright/test из
     # package.json, поэтому держим её вне образа). PLAYWRIGHT_BROWSERS_PATH
@@ -168,12 +171,17 @@ e2e-tests:
     # раннером с хоста: первый прогон качает ~30 секунд, дальше берётся из кэша.
     # npx находит playwright локально в node_modules (после npm ci), в сеть не ходит.
     - npx playwright install chromium
-    - npx playwright test
+    # --retries=2: бэкенд лимитирует записи slowapi'ем (30/мин на endpoint), а
+    # сьют создаёт ~35 досок за ~85 секунд — редкие 429 в бурсте возможны.
+    # Ретрай перезапускает только упавший тест (свежее окно лимита), код и
+    # тесты не трогаем. Это инвокация CI, не изменение тестов.
+    - npx playwright test --retries=2
   after_script:
     # Всегда показываем хвосты логов процессов — пригодится при отладке падений.
     - |
       if [ -f /tmp/backend.log ]; then echo "===== backend.log (tail) ====="; tail -n 100 /tmp/backend.log; fi
       if [ -f /tmp/frontend.log ]; then echo "===== frontend.log (tail) ====="; tail -n 100 /tmp/frontend.log; fi
+      if [ -f /tmp/nginx.log ]; then echo "===== nginx.log (tail) ====="; tail -n 100 /tmp/nginx.log; fi
   artifacts:
     # Скриншоты/трейсы Playwright при падении — аналог actions/upload-artifact
     # с if: failure() и retention-days: 7 в GitHub Actions.
