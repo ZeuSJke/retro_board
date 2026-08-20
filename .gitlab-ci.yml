@@ -132,9 +132,14 @@ e2e-tests:
     - cd ../frontend
     - npm ci
     - npm run build
+    # Фронтенд собирается с output: standalone — в проде (frontend/Dockerfile)
+    # сервер запускается как node .next/standalone/server.js, а статика лежит
+    # в .next/standalone/.next/static. next start со standalone не работает,
+    # поэтому повторяем продакшен-схему (nginx из Docker-стека нам не нужен).
+    - cp -r .next/static .next/standalone/.next/static
     # Playwright ожидает фронтенд по http://localhost:3080 (baseURL в
-    # playwright.config.ts) — поднимаем next start именно на этом порту.
-    - npm run start -- -p 3080 > /tmp/frontend.log 2>&1 &
+    # playwright.config.ts) — поднимаем standalone-сервер на этом порту.
+    - PORT=3080 HOSTNAME=0.0.0.0 node .next/standalone/server.js > /tmp/frontend.log 2>&1 &
     - cd ..
     # Ждём готовности бэкенда и фронтенда — как wait-циклы в GitHub Actions.
     - |
@@ -150,11 +155,12 @@ e2e-tests:
       done
       curl -sf http://localhost:3080 >/dev/null || { echo "Frontend did not start"; tail -n 100 /tmp/frontend.log; exit 1; }
     - cd frontend
-    # Браузеров в базовом образе нет — качаем chromium средствами Playwright.
-    # Без --with-deps: системные библиотеки для chromium, если их не хватает,
-    # добавляем в базовый образ (по договорённости со стендом), а не в before_script.
-    - npx playwright install chromium
-    - npx playwright test
+    # Браузеры в образ не вшиты (версия должна совпадать с @playwright/test из
+    # package.json, поэтому держим её вне образа). PLAYWRIGHT_BROWSERS_PATH
+    # задан в образе и указывает на /cache/playwright — каталог смонтирован
+    # раннером с хоста: первый прогон качает ~30 секунд, дальше берётся из кэша.
+    - pnpm exec playwright install chromium
+    - pnpm exec playwright test
   after_script:
     # Всегда показываем хвосты логов процессов — пригодится при отладке падений.
     - |
