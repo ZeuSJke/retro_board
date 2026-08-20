@@ -4,5 +4,7 @@
     - echo "раннер жив"
     - cat /etc/os-release | head -2
     - nproc
-    - free -h | head -2
+    - head -3 /proc/meminfo
     - id
+    - echo "--- маппинг идентификаторов ---"
+    - cat /proc/self/uid_map
