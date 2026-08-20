@@ -159,8 +159,11 @@ e2e-tests:
     # package.json, поэтому держим её вне образа). PLAYWRIGHT_BROWSERS_PATH
     # задан в образе и указывает на /cache/playwright — каталог смонтирован
     # раннером с хоста: первый прогон качает ~30 секунд, дальше берётся из кэша.
-    - pnpm exec playwright install chromium
-    - pnpm exec playwright test
+    # Вызываем локальный бинарник из node_modules (не pnpm exec: pnpm 11 при
+    # exec сам запускает pnpm install, а у нас npm-lockfile, и повторное
+    # разрешение зависимостей из npm-реестра в джобе не нужно).
+    - ./node_modules/.bin/playwright install chromium
+    - ./node_modules/.bin/playwright test
   after_script:
     # Всегда показываем хвосты логов процессов — пригодится при отладке падений.
     - |
