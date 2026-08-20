@@ -1,0 +1,8 @@
+проверка-связности:
+  image: docker.io/library/debian:12
+  script:
+    - echo "раннер жив"
+    - cat /etc/os-release | head -2
+    - nproc
+    - free -h | head -2
+    - id
