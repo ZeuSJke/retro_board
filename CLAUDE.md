@@ -56,7 +56,7 @@ ADMIN_LOGIN=testadmin ADMIN_PASSWORD=testpassword123 npx playwright test
 - **Models** (`app/models.py`): `Workspace → Board → Column → Card/CardGroup`, plus `ActionItem` and `BoardSummary` per board. Boards use **soft delete** via `deleted_at`; do not physically remove them. `Board` has a composite uniqueness on `(workspace_id, name)` and `(workspace_id, slug)`.
 - **WebSocket manager** (`app/ws_manager.py`): in-memory singleton tracking rooms, usernames, facilitators, phases, timer state, and session_ids. **This requires a single uvicorn worker** — do not scale workers without moving state out of process. Broadcast with `await manager.broadcast(board_id, "event_name", data_dict)` (NOT `broadcast_to_board()`).
 - **Auth dependencies** (`app/workspace_auth.py`): `get_current_workspace()` for board routes, `get_admin_user()` for admin routes.
-- **Rate limiting** (`app/limiter.py`, slowapi): 100/min reads, 30/min writes, 5/min AI, 20 msg/sec WebSocket.
+- **Rate limiting** (`app/limiter.py`, slowapi): 100/min reads, 30/min writes, 5/min AI, 20 msg/sec WebSocket. **Disabled when `TESTING=true`** (unit tests and E2E) — E2E creates ~35 boards per minute and would trip the 30/min write limit; prod limits are unchanged. The limiter itself is verified in `tests/test_rate_limiting.py` (it flips `limiter.enabled = True` and asserts 429).
 - **Config** (`app/config.py`): Pydantic Settings v2 — must keep `extra="ignore"` so extra Docker env vars don't blow up startup.
 
 ### AI (`app/ai/`)
