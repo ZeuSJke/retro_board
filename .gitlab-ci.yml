@@ -111,6 +111,15 @@ e2e-tests:
     # именно там, чтобы переживать джобы (а не в /root/.cache контейнера).
     PLAYWRIGHT_BROWSERS_PATH: /cache/playwright
   script:
+    # E2E не должен зависеть от внешней сети: Google Fonts (fonts.googleapis.com
+    # и fonts.gstatic.com) со стенда грузятся 10-20 секунд (флакающий внешний
+    # DNS) — зависший CSS держит событие "load" страницы, а поздний swap шрифта
+    # меняет геометрию кнопок, и Playwright падает с "element is not stable".
+    # Заворачиваем шрифтовые хосты на 127.0.0.1: запрос падает мгновенно,
+    # страница остаётся на fallback-шрифтах со стабильной вёрсткой. Доступные
+    # имена элементов не меняются — они строятся из DOM-текста (лигатуры
+    # иконок), а не из отрисовки глифов.
+    - echo "127.0.0.1 fonts.googleapis.com fonts.gstatic.com" >> /etc/hosts
     - cd backend
     # То же, что в backend-tests: Python в образе управляется uv, ставим в venv.
     - uv venv
