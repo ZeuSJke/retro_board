@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -304,7 +305,8 @@ async def _generate_summary_internal(
         return None
 
     try:
-        ai_result = generate_summary(board_data)
+        # AI-клиент синхронный и может занимать десятки секунд — не блокируем event loop
+        ai_result = await asyncio.to_thread(generate_summary, board_data)
         logger.info("AI summary generated for board %s", board_id)
     except Exception as e:
         logger.error("AI summary generation failed for board %s: %s", board_id, e)

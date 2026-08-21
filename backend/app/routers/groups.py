@@ -1,11 +1,11 @@
 import asyncio
 import logging
-import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app import models, schemas
 from app.utils import get_or_404
@@ -212,8 +212,8 @@ async def auto_cluster(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """AI-кластеризация негруппированных карточек в колонке."""
-    # Check API key configured
-    if not os.getenv("OPENROUTER_API_KEY"):
+    # Check AI configured
+    if not settings.ai_configured:
         raise HTTPException(503, "AI-сервис не настроен")
 
     # Load column, verify workspace ownership
