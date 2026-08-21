@@ -435,7 +435,10 @@ ws://localhost/ws/{board_id}?workspace_token={token}
 | `JIRA_URL` | URL Jira-инстанса (опционально) |
 | `JIRA_EMAIL` | Email для Jira API (опционально) |
 | `JIRA_API_TOKEN` | API-токен Jira (опционально) |
-| `OPENROUTER_API_KEY` | API-ключ OpenRouter для AI-функций (опционально) |
+| `AI_BASE_URL` | OpenAI-совместимый эндпоинт AI-гейта, напр. `https://llm-api.kirillbessonov.ru/v1` (обязательно для AI-функций) |
+| `AI_API_KEY` | API-ключ AI-гейта (опционально, если гейт без авторизации) |
+| `AI_MODEL` | Модель AI-гейта (по умолчанию: `qwen3.6-35b-a3b-mtp-ud-q8_k_xl`) |
+| `AI_DISABLE_THINKING` | Отключать reasoning у Qwen3 через `enable_thinking=false` (по умолчанию: true; иначе content пустой) |
 | `WORKSPACE_JWT_SECRET` | Секрет для JWT токенов workspace (обязательно, 32+ символов) |
 | `ADMIN_JWT_SECRET` | Секрет для JWT токенов админа (обязательно, 32+ символов) |
 | `WORKSPACE_JWT_EXPIRE_HOURS` | Срок жизни workspace токена (по умолчанию: 168 = 7 дней) |
@@ -449,7 +452,9 @@ ws://localhost/ws/{board_id}?workspace_token={token}
 | `CORS_ORIGINS` | Разрешённые CORS-источники |
 | `WORKSPACE_JWT_SECRET` | Секрет для JWT токенов workspace |
 | `ADMIN_JWT_SECRET` | Секрет для JWT токенов админа |
-| `OPENROUTER_API_KEY` | API-ключ OpenRouter (опционально) |
+| `AI_BASE_URL` | OpenAI-совместимый эндпоинт AI-гейта (опционально; без него AI-функции отключены) |
+| `AI_API_KEY` | API-ключ AI-гейта (опционально) |
+| `AI_MODEL` | Модель AI-гейта (по умолчанию: `qwen3.6-35b-a3b-mtp-ud-q8_k_xl`) |
 
 ### `frontend/.env.local` (локальная разработка)
 

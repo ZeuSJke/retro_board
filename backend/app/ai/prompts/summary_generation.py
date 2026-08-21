@@ -26,10 +26,9 @@ SUMMARY_GENERATION_PROMPT = """Проанализируй данные ретр�
 Ответ только JSON, без пояснений."""
 
 SUMMARY_GENERATION_CONFIG = AIModelConfig(
-    model="google/gemini-3-flash-preview",
     temperature=0.4,
     max_tokens=1000,
-    timeout=60,
+    timeout=90,
     retries=2,
 )
 

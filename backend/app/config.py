@@ -27,6 +27,12 @@ class Settings(BaseSettings):
         True  # False для on-premise Jira с самоподписанным сертификатом
     )
 
+    # AI — self-hosted LiteLLM gateway (OpenAI-compatible /v1 API)
+    ai_base_url: str = ""  # env AI_BASE_URL, e.g. https://llm-api.kirillbessonov.ru/v1
+    ai_api_key: str = ""  # env AI_API_KEY (может быть пустым, если гейт без авторизации)
+    ai_model: str = "qwen3.6-35b-a3b-mtp-ud-q8_k_xl"  # env AI_MODEL
+    ai_disable_thinking: bool = True  # env AI_DISABLE_THINKING
+
     # Workspace JWT secrets and admin credentials
     workspace_jwt_secret: str = "change-me-workspace-secret"
     workspace_jwt_expire_hours: int = 168  # 7 дней
@@ -38,6 +44,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     @field_validator("workspace_jwt_secret")
@@ -87,6 +94,10 @@ class Settings(BaseSettings):
     @property
     def jira_configured(self) -> bool:
         return bool(self.jira_url and self.jira_email and self.jira_api_token)
+
+    @property
+    def ai_configured(self) -> bool:
+        return bool(self.ai_base_url)
 
     @property
     def cors_origins_list(self) -> list[str]:

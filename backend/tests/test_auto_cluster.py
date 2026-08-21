@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+from app.config import settings
+
 
 # ---------------------------------------------------------------------------
 # Unit tests for parse_clustering_response
@@ -183,7 +185,7 @@ class TestAutoCluster:
         })
 
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+             patch.object(settings, "ai_base_url", "http://llm.test/v1"):
             mock_ai.generate.return_value = ai_response
 
             resp = client.post(
@@ -207,7 +209,7 @@ class TestAutoCluster:
             client, sample_column["id"], ["Only card"], workspace_headers
         )
 
-        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+        with patch.object(settings, "ai_base_url", "http://llm.test/v1"):
             resp = client.post(
                 "/api/groups/auto-cluster",
                 json={"column_id": sample_column["id"]},
@@ -219,7 +221,7 @@ class TestAutoCluster:
         self, client, sample_column, workspace_headers
     ):
         """Column with no ungrouped cards → 400."""
-        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+        with patch.object(settings, "ai_base_url", "http://llm.test/v1"):
             resp = client.post(
                 "/api/groups/auto-cluster",
                 json={"column_id": sample_column["id"]},
@@ -229,7 +231,7 @@ class TestAutoCluster:
 
     def test_column_not_found_returns_404(self, client, workspace_headers):
         """Column not found → 404."""
-        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+        with patch.object(settings, "ai_base_url", "http://llm.test/v1"):
             resp = client.post(
                 "/api/groups/auto-cluster",
                 json={"column_id": "nonexistent-column-id"},
@@ -273,7 +275,7 @@ class TestAutoCluster:
         db_session.add(other_col)
         db_session.commit()
 
-        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+        with patch.object(settings, "ai_base_url", "http://llm.test/v1"):
             resp = client.post(
                 "/api/groups/auto-cluster",
                 json={"column_id": "other-col-id"},
@@ -308,7 +310,7 @@ class TestAutoCluster:
         })
 
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+             patch.object(settings, "ai_base_url", "http://llm.test/v1"):
             mock_ai.generate.return_value = ai_response
 
             resp = client.post(
@@ -338,7 +340,7 @@ class TestAutoCluster:
         )
 
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+             patch.object(settings, "ai_base_url", "http://llm.test/v1"):
             mock_ai.generate.side_effect = RuntimeError("Connection timeout")
 
             resp = client.post(
@@ -349,14 +351,9 @@ class TestAutoCluster:
 
         assert resp.status_code == 503
 
-    def test_no_api_key_returns_503(self, client, sample_column, workspace_headers):
-        """No OPENROUTER_API_KEY configured → 503."""
-        import os
-        # Remove the key if it happens to be set in test env
-        env_without_key = {k: v for k, v in os.environ.items() if k != "OPENROUTER_API_KEY"}
-        with patch.dict("os.environ", env_without_key, clear=True):
-            # Re-add the required env vars
-            os.environ.setdefault("DATABASE_URL", "sqlite://")
+    def test_ai_not_configured_returns_503(self, client, sample_column, workspace_headers):
+        """AI_BASE_URL not configured → 503."""
+        with patch.object(settings, "ai_base_url", ""):
             resp = client.post(
                 "/api/groups/auto-cluster",
                 json={"column_id": sample_column["id"]},
@@ -383,7 +380,7 @@ class TestAutoCluster:
         })
 
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+             patch.object(settings, "ai_base_url", "http://llm.test/v1"):
             mock_ai.generate.return_value = ai_response
 
             resp = client.post(
@@ -425,7 +422,7 @@ class TestAutoCluster:
         })
 
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+             patch.object(settings, "ai_base_url", "http://llm.test/v1"):
             mock_ai.generate.return_value = ai_response
 
             resp = client.post(
