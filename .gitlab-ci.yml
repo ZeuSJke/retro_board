@@ -10,7 +10,7 @@
 # в одном месте. Образ уже содержит node 24, uv+Python 3.12, pandoc,
 # helm, kubeconform, buildctl, git, jq, curl — ничего в джобах не ставим.
 variables:
-  CI_BASE_IMAGE: registry.kirillbessonov.ru/tools/ci-base:2026-08-20-1809
+  CI_BASE_IMAGE: registry.kirillbessonov.ru/homelab/infrastructure/ci-base:2026-08-20-1809
 
 # Общие настройки всех джоб. Раннер на стенде один (инстанс), тег homelab.
 default:
@@ -88,7 +88,8 @@ frontend-tests:
 e2e-tests:
   stage: test
   services:
-    # docker.io/library/... — подмена на зеркало Zot происходит на уровне стенда.
+    # docker.io/library/... — подмена на зеркало dh-mirror.gitverse.ru происходит
+    # на уровне машины (зеркалирование registry на стенде), а не у Zot — Zot снесён.
     - name: docker.io/library/postgres:16-alpine
       alias: postgres
   variables:
