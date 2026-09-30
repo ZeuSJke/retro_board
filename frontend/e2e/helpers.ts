@@ -165,7 +165,7 @@ export async function ensureE2EWorkspace(
   for (let i = 0; i <= 3; i++) {
     createRes = await request.post(`${ADMIN_API}/workspaces`, {
       data: { slug: workspaceSlug, name: workspaceName, access_key: accessKey },
-      headers: { Cookie: adminCookie },
+      headers: await getAdminMutHeaders(request),
     })
     if (createRes.ok() || createRes.status() === 409) break
     if (createRes.status() === 500 && i < 3) {
@@ -200,6 +200,16 @@ export async function getAdminCookie(request: APIRequestContext): Promise<string
   return cachedAdminCookie
 }
 
+/** Headers for admin MUTATING requests: admin cookie + CSRF pair.
+ * CSRF is enforced on /api/admin/* (except login) — plain `{ Cookie }`
+ * gets 403. Safe-method GETs don't need it. */
+export async function getAdminMutHeaders(request: APIRequestContext): Promise<Record<string, string>> {
+  const cookie = await getAdminCookie(request)
+  const csrf = await getCsrfHeaders(request)
+  const csrfCookie = csrf['Cookie'] ? `; ${csrf['Cookie']}` : ''
+  return { ...csrf, Cookie: `${cookie}${csrfCookie}` }
+}
+
 /** Get workspace by slug from admin API. */
 export async function getWorkspaceBySlug(
   request: APIRequestContext,
@@ -221,9 +231,12 @@ export async function updateWorkspaceName(
   newName: string,
 ): Promise<void> {
   const cookie = await getAdminCookie(request)
+  const csrf = await getCsrfHeaders(request)
+  const csrfCookie = csrf['Cookie'] ? `; ${csrf['Cookie']}` : ''
+  const headers = { ...csrf, Cookie: `${cookie}${csrfCookie}` }
   await request.patch(`${ADMIN_API}/workspaces/${workspaceId}`, {
     data: { name: newName },
-    headers: { Cookie: cookie },
+    headers,
   })
 }
 
@@ -232,9 +245,9 @@ export async function deleteWorkspace(
   request: APIRequestContext,
   workspaceId: string,
 ): Promise<void> {
-  const cookie = await getAdminCookie(request)
+  const headers = await getAdminMutHeaders(request)
   await request.delete(`${ADMIN_API}/workspaces/${workspaceId}`, {
-    headers: { Cookie: cookie },
+    headers,
   })
 }
 
