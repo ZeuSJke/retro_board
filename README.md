@@ -22,9 +22,8 @@
 - **Фасилитатор** — режим ведущего: фазы ретро (мозговой штурм → обсуждение → голосование), управление таймером
 - **Таймер** — обратный отсчёт для временных слотов ретро (старт / пауза / сброс), синхронизируется через WebSocket
 - **Лимит голосов** — настраиваемый лимит голосов на участника (по умолчанию 5), бейдж использования в топбаре
-- **Итоги (Action Items)** — мастер-колонка на доске для фиксации решений и задач (статус read-only); полное управление (редактирование, статусы, удаление, Jira) — на странице Dashboard; перенос незакрытых задач между досками (carry-forward)
+- **Итоги (Action Items)** — мастер-колонка на доске для фиксации решений и задач (статус read-only); полное управление (редактирование, статусы, удаление) — на странице Dashboard; перенос незакрытых задач между досками (carry-forward)
 - **Dashboard** — история ретро, кросс-доска список задач с фильтрами (статус, доска, ответственный), карточки задач с inline-редактированием, секция выполненных задач, график трендов, просмотр AI-резюме
-- **Jira-интеграция** — создавай задачи в Jira из Dashboard (бэкенд-прокси, ключи не утекают в браузер)
 - **Экспорт в PDF** — сохрани содержимое доски одним кликом
 - **Workspaces** — изолированные рабочие пространства для разных команд, каждый с собственным набором досок
 - **Admin-панель** — управление workspaces (создание, переименование, смена ключа доступа, удаление)
@@ -158,7 +157,6 @@ retro_board/
 │   │   ├── test_action_items.py
 │   │   ├── test_workspaces.py
 │   │   ├── test_admin.py
-│   │   ├── test_jira.py
 │   │   ├── test_csrf.py
 │   │   ├── test_websocket.py
 │   │   ├── test_error_handling.py
@@ -185,7 +183,6 @@ retro_board/
 │           ├── action_items.py
 │           ├── workspaces.py     # Вход в workspace
 │           ├── admin.py          # Admin API (CRUD workspaces)
-│           ├── jira.py           # Jira-интеграция (прокси)
 │           └── websocket.py
 │
 └── frontend/
@@ -218,7 +215,7 @@ retro_board/
     │   ├── CardGroupWidget.tsx  # Группа карточек с DnD
     │   ├── CardWidget.tsx       # Карточка с DnD, лайками
     │   ├── Column.tsx           # Колонка с карточками
-    │   ├── Dashboard.tsx        # Dashboard: задачи, фильтры, Jira
+    │   ├── Dashboard.tsx        # Dashboard: задачи, фильтры
     │   ├── MasterColumn.tsx     # Мастер-колонка итогов (read-only)
     │   ├── PhaseProgress.tsx    # Визуальный индикатор фаз ретро
     │   ├── TimerWidget.tsx      # Таймер обратного отсчёта
@@ -227,7 +224,6 @@ retro_board/
     │   ├── ThemePanel.tsx       # Панель смены темы
     │   ├── TrendChart.tsx       # График трендов на Dashboard
     │   ├── CursorMarker.tsx     # Индикатор курсора участника
-    │   ├── JiraDialog.tsx       # Диалог создания задачи в Jira
     │   ├── SummaryModal.tsx     # Просмотр AI-резюме ретро
     │   ├── Dialog.tsx           # Переиспользуемый диалог
     │   ├── ErrorBoundary.tsx    # Обработка ошибок рендера
@@ -365,13 +361,6 @@ retro_board/
 | `PATCH` | `/api/admin/workspaces/{id}` | Обновить workspace |
 | `DELETE` | `/api/admin/workspaces/{id}` | Удалить workspace |
 
-### Jira
-
-| Метод | Путь | Описание |
-|---|---|---|
-| `GET` | `/api/jira/status` | Проверить настройку Jira |
-| `POST` | `/api/jira/create-issue` | Создать задачу в Jira |
-
 ### Health
 
 | Метод | Путь | Описание |
@@ -432,9 +421,6 @@ ws://localhost/ws/{board_id}?workspace_token={token}
 | `CORS_ORIGINS` | Разрешённые CORS-источники |
 | `ADMIN_LOGIN` | Логин админа (по умолчанию: admin) |
 | `ADMIN_PASSWORD` | Пароль админа (по умолчанию: changeme) |
-| `JIRA_URL` | URL Jira-инстанса (опционально) |
-| `JIRA_EMAIL` | Email для Jira API (опционально) |
-| `JIRA_API_TOKEN` | API-токен Jira (опционально) |
 | `AI_BASE_URL` | OpenAI-совместимый эндпоинт AI-гейта, напр. `https://llm-api.kirillbessonov.ru/v1` (обязательно для AI-функций) |
 | `AI_API_KEY` | API-ключ AI-гейта (опционально, если гейт без авторизации) |
 | `AI_MODEL` | Модель AI-гейта (по умолчанию: `qwen3.6-35b-a3b-mtp-ud-q8_k_xl`) |
@@ -442,7 +428,8 @@ ws://localhost/ws/{board_id}?workspace_token={token}
 | `WORKSPACE_JWT_SECRET` | Секрет для JWT токенов workspace (обязательно, 32+ символов) |
 | `ADMIN_JWT_SECRET` | Секрет для JWT токенов админа (обязательно, 32+ символов) |
 | `WORKSPACE_JWT_EXPIRE_HOURS` | Срок жизни workspace токена (по умолчанию: 168 = 7 дней) |
-| `JIRA_VERIFY_SSL` | Проверка SSL при подключении к Jira (по умолчанию: true) |
+| `SECURE_COOKIES` | Secure-флаг кук (по умолчанию: true; для HTTP-dev ставить false) |
+| `CSRF_ENABLED` | CSRF-защита (по умолчанию: true; false — только для E2E) |
 
 ### `backend/.env` (локальная разработка)
 
@@ -508,6 +495,5 @@ docker compose exec db pg_dump -U retro retroboard > backup_$(date +%Y%m%d).sql
 - **Rate Limiting** — slowapi: 100/мин чтение, 30/мин мутации, 5/мин AI-вызовы
 - **WebSocket Rate Limiting** — максимум 20 сообщений/сек на соединение
 - **Лимит голосов** — серверная проверка
-- **Jira-интеграция** — запросы проксируются через бэкенд, ключи не утекают
 - **Workspace изоляция** — JWT токен в каждом запросе, данные изолированы
 - **AI-безопасность** — санитизация текста карточек перед отправкой в AI, валидация ответов по белому списку ID

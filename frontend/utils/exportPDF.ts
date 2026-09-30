@@ -105,12 +105,6 @@ function actionItemHTML(item: ActionItem, index: number): string {
           </div>
           <div class="action-item-date">Создано: ${date}</div>
         </div>
-        ${item.jira_issue_key ? `
-        <div class="action-item-jira">
-          <span class="jira-icon">🔗</span>
-          <span class="jira-key">${escHtml(item.jira_issue_key)}</span>
-          <span class="jira-label">— задача создана в Jira</span>
-        </div>` : ''}
       </div>
     </div>`
 }
@@ -129,7 +123,6 @@ function actionItemsSectionHTML(actionItems: ActionItem[]): string {
       </div>
       <div class="action-items-description">
         Список решений и задач, принятых по результатам ретроспективы.
-        ${actionItems.some((i) => i.jira_issue_key) ? 'Часть задач уже заведена в Jira.' : ''}
       </div>
       <div class="action-items-list">
         ${itemsHTML}
@@ -198,14 +191,10 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
     .action-item-assignee { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: #49454F; }
     .action-item-assignee-name { }
     .action-item-date { font-size: 11px; color: #79747E; }
-    .action-item-jira { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 6px 10px; background: #E8F5E9; border-radius: 8px; font-size: 12px; }
-    .jira-icon { font-size: 14px; }
-    .jira-key { font-weight: 700; color: #1B5E20; }
-    .jira-label { color: #388E3C; }
     @media print {
       body { background: white; }
       .cover { page-break-after: avoid; }
-      .cover, .card, .group-block, .column-section, .action-item, .action-item-number, .action-item-jira { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .cover, .card, .group-block, .column-section, .action-item, .action-item-number { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       @page { size: A4; margin: 20mm 0 10mm 0; }
       @page :first { margin: 0; }
     }

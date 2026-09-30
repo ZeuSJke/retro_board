@@ -1,20 +1,28 @@
 'use client'
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store'
 import type { WsMessage } from '../types'
+
+const RECONNECT_BASE_MS = 2000
+const RECONNECT_MAX_MS = 30000
+const PING_INTERVAL_MS = 25000
 
 export function useWebSocket(
   boardId: string,
   onMessage: (msg: WsMessage) => void,
   onOpen?: () => void,
-): { sendMessage: (msg: WsMessage) => void } {
+): { sendMessage: (msg: WsMessage) => void; connected: boolean } {
   const onMessageRef = useRef(onMessage)
   onMessageRef.current = onMessage
   const onOpenRef = useRef(onOpen)
   onOpenRef.current = onOpen
 
   const wsRef = useRef<WebSocket | null>(null)
+  const attemptsRef = useRef(0)
+  const [connected, setConnected] = useState(false)
+  // Токен воркспейса — в deps эффекта ниже: смена токена переподключает сокет
+  const wsToken = useAppStore((s) => s.workspace?.token ?? '')
 
   const sendMessage = useCallback((msg: WsMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -28,17 +36,35 @@ export function useWebSocket(
     let cancelled = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
+    const scheduleReconnect = () => {
+      if (cancelled) return
+      // Exponential backoff 2s → 30s cap + jitter против синхронных переподключений
+      const delay = Math.min(RECONNECT_BASE_MS * 2 ** attemptsRef.current, RECONNECT_MAX_MS)
+      attemptsRef.current += 1
+      reconnectTimer = setTimeout(connect, delay + Math.random() * 1000)
+    }
+
     const connect = () => {
       if (cancelled) return
 
+      // Закрыть старый сокет перед новым connect (смена токена/boardId),
+      // подавив его onclose чтобы не планировать лишнее переподключение
+      const prev = wsRef.current
+      wsRef.current = null
+      if (prev) {
+        prev.onclose = null
+        prev.close()
+      }
+
       const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
       const wsHost = process.env.NEXT_PUBLIC_WS_HOST || location.host
-      const workspace = useAppStore.getState().workspace
-      const wsToken = workspace?.token || ''
       const wsUrl = `${protocol}://${wsHost}/ws/${boardId}?workspace_token=${encodeURIComponent(wsToken)}`
       const ws = new WebSocket(wsUrl)
 
       ws.onopen = () => {
+        if (cancelled) return
+        attemptsRef.current = 0
+        setConnected(true)
         onOpenRef.current?.()
       }
 
@@ -49,9 +75,14 @@ export function useWebSocket(
         } catch { /* ignore malformed messages */ }
       }
 
+      ws.onerror = () => {
+        // onclose последует автоматически и запланирует reconnect
+        ws.close()
+      }
+
       ws.onclose = () => {
-        if (cancelled) return
-        reconnectTimer = setTimeout(connect, 2000)
+        setConnected(false)
+        scheduleReconnect()
       }
 
       wsRef.current = ws
@@ -63,7 +94,7 @@ export function useWebSocket(
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send('ping')
       }
-    }, 25000)
+    }, PING_INTERVAL_MS)
 
     return () => {
       cancelled = true
@@ -71,8 +102,9 @@ export function useWebSocket(
       clearInterval(ping)
       wsRef.current?.close()
       wsRef.current = null
+      setConnected(false)
     }
-  }, [boardId])
+  }, [boardId, wsToken])
 
-  return { sendMessage }
+  return { sendMessage, connected }
 }

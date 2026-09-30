@@ -66,7 +66,8 @@ class JSONEncodedList(TypeDecorator):
 # Import app AFTER env is set, then patch the likes column type
 # ---------------------------------------------------------------------------
 from app.database import Base, get_db
-from app.models import Card, ActionItem, BoardSummary
+from app import models as app_models  # noqa: F401 — импорт ради регистрации мапперов
+from sqlalchemy import ARRAY
 
 # Import app but patch lifespan so alembic is not invoked during tests
 from contextlib import asynccontextmanager
@@ -98,11 +99,17 @@ def _test_500_endpoint():
     raise RuntimeError("test error")
 
 
-# Patch the underlying SA column type so SQLite can handle list<->json
-Card.__table__.c.likes.type = JSONEncodedList()
-ActionItem.__table__.c.source_card_ids.type = JSONEncodedList()
-BoardSummary.__table__.c.key_themes.type = JSONEncodedList()
-BoardSummary.__table__.c.recommendations.type = JSONEncodedList()
+# Patch ALL ARRAY columns to JSONEncodedList so SQLite can handle list<->json.
+# Auto-walk every mapped model — new ARRAY columns are covered without
+# touching this file (аудит: каждая новая ARRAY-колонка обязана идти через
+# этот декоратор, иначе тесты на SQLite упадут).
+for _mapper in Base.registry.mappers:
+    _table = getattr(_mapper.class_, "__table__", None)
+    if _table is None:
+        continue
+    for _col in _table.columns:
+        if isinstance(_col.type, ARRAY):
+            _col.type = JSONEncodedList()
 
 # ---------------------------------------------------------------------------
 # Engine (single in-memory database shared across all threads)
@@ -135,6 +142,31 @@ def _setup_tables():
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(autouse=True)
+def _reset_ws_manager():
+    """Сбрасывать in-memory состояние ws_manager между тестами.
+
+    ConnectionManager — синглтон процесса: rooms/usernames/facilitators/
+    phases/timers/session_ids иначе протекают из теста в тест и дают
+    ложные presence/facilitator/timer-состояния.
+    """
+    from app.ws_manager import manager as _ws_manager
+
+    _ws_manager.rooms.clear()
+    _ws_manager.usernames.clear()
+    _ws_manager.facilitators.clear()
+    _ws_manager.phases.clear()
+    _ws_manager.timers.clear()
+    _ws_manager.session_ids.clear()
+    yield
+    _ws_manager.rooms.clear()
+    _ws_manager.usernames.clear()
+    _ws_manager.facilitators.clear()
+    _ws_manager.phases.clear()
+    _ws_manager.timers.clear()
+    _ws_manager.session_ids.clear()
 
 
 @pytest.fixture()

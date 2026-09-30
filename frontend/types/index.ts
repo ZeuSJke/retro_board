@@ -56,7 +56,6 @@ export interface ActionItem {
   title: string
   text: string
   assignee: string | null
-  jira_issue_key: string | null
   source_card_ids: string[]
   status: ActionItemStatus
   completed_at: string | null

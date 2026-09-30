@@ -109,6 +109,15 @@ export default async function globalSetup() {
     const setCookies = adminLoginRes.headers()['set-cookie'] || ''
     const adminCookie = setCookies
 
+    // CSRF is enforced on /api/admin/* (except login): fetch csrf pair once
+    const csrfRes = await context.get('/api/boards/')
+    const csrfMatch = (csrfRes.headers()['set-cookie'] || '').match(/csrf_token=([^;]+)/)
+    const csrfToken = csrfMatch ? csrfMatch[1] : null
+    const mutHeaders = (base: string) => ({
+      Cookie: csrfToken ? `${base}; csrf_token=${csrfToken}` : base,
+      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+    })
+
     // List workspaces to check if e2e-team exists with wrong key
     const listRes = await context.get('/api/admin/workspaces', {
       headers: { Cookie: adminCookie },
@@ -121,7 +130,7 @@ export default async function globalSetup() {
         // Workspace exists but login failed — delete and recreate with correct key
         console.log('[setup] e2e-team exists with wrong key — deleting and recreating')
         await context.delete(`/api/admin/workspaces/${existing.id}`, {
-          headers: { Cookie: adminCookie },
+          headers: mutHeaders(adminCookie),
         })
       }
     }
@@ -133,7 +142,7 @@ export default async function globalSetup() {
       try {
         const createRes = await context.post('/api/admin/workspaces', {
           data: { slug: 'e2e-team', name: 'E2E Team', access_key: 'e2e-test-key' },
-          headers: { Cookie: adminCookie },
+          headers: mutHeaders(adminCookie),
         })
         if (createRes.ok()) {
           console.log('[setup] Created e2e-team workspace')

@@ -3,11 +3,12 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
-import { getBoards, getAllActionItems, updateActionItem, deleteActionItem, getJiraStatus } from '../api'
+import { getBoards, getAllActionItems, updateActionItem, deleteActionItem } from '../api'
+import { showToast } from '../store/toastStore'
+import { getApiErrorMessage } from '../utils/apiError'
 import { userColor, initials } from '../utils/theme'
 import type { BoardListItem, DashboardActionItem, ActionItemStatus } from '../types'
 import Dialog from './Dialog'
-import JiraDialog from './JiraDialog'
 import SummaryModal from './SummaryModal'
 import s from './Dashboard.module.css'
 
@@ -72,9 +73,8 @@ export default function Dashboard() {
           setBoards(boardsData)
           setItems(itemsData)
         }
-        getJiraStatus()
-          .then((s) => { if (!cancelled) setJiraConfigured(s.configured) })
-          .catch(() => {})
+      } catch (e) {
+        if (!cancelled) showToast(getApiErrorMessage(e, 'Не удалось загрузить данные'), 'error')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -144,44 +144,62 @@ export default function Dashboard() {
   const [editAssigneeId, setEditAssigneeId] = useState<string | null>(null)
   const [editAssignee, setEditAssignee] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<DashboardActionItem | null>(null)
-  const [jiraConfigured, setJiraConfigured] = useState(false)
-  const [jiraTarget, setJiraTarget] = useState<DashboardActionItem | null>(null)
   const [summaryBoard, setSummaryBoard] = useState<BoardListItem | null>(null)
 
 
   async function toggleStatus(item: DashboardActionItem) {
-    const next = NEXT_STATUS[item.status]
-    const updated = await updateActionItem(item.id, { status: next })
-    setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
+    try {
+      const next = NEXT_STATUS[item.status]
+      const updated = await updateActionItem(item.id, { status: next })
+      setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
+    } catch (e) {
+      showToast(getApiErrorMessage(e, 'Не удалось обновить статус'), 'error')
+    }
   }
 
   async function saveTitle(id: string) {
     setEditingTitleId(null)
     if (editTitle.trim()) {
-      const updated = await updateActionItem(id, { title: editTitle.trim() })
-      setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
+      try {
+        const updated = await updateActionItem(id, { title: editTitle.trim() })
+        setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
+      } catch (e) {
+        showToast(getApiErrorMessage(e, 'Не удалось сохранить название'), 'error')
+      }
     }
   }
 
   async function saveDesc(id: string) {
     setEditingDescId(null)
     if (editDesc.trim()) {
-      const updated = await updateActionItem(id, { text: editDesc.trim() })
-      setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
+      try {
+        const updated = await updateActionItem(id, { text: editDesc.trim() })
+        setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
+      } catch (e) {
+        showToast(getApiErrorMessage(e, 'Не удалось сохранить описание'), 'error')
+      }
     }
   }
 
   async function saveAssignee(id: string) {
     setEditAssigneeId(null)
-    const updated = await updateActionItem(id, { assignee: editAssignee.trim() || null })
-    setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
+    try {
+      const updated = await updateActionItem(id, { assignee: editAssignee.trim() || null })
+      setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
+    } catch (e) {
+      showToast(getApiErrorMessage(e, 'Не удалось сохранить ответственного'), 'error')
+    }
   }
 
   async function confirmDeleteItem() {
     if (!deleteTarget) return
-    await deleteActionItem(deleteTarget.id)
-    setItems((prev) => prev.filter((i) => i.id !== deleteTarget.id))
-    setDeleteTarget(null)
+    try {
+      await deleteActionItem(deleteTarget.id)
+      setItems((prev) => prev.filter((i) => i.id !== deleteTarget.id))
+      setDeleteTarget(null)
+    } catch (e) {
+      showToast(getApiErrorMessage(e, 'Не удалось удалить задачу'), 'error')
+    }
   }
 
 
@@ -315,29 +333,6 @@ export default function Dashboard() {
           <span className={s.metaTag}>
             {formatDate(item.created_at)}
           </span>
-
-          {jiraConfigured && (
-            <>
-              {item.jira_issue_key ? (
-                <span className={s.jiraBadge}>
-                  <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
-                    link
-                  </span>
-                  {item.jira_issue_key}
-                </span>
-              ) : (
-                <button
-                  className={s.jiraBtn}
-                  onClick={() => setJiraTarget(item)}
-                >
-                  <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
-                    add_link
-                  </span>
-                  Jira
-                </button>
-              )}
-            </>
-          )}
         </div>
       </div>
     )
@@ -360,7 +355,7 @@ export default function Dashboard() {
     <div className={s.container}>
       {/* Header */}
       <div className={s.header}>
-        <button className={s.backBtn} onClick={() => router.back()} title="Назад">
+        <button className={s.backBtn} onClick={() => router.push('/')} title="Назад">
           <span className="material-symbols-rounded">arrow_back</span>
         </button>
         <h1 className={s.pageTitle}>История ретро</h1>
@@ -524,18 +519,6 @@ export default function Dashboard() {
           будет удалена без возможности восстановления.
         </p>
       </Dialog>
-
-      {/* Jira dialog */}
-      {jiraTarget && (
-        <JiraDialog
-          item={jiraTarget}
-          onClose={() => setJiraTarget(null)}
-          onCreated={(updated) => {
-            setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
-            setJiraTarget(null)
-          }}
-        />
-      )}
 
       {/* Summary modal */}
       {summaryBoard && (

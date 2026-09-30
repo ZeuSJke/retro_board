@@ -4,9 +4,8 @@ import Dashboard from '../../components/Dashboard'
 
 // Mock next/navigation
 const mockPush = vi.fn()
-const mockBack = vi.fn()
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: mockPush, back: mockBack }),
+  useRouter: () => ({ push: mockPush }),
 }))
 
 // Mock API
@@ -38,7 +37,6 @@ const mockItems = [
     title: 'Fix CI',
     text: 'Fix CI pipeline description',
     assignee: 'Alice',
-    jira_issue_key: null,
     status: 'open',
     completed_at: null,
     created_at: '2026-01-11T10:00:00Z',
@@ -50,7 +48,6 @@ const mockItems = [
     title: 'Update docs',
     text: 'Update documentation for API',
     assignee: 'Bob',
-    jira_issue_key: null,
     status: 'done',
     completed_at: '2026-01-15T10:00:00Z',
     created_at: '2026-01-12T10:00:00Z',
@@ -62,7 +59,6 @@ const mockItems = [
     title: 'Add tests',
     text: 'Write unit tests for dashboard',
     assignee: null,
-    jira_issue_key: null,
     status: 'in_progress',
     completed_at: null,
     created_at: '2026-02-11T10:00:00Z',
@@ -75,7 +71,6 @@ vi.mock('../../api', () => ({
   getAllActionItems: vi.fn(() => Promise.resolve(mockItems)),
   updateActionItem: vi.fn((_id: string, data: Record<string, unknown>) => Promise.resolve({ ...mockItems[0], ...data })),
   deleteActionItem: vi.fn(() => Promise.resolve()),
-  getJiraStatus: vi.fn(() => Promise.resolve({ configured: false })),
 }))
 
 // Mock CSS modules
@@ -148,14 +143,14 @@ describe('Dashboard', () => {
     expect(mockPush).toHaveBeenCalledWith('/board/sprint-1')
   })
 
-  it('navigates back on button click', async () => {
+  it('navigates home on back button click', async () => {
     render(<Dashboard />)
 
     await waitFor(() => {
       expect(screen.getByText('История ретро')).toBeDefined()
     })
     fireEvent.click(screen.getByTitle('Назад'))
-    expect(mockBack).toHaveBeenCalled()
+    expect(mockPush).toHaveBeenCalledWith('/')
   })
 
   it('filters items by status', async () => {

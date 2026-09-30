@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import {
   cleanupBoards,
   createBoardViaAPI,
-  getAdminCookie,
+  getAdminMutHeaders,
 } from './helpers'
 
 const SECOND_WORKSPACE_SLUG = 'e2e-team-2'
@@ -15,10 +15,10 @@ async function createWorkspace(
   name: string,
   accessKey: string,
 ) {
-  const cookie = await getAdminCookie(request)
+  const headers = await getAdminMutHeaders(request)
   const res = await request.post(`http://localhost:8000/api/admin/workspaces`, {
     data: { slug, name, access_key: accessKey },
-    headers: { Cookie: cookie },
+    headers,
   })
   return res.ok() || res.status() === 409
 }

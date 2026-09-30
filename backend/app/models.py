@@ -162,7 +162,6 @@ class ActionItem(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     text: Mapped[str] = mapped_column(Text, nullable=False)
     assignee: Mapped[str | None] = mapped_column(String(60), nullable=True)
-    jira_issue_key: Mapped[str | None] = mapped_column(String(30), nullable=True)
     source_card_ids: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
     completed_at: Mapped[datetime | None] = mapped_column(
@@ -177,6 +176,11 @@ class ActionItem(Base):
 
 class BoardSummary(Base):
     __tablename__ = "board_summaries"
+    __table_args__ = (
+        UniqueConstraint(
+            "board_id", "session_id", name="uq_summary_board_session"
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     board_id: Mapped[str] = mapped_column(

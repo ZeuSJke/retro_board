@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from typing import Optional
 
@@ -72,7 +73,13 @@ class AIClient:
                     if not content:
                         raise RuntimeError("AI returned empty content")
                     return content
-            except (httpx.HTTPError, httpx.TimeoutException, KeyError, IndexError) as e:
+            except (
+                httpx.HTTPError,
+                KeyError,
+                IndexError,
+                json.JSONDecodeError,
+                ValueError,
+            ) as e:
                 last_error = e
                 if attempt < config.retries - 1:
                     continue

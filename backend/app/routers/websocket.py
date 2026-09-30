@@ -49,20 +49,22 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     return origin in allowed
 
 
-async def _trigger_summary_generation(board_id: str, username: str):
+async def _trigger_summary_generation(
+    board_id: str, username: str, workspace_id: str
+):
     """Trigger automatic summary generation when entering summary phase.
 
     This function is called when facilitator changes phase to 'summary'.
-    The actual generation happens via the API endpoint to keep WS handler simple.
+    Generation runs in a thread with its own DB session (see boards module).
     """
     from app.routers.boards import _generate_summary_internal
-    from app.database import SessionLocal
 
     logger.info("Starting summary generation for board %s by %s", board_id, username)
 
-    db = SessionLocal()
     try:
-        summary_data = await _generate_summary_internal(db, board_id, username)
+        summary_data = await asyncio.to_thread(
+            _generate_summary_internal, board_id, username, workspace_id
+        )
         if summary_data:
             logger.info("Summary generated for board %s, broadcasting", board_id)
             await manager.broadcast(
@@ -75,7 +77,6 @@ async def _trigger_summary_generation(board_id: str, username: str):
     except Exception as e:
         logger.error("Summary generation failed for board %s: %s", board_id, e)
     finally:
-        db.close()
         logger.info("Summary generation task completed for board %s", board_id)
 
 
@@ -334,7 +335,9 @@ async def websocket_endpoint(
                                 board_id, username,
                             )
                             asyncio.create_task(
-                                _trigger_summary_generation(board_id, username)
+                                _trigger_summary_generation(
+                                    board_id, username, workspace_id
+                                )
                             )
 
             except (json.JSONDecodeError, KeyError):

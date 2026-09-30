@@ -6,10 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 
 ActionItemStatus = Literal["open", "in_progress", "done"]
 
-JiraIssueType = Literal["Task", "Bug", "Story", "Epic", "Subtask"]
-
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
-_JIRA_PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]{0,19}$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -216,7 +213,7 @@ class BoardListItem(BoardBase):
 
 class MoveCard(BaseModel):
     column_id: str
-    position: int
+    position: int = Field(ge=0)
 
 
 # ── Set card group ─────────────────────────────────────────────────────────────
@@ -258,7 +255,6 @@ class ActionItemOut(BaseModel):
     title: str = ""
     text: str
     assignee: Optional[str] = None
-    jira_issue_key: Optional[str] = None
     source_card_ids: list[str] = []
     status: str = "open"
     completed_at: Optional[datetime] = None
@@ -277,40 +273,6 @@ class GenerateTitleRequest(BaseModel):
 
 class GenerateTitleResponse(BaseModel):
     title: str
-
-
-# ── Jira Integration ────────────────────────────────────────────────────────
-
-
-class JiraCreateIssue(BaseModel):
-    action_item_id: str
-    project_key: str = Field(
-        ...,
-        min_length=1,
-        max_length=20,
-        pattern=r"^[A-Z][A-Z0-9]{0,19}$",
-    )
-    summary: str = Field(..., min_length=1, max_length=255)
-    description: str = ""
-    issue_type: JiraIssueType = "Task"
-
-    @field_validator("project_key")
-    @classmethod
-    def validate_project_key(cls, v: str) -> str:
-        if not _JIRA_PROJECT_KEY_RE.match(v):
-            raise ValueError(
-                "project_key must be a valid Jira project key (e.g., PROJ, ABC123)"
-            )
-        return v
-
-
-class JiraIssueResult(BaseModel):
-    jira_issue_key: str
-    jira_url: str
-
-
-class JiraStatus(BaseModel):
-    configured: bool
 
 
 # ── Carry Forward ──────────────────────────────────────────────────────────
