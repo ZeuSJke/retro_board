@@ -67,11 +67,11 @@ class AIClient:
                     )
                     response.raise_for_status()
                     data = response.json()
-                    content = (
-                        data["choices"][0]["message"].get("content") or ""
-                    ).strip()
+                    content = data["choices"][0]["message"]["content"].strip()
+                    if content.startswith("."):
+                        content = content[1:].strip()
                     if not content:
-                        raise ValueError("Empty AI response content")
+                        raise RuntimeError("AI returned empty content")
                     return content
             except (
                 httpx.HTTPError,
