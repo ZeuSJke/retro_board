@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
-from app.utils import get_or_404
+from app.utils import get_or_404, require_live_board
 from app.ws_manager import manager
 from app.limiter import limiter
 from app.workspace_auth import get_current_workspace
@@ -33,9 +33,7 @@ async def create_card(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     col = get_or_404(db, models.Column, body.column_id, "Column not found")
-    board = db.get(models.Board, col.board_id)
-    if not board or board.workspace_id != workspace.id:
-        raise HTTPException(404, "Column not found")
+    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
     pos = db.query(func.count(models.Card.id)).filter(models.Card.column_id == body.column_id).scalar() or 0
     card = models.Card(
         id=str(uuid.uuid4()),
@@ -65,9 +63,7 @@ async def update_card(
 ):
     card = get_or_404(db, models.Card, card_id, "Card not found")
     col = db.get(models.Column, card.column_id)
-    board = db.get(models.Board, col.board_id)
-    if not board or board.workspace_id != workspace.id:
-        raise HTTPException(404, "Card not found")
+    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Card not found")
     if body.text is not None:
         card.text = body.text
     if body.color is not None:
@@ -92,9 +88,7 @@ async def move_card(
 ):
     card = get_or_404(db, models.Card, card_id, "Card not found")
     col = db.get(models.Column, card.column_id)
-    board = db.get(models.Board, col.board_id)
-    if not board or board.workspace_id != workspace.id:
-        raise HTTPException(404, "Card not found")
+    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Card not found")
     old_col = db.get(models.Column, card.column_id)
     new_col = get_or_404(db, models.Column, body.column_id, "Target column not found")
 
@@ -149,18 +143,16 @@ async def toggle_like(
 ):
     # Lock the card row to prevent concurrent vote race conditions
     card = db.query(models.Card).filter(models.Card.id == card_id).with_for_update().first()
-    if card:
-        col = db.get(models.Column, card.column_id)
-        board = db.get(models.Board, col.board_id)
-        if not board or board.workspace_id != workspace.id:
-            card = None
     if not card:
         raise HTTPException(404, "Card not found")
+    col = db.get(models.Column, card.column_id)
+    board = require_live_board(
+        db.get(models.Board, col.board_id), workspace.id, "Card not found"
+    )
     likes = list(card.likes or [])
     if username in likes:
         likes.remove(username)
     else:
-        board = db.get(models.Board, col.board_id)
         used = _count_user_votes(db, col.board_id, username)
         if used >= board.max_votes:
             raise HTTPException(403, "Лимит голосов исчерпан")
@@ -183,9 +175,7 @@ async def delete_card(
 ):
     card = get_or_404(db, models.Card, card_id, "Card not found")
     col = db.get(models.Column, card.column_id)
-    board = db.get(models.Board, col.board_id)
-    if not board or board.workspace_id != workspace.id:
-        raise HTTPException(404, "Card not found")
+    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Card not found")
     board_id = col.board_id
     group_id = card.group_id
     db.delete(card)

@@ -3,13 +3,14 @@ import logging
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slugify import slugify
-from sqlalchemy import case, func
+from sqlalchemy import case, exists, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from datetime import datetime, UTC
 
 from app.database import get_db
 from app import models, schemas
-from app.utils import get_or_404
+from app.utils import get_or_404, require_live_board
 from app.limiter import limiter
 from app.workspace_auth import get_current_workspace
 from app.ws_manager import manager
@@ -40,14 +41,26 @@ def list_boards(
     rows = (
         db.query(
             models.Board,
-            func.count(models.ActionItem.id).label("action_items_total"),
-            func.count(case((models.ActionItem.status != "done", 1))).label(
-                "action_items_open"
+            func.count(func.distinct(models.ActionItem.id)).label(
+                "action_items_total"
             ),
-            func.max(models.BoardSummary.id).label("has_summary_id"),
+            func.count(
+                func.distinct(
+                    case(
+                        (
+                            models.ActionItem.status != "done",
+                            models.ActionItem.id,
+                        )
+                    )
+                )
+            ).label("action_items_open"),
+            exists()
+            .where(models.BoardSummary.board_id == models.Board.id)
+            .label("has_summary"),
         )
-        .outerjoin(models.ActionItem)
-        .outerjoin(models.BoardSummary)
+        .outerjoin(
+            models.ActionItem, models.ActionItem.board_id == models.Board.id
+        )
         .filter(
             models.Board.deleted_at.is_(None),
             models.Board.workspace_id == workspace.id,
@@ -57,11 +70,11 @@ def list_boards(
         .all()
     )
     result = []
-    for board, total, open_count, has_summary_id in rows:
+    for board, total, open_count, has_summary in rows:
         item = schemas.BoardListItem.model_validate(board)
         item.action_items_total = total
         item.action_items_open = open_count
-        item.has_summary = has_summary_id is not None
+        item.has_summary = bool(has_summary)
         result.append(item)
     return result
 
@@ -85,16 +98,32 @@ def create_board(
     )
     if existing:
         raise HTTPException(409, "Измени название, такая доска уже есть")
+    slug = _make_slug(body.name)
+    slug_taken = (
+        db.query(models.Board.id)
+        .filter(
+            models.Board.slug == slug,
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace.id,
+        )
+        .first()
+    )
+    if slug_taken:
+        raise HTTPException(409, "Измени название, такая доска уже есть")
     uid = str(uuid.uuid4())
     board = models.Board(
         id=uid,
         name=body.name,
-        slug=_make_slug(body.name),
+        slug=slug,
         max_votes=body.max_votes,
         workspace_id=workspace.id,
     )
     db.add(board)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Измени название, такая доска уже есть")
     for i, col in enumerate(DEFAULT_COLUMNS):
         db.add(
             models.Column(
@@ -172,8 +201,7 @@ def update_board(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     board = get_or_404(db, models.Board, board_id, "Board not found")
-    if board.workspace_id != workspace.id:
-        raise HTTPException(404, "Board not found")
+    require_live_board(board, workspace.id)
     if body.name is not None:
         existing = (
             db.query(models.Board)
@@ -187,11 +215,28 @@ def update_board(
         )
         if existing:
             raise HTTPException(409, "Измени название, такая доска уже есть")
+        new_slug = _make_slug(body.name)
+        slug_taken = (
+            db.query(models.Board.id)
+            .filter(
+                models.Board.slug == new_slug,
+                models.Board.id != board_id,
+                models.Board.deleted_at.is_(None),
+                models.Board.workspace_id == workspace.id,
+            )
+            .first()
+        )
+        if slug_taken:
+            raise HTTPException(409, "Измени название, такая доска уже есть")
         board.name = body.name
-        board.slug = _make_slug(body.name)
+        board.slug = new_slug
     if body.max_votes is not None:
         board.max_votes = body.max_votes
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Измени название, такая доска уже есть")
     db.refresh(board)
     return board
 
@@ -217,7 +262,9 @@ def delete_board(
 # ── Summary Endpoints ────────────────────────────────────────────────────────
 
 
-def _get_board_full_data(db: Session, board_id: str) -> dict:
+def _get_board_full_data(
+    db: Session, board_id: str, workspace_id: str
+) -> dict:
     """Get full board data with columns and cards for AI processing."""
     from sqlalchemy import or_
 
@@ -232,6 +279,7 @@ def _get_board_full_data(db: Session, board_id: str) -> dict:
                 models.Board.id == board_id,
             ),
             models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace_id,
         )
         .first()
     )
@@ -263,15 +311,18 @@ def _get_board_full_data(db: Session, board_id: str) -> dict:
     }
 
 
-async def _generate_summary_internal(
-    db: Session,
+def _generate_summary_internal(
     board_id: str,
     username: str,
+    workspace_id: str,
 ) -> dict | None:
-    """Internal function to generate and save summary.
+    """Generate and save summary (blocking; run via asyncio.to_thread).
 
-    Returns summary data dict or None if generation failed.
+    Opens its own Session so it never reuses the request/WS session
+    across threads. Returns summary data dict or None if generation failed.
     """
+    from app.database import SessionLocal
+
     logger.info("Starting summary generation for board %s", board_id)
 
     if manager.get_facilitator(board_id) != username:
@@ -284,48 +335,90 @@ async def _generate_summary_internal(
         manager.set_session_id(board_id, session_id)
         logger.info("Created new session ID: %s", session_id)
 
-    existing = (
-        db.query(models.BoardSummary)
-        .filter(
-            models.BoardSummary.board_id == board_id,
-            models.BoardSummary.session_id == session_id,
-        )
-        .first()
-    )
-
-    if existing:
-        logger.info(
-            "Summary already exists for board %s, session %s", board_id, session_id
-        )
-        return schemas.BoardSummaryOut.model_validate(existing).model_dump(mode="json")
-
-    board_data = _get_board_full_data(db, board_id)
-    if not board_data:
-        logger.warning("No board data for %s", board_id)
-        return None
-
+    db = SessionLocal()
     try:
-        # AI-клиент синхронный и может занимать десятки секунд — не блокируем event loop
-        ai_result = await asyncio.to_thread(generate_summary, board_data)
-        logger.info("AI summary generated for board %s", board_id)
-    except Exception as e:
-        logger.error("AI summary generation failed for board %s: %s", board_id, e)
-        return None
+        board_row = db.get(models.Board, board_id)
+        if (
+            board_row is None
+            or board_row.workspace_id != workspace_id
+            or board_row.deleted_at is not None
+        ):
+            logger.warning(
+                "Summary generation refused for board %s: not live in workspace",
+                board_id,
+            )
+            return None
 
-    summary = models.BoardSummary(
-        id=str(uuid.uuid4()),
-        board_id=board_id,
-        session_id=session_id,
-        summary_text=ai_result.get("summary_text", ""),
-        key_themes=ai_result.get("key_themes", []),
-        recommendations=ai_result.get("recommendations", []),
-    )
-    db.add(summary)
-    db.commit()
-    db.refresh(summary)
-    logger.info("Summary saved to DB for board %s", board_id)
+        existing = (
+            db.query(models.BoardSummary)
+            .filter(
+                models.BoardSummary.board_id == board_id,
+                models.BoardSummary.session_id == session_id,
+            )
+            .first()
+        )
 
-    return schemas.BoardSummaryOut.model_validate(summary).model_dump(mode="json")
+        if existing:
+            logger.info(
+                "Summary already exists for board %s, session %s",
+                board_id,
+                session_id,
+            )
+            return schemas.BoardSummaryOut.model_validate(existing).model_dump(
+                mode="json"
+            )
+
+        board_data = _get_board_full_data(db, board_id, workspace_id)
+        if not board_data:
+            logger.warning("No board data for %s", board_id)
+            return None
+
+        try:
+            ai_result = generate_summary(board_data)
+            logger.info("AI summary generated for board %s", board_id)
+        except Exception as e:
+            logger.error(
+                "AI summary generation failed for board %s: %s", board_id, e
+            )
+            return None
+
+        summary = models.BoardSummary(
+            id=str(uuid.uuid4()),
+            board_id=board_data["id"],
+            session_id=session_id,
+            summary_text=ai_result.get("summary_text", ""),
+            key_themes=ai_result.get("key_themes", []),
+            recommendations=ai_result.get("recommendations", []),
+        )
+        db.add(summary)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            logger.info(
+                "Summary race lost for board %s, session %s",
+                board_id,
+                session_id,
+            )
+            existing = (
+                db.query(models.BoardSummary)
+                .filter(
+                    models.BoardSummary.board_id == board_data["id"],
+                    models.BoardSummary.session_id == session_id,
+                )
+                .first()
+            )
+            if existing is None:
+                return None
+            return schemas.BoardSummaryOut.model_validate(existing).model_dump(
+                mode="json"
+            )
+        db.refresh(summary)
+        logger.info("Summary saved to DB for board %s", board_id)
+
+        return schemas.BoardSummaryOut.model_validate(summary).model_dump(mode="json")
+    finally:
+        db.close()
 
 
 @router.get("/{board_id}/summary", response_model=schemas.BoardSummaryOut)
@@ -341,8 +434,7 @@ async def get_summary(
     Returns the most recent summary for the current or last session.
     """
     board = get_or_404(db, models.Board, board_id, "Board not found")
-    if board.workspace_id != workspace.id:
-        raise HTTPException(404, "Board not found")
+    require_live_board(board, workspace.id)
 
     # Get current session_id if active
     session_id = manager.get_session_id(board_id)

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from typing import Optional
 
@@ -66,13 +67,19 @@ class AIClient:
                     )
                     response.raise_for_status()
                     data = response.json()
-                    content = data["choices"][0]["message"]["content"].strip()
-                    if content.startswith("."):
-                        content = content[1:].strip()
+                    content = (
+                        data["choices"][0]["message"].get("content") or ""
+                    ).strip()
                     if not content:
-                        raise RuntimeError("AI returned empty content")
+                        raise ValueError("Empty AI response content")
                     return content
-            except (httpx.HTTPError, httpx.TimeoutException, KeyError, IndexError) as e:
+            except (
+                httpx.HTTPError,
+                KeyError,
+                IndexError,
+                json.JSONDecodeError,
+                ValueError,
+            ) as e:
                 last_error = e
                 if attempt < config.retries - 1:
                     continue

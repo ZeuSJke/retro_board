@@ -193,6 +193,8 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
         }
       }
       if (!groupData || targetColId === srcColId) return
+      // groupData сужен до CardGroup — const для использования в замыкании ниже
+      const group = groupData
 
       const groupCards =
         (savedColumnsRef.current || [])
@@ -212,7 +214,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
               ...c,
               groups: [
                 ...(c.groups || []).filter((g) => g.id !== groupId),
-                { ...groupData!, column_id: targetColId },
+                { ...group, column_id: targetColId },
               ],
               cards: [
                 ...c.cards,
@@ -229,7 +231,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
 
       try {
         await moveGroup(groupId, { column_id: targetColId })
-      } catch (e) {
+      } catch {
         showToast('Не удалось переместить группу', 'error')
         if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
       }
@@ -281,7 +283,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
               ),
             })),
           )
-        } catch (e) {
+        } catch {
           showToast('Не удалось добавить в группу', 'error')
           if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
         }
@@ -327,7 +329,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
                 : c,
             ),
           )
-        } catch (e) {
+        } catch {
           showToast('Не удалось создать группу', 'error')
           if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
         }
@@ -345,7 +347,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
         await removeCardFromGroup(activeFound.card.group_id, String(active.id))
       }
       await moveCard(String(active.id), { column_id: overColId, position: newPos })
-    } catch (e) {
+    } catch {
       showToast('Не удалось переместить карточку', 'error')
       if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
     }

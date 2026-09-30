@@ -19,13 +19,8 @@ class Settings(BaseSettings):
     # CSRF protection (disable for E2E tests via CSRF_ENABLED=false)
     csrf_enabled: bool = True
 
-    # Jira integration (optional)
-    jira_url: str = ""
-    jira_email: str = ""
-    jira_api_token: str = ""
-    jira_verify_ssl: bool = (
-        True  # False для on-premise Jira с самоподписанным сертификатом
-    )
+    # Secure cookies (set SECURE_COOKIES=false for local HTTP dev)
+    secure_cookies: bool = True
 
     # AI — self-hosted LiteLLM gateway (OpenAI-compatible /v1 API)
     ai_base_url: str = ""  # env AI_BASE_URL, e.g. https://llm-api.kirillbessonov.ru/v1
@@ -90,10 +85,6 @@ class Settings(BaseSettings):
         if len(v) < 8:
             raise ValueError("ADMIN_PASSWORD must be at least 8 characters")
         return v
-
-    @property
-    def jira_configured(self) -> bool:
-        return bool(self.jira_url and self.jira_email and self.jira_api_token)
 
     @property
     def ai_configured(self) -> bool:

@@ -38,7 +38,6 @@ const mockItems = [
     title: 'Fix CI',
     text: 'Fix CI pipeline description',
     assignee: 'Alice',
-    jira_issue_key: null,
     status: 'open',
     completed_at: null,
     created_at: '2026-01-11T10:00:00Z',
@@ -50,7 +49,6 @@ const mockItems = [
     title: 'Update docs',
     text: 'Update documentation for API',
     assignee: 'Bob',
-    jira_issue_key: null,
     status: 'done',
     completed_at: '2026-01-15T10:00:00Z',
     created_at: '2026-01-12T10:00:00Z',
@@ -62,7 +60,6 @@ const mockItems = [
     title: 'Add tests',
     text: 'Write unit tests for dashboard',
     assignee: null,
-    jira_issue_key: null,
     status: 'in_progress',
     completed_at: null,
     created_at: '2026-02-11T10:00:00Z',
@@ -75,7 +72,6 @@ vi.mock('../../api', () => ({
   getAllActionItems: vi.fn(() => Promise.resolve(mockItems)),
   updateActionItem: vi.fn((_id: string, data: Record<string, unknown>) => Promise.resolve({ ...mockItems[0], ...data })),
   deleteActionItem: vi.fn(() => Promise.resolve()),
-  getJiraStatus: vi.fn(() => Promise.resolve({ configured: false })),
 }))
 
 // Mock CSS modules

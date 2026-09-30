@@ -296,7 +296,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
         }
       })
     },
-    [onTimerWsEvent, onFacilitatorChanged, onPhaseChanged, onSummaryGenerated, notifyCursorListeners],
+    [onTimerWsEvent, onFacilitatorChanged, onPhaseChanged, onSummaryGenerated, notifyCursorListeners, username],
   )
 
   const { sendMessage } = useWebSocket(
@@ -316,7 +316,9 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
         })
     }, [username]),
   )
-  sendMessageRef.current = sendMessage
+  useEffect(() => {
+    sendMessageRef.current = sendMessage
+  }, [sendMessage])
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent, boardEl: HTMLDivElement | null) => {

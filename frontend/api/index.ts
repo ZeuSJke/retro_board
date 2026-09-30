@@ -97,17 +97,13 @@ export const carryForward = (data: CarryForwardRequest): Promise<ActionItem[]> =
 export const generateActionItemTitle = (text: string): Promise<string> =>
   api.post('/action-items/generate-title', { text }).then((r) => r.data.title)
 
-// ── Jira Integration ────────────────────────────────────────────────────────
-export const getJiraStatus = (): Promise<{ configured: boolean }> =>
-  api.get('/jira/status').then((r) => r.data)
-export const createJiraIssue = (data: {
-  action_item_id: string; project_key: string; summary: string; description?: string; issue_type?: string
-}): Promise<{ jira_issue_key: string; jira_url: string }> =>
-  api.post('/jira/create-issue', data).then((r) => r.data)
-
 // ── Summary ─────────────────────────────────────────────────────────────────
 export const getBoardSummary = (boardId: string): Promise<BoardSummary | null> =>
-  api.get(`/boards/${boardId}/summary`).then((r) => r.data).catch(() => null)
+  api.get(`/boards/${boardId}/summary`).then((r) => r.data).catch((error) => {
+    // Нет саммари — штатная ситуация, остальные ошибки пробрасываем
+    if (error?.response?.status === 404) return null
+    throw error
+  })
 
 // ── Workspace ───────────────────────────────────────────────────────────────
 export const loginToWorkspace = (data: {

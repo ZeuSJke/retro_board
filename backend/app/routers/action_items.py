@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import uuid
 from typing import Optional
 
@@ -8,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
 from app.models import now_utc
-from app.utils import get_or_404
+from app.utils import get_or_404, require_live_board
 from app.ai import ai_client
 from app.ai.prompts.title_generation import (
     TITLE_GENERATION_PROMPT,
@@ -17,6 +19,8 @@ from app.ai.prompts.title_generation import (
 from app.ws_manager import manager
 from app.limiter import limiter
 from app.workspace_auth import get_current_workspace
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -114,13 +118,11 @@ async def carry_forward(
     src_board = get_or_404(
         db, models.Board, body.source_board_id, "Source board not found"
     )
-    if src_board.workspace_id != workspace.id:
-        raise HTTPException(404, "Source board not found")
+    require_live_board(src_board, workspace.id, "Source board not found")
     tgt_board = get_or_404(
         db, models.Board, body.target_board_id, "Target board not found"
     )
-    if tgt_board.workspace_id != workspace.id:
-        raise HTTPException(404, "Target board not found")
+    require_live_board(tgt_board, workspace.id, "Target board not found")
 
     items = (
         db.query(models.ActionItem)
@@ -166,8 +168,7 @@ async def list_action_items(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     board = get_or_404(db, models.Board, board_id, "Board not found")
-    if board.workspace_id != workspace.id:
-        raise HTTPException(404, "Board not found")
+    require_live_board(board, workspace.id)
     items = (
         db.query(models.ActionItem)
         .filter(models.ActionItem.board_id == board_id)
@@ -187,9 +188,12 @@ async def generate_action_item_title(
     """Generate action item title from card text using AI."""
     prompt = TITLE_GENERATION_PROMPT.format(card_text=body.text)
     try:
-        title = ai_client.generate(prompt, TITLE_GENERATION_CONFIG)
+        title = await asyncio.to_thread(
+            ai_client.generate, prompt, TITLE_GENERATION_CONFIG
+        )
         return schemas.GenerateTitleResponse(title=title)
     except Exception:
+        logger.exception("Action item title generation failed")
         return schemas.GenerateTitleResponse(title=body.text[:50])
 
 
@@ -202,8 +206,7 @@ async def create_action_item(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     board = get_or_404(db, models.Board, body.board_id, "Board not found")
-    if board.workspace_id != workspace.id:
-        raise HTTPException(404, "Board not found")
+    require_live_board(board, workspace.id)
     if body.source_card_ids:
         valid_cards = (
             db.query(models.Card.id)
@@ -250,9 +253,9 @@ async def update_action_item(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     item = get_or_404(db, models.ActionItem, item_id, "Action item not found")
-    board = db.get(models.Board, item.board_id)
-    if not board or board.workspace_id != workspace.id:
-        raise HTTPException(404, "Action item not found")
+    require_live_board(
+        db.get(models.Board, item.board_id), workspace.id, "Action item not found"
+    )
     if body.title is not None:
         item.title = body.title
     if body.text is not None:
@@ -283,9 +286,9 @@ async def delete_action_item(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     item = get_or_404(db, models.ActionItem, item_id, "Action item not found")
-    board = db.get(models.Board, item.board_id)
-    if not board or board.workspace_id != workspace.id:
-        raise HTTPException(404, "Action item not found")
+    require_live_board(
+        db.get(models.Board, item.board_id), workspace.id, "Action item not found"
+    )
     board_id = item.board_id
     db.delete(item)
     db.commit()

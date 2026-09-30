@@ -1,8 +1,25 @@
 import json
+import os
 import time
 from collections import defaultdict
 
 from fastapi import WebSocket
+
+
+def assert_single_worker() -> None:
+    """ConnectionManager держит состояние в памяти — требуется один воркер.
+
+    Вызывать только на старте сервера (lifespan), НЕ на импорте: иначе
+    ломается pytest collection / alembic / скрипты. Проверка читает
+    WEB_CONCURRENCY (gunicorn/uvicorn-worker); флаг `uvicorn --workers N`
+    эту переменную не выставляет и гардом не ловится — не масштабировать
+    воркеры без выноса состояния в Redis.
+    """
+    workers = int(os.getenv("WEB_CONCURRENCY", "1"))
+    if workers != 1:
+        raise RuntimeError(
+            f"ws_manager requires a single worker, got WEB_CONCURRENCY={workers}"
+        )
 
 
 class ConnectionManager:
@@ -38,6 +55,8 @@ class ConnectionManager:
     def disconnect(self, board_id: str, ws: WebSocket):
         if ws in self.rooms[board_id]:
             self.rooms[board_id].remove(ws)
+        if not self.rooms[board_id]:
+            self.rooms.pop(board_id, None)
         username = self.usernames.pop(id(ws), None)
         # If facilitator disconnects, clear facilitator state and session
         if username and self.facilitators.get(board_id) == username:
@@ -122,6 +141,8 @@ class ConnectionManager:
         for ws in dead:
             self.rooms[board_id].remove(ws)
             self.usernames.pop(id(ws), None)
+        if not self.rooms.get(board_id):
+            self.rooms.pop(board_id, None)
 
 
 manager = ConnectionManager()

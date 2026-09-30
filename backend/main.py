@@ -11,7 +11,6 @@ from app.routers import (
     cards,
     columns,
     groups,
-    jira,
     websocket,
     workspaces,
     admin,
@@ -30,6 +29,9 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.ws_manager import assert_single_worker
+
+    assert_single_worker()
     yield
 
 
@@ -70,10 +72,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # Skip if disabled via settings
         if not settings.csrf_enabled:
             return await call_next(request)
-        # Skip CSRF for WebSocket upgrades, health checks, and auth endpoints
+        # Skip CSRF for WebSocket upgrades, health checks, and login endpoints
+        # (only logins — the rest of /api/admin/* stays protected)
         if (
             request.url.path.startswith("/ws/")
-            or request.url.path.startswith("/api/admin/")
+            or request.url.path == "/api/admin/login"
             or request.url.path in ("/health", "/api/health", "/api/workspaces/login")
         ):
             return await call_next(request)
@@ -88,6 +91,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     httponly=False,  # JS must read it
                     samesite="lax",
                     max_age=86400,
+                    secure=settings.secure_cookies,
                 )
             return response
 
@@ -123,7 +127,6 @@ app.include_router(groups.router, prefix="/api/groups", tags=["groups"])
 app.include_router(
     action_items.router, prefix="/api/action-items", tags=["action_items"]
 )
-app.include_router(jira.router, prefix="/api/jira", tags=["jira"])
 app.include_router(websocket.router, tags=["websocket"])
 
 
