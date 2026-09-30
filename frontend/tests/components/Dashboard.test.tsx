@@ -4,9 +4,8 @@ import Dashboard from '../../components/Dashboard'
 
 // Mock next/navigation
 const mockPush = vi.fn()
-const mockBack = vi.fn()
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: mockPush, back: mockBack }),
+  useRouter: () => ({ push: mockPush }),
 }))
 
 // Mock API
@@ -144,14 +143,14 @@ describe('Dashboard', () => {
     expect(mockPush).toHaveBeenCalledWith('/board/sprint-1')
   })
 
-  it('navigates back on button click', async () => {
+  it('navigates home on back button click', async () => {
     render(<Dashboard />)
 
     await waitFor(() => {
       expect(screen.getByText('История ретро')).toBeDefined()
     })
     fireEvent.click(screen.getByTitle('Назад'))
-    expect(mockBack).toHaveBeenCalled()
+    expect(mockPush).toHaveBeenCalledWith('/')
   })
 
   it('filters items by status', async () => {
