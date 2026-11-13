@@ -46,7 +46,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -105,6 +104,7 @@ export default function CardWidget({
   const [saving, setSaving] = useState(false)
   const [liking, setLiking] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
@@ -173,7 +173,7 @@ export default function CardWidget({
   }
 
   const handleQuickColorChange = async (hex: string) => {
-    if (readOnly || hex === card.color) return
+    if (readOnly || (card.color || '#FFFFFF').toLowerCase() === hex.toLowerCase()) return
     const prev = card
     emitUpdated({ ...card, color: hex })
     try {
@@ -316,7 +316,7 @@ export default function CardWidget({
               )}
 
               {!readOnly && (
-                <DropdownMenu>
+                <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
                   <DropdownMenuTrigger asChild>
                     <Button
                       type="button"
@@ -329,44 +329,60 @@ export default function CardWidget({
                       <MoreHorizontal className="h-3.5 w-3.5" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-52"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <DropdownMenuItem onClick={startEdit}>
                       <Pencil className="mr-2 h-3.5 w-3.5" />
                       Редактировать
                     </DropdownMenuItem>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                          <Palette className="mr-2 h-3.5 w-3.5" />
-                          Цвет стикера
-                        </DropdownMenuItem>
-                      </PopoverTrigger>
-                      <PopoverContent side="left" className="w-auto p-2.5">
-                        <div className="flex items-center gap-1.5">
-                          {CARD_COLOR_PRESETS.map((c) => (
+                    <DropdownMenuSeparator />
+                    <div className="px-2 py-1.5" role="group" aria-label="Цвет стикера">
+                      <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                        <Palette className="h-3.5 w-3.5" />
+                        <span>Цвет стикера</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-1">
+                        {CARD_COLOR_PRESETS.map((c) => {
+                          const isActive =
+                            (card.color || '#FFFFFF').toLowerCase() === c.hex.toLowerCase()
+                          return (
                             <button
                               key={c.id}
                               type="button"
-                              onClick={() => handleQuickColorChange(c.hex)}
-                              className={cn(
-                                'h-5 w-5 rounded-full border transition-transform hover:scale-110',
-                                c.swatchClass,
-                                (card.color || '#FFFFFF').toLowerCase() === c.hex.toLowerCase() &&
-                                  'ring-2 ring-primary ring-offset-1',
-                              )}
+                              data-testid={`card-color-option-${c.id}`}
+                              aria-label={`Цвет: ${c.name}`}
                               title={c.name}
-                            />
-                          ))}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
+                              onClick={() => {
+                                handleQuickColorChange(c.hex)
+                                setMenuOpen(false)
+                              }}
+                              className={cn(
+                                'flex h-5 w-5 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                                c.swatchClass,
+                                isActive && 'ring-2 ring-primary ring-offset-1 ring-offset-popover',
+                              )}
+                            >
+                              {c.id !== 'default' && (
+                                <span
+                                  className="h-2 w-2 rounded-full"
+                                  style={{ backgroundColor: c.accentDot }}
+                                />
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    <DropdownMenuSeparator />
                     {inGroup && onRemoveFromGroup && (
                       <DropdownMenuItem onClick={onRemoveFromGroup}>
                         <Unlink className="mr-2 h-3.5 w-3.5" />
                         Убрать из группы
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => setDeleteOpen(true)}
                       className="text-destructive focus:text-destructive"
@@ -408,12 +424,19 @@ export default function CardWidget({
                     onClick={() => setEditColor(c.hex)}
                     title={c.name}
                     className={cn(
-                      'h-4 w-4 rounded-full border transition-transform hover:scale-110',
+                      'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110',
                       c.swatchClass,
                       editColor.toLowerCase() === c.hex.toLowerCase() &&
-                        'ring-2 ring-primary ring-offset-1',
+                        'ring-2 ring-primary ring-offset-1 ring-offset-card',
                     )}
-                  />
+                  >
+                    {c.id !== 'default' && (
+                      <span
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: c.accentDot }}
+                      />
+                    )}
+                  </button>
                 ))}
               </div>
               <div className="flex items-center gap-1">

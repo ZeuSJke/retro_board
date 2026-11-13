@@ -645,6 +645,10 @@ async def websocket_endpoint(
         username, still_present, fac_disconnected = manager.disconnect(
             board_id, websocket
         )
+        # Синхронно планируем grace-таймер и чистим ready ДО любых await,
+        # иначе CancelledError при отмене задачи оборвёт finally до планирования.
+        if fac_disconnected and username:
+            manager.schedule_facilitator_grace(board_id, username)
         if username and not still_present:
             ready_changed = manager.remove_ready_user(board_id, username)
             try:
@@ -662,5 +666,3 @@ async def websocket_endpoint(
                     )
             except Exception:
                 pass
-        if fac_disconnected and username:
-            manager.schedule_facilitator_grace(board_id, username)

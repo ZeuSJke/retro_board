@@ -235,13 +235,13 @@ export default function Column({
         data-testid="board-column"
         data-column-id={column.id}
         className={cn(
-          'flex max-h-full w-[336px] shrink-0 flex-col rounded-2xl border bg-card/85 shadow-sm backdrop-blur-sm transition-colors',
+          'flex max-h-full w-[336px] shrink-0 flex-col overflow-hidden rounded-2xl border bg-card/85 shadow-sm backdrop-blur-sm transition-colors',
           isOver && 'border-primary/70 ring-2 ring-primary/20',
         )}
       >
         {/* Top accent strip */}
         <div
-          className="h-1 w-full shrink-0 rounded-t-2xl"
+          className="h-1 w-full shrink-0"
           style={{ backgroundColor: column.color || '#6366F1' }}
         />
 
@@ -456,12 +456,19 @@ export default function Column({
                       onClick={() => setDraftColor(c.hex)}
                       title={c.name}
                       className={cn(
-                        'h-4 w-4 rounded-full border transition-transform hover:scale-110',
+                        'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110',
                         c.swatchClass,
                         draftColor.toLowerCase() === c.hex.toLowerCase() &&
-                          'ring-2 ring-primary ring-offset-1',
+                          'ring-2 ring-primary ring-offset-1 ring-offset-background',
                       )}
-                    />
+                    >
+                      {c.id !== 'default' && (
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: c.accentDot }}
+                        />
+                      )}
+                    </button>
                   ))}
                 </div>
                 <div className="flex items-center gap-1">

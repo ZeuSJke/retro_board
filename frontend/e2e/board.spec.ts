@@ -152,4 +152,37 @@ test.describe('Доска — колонки и карточки', () => {
 
     await expect(page.locator('body')).not.toContainText('Ненужная колонка')
   })
+
+  test('смена цвета стикера через меню карточки', async ({ page, request }) => {
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Доска цвет', wsData.token)
+    const csrf = await getCsrfHeaders(request)
+    const colRes = await request.post('http://localhost:8000/api/columns/', {
+      data: { board_id: board.id, title: 'Колонка' },
+      headers: { ...csrf, 'X-Workspace-Token': wsData.token },
+    })
+    const col = await colRes.json()
+    await request.post('http://localhost:8000/api/cards/', {
+      data: { column_id: col.id, text: 'Цветная карточка', author: 'E2E Тестер' },
+      headers: { ...csrf, 'X-Workspace-Token': wsData.token },
+    })
+
+    await openBoard(page, board.slug)
+    const card = page.getByTestId('card-widget').filter({ hasText: 'Цветная карточка' })
+    await expect(card).toBeVisible()
+
+    await card.hover()
+    await card.getByRole('button', { name: 'Действия с карточкой' }).click()
+    await page.getByTestId('card-color-option-emerald').click()
+
+    await expect(card).toHaveClass(/bg-emerald-50/)
+
+    // Verify persisted in backend API
+    const boardRes = await request.get(`http://localhost:8000/api/boards/${board.id}`, {
+      headers: { 'X-Workspace-Token': wsData.token },
+    })
+    const boardData = await boardRes.json()
+    const savedCol = boardData.columns.find((c: { id: string }) => c.id === col.id)
+    expect(savedCol.cards[0].color).toBe('#E8F5E9')
+  })
 })

@@ -96,4 +96,15 @@ describe('CardWidget', () => {
     const { toggleLike } = await import('../../api')
     expect(toggleLike).toHaveBeenCalledWith('1', 'TestUser')
   })
+
+  it('changes card sticker color from dropdown menu', async () => {
+    const user = userEvent.setup()
+    render(<CardWidget card={baseCard} onUpdate={onUpdate} onDelete={onDelete} />)
+    await user.click(screen.getByRole('button', { name: 'Действия с карточкой' }))
+    const mintOption = await screen.findByTestId('card-color-option-emerald')
+    await user.click(mintOption)
+    const { updateCard } = await import('../../api')
+    expect(updateCard).toHaveBeenCalledWith('1', { color: '#E8F5E9' })
+    expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ color: '#E8F5E9' }))
+  })
 })
