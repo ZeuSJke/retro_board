@@ -144,7 +144,20 @@ export default function CardWidget({
   const liked = likes.includes(resolvedUser)
   const limitReached = !liked && (!canVote || (maxVotes > 0 && userTotalVotes >= maxVotes))
   const voteDisabled = limitReached || readOnly || liking
-  const voteTitle = limitReached ? 'Лимит голосов исчерпан' : liked ? 'Убрать лайк' : 'Лайк'
+  const voteTitle = readOnly
+    ? 'Доска заблокирована для правок'
+    : limitReached
+      ? 'Лимит голосов исчерпан'
+      : liked
+        ? 'Убрать лайк'
+        : 'Лайк'
+  const voteBlockedReason = readOnly
+    ? 'Доска заблокирована для голосования'
+    : limitReached
+      ? canVote
+        ? `Лимит голосов исчерпан (${userTotalVotes}/${maxVotes}). Снимите голос с другой карточки или измените лимит в настройках.`
+        : 'Голосование недоступно'
+      : null
   const showAccentBar = preset.id !== 'default'
 
   const startEdit = () => {
@@ -346,8 +359,7 @@ export default function CardWidget({
                       </div>
                       <div className="flex items-center justify-between gap-1">
                         {CARD_COLOR_PRESETS.map((c) => {
-                          const isActive =
-                            (card.color || '#FFFFFF').toLowerCase() === c.hex.toLowerCase()
+                          const isActive = preset.id === c.id
                           return (
                             <button
                               key={c.id}
@@ -486,45 +498,51 @@ export default function CardWidget({
               )}
             </div>
 
-            {likes.length > 0 ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    title={voteTitle}
-                    disabled={voteDisabled}
-                    onClick={handleToggleLike}
-                    className={cn(
-                      'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-medium transition-colors',
-                      liked
-                        ? 'border-primary/40 bg-primary/15 text-primary'
-                        : 'border-border/80 bg-background/70 text-muted-foreground hover:border-primary/40 hover:text-foreground',
-                      voteDisabled && !liked && 'cursor-not-allowed opacity-50',
+            {(() => {
+              const voteButton = (
+                <button
+                  type="button"
+                  title={voteTitle}
+                  disabled={voteDisabled}
+                  onClick={handleToggleLike}
+                  className={cn(
+                    'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-medium transition-colors',
+                    liked
+                      ? 'border-primary/40 bg-primary/15 text-primary'
+                      : 'border-border/80 bg-background/70 text-muted-foreground hover:border-primary/40 hover:text-foreground',
+                    voteDisabled && 'pointer-events-none',
+                    voteDisabled && !liked && 'opacity-50',
+                  )}
+                >
+                  <ThumbsUp className={cn('h-3 w-3', liked && 'fill-current')} />
+                  <span>{likes.length}</span>
+                </button>
+              )
+
+              if (likes.length === 0 && !voteBlockedReason) {
+                return voteButton
+              }
+
+              return (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className={cn('inline-flex', voteDisabled && 'cursor-not-allowed')}>
+                      {voteButton}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {likes.length > 0 && (
+                      <div>{anonymous ? `${likes.length} голосов (анонимно)` : likes.join(', ')}</div>
                     )}
-                  >
-                    <ThumbsUp className={cn('h-3 w-3', liked && 'fill-current')} />
-                    <span>{likes.length}</span>
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {anonymous ? `${likes.length} голосов (анонимно)` : likes.join(', ')}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <button
-                type="button"
-                title={voteTitle}
-                disabled={voteDisabled}
-                onClick={handleToggleLike}
-                className={cn(
-                  'inline-flex h-6 items-center gap-1 rounded-full border border-border/70 bg-background/60 px-2 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground',
-                  voteDisabled && 'cursor-not-allowed opacity-50',
-                )}
-              >
-                <ThumbsUp className="h-3 w-3" />
-                <span>0</span>
-              </button>
-            )}
+                    {voteBlockedReason && (
+                      <div className={likes.length > 0 ? 'mt-1 opacity-80' : undefined}>
+                        {voteBlockedReason}
+                      </div>
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              )
+            })()}
           </div>
         )}
       </div>

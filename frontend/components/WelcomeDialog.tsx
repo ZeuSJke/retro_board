@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, Eye, EyeOff, KeyRound, Layers, Loader2, Sparkles, Users } from 'lucide-react'
+import { ArrowRight, Eye, EyeOff, KeyRound, Layers, Loader2, Users } from 'lucide-react'
+import { BrandMark } from '@/components/BrandLogo'
 import { useAppStore } from '@/store'
 import { loginToWorkspace } from '@/api'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
@@ -88,10 +89,10 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
       <Card className="relative z-10 w-full max-w-md border-border/80 bg-background/95 shadow-2xl backdrop-blur-md">
         <CardHeader className="items-center space-y-3 pb-4 text-center">
           <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="gap-1.5 px-3 py-1 text-xs font-medium">
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              RetroBoard
-            </Badge>
+            <div className="inline-flex items-center gap-2 rounded-full border bg-muted/60 px-3 py-1 text-xs font-semibold text-foreground">
+              <BrandMark size={20} />
+              <span>RetroBoard</span>
+            </div>
           </div>
 
           <div

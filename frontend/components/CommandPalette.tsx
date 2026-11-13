@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Command } from 'cmdk'
 import {
   BarChart3,
@@ -16,6 +16,8 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 
 interface CommandPaletteProps {
   boards: BoardListItem[]
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   onSelectBoard: (board: BoardListItem) => void
   onCreateBoard: () => void
   onNavigateDashboard: () => void
@@ -23,23 +25,33 @@ interface CommandPaletteProps {
 
 export default function CommandPalette({
   boards,
+  open: controlledOpen,
+  onOpenChange,
   onSelectBoard,
   onCreateBoard,
   onNavigateDashboard,
 }: CommandPaletteProps) {
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (onOpenChange) onOpenChange(next)
+      else setInternalOpen(next)
+    },
+    [onOpenChange],
+  )
   const { theme, setTheme } = useTheme()
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        setOpen((prev) => !prev)
+        setOpen(!open)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [open, setOpen])
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

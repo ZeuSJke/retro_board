@@ -96,7 +96,12 @@ export default function SessionBar({
           {!facilitator ? (
             <div className="flex flex-wrap items-center gap-2.5">
               <Badge variant="outline" className="gap-1.5 bg-background font-normal">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                <span
+                  className={cn(
+                    'h-2 w-2 rounded-full',
+                    isLocked ? 'bg-amber-500' : 'bg-emerald-500',
+                  )}
+                />
                 {isLocked ? 'Доска заблокирована для правок' : 'Свободный режим'}
               </Badge>
               <Button
@@ -126,30 +131,58 @@ export default function SessionBar({
           )}
 
           <div className="flex flex-wrap items-center gap-2 ml-auto">
-            {phase === 'vote' && (
-              <div
-                className="flex items-center gap-2 rounded-full border bg-background px-2.5 py-1 text-xs"
-                title={`Использовано ${usedVotes} из ${maxVotes} голосов`}
+            {facilitator && isLocked && (
+              <Badge
+                variant="outline"
+                className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                title="Доска заблокирована — редактирование и голосование отключены. Разблокировать можно в настройках доски."
               >
-                <Vote className="h-3.5 w-3.5 text-primary" />
-                {maxVotes <= 10 ? (
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: maxVotes }).map((_, idx) => (
-                      <span
-                        key={idx}
-                        className={cn(
-                          'h-2 w-2 rounded-full transition-colors',
-                          idx < usedVotes ? 'bg-primary' : 'bg-muted-foreground/30',
-                        )}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-                <span className="font-mono font-semibold">
-                  {Math.max(0, maxVotes - usedVotes)}/{maxVotes}
-                </span>
-              </div>
+                <Lock className="h-3 w-3" />
+                Только чтение
+              </Badge>
             )}
+
+            {phase === 'vote' && (() => {
+              const limitReached = maxVotes > 0 && usedVotes >= maxVotes
+              return (
+                <div
+                  className={cn(
+                    'flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs transition-colors',
+                    limitReached
+                      ? 'border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                      : 'bg-background',
+                  )}
+                  title={
+                    limitReached
+                      ? `Лимит голосов исчерпан (${usedVotes} из ${maxVotes})`
+                      : `Использовано ${usedVotes} из ${maxVotes} голосов`
+                  }
+                >
+                  <Vote className={cn('h-3.5 w-3.5', limitReached ? 'text-amber-500' : 'text-primary')} />
+                  {maxVotes <= 10 ? (
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: maxVotes }).map((_, idx) => (
+                        <span
+                          key={idx}
+                          className={cn(
+                            'h-2 w-2 rounded-full transition-colors',
+                            idx < usedVotes
+                              ? limitReached
+                                ? 'bg-amber-500'
+                                : 'bg-primary'
+                              : 'bg-muted-foreground/30',
+                          )}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                  <span className="font-mono font-semibold">
+                    {Math.max(0, maxVotes - usedVotes)}/{maxVotes}
+                    {limitReached ? ' · лимит' : ''}
+                  </span>
+                </div>
+              )
+            })()}
 
             {facilitator && (
               <Button

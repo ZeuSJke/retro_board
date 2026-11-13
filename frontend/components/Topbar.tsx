@@ -8,7 +8,6 @@ import {
   Download,
   FileText,
   HeartPulse,
-  LayoutGrid,
   Lock,
   Moon,
   PanelLeft,
@@ -19,6 +18,7 @@ import {
   Sun,
   Users,
 } from 'lucide-react'
+import { BrandMark } from '@/components/BrandLogo'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import type { Board } from '@/types'
 import { Badge } from '@/components/ui/badge'
@@ -43,6 +43,7 @@ interface TopbarProps {
   connected: boolean
   openActionItemsCount: number
   onOpenBoardsDrawer: () => void
+  onOpenCommandPalette?: () => void
   onOpenBoardSettings: () => void
   onOpenUserSettings: () => void
   onOpenMood: () => void
@@ -61,6 +62,7 @@ export default function Topbar({
   connected,
   openActionItemsCount,
   onOpenBoardsDrawer,
+  onOpenCommandPalette,
   onOpenBoardSettings,
   onOpenUserSettings,
   onOpenMood,
@@ -98,9 +100,7 @@ export default function Topbar({
         </Tooltip>
 
         <div className="flex items-center gap-2 min-w-0">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
-            <LayoutGrid className="h-4 w-4" />
-          </div>
+          <BrandMark size={32} />
           <div className="hidden md:flex items-center gap-1.5 text-xs text-muted-foreground min-w-0">
             <span className="truncate max-w-[130px] font-medium text-foreground/80">
               {workspaceName}
@@ -123,9 +123,17 @@ export default function Topbar({
           )}
         </div>
 
-        <kbd className="hidden xl:inline-flex items-center gap-1 rounded-md border bg-muted/60 px-2 py-0.5 text-[11px] font-mono text-muted-foreground">
-          <Search className="h-3 w-3" /> Ctrl K
-        </kbd>
+        <button
+          type="button"
+          onClick={onOpenCommandPalette}
+          data-testid="command-palette-trigger"
+          title="Быстрый поиск и команды (Ctrl+K)"
+          className="hidden sm:inline-flex items-center gap-1.5 rounded-md border bg-muted/60 px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+        >
+          <Search className="h-3 w-3" />
+          <span className="hidden md:inline">Поиск</span>
+          <kbd className="font-mono text-[10px] opacity-80">Ctrl K</kbd>
+        </button>
       </div>
 
       {/* Правый блок: Участники, Настроение, Дашборд, Экспорт, Настройки */}

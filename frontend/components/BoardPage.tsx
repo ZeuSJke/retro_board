@@ -100,6 +100,7 @@ export default function BoardPage({
   const [userSettingsOpen, setUserSettingsOpen] = useState(false)
   const [moodOpen, setMoodOpen] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
   const [masterOpen, setMasterOpen] = useState(true)
   const [mobileMasterOpen, setMobileMasterOpen] = useState(false)
 
@@ -171,24 +172,28 @@ export default function BoardPage({
     showToast(msg || 'Не удалось сгенерировать AI-итоги', 'error')
   }, [])
 
+  const boardRef = useRef(board)
+  boardRef.current = board
+
   const handleWsBoardUpdated = useCallback(
     (data: WsBoardUpdatedData) => {
       onBoardsListUpdated(data)
-      if (data.id === board.id) {
+      const current = boardRef.current
+      if (data.id === current.id) {
         onBoardUpdated({
-          ...board,
-          name: data.name ?? board.name,
-          slug: data.slug ?? board.slug,
-          max_votes: data.max_votes ?? board.max_votes,
-          template: data.template ?? board.template,
-          is_locked: data.is_locked ?? board.is_locked,
+          ...current,
+          name: data.name ?? current.name,
+          slug: data.slug ?? current.slug,
+          max_votes: data.max_votes ?? current.max_votes,
+          template: data.template ?? current.template,
+          is_locked: data.is_locked ?? current.is_locked,
           hide_cards_until_reveal:
-            data.hide_cards_until_reveal ?? board.hide_cards_until_reveal,
-          anonymous_votes: data.anonymous_votes ?? board.anonymous_votes,
+            data.hide_cards_until_reveal ?? current.hide_cards_until_reveal,
+          anonymous_votes: data.anonymous_votes ?? current.anonymous_votes,
         })
       }
     },
-    [board, onBoardUpdated, onBoardsListUpdated],
+    [onBoardUpdated, onBoardsListUpdated],
   )
 
   const handleWsMoodUpdated = useCallback((mood: BoardMood) => {
@@ -234,18 +239,28 @@ export default function BoardPage({
     sendMessageRef.current = sendMessage
   }, [sendMessage])
 
+  const loadedBoardIdRef = useRef<string | null>(null)
   useEffect(() => {
-    setColumns(board.columns || [])
-    setMoods(board.moods || [])
+    const initialBoard = boardRef.current
+    const boardChanged = loadedBoardIdRef.current !== board.id
+    loadedBoardIdRef.current = board.id
+    if (!boardChanged) return
+
+    setColumns(initialBoard.columns || [])
+    setMoods(initialBoard.moods || [])
     setSummary(null)
     setSummaryError(null)
     restoreTimer(board.id)
-    if (board.has_summary) {
+    handleFacilitatorChanged(
+      initialBoard.active_facilitator ?? null,
+      initialBoard.active_phase ?? null,
+    )
+    if (initialBoard.has_summary) {
       getBoardSummary(board.id)
         .then((s) => s && setSummary(s))
         .catch(() => {})
     }
-  }, [board.id, board.columns, board.moods, board.has_summary, setColumns, restoreTimer])
+  }, [board.id, setColumns, restoreTimer, handleFacilitatorChanged])
 
   // Subscribe cursor arrivals to render CursorMarker components dynamically
   useEffect(() => {
@@ -282,6 +297,9 @@ export default function BoardPage({
   } = useBoardDragDrop({ columns, setColumns })
 
   const boardLocked = Boolean(board.is_locked)
+  const effectiveFacilitator = sessionSynced
+    ? facilitator
+    : board.active_facilitator ?? null
   const effectivePhase = sessionSynced ? phase : board.active_phase ?? null
   const hideOtherCards =
     effectivePhase === 'brainstorm' ||
@@ -549,10 +567,11 @@ export default function BoardPage({
         username={username}
         activeUsers={activeUsers}
         readyUsers={readyUsers}
-        facilitator={facilitator}
+        facilitator={effectiveFacilitator}
         connected={connected}
         openActionItemsCount={actionItems.filter((i) => i.status !== 'done').length}
         onOpenBoardsDrawer={() => setBoardsPanelOpen(true)}
+        onOpenCommandPalette={() => setCommandOpen(true)}
         onOpenBoardSettings={() => setBoardSettingsOpen(true)}
         onOpenUserSettings={() => setUserSettingsOpen(true)}
         onOpenMood={() => setMoodOpen(true)}
@@ -565,7 +584,7 @@ export default function BoardPage({
       />
 
       <SessionBar
-        facilitator={facilitator}
+        facilitator={effectiveFacilitator}
         phase={effectivePhase}
         username={username}
         activeUsers={activeUsers}
@@ -748,18 +767,19 @@ export default function BoardPage({
       {/* Floating emoji reactions */}
       {reactions.length > 0 && (
         <div
-          className="pointer-events-none fixed inset-x-0 bottom-14 z-50 h-44 overflow-hidden"
+          data-testid="reactions-overlay"
+          className="pointer-events-none fixed inset-x-0 top-14 bottom-4 z-50 overflow-hidden"
           aria-hidden="true"
         >
           {reactions.map((r) => (
             <div
               key={r.id}
               style={{ left: `${r.xOffset}%` }}
-              className="animate-float-up absolute bottom-0 flex flex-col items-center gap-0.5"
+              className="animate-float-up absolute bottom-2 flex -translate-x-1/2 flex-col items-center gap-1"
             >
-              <span className="text-3xl drop-shadow-sm">{r.emoji}</span>
+              <span className="text-4xl drop-shadow-md">{r.emoji}</span>
               {r.username && (
-                <span className="rounded-full bg-background/90 px-2 py-0.5 text-[10px] font-medium shadow">
+                <span className="rounded-full border border-border/60 bg-background/90 px-2 py-0.5 text-[10px] font-medium shadow-sm backdrop-blur-sm">
                   {r.username}
                 </span>
               )}
@@ -781,6 +801,8 @@ export default function BoardPage({
 
       <CommandPalette
         boards={boards}
+        open={commandOpen}
+        onOpenChange={setCommandOpen}
         onSelectBoard={onSelectBoard}
         onCreateBoard={onOpenCreateBoard}
         onNavigateDashboard={() => router.push('/dashboard')}
@@ -826,10 +848,13 @@ export default function BoardPage({
         card={spotlightData?.card || null}
         column={spotlightData?.column}
         anonymous={anonymousMode}
-        isFacilitator={!facilitator || facilitator === username}
+        isFacilitator={!effectiveFacilitator || effectiveFacilitator === username}
         currentUser={username}
+        readOnly={readOnly}
+        maxVotes={board.max_votes}
+        userTotalVotes={userTotalVotes}
         onClose={() => {
-          if (!facilitator || facilitator === username) {
+          if (!effectiveFacilitator || effectiveFacilitator === username) {
             sendMessage({ event: 'spotlight_card', data: { card_id: null } })
           }
         }}
@@ -837,14 +862,18 @@ export default function BoardPage({
           createActionItemFromCards(card.text, [card.id], card.author)
         }
         onLike={() => {
-          if (spotlightData) {
-            // Re-use CardWidget/API toggle via Sparkles focus
-            import('../api').then(({ toggleLike }) =>
-              toggleLike(spotlightData.card.id, username).then((updated) =>
-                handleCardUpdated(spotlightData.column.id, updated),
-              ),
-            )
+          if (!spotlightData || readOnly) return
+          const targetCard = spotlightData.card
+          const targetColId = spotlightData.column.id
+          const alreadyLiked = (targetCard.likes || []).includes(username)
+          if (!alreadyLiked && board.max_votes > 0 && userTotalVotes >= board.max_votes) {
+            showToast(`Лимит голосов исчерпан (${userTotalVotes}/${board.max_votes})`, 'info')
+            return
           }
+          import('../api')
+            .then(({ toggleLike }) => toggleLike(targetCard.id, username))
+            .then((updated) => handleCardUpdated(targetColId, updated))
+            .catch((err) => showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error'))
         }}
       />
 

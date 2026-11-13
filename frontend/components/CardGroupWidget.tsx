@@ -212,19 +212,9 @@ export default function CardGroupWidget({
             </span>
           )}
 
-          {totalLikes > 0 && (
-            <Badge variant="secondary" className="h-5 gap-1 px-1.5 text-[10px]">
-              <ThumbsUp className="h-2.5 w-2.5" />
-              {totalLikes}
-            </Badge>
-          )}
-          <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-            {cards.length}
-          </Badge>
-
           {!readOnly && !editingTitle && (
             <div
-              className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/hdr:opacity-100 focus-within:opacity-100"
+              className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/hdr:opacity-100 focus-within:opacity-100 shrink-0"
               onPointerDown={(e) => e.stopPropagation()}
             >
               <Button
@@ -252,6 +242,16 @@ export default function CardGroupWidget({
               </Button>
             </div>
           )}
+
+          {totalLikes > 0 && (
+            <Badge variant="secondary" className="h-5 gap-1 px-1.5 text-[10px] shrink-0">
+              <ThumbsUp className="h-2.5 w-2.5" />
+              {totalLikes}
+            </Badge>
+          )}
+          <Badge variant="outline" className="h-5 px-1.5 text-[10px] shrink-0">
+            {cards.length}
+          </Badge>
         </div>
 
         {!collapsed && cards.length > 0 && (

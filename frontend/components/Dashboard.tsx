@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
+import { BrandMark } from '@/components/BrandLogo'
 import {
   ArrowLeft,
   ArrowRight,
-  BarChart3,
   CheckCircle2,
   Circle,
   Clock,
@@ -601,10 +601,8 @@ export default function Dashboard() {
               К доске
             </Button>
             <div className="h-4 w-px bg-border" />
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <BarChart3 className="h-4 w-4" />
-              </div>
+            <div className="flex items-center gap-2.5">
+              <BrandMark size={28} />
               <span className="font-semibold tracking-tight">Панель управления</span>
             </div>
             {workspace && (

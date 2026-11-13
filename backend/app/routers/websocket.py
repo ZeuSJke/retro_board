@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-WS_RATE_LIMIT = 20  # max messages per second
+WS_RATE_LIMIT = 20  # max non-cursor control messages per second
+WS_CURSOR_RATE_LIMIT = 30  # max cursor_move frames per second
 WS_RATE_WINDOW = 1.0  # seconds
 
 VALID_PHASES = ("brainstorm", "reveal", "discuss", "vote", "summary")
@@ -253,6 +254,7 @@ async def websocket_endpoint(
 
     await manager.connect(board_id, websocket, workspace_id=workspace_id)
     msg_timestamps: list[float] = []
+    cursor_timestamps: list[float] = []
     username_announced = False
 
     try:
@@ -327,13 +329,6 @@ async def websocket_endpoint(
             if data == "ping":
                 continue
 
-            # Simple rate check: drop excess messages
-            now = time.monotonic()
-            msg_timestamps = [t for t in msg_timestamps if now - t < WS_RATE_WINDOW]
-            if len(msg_timestamps) >= WS_RATE_LIMIT:
-                continue
-            msg_timestamps.append(now)
-
             try:
                 msg = json.loads(data)
                 event = msg.get("event")
@@ -342,6 +337,19 @@ async def websocket_endpoint(
                 # Validate event type
                 if not isinstance(event, str) or event not in KNOWN_EVENTS:
                     continue
+
+                # Separate rate-limit buckets so cursor movement never drops session/timer commands
+                now = time.monotonic()
+                if event == "cursor_move":
+                    cursor_timestamps = [t for t in cursor_timestamps if now - t < WS_RATE_WINDOW]
+                    if len(cursor_timestamps) >= WS_CURSOR_RATE_LIMIT:
+                        continue
+                    cursor_timestamps.append(now)
+                else:
+                    msg_timestamps = [t for t in msg_timestamps if now - t < WS_RATE_WINDOW]
+                    if len(msg_timestamps) >= WS_RATE_LIMIT:
+                        continue
+                    msg_timestamps.append(now)
 
                 # Validate cursor_move coordinates
                 if event == "cursor_move":

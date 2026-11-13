@@ -77,72 +77,144 @@ export const CARD_COLOR_PRESETS: CardColorPreset[] = [
     id: 'amber',
     name: 'Тёплый песок',
     hex: '#FFF8E1',
-    swatchClass: 'bg-amber-100 dark:bg-amber-950/75 border-amber-300 dark:border-amber-600/80',
-    cardClass: 'bg-amber-50/90 dark:bg-amber-950/50 border-amber-200/80 dark:border-amber-700/65',
+    swatchClass: 'bg-amber-100 dark:bg-amber-900/80 border-amber-300 dark:border-amber-500/80',
+    cardClass: 'bg-amber-50/90 dark:bg-amber-900/40 border-amber-200/80 dark:border-amber-500/45',
     accentDot: '#F59E0B',
   },
   {
     id: 'emerald',
     name: 'Мята',
     hex: '#E8F5E9',
-    swatchClass: 'bg-emerald-100 dark:bg-emerald-950/75 border-emerald-300 dark:border-emerald-600/80',
-    cardClass: 'bg-emerald-50/90 dark:bg-emerald-950/50 border-emerald-200/80 dark:border-emerald-700/65',
+    swatchClass: 'bg-emerald-100 dark:bg-emerald-900/80 border-emerald-300 dark:border-emerald-500/80',
+    cardClass: 'bg-emerald-50/90 dark:bg-emerald-900/40 border-emerald-200/80 dark:border-emerald-500/45',
     accentDot: '#10B981',
   },
   {
     id: 'sky',
     name: 'Небо',
     hex: '#E3F2FD',
-    swatchClass: 'bg-sky-100 dark:bg-sky-950/75 border-sky-300 dark:border-sky-600/80',
-    cardClass: 'bg-sky-50/90 dark:bg-sky-950/50 border-sky-200/80 dark:border-sky-700/65',
+    swatchClass: 'bg-sky-100 dark:bg-sky-900/80 border-sky-300 dark:border-sky-500/80',
+    cardClass: 'bg-sky-50/90 dark:bg-sky-900/40 border-sky-200/80 dark:border-sky-500/45',
     accentDot: '#0EA5E9',
   },
   {
     id: 'violet',
     name: 'Лаванда',
     hex: '#EDE7F6',
-    swatchClass: 'bg-violet-100 dark:bg-violet-950/75 border-violet-300 dark:border-violet-600/80',
-    cardClass: 'bg-violet-50/90 dark:bg-violet-950/50 border-violet-200/80 dark:border-violet-700/65',
+    swatchClass: 'bg-violet-100 dark:bg-violet-900/80 border-violet-300 dark:border-violet-500/80',
+    cardClass: 'bg-violet-50/90 dark:bg-violet-900/40 border-violet-200/80 dark:border-violet-500/45',
     accentDot: '#8B5CF6',
   },
   {
     id: 'rose',
     name: 'Коралл',
     hex: '#FCE4EC',
-    swatchClass: 'bg-rose-100 dark:bg-rose-950/75 border-rose-300 dark:border-rose-600/80',
-    cardClass: 'bg-rose-50/90 dark:bg-rose-950/50 border-rose-200/80 dark:border-rose-700/65',
+    swatchClass: 'bg-rose-100 dark:bg-rose-900/80 border-rose-300 dark:border-rose-500/80',
+    cardClass: 'bg-rose-50/90 dark:bg-rose-900/40 border-rose-200/80 dark:border-rose-500/45',
     accentDot: '#F43F5E',
   },
   {
     id: 'teal',
     name: 'Бирюза',
     hex: '#E0F2F1',
-    swatchClass: 'bg-teal-100 dark:bg-teal-950/75 border-teal-300 dark:border-teal-600/80',
-    cardClass: 'bg-teal-50/90 dark:bg-teal-950/50 border-teal-200/80 dark:border-teal-700/65',
+    swatchClass: 'bg-teal-100 dark:bg-teal-900/80 border-teal-300 dark:border-teal-500/80',
+    cardClass: 'bg-teal-50/90 dark:bg-teal-900/40 border-teal-200/80 dark:border-teal-500/45',
     accentDot: '#14B8A6',
   },
 ]
 
 const HEX_TO_CARD_PRESET: Record<string, CardColorPreset> = {
   '#ffffff': CARD_COLOR_PRESETS[0],
+  '#fafafa': CARD_COLOR_PRESETS[0],
   '#fff8e1': CARD_COLOR_PRESETS[1],
+  '#fff9c4': CARD_COLOR_PRESETS[1],
+  '#ffe0b2': CARD_COLOR_PRESETS[1],
   '#ffeb3b': CARD_COLOR_PRESETS[1],
   '#fef3c7': CARD_COLOR_PRESETS[1],
   '#fff3e0': CARD_COLOR_PRESETS[1],
   '#e8f5e9': CARD_COLOR_PRESETS[2],
+  '#c8e6c9': CARD_COLOR_PRESETS[2],
+  '#dcedc8': CARD_COLOR_PRESETS[2],
   '#d1fae5': CARD_COLOR_PRESETS[2],
   '#e3f2fd': CARD_COLOR_PRESETS[3],
+  '#bbdefb': CARD_COLOR_PRESETS[3],
   '#e0f2fe': CARD_COLOR_PRESETS[3],
   '#ede7f6': CARD_COLOR_PRESETS[4],
+  '#e1bee7': CARD_COLOR_PRESETS[4],
   '#f3e5f5': CARD_COLOR_PRESETS[4],
   '#fce4ec': CARD_COLOR_PRESETS[5],
+  '#f8bbd9': CARD_COLOR_PRESETS[5],
+  '#ffcdd2': CARD_COLOR_PRESETS[5],
   '#ffebee': CARD_COLOR_PRESETS[5],
   '#e0f2f1': CARD_COLOR_PRESETS[6],
+  '#e0f7fa': CARD_COLOR_PRESETS[6],
+  '#b2ebf2': CARD_COLOR_PRESETS[6],
 }
+
+function parseHexRgb(hex: string): [number, number, number] | null {
+  const clean = hex.trim().replace(/^#/, '')
+  const normalized =
+    clean.length === 3
+      ? clean
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : clean
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return null
+  return [
+    parseInt(normalized.slice(0, 2), 16),
+    parseInt(normalized.slice(2, 4), 16),
+    parseInt(normalized.slice(4, 6), 16),
+  ]
+}
+
+function rgbToHue([r, g, b]: [number, number, number]): number {
+  const rn = r / 255
+  const gn = g / 255
+  const bn = b / 255
+  const max = Math.max(rn, gn, bn)
+  const min = Math.min(rn, gn, bn)
+  const delta = max - min
+  if (delta === 0) return 0
+  let hue = 0
+  if (max === rn) hue = ((gn - bn) / delta) % 6
+  else if (max === gn) hue = (bn - rn) / delta + 2
+  else hue = (rn - gn) / delta + 4
+  hue = Math.round(hue * 60)
+  return hue < 0 ? hue + 360 : hue
+}
+
+const PRESET_HUE_MAP: Array<{ preset: CardColorPreset; hue: number }> =
+  CARD_COLOR_PRESETS.slice(1).map((preset) => ({
+    preset,
+    hue: rgbToHue(parseHexRgb(preset.accentDot) ?? [255, 255, 255]),
+  }))
 
 export function getCardColorPreset(hex?: string | null): CardColorPreset {
   if (!hex) return CARD_COLOR_PRESETS[0]
-  return HEX_TO_CARD_PRESET[hex.toLowerCase()] || CARD_COLOR_PRESETS[0]
+  const normalized = hex.trim().toLowerCase()
+  const exact = HEX_TO_CARD_PRESET[normalized]
+  if (exact) return exact
+
+  const rgb = parseHexRgb(normalized)
+  if (!rgb) return CARD_COLOR_PRESETS[0]
+  // Keep near-neutral whites/grays on the default surface preset.
+  if (Math.max(...rgb) - Math.min(...rgb) < 16) {
+    return CARD_COLOR_PRESETS[0]
+  }
+
+  const targetHue = rgbToHue(rgb)
+  let best = CARD_COLOR_PRESETS[1]
+  let minDist = Infinity
+  for (const item of PRESET_HUE_MAP) {
+    const rawDiff = Math.abs(targetHue - item.hue)
+    const dist = Math.min(rawDiff, 360 - rawDiff)
+    if (dist < minDist) {
+      minDist = dist
+      best = item.preset
+    }
+  }
+  return best
 }
 
 export const COLUMN_COLOR_PALETTE = [

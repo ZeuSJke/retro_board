@@ -158,16 +158,23 @@ export default function SummaryModal({
                 {summary.key_themes.length > 0 && (
                   <div className="space-y-2">
                     <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      <Tag className="h-3.5 w-3.5" />
+                      <Tag className="h-3.5 w-3.5 text-primary" />
                       Ключевые темы
                     </div>
-                    <div className="flex flex-wrap gap-2">
+                    <ul className="rounded-xl border bg-card/60 divide-y divide-border/60">
                       {summary.key_themes.map((theme, idx) => (
-                        <Badge key={idx} variant="secondary" className="px-3 py-1 text-xs">
-                          {theme}
-                        </Badge>
+                        <li
+                          key={idx}
+                          className="flex items-start gap-2.5 px-3.5 py-2.5 text-sm leading-relaxed text-foreground"
+                        >
+                          <span
+                            className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                            aria-hidden="true"
+                          />
+                          <span>{theme}</span>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   </div>
                 )}
 
@@ -177,16 +184,19 @@ export default function SummaryModal({
                       <Lightbulb className="h-3.5 w-3.5 text-amber-500" />
                       Рекомендации
                     </div>
-                    <ul className="space-y-2">
+                    <ol className="rounded-xl border bg-card/60 divide-y divide-border/60">
                       {summary.recommendations.map((rec, idx) => (
                         <li
                           key={idx}
-                          className="rounded-lg border bg-card px-3 py-2 text-sm text-foreground"
+                          className="flex items-start gap-3 px-3.5 py-2.5 text-sm leading-relaxed text-foreground"
                         >
-                          {rec}
+                          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                            {idx + 1}
+                          </span>
+                          <span>{rec}</span>
                         </li>
                       ))}
-                    </ul>
+                    </ol>
                   </div>
                 )}
               </div>
