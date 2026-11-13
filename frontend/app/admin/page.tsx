@@ -338,6 +338,7 @@ export default function AdminPage() {
             <Button
               variant="ghost"
               size="icon-sm"
+              className="relative"
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
               aria-label="Переключить тему"
             >

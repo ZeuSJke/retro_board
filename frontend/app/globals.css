@@ -138,15 +138,11 @@
     @apply border-border;
   }
 
-  html,
-  body {
-    height: 100%;
-    overflow-x: hidden;
-  }
-
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    /* Keep root viewport as the vertical scroll container so scroll-lock gap compensation works */
+    overflow-x: clip;
   }
 }
 

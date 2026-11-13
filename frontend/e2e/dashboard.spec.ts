@@ -101,4 +101,65 @@ test.describe('Dashboard', () => {
 
     await expect(page).toHaveURL(/\/board\//)
   })
+
+  test('открытие Select и Dialog не вызывает горизонтальный сдвиг макета', async ({ page, request }) => {
+    const wsData = await ensureE2EWorkspace(request)
+    const board = await createBoardViaAPI(request, 'Scroll Stability Sprint', wsData.token)
+    for (let i = 1; i <= 2; i++) {
+      await createActionItemViaAPI(request, board.id, `Длинное описание задачи ${i}`, wsData.token, {
+        title: `Задача ${i}`,
+      })
+    }
+
+    await page.setViewportSize({ width: 1440, height: 550 })
+    await page.goto('/dashboard')
+    await expect(page.locator('body')).toContainText('Задача 2', { timeout: 15000 })
+
+    // DocumentElement owns document vertical scroll; body itself is not an inner scroll box
+    const scrollMetrics = await page.evaluate(() => ({
+      htmlOverflowY: document.documentElement.scrollHeight > document.documentElement.clientHeight,
+      bodyOwnScroll: document.body.scrollHeight > document.body.clientHeight,
+      headerX: document.querySelector('header > div')!.getBoundingClientRect().x,
+      mainX: document.querySelector('main')!.getBoundingClientRect().x,
+    }))
+    expect(scrollMetrics.htmlOverflowY).toBe(true)
+    expect(scrollMetrics.bodyOwnScroll).toBe(false)
+
+    // Scroll down slightly so sticky header is active when overlays open
+    await page.evaluate(() => window.scrollTo(0, 120))
+
+    // 1. Open status Select filter
+    const statusTrigger = page.getByRole('combobox').first()
+    const triggerXBefore = (await statusTrigger.boundingBox())!.x
+    await statusTrigger.click()
+    await expect(page.getByRole('listbox')).toBeVisible()
+
+    // Measure via DOM querySelector because modal Radix Select temporarily marks background aria-hidden="true"
+    const afterSelect = await page.evaluate(() => ({
+      headerTop: document.querySelector('header')!.getBoundingClientRect().top,
+      headerX: document.querySelector('header > div')!.getBoundingClientRect().x,
+      mainX: document.querySelector('main')!.getBoundingClientRect().x,
+      triggerX: document.querySelector('button[role="combobox"]')!.getBoundingClientRect().x,
+    }))
+    expect(afterSelect.headerTop).toBe(0)
+    expect(Math.abs(afterSelect.headerX - scrollMetrics.headerX)).toBeLessThan(0.5)
+    expect(Math.abs(afterSelect.mainX - scrollMetrics.mainX)).toBeLessThan(0.5)
+    expect(Math.abs(afterSelect.triggerX - triggerXBefore)).toBeLessThan(0.5)
+
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('listbox')).not.toBeVisible()
+
+    // 2. Open "Новая доска" modal Dialog
+    await page.getByRole('button', { name: /Новая доска/i }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    const afterDialog = await page.evaluate(() => ({
+      headerTop: document.querySelector('header')!.getBoundingClientRect().top,
+      headerX: document.querySelector('header > div')!.getBoundingClientRect().x,
+      mainX: document.querySelector('main')!.getBoundingClientRect().x,
+    }))
+    expect(afterDialog.headerTop).toBe(0)
+    expect(Math.abs(afterDialog.headerX - scrollMetrics.headerX)).toBeLessThan(0.5)
+    expect(Math.abs(afterDialog.mainX - scrollMetrics.mainX)).toBeLessThan(0.5)
+  })
 })
