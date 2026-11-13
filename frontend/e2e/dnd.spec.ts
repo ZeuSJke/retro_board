@@ -42,9 +42,9 @@ test.describe('Drag and Drop', () => {
       headers,
     })
 
-    // Create a card in column A
+    // Create a card in column A (owned by current test user so it stays visible during brainstorm)
     await request.post('http://localhost:8000/api/cards/', {
-      data: { column_id: col1.id, text: 'Перетащи меня' },
+      data: { column_id: col1.id, text: 'Перетащи меня', author: 'E2E Тестер' },
       headers,
     })
 
