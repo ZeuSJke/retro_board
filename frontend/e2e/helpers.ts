@@ -81,6 +81,20 @@ export async function loginWorkspace(
     cachedWorkspaceSession = data
   }
 
+  const token = String((data as Record<string, unknown>).token || '')
+  if (token) {
+    await page.context().addCookies([
+      {
+        name: 'workspace_token',
+        value: token,
+        domain: 'localhost',
+        path: '/',
+        httpOnly: true,
+        sameSite: 'Lax',
+      },
+    ])
+  }
+
   await page.addInitScript((session) => {
     const stored = localStorage.getItem('retroboard-app')
     const state = stored ? JSON.parse(stored) : { state: {}, version: 0 }

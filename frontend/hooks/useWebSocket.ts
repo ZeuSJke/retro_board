@@ -58,7 +58,7 @@ export function useWebSocket(
 
       const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
       const wsHost = process.env.NEXT_PUBLIC_WS_HOST || location.host
-      const wsUrl = `${protocol}://${wsHost}/ws/${boardId}?workspace_token=${encodeURIComponent(wsToken)}`
+      const wsUrl = `${protocol}://${wsHost}/ws/${boardId}`
       const ws = new WebSocket(wsUrl)
 
       ws.onopen = () => {

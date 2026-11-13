@@ -617,3 +617,51 @@ class TestWebSocketBugfixes:
             ws.send_text(json.dumps({"event": "phase_change", "data": {"phase": "summary"}}))
             ev = recv_event(ws, "summary_failed")
             assert "message" in ev["data"]
+
+    def test_board_ws_auth_via_httponly_cookie(self, client, ws_token, ws_board):
+        with client.websocket_connect(
+            f"/ws/{ws_board.id}",
+            headers={"origin": TEST_ORIGIN, "cookie": f"workspace_token={ws_token}"},
+        ) as ws:
+            ev = ws.receive_json()
+            assert ev["event"] == "facilitator_update"
+
+    def test_workspace_ws_auth_via_httponly_cookie(self, client, ws_token):
+        ws_headers = {"X-Workspace-Token": ws_token}
+        with client.websocket_connect(
+            "/ws/workspace",
+            headers={"origin": TEST_ORIGIN, "cookie": f"workspace_token={ws_token}"},
+        ) as ws:
+            create_resp = client.post(
+                "/api/boards/",
+                json={"name": "WS Cookie Board"},
+                headers=ws_headers,
+            )
+            assert create_resp.status_code == 201
+            board = create_resp.json()
+            ev_created = recv_event(ws, "board_created")
+            assert ev_created["data"]["id"] == board["id"]
+
+    def test_board_ws_rejects_missing_token(self, client, ws_board):
+        rejected_code = None
+        try:
+            with client.websocket_connect(
+                f"/ws/{ws_board.id}",
+                headers={"origin": TEST_ORIGIN},
+            ):
+                pass
+        except Exception as exc:
+            rejected_code = getattr(exc, "code", None)
+        assert rejected_code == 1008
+
+    def test_board_ws_rejects_invalid_cookie_token(self, client, ws_board):
+        rejected_code = None
+        try:
+            with client.websocket_connect(
+                f"/ws/{ws_board.id}",
+                headers={"origin": TEST_ORIGIN, "cookie": "workspace_token=invalid.jwt.token"},
+            ):
+                pass
+        except Exception as exc:
+            rejected_code = getattr(exc, "code", None)
+        assert rejected_code == 1008

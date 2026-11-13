@@ -14,6 +14,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!hasHydrated) return
+    let cancelled = false
     ;(async () => {
       // Without workspace token API calls will fail — redirect to board page
       // so App.tsx can show WelcomeDialog
@@ -23,8 +24,10 @@ export default function HomePage() {
       }
       try {
         let list = await getBoards()
+        if (cancelled) return
         if (list.length === 0) {
           const board = await createBoard('Моя первая ретро-доска')
+          if (cancelled) return
           list = [boardToBoardListItem(board)]
         }
         const target =
@@ -33,13 +36,17 @@ export default function HomePage() {
             : list[0]
         router.replace(`/board/${target.slug || target.id}`)
       } catch (err: unknown) {
+        if (cancelled) return
         const status = (err as { response?: { status?: number } })?.response?.status
         if (status === 401 || !useAppStore.getState().workspace) {
           router.replace(currentBoardId ? `/board/${currentBoardId}` : '/board/start')
         }
       }
     })()
-  }, [hasHydrated])
+    return () => {
+      cancelled = true
+    }
+  }, [hasHydrated, router, workspace, currentBoardId])
 
   return (
     <div style={centeredStyle}>
