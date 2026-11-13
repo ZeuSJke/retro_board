@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { BarChart3, Lock, Plus, Search, Sparkles } from 'lucide-react'
 import type { BoardListItem } from '@/types'
+import { BrandMark } from '@/components/BrandLogo'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -46,7 +47,10 @@ export default function BoardsPanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="left" className="flex flex-col p-0 sm:max-w-sm">
         <SheetHeader className="border-b px-5 py-4">
-          <SheetTitle>Доски команды</SheetTitle>
+          <div className="flex items-center gap-2.5">
+            <BrandMark size={24} />
+            <SheetTitle>Доски команды</SheetTitle>
+          </div>
           <SheetDescription>Переключайтесь между спринтами или создайте новый</SheetDescription>
         </SheetHeader>
 

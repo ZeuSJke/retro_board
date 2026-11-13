@@ -173,7 +173,7 @@ describe('Column — auto-cluster button', () => {
       // Both cards belong to a group — ungroupedCards.length === 0
       const column = makeColumn({
         cards: [makeCard('c1', 'g1'), makeCard('c2', 'g1')],
-        groups: [{ id: 'g1', column_id: 'col-1', title: 'Group', position: 0, cards: [] }],
+        groups: [{ id: 'g1', column_id: 'col-1', title: 'Group', position: 0 }],
       })
       renderColumn(column)
       expect(screen.queryByTitle(AI_BTN_TITLE)).not.toBeInTheDocument()

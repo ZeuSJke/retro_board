@@ -665,3 +665,22 @@ class TestWebSocketBugfixes:
         except Exception as exc:
             rejected_code = getattr(exc, "code", None)
         assert rejected_code == 1008
+
+    def test_cursor_flood_does_not_drop_facilitator_commands(self, client, ws_token, ws_board):
+        url = f"/ws/{ws_board.id}?workspace_token={ws_token}"
+        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws:
+            ws.receive_json()  # initial facilitator_update
+            ws.send_text(json.dumps({"event": "identify", "data": {"username": "Fac"}}))
+            # Flood cursor_move past cursor rate limit (30/s)
+            for i in range(35):
+                ws.send_text(
+                    json.dumps(
+                        {"event": "cursor_move", "data": {"username": "Fac", "x": 10 + i, "y": 20 + i}}
+                    )
+                )
+            ws.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
+            ev_fac = recv_event(ws, "facilitator_update")
+            assert ev_fac["data"]["facilitator"] == "Fac"
+            ws.send_text(json.dumps({"event": "phase_change", "data": {"phase": "vote"}}))
+            ev_phase = recv_event(ws, "phase_update")
+            assert ev_phase["data"]["phase"] == "vote"

@@ -73,14 +73,26 @@ export function useBoardWebSocket({
   const cursorTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const reactionTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastCursorRef = useRef<CursorPos | null>(null)
+  const lastCursorSentAtRef = useRef<number>(0)
+  const lastCursorSentPosRef = useRef<CursorPos | null>(null)
   const sendMessageRef = useRef<((msg: WsMessage) => void) | null>(null)
   const prevUsernameRef = useRef(username)
 
   useEffect(() => {
     setSessionSynced(false)
+    setFacilitator(null)
+    setPhase(null)
     setReadyUsers([])
     setSpotlightCardId(null)
     setReactions([])
+    Object.values(cursorTimeouts.current).forEach(clearTimeout)
+    cursorTimeouts.current = {}
+    if (Object.keys(cursorsRef.current).length > 0) {
+      cursorsRef.current = {}
+      notifyCursorListeners()
+    }
+    lastCursorSentAtRef.current = 0
+    lastCursorSentPosRef.current = null
   }, [boardId])
 
   const subscribeCursors = useCallback((cb: () => void) => {
@@ -122,14 +134,22 @@ export function useBoardWebSocket({
       if (event === 'cursor_move') {
         const { username: u, x, y } = data as unknown as WsCursorMoveData
         if (!u) return
+        const isNewCursor = !(u in cursorsRef.current)
         cursorsRef.current = { ...cursorsRef.current, [u]: { x, y } }
-        notifyCursorListeners()
+        // Only trigger a React tree re-render when a peer cursor appears for the first time;
+        // CursorMarker already animates x/y directly via requestAnimationFrame.
+        if (isNewCursor) {
+          notifyCursorListeners()
+        }
         clearTimeout(cursorTimeouts.current[u])
         cursorTimeouts.current[u] = setTimeout(() => {
-          const n = { ...cursorsRef.current }
-          delete n[u]
-          cursorsRef.current = n
-          notifyCursorListeners()
+          if (u in cursorsRef.current) {
+            const n = { ...cursorsRef.current }
+            delete n[u]
+            cursorsRef.current = n
+            notifyCursorListeners()
+          }
+          delete cursorTimeouts.current[u]
         }, 6000)
         return
       }
@@ -138,10 +158,13 @@ export function useBoardWebSocket({
         const { username: u } = data as unknown as WsCursorLeaveData
         if (!u) return
         clearTimeout(cursorTimeouts.current[u])
-        const n = { ...cursorsRef.current }
-        delete n[u]
-        cursorsRef.current = n
-        notifyCursorListeners()
+        delete cursorTimeouts.current[u]
+        if (u in cursorsRef.current) {
+          const n = { ...cursorsRef.current }
+          delete n[u]
+          cursorsRef.current = n
+          notifyCursorListeners()
+        }
         return
       }
 
@@ -178,12 +201,12 @@ export function useBoardWebSocket({
             ? data.id
             : `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         if (!emoji) return
-        const xOffset = 15 + Math.floor(Math.random() * 70)
-        setReactions((prev) => [...prev.slice(-14), { id, emoji, username: sender, xOffset }])
+        const xOffset = 8 + Math.floor(Math.random() * 84)
+        setReactions((prev) => [...prev.slice(-23), { id, emoji, username: sender, xOffset }])
         reactionTimeouts.current[id] = setTimeout(() => {
           setReactions((prev) => prev.filter((r) => r.id !== id))
           delete reactionTimeouts.current[id]
-        }, 2500)
+        }, 3500)
         return
       }
 
@@ -484,10 +507,17 @@ export function useBoardWebSocket({
       if (!boardEl) return
       const rect = boardEl.getBoundingClientRect()
       const pos = {
-        x: e.clientX - rect.left + boardEl.scrollLeft,
-        y: e.clientY - rect.top + boardEl.scrollTop,
+        x: Math.round(e.clientX - rect.left + boardEl.scrollLeft),
+        y: Math.round(e.clientY - rect.top + boardEl.scrollTop),
       }
       lastCursorRef.current = pos
+      const now = performance.now()
+      const prevSent = lastCursorSentPosRef.current
+      const movedEnough =
+        !prevSent || Math.abs(pos.x - prevSent.x) >= 3 || Math.abs(pos.y - prevSent.y) >= 3
+      if (!movedEnough || now - lastCursorSentAtRef.current < 50) return
+      lastCursorSentAtRef.current = now
+      lastCursorSentPosRef.current = pos
       sendMessage({ event: 'cursor_move', data: { username, ...pos } })
     },
     [username, sendMessage],

@@ -13,11 +13,11 @@ import {
   Moon,
   Pencil,
   Plus,
-  ShieldCheck,
   Sun,
   Trash2,
   User,
 } from 'lucide-react'
+import { BrandMark } from '@/components/BrandLogo'
 import {
   adminLogin,
   adminLogout,
@@ -250,8 +250,8 @@ export default function AdminPage() {
       <div className="bg-dot-grid flex min-h-screen items-center justify-center bg-background p-4">
         <Card className="w-full max-w-sm shadow-xl">
           <CardHeader className="text-center">
-            <div className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <ShieldCheck className="h-6 w-6" />
+            <div className="mx-auto mb-2 flex justify-center">
+              <BrandMark size={44} />
             </div>
             <CardTitle className="text-xl">Панель администратора</CardTitle>
             <CardDescription>Управление командами и ключами доступа</CardDescription>
@@ -329,7 +329,7 @@ export default function AdminPage() {
             </Link>
             <div className="h-4 w-px bg-border" />
             <div className="flex items-center gap-2 font-semibold">
-              <ShieldCheck className="h-4 w-4 text-primary" />
+              <BrandMark size={24} />
               <span>Администрирование</span>
             </div>
           </div>

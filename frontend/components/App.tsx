@@ -147,6 +147,7 @@ export default function App({ boardId }: AppProps) {
   return (
     <>
       <BoardPage
+        key={board.id}
         board={board}
         boards={boards}
         workspaceName={workspace?.workspaceName || 'Команда'}

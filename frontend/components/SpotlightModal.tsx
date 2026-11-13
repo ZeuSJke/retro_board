@@ -19,6 +19,9 @@ interface SpotlightModalProps {
   anonymous: boolean
   isFacilitator: boolean
   currentUser: string
+  readOnly?: boolean
+  maxVotes?: number
+  userTotalVotes?: number
   onClose: () => void
   onCreateActionItem: (card: Card) => void
   onLike: (cardId: string) => void
@@ -30,6 +33,9 @@ export default function SpotlightModal({
   anonymous,
   isFacilitator,
   currentUser,
+  readOnly = false,
+  maxVotes = 0,
+  userTotalVotes = 0,
   onClose,
   onCreateActionItem,
   onLike,
@@ -37,6 +43,8 @@ export default function SpotlightModal({
   if (!card) return null
   const preset = getCardColorPreset(card.color)
   const liked = card.likes.includes(currentUser)
+  const limitReached = !liked && maxVotes > 0 && userTotalVotes >= maxVotes
+  const voteDisabled = readOnly || limitReached
 
   return (
     <Dialog open={Boolean(card)} onOpenChange={(open) => !open && onClose()}>
@@ -75,6 +83,16 @@ export default function SpotlightModal({
               type="button"
               size="sm"
               variant={liked ? 'default' : 'outline'}
+              disabled={voteDisabled}
+              title={
+                readOnly
+                  ? 'Доска заблокирована для правок'
+                  : limitReached
+                    ? 'Лимит голосов исчерпан'
+                    : liked
+                      ? 'Убрать лайк'
+                      : 'Лайк'
+              }
               onClick={() => onLike(card.id)}
               className="gap-1.5 font-mono"
             >
