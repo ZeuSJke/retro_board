@@ -25,7 +25,6 @@ interface AppProps {
 export default function App({ boardId }: AppProps) {
   const router = useRouter()
   const theme = useAppStore((s) => s.theme)
-  const currentBoardId = useAppStore((s) => s.currentBoardId)
   const setCurrentBoard = useAppStore((s) => s.setCurrentBoard)
   const setUsername = useAppStore((s) => s.setUsername)
   const username = useAppStore((s) => s.username)
@@ -89,14 +88,94 @@ export default function App({ boardId }: AppProps) {
     setIsGeneratingSummary(p === 'summary')
   }, [handlePhaseChanged])
 
+  const boardsRef = useRef<BoardListItem[]>(boards)
+  boardsRef.current = boards
+  const boardsVersionRef = useRef(0)
+  const boardIdRef = useRef(boardId)
+  boardIdRef.current = boardId
+  const currentBoardRef = useRef<Board | null>(currentBoard)
+  currentBoardRef.current = currentBoard
+  const restoreTimerRef = useRef(restoreTimer)
+  restoreTimerRef.current = restoreTimer
+
+  const loadBoards = useCallback(async (targetBoardId?: string) => {
+    const effectiveBoardId = targetBoardId ?? boardIdRef.current
+    try {
+      setError(null)
+      const versionBeforeFetch = boardsVersionRef.current
+      let list = await getBoards()
+      // Если во время HTTP-запроса пришёл WS-ивент списка досок (напр. board_created), перечитаем актуальный список
+      if (boardsVersionRef.current !== versionBeforeFetch) {
+        list = await getBoards()
+      }
+      if (list.length === 0) {
+        const board = await createBoard('Моя первая ретро-доска')
+        list = [boardToBoardListItem(board)]
+        router.replace(`/board/${board.slug || board.id}`)
+      } else {
+        const inList = list.find((b) => b.slug === effectiveBoardId || b.id === effectiveBoardId)
+        if (!inList) {
+          const storeBoardId = useAppStore.getState().currentBoardId
+          const target =
+            storeBoardId && list.find((b) => b.id === storeBoardId)
+              ? list.find((b) => b.id === storeBoardId)!
+              : list[0]
+          router.replace(`/board/${target.slug || target.id}`)
+        }
+      }
+      setBoards(list)
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 401 || !useAppStore.getState().workspace) {
+        setShowWelcome(true)
+        return
+      }
+      setError('Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен.')
+    }
+  }, [router])
+
+  const loadBoard = useCallback(async (id: string) => {
+    try {
+      setLoading(true)
+      setError(null)
+      const board = await getBoardBySlug(id)
+      setCurrentBoardData(board)
+      setCurrentBoard(board.id)
+      restoreTimerRef.current(board.id)
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 401 || !useAppStore.getState().workspace) {
+        setShowWelcome(true)
+        return
+      }
+      if (status === 404) {
+        // Доска не найдена (удалена или неверный URL) — попробуем перейти на доступную доску
+        const fallback = boardsRef.current.find((b) => b.id !== id && b.slug !== id)
+        if (fallback) {
+          showToast('Запрошенная доска не найдена', 'error')
+          router.replace(`/board/${fallback.slug || fallback.id}`)
+          return
+        }
+      }
+      setError('Не удалось загрузить доску.')
+    } finally {
+      setLoading(false)
+    }
+  }, [router, setCurrentBoard])
+
   const handleWelcomeConfirm = async (name: string) => {
     setUsername(name)
     setShowWelcome(false)
-    setSessionChecked(true)
+    setLoading(true)
+    setSessionChecked(false)
     setError(null)
-    await loadBoards()
-    if (boardId && boardId !== 'start') {
-      await loadBoard(boardId)
+    try {
+      await loadBoards(boardId)
+      if (boardId && boardId !== 'start') {
+        await loadBoard(boardId)
+      }
+    } finally {
+      setSessionChecked(true)
     }
   }
 
@@ -124,15 +203,18 @@ export default function App({ boardId }: AppProps) {
       try {
         await checkWorkspaceSession()
         if (cancelled) return
-        setSessionChecked(true)
         if (uname === 'Аноним') {
           setShowWelcome(true)
           setLoading(false)
+          setSessionChecked(true)
         } else {
           setShowWelcome(false)
-          await loadBoards()
-          if (!cancelled && boardId && boardId !== 'start') {
-            await loadBoard(boardId)
+          await loadBoards(boardIdRef.current)
+          if (!cancelled && boardIdRef.current && boardIdRef.current !== 'start') {
+            await loadBoard(boardIdRef.current)
+          }
+          if (!cancelled) {
+            setSessionChecked(true)
           }
         }
       } catch (err: unknown) {
@@ -151,7 +233,7 @@ export default function App({ boardId }: AppProps) {
 
     verifySession()
     return () => { cancelled = true }
-  }, [hasHydrated])
+  }, [hasHydrated, loadBoard, loadBoards])
 
   // Реагируем на сброс workspace (например, при протухании куки во время работы → interceptor 401)
   useEffect(() => {
@@ -166,70 +248,15 @@ export default function App({ boardId }: AppProps) {
   useEffect(() => {
     if (!hasHydrated || !sessionChecked || !workspace || showWelcome) return
     if (boardId && boardId !== 'start') {
-      if (currentBoard && (currentBoard.id === boardId || currentBoard.slug === boardId)) {
+      if (
+        currentBoardRef.current &&
+        (currentBoardRef.current.id === boardId || currentBoardRef.current.slug === boardId)
+      ) {
         return
       }
       loadBoard(boardId)
     }
-  }, [boardId])
-
-  const loadBoards = async () => {
-    try {
-      setError(null)
-      let list = await getBoards()
-      if (list.length === 0) {
-        const board = await createBoard('Моя первая ретро-доска')
-        list = [boardToBoardListItem(board)]
-        router.replace(`/board/${board.slug || board.id}`)
-      } else {
-        const inList = list.find((b) => b.slug === boardId || b.id === boardId)
-        if (!inList) {
-          const target =
-            currentBoardId && list.find((b) => b.id === currentBoardId)
-              ? list.find((b) => b.id === currentBoardId)!
-              : list[0]
-          router.replace(`/board/${target.slug || target.id}`)
-        }
-      }
-      setBoards(list)
-    } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } })?.response?.status
-      if (status === 401 || !useAppStore.getState().workspace) {
-        setShowWelcome(true)
-        return
-      }
-      setError('Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен.')
-    }
-  }
-
-  const loadBoard = async (id: string) => {
-    try {
-      setLoading(true)
-      setError(null)
-      const board = await getBoardBySlug(id)
-      setCurrentBoardData(board)
-      setCurrentBoard(board.id)
-      restoreTimer(board.id)
-    } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } })?.response?.status
-      if (status === 401 || !useAppStore.getState().workspace) {
-        setShowWelcome(true)
-        return
-      }
-      if (status === 404) {
-        // Доска не найдена (удалена или неверный URL) — попробуем перейти на доступную доску
-        const fallback = boards.find((b) => b.id !== id && b.slug !== id)
-        if (fallback) {
-          showToast('Запрошенная доска не найдена', 'error')
-          router.replace(`/board/${fallback.slug || fallback.id}`)
-          return
-        }
-      }
-      setError('Не удалось загрузить доску.')
-    } finally {
-      setLoading(false)
-    }
-  }
+  }, [boardId, hasHydrated, sessionChecked, workspace, showWelcome, loadBoard])
 
   const handleSelectBoard = async (id: string) => {
     setBoardsPanelOpen(false)
@@ -238,12 +265,14 @@ export default function App({ boardId }: AppProps) {
   }
 
   const handleBoardCreated = async (board: BoardListItem) => {
+    boardsVersionRef.current += 1
     setBoards((prev) => (prev.some((b) => b.id === board.id) ? prev : [board, ...prev]))
     setBoardsPanelOpen(false)
     router.push(`/board/${board.slug || board.id}`)
   }
 
   const handleBoardDeleted = (id: string) => {
+    boardsVersionRef.current += 1
     selfDeletedIdRef.current = id
     const remaining = boards.filter((b) => b.id !== id)
     setBoards(remaining)
@@ -255,15 +284,18 @@ export default function App({ boardId }: AppProps) {
   }
 
   const handleWsBoardCreated = useCallback((board: BoardListItem) => {
+    boardsVersionRef.current += 1
     setBoards((prev) => (prev.some((b) => b.id === board.id) ? prev : [board, ...prev]))
   }, [])
 
   const handleWsBoardUpdated = useCallback((upd: WsBoardUpdatedData) => {
+    boardsVersionRef.current += 1
     setBoards((prev) => prev.map((b) => (b.id === upd.id ? { ...b, ...upd } : b)))
     setCurrentBoardData((prev) => (prev && prev.id === upd.id ? { ...prev, ...upd } : prev))
   }, [])
 
   const handleWsBoardDeleted = useCallback((deletedId: string) => {
+    boardsVersionRef.current += 1
     setBoards((prev) => {
       const remaining = prev.filter((b) => b.id !== deletedId)
       if (selfDeletedIdRef.current === deletedId) {
@@ -291,6 +323,7 @@ export default function App({ boardId }: AppProps) {
       columns: updated_board.columns?.length ? updated_board.columns : currentBoard.columns,
     }
     setCurrentBoardData(updated)
+    boardsVersionRef.current += 1
     setBoards((prev) =>
       prev.map((b) =>
         b.id === updated.id

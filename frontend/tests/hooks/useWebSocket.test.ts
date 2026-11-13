@@ -54,13 +54,11 @@ describe('useWebSocket', () => {
     return { ...hook, ws, onMessage, onOpen }
   }
 
-  it('connects on mount with board id and workspace token in url', () => {
+  it('connects on mount with board id and does not leak workspace token in url', () => {
     setup()
     expect(MockWebSocket.instances).toHaveLength(1)
     expect(MockWebSocket.instances[0].url).toContain('/ws/board-1')
-    expect(MockWebSocket.instances[0].url).toContain(
-      `workspace_token=${encodeURIComponent('test-token')}`,
-    )
+    expect(MockWebSocket.instances[0].url).not.toContain('workspace_token')
   })
 
   it('calls onOpen when the socket opens', () => {

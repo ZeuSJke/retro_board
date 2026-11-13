@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { getBoardSummary } from '../api'
 import type { BoardSummary } from '../types'
 import styles from './SummaryModal.module.css'
@@ -17,7 +17,7 @@ export default function SummaryModal({ boardId, hasSummary, isGeneratingSummary,
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
 
-  const loadSummary = async (silent = false) => {
+  const loadSummary = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
       const data = await getBoardSummary(boardId)
@@ -27,7 +27,7 @@ export default function SummaryModal({ boardId, hasSummary, isGeneratingSummary,
     } finally {
       if (!silent) setLoading(false)
     }
-  }
+  }, [boardId])
 
   useEffect(() => {
     if (hasSummary) {
@@ -36,7 +36,7 @@ export default function SummaryModal({ boardId, hasSummary, isGeneratingSummary,
       setLoading(false)
       setSummary(null)
     }
-  }, [boardId, hasSummary])
+  }, [hasSummary, loadSummary])
 
   useEffect(() => {
     if (isGeneratingSummary && !hasSummary) {
@@ -45,7 +45,7 @@ export default function SummaryModal({ boardId, hasSummary, isGeneratingSummary,
       }, 2000)
       return () => clearInterval(interval)
     }
-  }, [isGeneratingSummary, hasSummary])
+  }, [isGeneratingSummary, hasSummary, loadSummary])
 
   const handleCopy = async () => {
     if (!summary) return

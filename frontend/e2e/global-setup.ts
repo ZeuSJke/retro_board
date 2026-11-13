@@ -107,12 +107,16 @@ export default async function globalSetup() {
     }
 
     const setCookies = adminLoginRes.headers()['set-cookie'] || ''
-    const adminCookie = setCookies
+    const adminCookie = setCookies.match(/admin_token=[^;]+/)?.[0] || setCookies
 
-    // CSRF is enforced on /api/admin/* (except login): fetch csrf pair once
-    const csrfRes = await context.get('/api/boards/')
-    const csrfMatch = (csrfRes.headers()['set-cookie'] || '').match(/csrf_token=([^;]+)/)
-    const csrfToken = csrfMatch ? csrfMatch[1] : null
+    // CSRF is enforced on /api/admin/* (except login): read csrf cookie from jar or refresh via /api/workspaces/me
+    const jarCookies = (await context.storageState()).cookies
+    let csrfToken = jarCookies.find((c) => c.name === 'csrf_token')?.value ?? null
+    if (!csrfToken) {
+      const csrfRes = await context.get('/api/workspaces/me')
+      const csrfMatch = (csrfRes.headers()['set-cookie'] || '').match(/csrf_token=([^;]+)/)
+      csrfToken = csrfMatch ? csrfMatch[1] : null
+    }
     const mutHeaders = (base: string) => ({
       Cookie: csrfToken ? `${base}; csrf_token=${csrfToken}` : base,
       ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),

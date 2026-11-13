@@ -48,6 +48,30 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     return origin in allowed
 
 
+async def _authenticate_ws(
+    websocket: WebSocket,
+    query_token: str | None = None,
+) -> str | None:
+    """Validate WebSocket Origin and workspace JWT (preferring httpOnly cookie)."""
+    if not _origin_allowed(websocket):
+        await websocket.close(code=1008, reason="Origin not allowed")
+        return None
+
+    # Prefer httpOnly cookie so JWTs are not leaked into URLs / access logs.
+    # Keep query parameter fallback for backward compatibility with older clients/tests.
+    token = websocket.cookies.get("workspace_token") or query_token
+    if not token:
+        await websocket.close(code=1008, reason="Workspace token required")
+        return None
+
+    try:
+        payload = decode_workspace_token(token)
+        return payload["workspace_id"]
+    except HTTPException:
+        await websocket.close(code=1008, reason="Invalid or expired token")
+        return None
+
+
 async def _trigger_summary_generation(
     board_id: str, username: str, workspace_id: str
 ):
@@ -95,19 +119,8 @@ async def workspace_websocket_endpoint(
     workspace_token: str = Query(None, alias="workspace_token"),
 ):
     """WebSocket уровня workspace для live-обновления списка досок (напр., на /dashboard)."""
-    if not _origin_allowed(websocket):
-        await websocket.close(code=1008, reason="Origin not allowed")
-        return
-
-    if not workspace_token:
-        await websocket.close(code=1008, reason="Workspace token required")
-        return
-
-    try:
-        payload = decode_workspace_token(workspace_token)
-        workspace_id = payload["workspace_id"]
-    except HTTPException:
-        await websocket.close(code=1008, reason="Invalid or expired token")
+    workspace_id = await _authenticate_ws(websocket, workspace_token)
+    if not workspace_id:
         return
 
     await manager.connect_workspace(workspace_id, websocket)
@@ -126,19 +139,8 @@ async def websocket_endpoint(
     board_id: str,
     workspace_token: str = Query(None, alias="workspace_token"),
 ):
-    if not _origin_allowed(websocket):
-        await websocket.close(code=1008, reason="Origin not allowed")
-        return
-
-    if not workspace_token:
-        await websocket.close(code=1008, reason="Workspace token required")
-        return
-
-    try:
-        payload = decode_workspace_token(workspace_token)
-        workspace_id = payload["workspace_id"]
-    except HTTPException:
-        await websocket.close(code=1008, reason="Invalid or expired token")
+    workspace_id = await _authenticate_ws(websocket, workspace_token)
+    if not workspace_id:
         return
 
     db_gen = get_db()

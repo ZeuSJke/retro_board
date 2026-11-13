@@ -94,18 +94,30 @@ test.describe('Workspace — вход и изоляция', () => {
     await expect(dialog.locator('input[type="password"]')).toBeVisible()
   })
 
-  test('workspace токен передаётся в WebSocket', async ({ page }) => {
+  test('workspace аутентификация в WebSocket работает через httpOnly cookie без токена в URL', async ({ page }) => {
+    const wsUrls: string[] = []
+    page.on('websocket', (ws) => {
+      wsUrls.push(ws.url())
+    })
+    const wsPromise = page.waitForEvent('websocket')
+
     await page.goto('/')
     await page.getByPlaceholder(/ваше имя/i).fill('WS Token Тест')
     await page.getByPlaceholder(/код команды|fmrm/i).fill('e2e-team')
     await page.getByPlaceholder(/ключ доступа/i).fill('e2e-test-key')
     await page.getByRole('button', { name: /войти на доску/i }).click()
 
-    // Дождаться загрузки доски
+    // Дождаться загрузки доски, открытия WebSocket и presence-синхронизации сессии
     await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 15000 })
-
-    // Проверить что WebSocket подключение установлено (проверяется через успешную загрузку доски)
-    // Если бы workspace токен не был передан, получили бы ошибку 401
+    const ws = await wsPromise
+    await expect(page.locator('[title="WS Token Тест"]')).toBeVisible({ timeout: 10000 })
     await expect(page.locator('main')).toBeVisible()
+
+    // Проверить, что WebSocket подключился без утечки workspace_token в URL
+    expect(ws.url()).toContain('/ws/')
+    expect(wsUrls.length).toBeGreaterThan(0)
+    for (const url of wsUrls) {
+      expect(url).not.toContain('workspace_token')
+    }
   })
 })
