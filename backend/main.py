@@ -83,14 +83,17 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         if request.method in self.SAFE_METHODS:
             response = await call_next(request)
-            if self.COOKIE_NAME not in request.cookies:
-                token = secrets.token_urlsafe(32)
+            if (
+                self.COOKIE_NAME not in request.cookies
+                or request.url.path == "/api/workspaces/me"
+            ):
+                token = request.cookies.get(self.COOKIE_NAME) or secrets.token_urlsafe(32)
                 response.set_cookie(
                     self.COOKIE_NAME,
                     token,
                     httponly=False,  # JS must read it
                     samesite="lax",
-                    max_age=86400,
+                    max_age=settings.workspace_jwt_expire_hours * 3600,
                     secure=settings.secure_cookies,
                 )
             return response

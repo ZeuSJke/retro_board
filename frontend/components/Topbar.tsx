@@ -72,7 +72,7 @@ export default function Topbar({
   const [nameOpen, setNameOpen] = useState(false)
   const [tempName, setTempName] = useState('')
   const [tempBoard, setTempBoard] = useState('')
-  const [tempMaxVotes, setTempMaxVotes] = useState(5)
+  const [tempMaxVotes, setTempMaxVotes] = useState(String(maxVotes))
   const [renameError, setRenameError] = useState<string | null>(null)
   const [workspaceSlug, setWorkspaceSlug] = useState('')
   const [accessKey, setAccessKey] = useState('')
@@ -106,7 +106,7 @@ export default function Topbar({
           className={styles.boardName}
           onClick={() => {
             setTempBoard(boardName)
-            setTempMaxVotes(maxVotes)
+            setTempMaxVotes(String(maxVotes))
             setRenameError(null)
             setNameOpen(true)
           }}
@@ -235,13 +235,18 @@ export default function Topbar({
       <Dialog
         open={usernameOpen}
         title="Настройки пользователя"
+        confirmDisabled={workspaceLoading}
         onClose={() => {
           setUsernameOpen(false)
           setShowWorkspaceFields(false)
           setWorkspaceError(null)
         }}
         onConfirm={async () => {
-          if (showWorkspaceFields && workspaceSlug.trim() && accessKey) {
+          if (showWorkspaceFields) {
+            if (!workspaceSlug.trim() || !accessKey) {
+              setWorkspaceError('Введите код команды и ключ доступа')
+              return
+            }
             setWorkspaceLoading(true)
             setWorkspaceError(null)
             try {
@@ -252,15 +257,17 @@ export default function Topbar({
               // Reset current board because it belongs to the old workspace
               useAppStore.setState({ currentBoardId: null })
               setWorkspace(session)
+              if (tempName.trim()) setUsername(tempName.trim())
               setWorkspaceSlug('')
               setAccessKey('')
               setShowWorkspaceFields(false)
               setUsernameOpen(false)
+              setWorkspaceLoading(false)
               router.push('/')
               return
             } catch (err: unknown) {
               const errorMsg =
-                err instanceof Error && 'response' in err && (err as any).response?.status === 401
+                err instanceof Error && 'response' in err && (err as { response?: { status?: number } }).response?.status === 401
                   ? 'Неверный код команды или ключ доступа'
                   : 'Ошибка при подключении к команде'
               setWorkspaceError(errorMsg)
@@ -268,7 +275,8 @@ export default function Topbar({
               return
             }
           }
-          if (tempName.trim()) setUsername(tempName.trim())
+          if (!tempName.trim()) return
+          setUsername(tempName.trim())
           setUsernameOpen(false)
           setShowWorkspaceFields(false)
           setWorkspaceError(null)
@@ -333,9 +341,12 @@ export default function Topbar({
             onChange={(e) => setTempName(e.target.value)}
             placeholder="Введите имя"
             maxLength={60}
-            onKeyDown={(e) =>
-              e.key === 'Enter' && !showWorkspaceFields && (setUsername(tempName.trim()), setUsernameOpen(false))
-            }
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !showWorkspaceFields && tempName.trim()) {
+                setUsername(tempName.trim())
+                setUsernameOpen(false)
+              }
+            }}
           />
         </div>
       </Dialog>
@@ -345,10 +356,20 @@ export default function Topbar({
         title="Настройки доски"
         onClose={() => { setNameOpen(false); setRenameError(null) }}
         onConfirm={async () => {
+          const trimmedBoard = tempBoard.trim()
+          if (!trimmedBoard) {
+            setRenameError('Название не может быть пустым')
+            return
+          }
+          const parsedVotes = Number(tempMaxVotes)
+          if (!Number.isInteger(parsedVotes) || parsedVotes < 1 || parsedVotes > 99) {
+            setRenameError('Лимит голосов должен быть от 1 до 99')
+            return
+          }
           try {
             const data: { name?: string; max_votes?: number } = {}
-            if (tempBoard.trim() !== boardName) data.name = tempBoard.trim()
-            if (tempMaxVotes !== maxVotes) data.max_votes = tempMaxVotes
+            if (trimmedBoard !== boardName) data.name = trimmedBoard
+            if (parsedVotes !== maxVotes) data.max_votes = parsedVotes
             if (Object.keys(data).length > 0) await onBoardSettings(data)
             setNameOpen(false)
             setRenameError(null)
@@ -367,6 +388,26 @@ export default function Topbar({
             placeholder="Название доски"
             maxLength={120}
             autoFocus
+            onKeyDown={async (e) => {
+              if (e.key !== 'Enter') return
+              const trimmedBoard = tempBoard.trim()
+              if (!trimmedBoard) { setRenameError('Название не может быть пустым'); return }
+              const parsedVotes = Number(tempMaxVotes)
+              if (!Number.isInteger(parsedVotes) || parsedVotes < 1 || parsedVotes > 99) {
+                setRenameError('Лимит голосов должен быть от 1 до 99')
+                return
+              }
+              try {
+                const data: { name?: string; max_votes?: number } = {}
+                if (trimmedBoard !== boardName) data.name = trimmedBoard
+                if (parsedVotes !== maxVotes) data.max_votes = parsedVotes
+                if (Object.keys(data).length > 0) await onBoardSettings(data)
+                setNameOpen(false)
+                setRenameError(null)
+              } catch (err: unknown) {
+                setRenameError(getApiErrorMessage(err, 'Ошибка сохранения'))
+              }
+            }}
           />
         </div>
         <div>
@@ -378,7 +419,7 @@ export default function Topbar({
             min={1}
             max={99}
             value={tempMaxVotes}
-            onChange={(e) => setTempMaxVotes(Math.max(1, Math.min(99, Number(e.target.value) || 1)))}
+            onChange={(e) => { setTempMaxVotes(e.target.value); setRenameError(null) }}
           />
         </div>
         {renameError && (

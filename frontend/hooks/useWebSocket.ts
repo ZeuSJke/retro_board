@@ -31,7 +31,7 @@ export function useWebSocket(
   }, [])
 
   useEffect(() => {
-    if (!boardId) return
+    if (!boardId || !wsToken) return
 
     let cancelled = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null

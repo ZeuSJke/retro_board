@@ -9,12 +9,13 @@ import BoardPage from './BoardPage'
 import WelcomeDialog from './WelcomeDialog'
 import SummaryModal from './SummaryModal'
 import { useAppStore } from '../store'
+import { showToast } from '../store/toastStore'
 import { applyTheme } from '../utils/theme'
-import { getBoards, getBoardBySlug, updateBoard, createBoard } from '../api'
+import { getBoards, getBoardBySlug, updateBoard, createBoard, checkWorkspaceSession } from '../api'
 import { useTimer } from '../hooks/useTimer'
 import { useFacilitator } from '../hooks/useFacilitator'
 import { boardToBoardListItem } from '../utils/boardMapper'
-import type { Board, BoardListItem } from '../types'
+import type { Board, BoardListItem, WsBoardUpdatedData } from '../types'
 import styles from './App.module.css'
 
 interface AppProps {
@@ -29,16 +30,18 @@ export default function App({ boardId }: AppProps) {
   const setUsername = useAppStore((s) => s.setUsername)
   const username = useAppStore((s) => s.username)
   const workspace = useAppStore((s) => s.workspace)
+  const hasHydrated = useAppStore((s) => s._hasHydrated ?? true)
   const [boards, setBoards] = useState<BoardListItem[]>([])
   const [currentBoard, setCurrentBoardData] = useState<Board | null>(null)
   const [boardsPanelOpen, setBoardsPanelOpen] = useState(false)
   const [themePanelOpen, setThemePanelOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [showWelcome, setShowWelcome] = useState(!workspace || username === 'Аноним')
+  const [sessionChecked, setSessionChecked] = useState(false)
+  const [showWelcome, setShowWelcome] = useState(false)
 
   const exportRef = useRef<(() => void) | null>(null)
-  const initializedRef = useRef(false)
+  const selfDeletedIdRef = useRef<string | null>(null)
   const [votesUsed, setVotesUsed] = useState(0)
   const [activeUsers, setActiveUsers] = useState<string[]>([])
   const [summaryOpen, setSummaryOpen] = useState(false)
@@ -54,15 +57,20 @@ export default function App({ boardId }: AppProps) {
     handleTimerStart,
     handleTimerPause,
     handleTimerReset,
-  } = useTimer(boardId)
+  } = useTimer(currentBoard?.id ?? '')
 
   const handleSummaryGenerated = useCallback(() => {
-    if (!currentBoard) return
     setIsGeneratingSummary(false)
+    if (!currentBoard) return
     setBoards((prev) =>
       prev.map((b) => (b.id === currentBoard.id ? { ...b, has_summary: true } : b))
     )
   }, [currentBoard])
+
+  const handleSummaryFailed = useCallback((message?: string) => {
+    setIsGeneratingSummary(false)
+    showToast(message || 'Не удалось сгенерировать итоги', 'error')
+  }, [])
 
   const {
     facilitator,
@@ -78,38 +86,89 @@ export default function App({ boardId }: AppProps) {
 
   const handlePhaseChangedWrapper = useCallback((p: string) => {
     handlePhaseChanged(p)
-    if (p === 'summary') {
-      setIsGeneratingSummary(true)
-    }
+    setIsGeneratingSummary(p === 'summary')
   }, [handlePhaseChanged])
 
-  const handleWelcomeConfirm = (name: string) => {
+  const handleWelcomeConfirm = async (name: string) => {
     setUsername(name)
     setShowWelcome(false)
-    initializedRef.current = true // Prevent async hydration effect from double-loading
-    loadBoards()
-    if (boardId && boardId !== 'start') loadBoard(boardId)
+    setSessionChecked(true)
+    setError(null)
+    await loadBoards()
+    if (boardId && boardId !== 'start') {
+      await loadBoard(boardId)
+    }
   }
 
   useEffect(() => {
     applyTheme(theme)
   }, [theme])
 
+  // После гидрации проверяем сессию на сервере (и обновляем CSRF TTL).
+  // На прямом /board/[id] при 401 не сносим URL: покажем WelcomeDialog и после входа откроем нужную доску.
   useEffect(() => {
-    if (workspace) {
-      initializedRef.current = true
-      loadBoards()
+    if (!hasHydrated) return
+    let cancelled = false
+
+    async function verifySession() {
+      const ws = useAppStore.getState().workspace
+      const uname = useAppStore.getState().username
+      if (!ws) {
+        if (!cancelled) {
+          setShowWelcome(true)
+          setSessionChecked(true)
+          setLoading(false)
+        }
+        return
+      }
+      try {
+        await checkWorkspaceSession()
+        if (cancelled) return
+        setSessionChecked(true)
+        if (uname === 'Аноним') {
+          setShowWelcome(true)
+          setLoading(false)
+        } else {
+          setShowWelcome(false)
+          await loadBoards()
+          if (!cancelled && boardId && boardId !== 'start') {
+            await loadBoard(boardId)
+          }
+        }
+      } catch (err: unknown) {
+        if (cancelled) return
+        const status = (err as { response?: { status?: number } })?.response?.status
+        setSessionChecked(true)
+        if (status === 401 || !useAppStore.getState().workspace) {
+          setShowWelcome(true)
+          setLoading(false)
+        } else {
+          setError('Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен.')
+          setLoading(false)
+        }
+      }
     }
-  }, [])
+
+    verifySession()
+    return () => { cancelled = true }
+  }, [hasHydrated])
+
+  // Реагируем на сброс workspace (например, при протухании куки во время работы → interceptor 401)
+  useEffect(() => {
+    if (!hasHydrated || !sessionChecked) return
+    if (!workspace) {
+      setShowWelcome(true)
+      setCurrentBoardData(null)
+      setError(null)
+    }
+  }, [hasHydrated, sessionChecked, workspace])
 
   useEffect(() => {
-    if (initializedRef.current && workspace) {
-      loadBoards()
-    }
-  }, [workspace])
-
-  useEffect(() => {
-    if (boardId && boardId !== 'start' && workspace) {
+    if (!hasHydrated || !sessionChecked || !workspace || showWelcome) return
+    if (boardId && boardId !== 'start') {
+      if (currentBoard && (currentBoard.id === boardId || currentBoard.slug === boardId)) {
+        return
+      }
       loadBoard(boardId)
     }
   }, [boardId])
@@ -133,7 +192,12 @@ export default function App({ boardId }: AppProps) {
         }
       }
       setBoards(list)
-    } catch {
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 401 || !useAppStore.getState().workspace) {
+        setShowWelcome(true)
+        return
+      }
       setError('Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен.')
     }
   }
@@ -141,11 +205,26 @@ export default function App({ boardId }: AppProps) {
   const loadBoard = async (id: string) => {
     try {
       setLoading(true)
+      setError(null)
       const board = await getBoardBySlug(id)
       setCurrentBoardData(board)
       setCurrentBoard(board.id)
-      restoreTimer(id)
-    } catch {
+      restoreTimer(board.id)
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 401 || !useAppStore.getState().workspace) {
+        setShowWelcome(true)
+        return
+      }
+      if (status === 404) {
+        // Доска не найдена (удалена или неверный URL) — попробуем перейти на доступную доску
+        const fallback = boards.find((b) => b.id !== id && b.slug !== id)
+        if (fallback) {
+          showToast('Запрошенная доска не найдена', 'error')
+          router.replace(`/board/${fallback.slug || fallback.id}`)
+          return
+        }
+      }
       setError('Не удалось загрузить доску.')
     } finally {
       setLoading(false)
@@ -159,28 +238,67 @@ export default function App({ boardId }: AppProps) {
   }
 
   const handleBoardCreated = async (board: BoardListItem) => {
-    setBoards((prev) => [board, ...prev])
+    setBoards((prev) => (prev.some((b) => b.id === board.id) ? prev : [board, ...prev]))
     setBoardsPanelOpen(false)
     router.push(`/board/${board.slug || board.id}`)
   }
 
   const handleBoardDeleted = (id: string) => {
+    selfDeletedIdRef.current = id
     const remaining = boards.filter((b) => b.id !== id)
     setBoards(remaining)
     if (currentBoard?.id === id && remaining.length > 0) {
       router.push(`/board/${remaining[0].slug || remaining[0].id}`)
+    } else if (currentBoard?.id === id) {
+      router.push('/board/start')
     }
   }
+
+  const handleWsBoardCreated = useCallback((board: BoardListItem) => {
+    setBoards((prev) => (prev.some((b) => b.id === board.id) ? prev : [board, ...prev]))
+  }, [])
+
+  const handleWsBoardUpdated = useCallback((upd: WsBoardUpdatedData) => {
+    setBoards((prev) => prev.map((b) => (b.id === upd.id ? { ...b, ...upd } : b)))
+    setCurrentBoardData((prev) => (prev && prev.id === upd.id ? { ...prev, ...upd } : prev))
+  }, [])
+
+  const handleWsBoardDeleted = useCallback((deletedId: string) => {
+    setBoards((prev) => {
+      const remaining = prev.filter((b) => b.id !== deletedId)
+      if (selfDeletedIdRef.current === deletedId) {
+        selfDeletedIdRef.current = null
+        return remaining
+      }
+      if (currentBoard?.id === deletedId) {
+        showToast('Текущая доска была удалена', 'info')
+        if (remaining.length > 0) {
+          router.replace(`/board/${remaining[0].slug || remaining[0].id}`)
+        } else {
+          router.replace('/board/start')
+        }
+      }
+      return remaining
+    })
+  }, [currentBoard?.id, router])
 
   const handleBoardSettings = async (data: { name?: string; max_votes?: number }) => {
     if (!currentBoard) return
     const updated_board = await updateBoard(currentBoard.id, data)
-    const updated = { ...currentBoard, ...updated_board }
+    const updated: Board = {
+      ...currentBoard,
+      ...updated_board,
+      columns: updated_board.columns?.length ? updated_board.columns : currentBoard.columns,
+    }
     setCurrentBoardData(updated)
     setBoards((prev) =>
-      prev.map((b) => (b.id === updated.id ? { ...b, name: updated.name, max_votes: updated.max_votes } : b)),
+      prev.map((b) =>
+        b.id === updated.id
+          ? { ...b, name: updated.name, slug: updated.slug, max_votes: updated.max_votes }
+          : b,
+      ),
     )
-    if (data.name) {
+    if (data.name && updated.slug && updated.slug !== boardId) {
       router.replace(`/board/${updated.slug || updated.id}`)
     }
   }
@@ -188,6 +306,15 @@ export default function App({ boardId }: AppProps) {
   const closePanels = () => {
     setBoardsPanelOpen(false)
     setThemePanelOpen(false)
+  }
+
+  if (!hasHydrated || (!sessionChecked && workspace)) {
+    return (
+      <div className={styles.centered}>
+        <div className={styles.spinner} />
+        <p style={{ color: 'var(--md-on-surface-variant)', fontSize: 14 }}>Загрузка...</p>
+      </div>
+    )
   }
 
   if (showWelcome) {
@@ -204,7 +331,13 @@ export default function App({ boardId }: AppProps) {
           error
         </span>
         <p style={{ color: 'var(--md-error)', fontWeight: 600, marginBottom: 8 }}>{error}</p>
-        <button className={styles.retryBtn} onClick={loadBoards}>
+        <button
+          className={styles.retryBtn}
+          onClick={() => {
+            loadBoards()
+            if (boardId && boardId !== 'start') loadBoard(boardId)
+          }}
+        >
           Повторить
         </button>
       </div>
@@ -229,7 +362,11 @@ export default function App({ boardId }: AppProps) {
         votesUsed={votesUsed}
         onBoardsToggle={() => {
           setThemePanelOpen(false)
-          setBoardsPanelOpen((v) => !v)
+          setBoardsPanelOpen((v) => {
+            const next = !v
+            if (next) void loadBoards()
+            return next
+          })
         }}
         onThemeToggle={() => {
           setBoardsPanelOpen(false)
@@ -302,6 +439,10 @@ export default function App({ boardId }: AppProps) {
             onFacilitatorChanged={handleFacilitatorChanged}
             onPhaseChanged={handlePhaseChangedWrapper}
             onSummaryGenerated={handleSummaryGenerated}
+            onSummaryFailed={handleSummaryFailed}
+            onBoardCreated={handleWsBoardCreated}
+            onBoardUpdated={handleWsBoardUpdated}
+            onBoardDeleted={handleWsBoardDeleted}
             sendFacilitatorRef={sendFacilitatorRef}
           />
         )}

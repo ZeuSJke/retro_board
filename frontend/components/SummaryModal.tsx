@@ -17,15 +17,15 @@ export default function SummaryModal({ boardId, hasSummary, isGeneratingSummary,
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
 
-  const loadSummary = async () => {
-    setLoading(true)
+  const loadSummary = async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const data = await getBoardSummary(boardId)
       setSummary(data)
     } catch {
       // Ignore errors
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -41,15 +41,11 @@ export default function SummaryModal({ boardId, hasSummary, isGeneratingSummary,
   useEffect(() => {
     if (isGeneratingSummary && !hasSummary) {
       const interval = setInterval(() => {
-        loadSummary()
+        loadSummary(true)
       }, 2000)
       return () => clearInterval(interval)
     }
   }, [isGeneratingSummary, hasSummary])
-
-  const handleExportPDF = () => {
-    window.open(`/board/${boardId}?export=pdf`, '_blank')
-  }
 
   const handleCopy = async () => {
     if (!summary) return

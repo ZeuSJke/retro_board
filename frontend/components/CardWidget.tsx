@@ -290,7 +290,13 @@ export default memo(function CardWidget({
               onClick={() => {
                 if (colorOpen) { setColorOpen(false); return }
                 const rect = colorBtnRef.current?.getBoundingClientRect()
-                if (rect) setColorPos({ top: rect.top - 8, left: rect.right + 8 })
+                if (rect) {
+                  const pickerW = 200
+                  const pickerH = 96
+                  const left = Math.max(8, Math.min(rect.right + 8, window.innerWidth - pickerW - 8))
+                  const top = Math.max(8, Math.min(rect.top - 8, window.innerHeight - pickerH - 8))
+                  setColorPos({ top, left })
+                }
                 setColorOpen(true)
               }}
               title="Цвет карточки"

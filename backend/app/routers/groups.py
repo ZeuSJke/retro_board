@@ -172,6 +172,8 @@ async def remove_card_from_group(
     card = get_or_404(db, models.Card, card_id, "Card not found")
     col = db.get(models.Column, card.column_id)
     require_live_board(db.get(models.Board, col.board_id), workspace.id, "Card not found")
+    if card.group_id != group_id:
+        raise HTTPException(400, "Card is not in this group")
     card.group_id = None
     db.commit()
     db.refresh(card)

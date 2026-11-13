@@ -1,15 +1,18 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { getBoards, getAllActionItems, updateActionItem, deleteActionItem } from '../api'
+import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
+import { useWebSocket } from '../hooks/useWebSocket'
 import { getApiErrorMessage } from '../utils/apiError'
 import { userColor, initials } from '../utils/theme'
-import type { BoardListItem, DashboardActionItem, ActionItemStatus } from '../types'
+import type { BoardListItem, DashboardActionItem, ActionItemStatus, WsBoardUpdatedData, WsDeletedData, WsMessage } from '../types'
 import Dialog from './Dialog'
 import SummaryModal from './SummaryModal'
+import WelcomeDialog from './WelcomeDialog'
 import s from './Dashboard.module.css'
 
 const TrendChart = dynamic(() => import('./TrendChart'), {
@@ -48,45 +51,98 @@ function formatDate(dateStr: string): string {
 
 export default function Dashboard() {
   const router = useRouter()
+  const setUsername = useAppStore((s) => s.setUsername)
+  const workspace = useAppStore((s) => s.workspace)
 
   const [boards, setBoards] = useState<BoardListItem[]>([])
   const [items, setItems] = useState<DashboardActionItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [authRequired, setAuthRequired] = useState(false)
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [boardFilter, setBoardFilter] = useState<string>('all')
   const [assigneeFilter, setAssigneeFilter] = useState('')
 
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
+    try {
+      const [boardsData, itemsData] = await Promise.all([
+        getBoards(),
+        getAllActionItems(),
+      ])
+      setBoards(boardsData)
+      setItems(itemsData)
+      setAuthRequired(false)
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status
+      if (status === 401 || !useAppStore.getState().workspace) {
+        setAuthRequired(true)
+      } else if (!silent) {
+        showToast(getApiErrorMessage(e, 'Не удалось загрузить данные'), 'error')
+      }
+    } finally {
+      if (!silent) setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    let cancelled = false
+    void loadData()
+  }, [loadData])
 
-    async function load() {
-      setLoading(true)
-      try {
-        const [boardsData, itemsData] = await Promise.all([
-          getBoards(),
-          getAllActionItems(),
-        ])
-        if (!cancelled) {
-          setBoards(boardsData)
-          setItems(itemsData)
-        }
-      } catch (e) {
-        if (!cancelled) showToast(getApiErrorMessage(e, 'Не удалось загрузить данные'), 'error')
-      } finally {
-        if (!cancelled) setLoading(false)
+  const hadWorkspaceRef = useRef(Boolean(workspace))
+
+  useEffect(() => {
+    if (workspace) {
+      hadWorkspaceRef.current = true
+    } else if (hadWorkspaceRef.current) {
+      setAuthRequired(true)
+    }
+  }, [workspace])
+
+  useEffect(() => {
+    const onFocus = () => {
+      if (useAppStore.getState().workspace) {
+        void loadData(true)
       }
     }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [loadData])
 
-    load()
-    return () => { cancelled = true }
+  const handleWorkspaceWsMessage = useCallback((msg: WsMessage) => {
+    try {
+      if (msg.event === 'board_created') {
+        const board = msg.data as unknown as BoardListItem
+        if (board?.id) {
+          setBoards((prev) => (prev.some((b) => b.id === board.id) ? prev : [board, ...prev]))
+        }
+      } else if (msg.event === 'board_updated') {
+        const upd = msg.data as unknown as WsBoardUpdatedData
+        if (upd?.id) {
+          setBoards((prev) => prev.map((b) => (b.id === upd.id ? { ...b, ...upd } : b)))
+          if (upd.name) {
+            setItems((prev) =>
+              prev.map((i) => (i.board_id === upd.id ? { ...i, board_name: upd.name! } : i)),
+            )
+          }
+        }
+      } else if (msg.event === 'board_deleted') {
+        const { id } = msg.data as unknown as WsDeletedData
+        if (id) {
+          setBoards((prev) => prev.filter((b) => b.id !== id))
+          setItems((prev) => prev.filter((i) => i.board_id !== id))
+        }
+      }
+    } catch {
+      /* ignore malformed workspace ws message */
+    }
   }, [])
+
+  useWebSocket('workspace', handleWorkspaceWsMessage)
 
   // Compute trend data from local items + boards (updates in real-time)
   const trends = useMemo(() => {
-    const boardMap = new Map(boards.map((b) => [b.id, b]))
     const grouped = new Map<string, { open: number; in_progress: number; done: number }>()
     for (const item of items) {
       let counts = grouped.get(item.board_id)
@@ -335,6 +391,18 @@ export default function Dashboard() {
           </span>
         </div>
       </div>
+    )
+  }
+
+  if (authRequired) {
+    return (
+      <WelcomeDialog
+        onConfirm={(name) => {
+          setUsername(name)
+          setAuthRequired(false)
+          void loadData()
+        }}
+      />
     )
   }
 

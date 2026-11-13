@@ -13,7 +13,7 @@ import { useAppStore } from '../store'
 import { useBoardWebSocket } from '../hooks/useBoardWebSocket'
 import { useBoardDragDrop } from '../hooks/useBoardDragDrop'
 import { exportBoardToPDF } from '../utils/exportPDF'
-import type { ActionItem, Board, Card, CardGroup, Column as ColumnType } from '../types'
+import type { ActionItem, Board, BoardListItem, Card, CardGroup, Column as ColumnType, WsBoardUpdatedData } from '../types'
 import styles from './BoardPage.module.css'
 
 const COLUMN_COLORS = [
@@ -36,6 +36,10 @@ interface BoardPageProps {
   onFacilitatorChanged?: (facilitator: string | null, phase: string | null) => void
   onPhaseChanged?: (phase: string) => void
   onSummaryGenerated?: () => void
+  onSummaryFailed?: (message?: string) => void
+  onBoardCreated?: (board: BoardListItem) => void
+  onBoardUpdated?: (board: WsBoardUpdatedData) => void
+  onBoardDeleted?: (id: string) => void
   sendFacilitatorRef: React.MutableRefObject<{
     start: () => void
     stop: () => void
@@ -54,6 +58,10 @@ export default function BoardPage({
   onFacilitatorChanged,
   onPhaseChanged,
   onSummaryGenerated,
+  onSummaryFailed,
+  onBoardCreated,
+  onBoardUpdated,
+  onBoardDeleted,
   sendFacilitatorRef,
 }: BoardPageProps) {
   const [addColOpen, setAddColOpen] = useState(false)
@@ -74,6 +82,7 @@ export default function BoardPage({
     activeUsers,
     facilitator,
     phase,
+    sessionSynced,
     actionItems,
     setActionItems,
     sendMessage,
@@ -85,6 +94,10 @@ export default function BoardPage({
     onFacilitatorChanged,
     onPhaseChanged,
     onSummaryGenerated,
+    onSummaryFailed,
+    onBoardCreated,
+    onBoardUpdated,
+    onBoardDeleted,
   })
 
   // Subscribe to cursor user list changes (add/remove only, not position)
@@ -194,16 +207,15 @@ export default function BoardPage({
             prev.find((i) => i.id === item.id) ? prev : [...prev, item],
           )
           generateActionItemTitle(activeCard.text)
-            .then((generatedTitle) => {
-              updateActionItem(item.id, { title: generatedTitle })
-                .then((updated) => {
-                  setActionItems((prev) =>
-                    prev.map((i) => i.id === item.id ? updated : i),
-                  )
-                })
-            })
+            .then((generatedTitle) =>
+              updateActionItem(item.id, { title: generatedTitle }).then((updated) => {
+                setActionItems((prev) =>
+                  prev.map((i) => (i.id === item.id ? updated : i)),
+                )
+              }),
+            )
             .catch(() => {
-              updateActionItem(item.id, { title: activeCard.text.slice(0, 50) || 'Новая задача' })
+              updateActionItem(item.id, { title: activeCard.text.slice(0, 50) || 'Новая задача' }).catch(() => {})
             })
         } catch { /* toast via interceptor */ }
         onDragEnd({ ...event, over: null } as DragEndEvent)
@@ -231,16 +243,15 @@ export default function BoardPage({
             prev.find((i) => i.id === item.id) ? prev : [...prev, item],
           )
           generateActionItemTitle(combinedText || activeGroup.title)
-            .then((generatedTitle) => {
-              updateActionItem(item.id, { title: generatedTitle })
-                .then((updated) => {
-                  setActionItems((prev) =>
-                    prev.map((i) => i.id === item.id ? updated : i),
-                  )
-                })
-            })
+            .then((generatedTitle) =>
+              updateActionItem(item.id, { title: generatedTitle }).then((updated) => {
+                setActionItems((prev) =>
+                  prev.map((i) => (i.id === item.id ? updated : i)),
+                )
+              }),
+            )
             .catch(() => {
-              updateActionItem(item.id, { title: combinedText.slice(0, 50) || activeGroup.title })
+              updateActionItem(item.id, { title: combinedText.slice(0, 50) || activeGroup.title }).catch(() => {})
             })
         } catch { /* toast via interceptor */ }
         onDragEnd({ ...event, over: null } as DragEndEvent)
@@ -289,6 +300,7 @@ export default function BoardPage({
   }, [sendFacilitatorRef, sendMessage])
 
   const isBrainstorm = phase === 'brainstorm'
+  const brainstormHidden = !sessionSynced || isBrainstorm
   const cardCreationDisabled = boardLocked || !facilitator
   const readOnly = boardLocked
 
@@ -470,7 +482,7 @@ export default function BoardPage({
             canVote={canVote}
             readOnly={readOnly}
             cardCreationDisabled={cardCreationDisabled}
-            brainstormHidden={isBrainstorm}
+            brainstormHidden={brainstormHidden}
             currentUser={username}
             isFacilitator={facilitator === username}
             groupTargetId={groupTargetId}
@@ -498,7 +510,8 @@ export default function BoardPage({
         <div className={`${styles.masterWrapper} ${masterOpen ? styles.masterWrapperOpen : ''}`}>
           <MasterColumn
             actionItems={actionItems}
-            dropDisabled={!!facilitator && facilitator !== username}
+            dropDisabled={readOnly || (!!facilitator && facilitator !== username)}
+            readOnly={readOnly}
             onUpdated={(item) =>
               setActionItems((prev) =>
                 prev.map((i) => (i.id === item.id ? item : i)),
@@ -523,10 +536,12 @@ export default function BoardPage({
           )}
         </button>
 
-        <button className={styles.addColBtn} onClick={openAddCol}>
-          <span className="material-symbols-rounded">add</span>
-          Новая колонка
-        </button>
+        {!readOnly && (
+          <button className={styles.addColBtn} onClick={openAddCol}>
+            <span className="material-symbols-rounded">add</span>
+            Новая колонка
+          </button>
+        )}
 
         {cursorUsers.map((u) => (
           <CursorMarker key={u} username={u} posRef={cursorsRef} />

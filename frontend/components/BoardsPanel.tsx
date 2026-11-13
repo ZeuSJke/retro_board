@@ -1,7 +1,9 @@
 'use client'
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { createBoard, deleteBoard } from '../api'
+import { showToast } from '../store/toastStore'
 import { boardToBoardListItem } from '../utils/boardMapper'
 import { getApiErrorMessage } from '../utils/apiError'
 import type { BoardListItem } from '../types'
@@ -25,30 +27,39 @@ export default function BoardsPanel({
   onCreated,
   onDeleted,
 }: BoardsPanelProps) {
+  const router = useRouter()
   const [creating, setCreating] = useState(false)
+  const [creatingSubmit, setCreatingSubmit] = useState(false)
+  const creatingSubmitRef = useRef(false)
   const [newName, setNewName] = useState('')
   const [createError, setCreateError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
+  const [windowHeight, setWindowHeight] = useState(
+    () => (typeof window !== 'undefined' ? window.innerHeight : 800),
+  )
+
+  useEffect(() => {
+    const onResize = () => setWindowHeight(window.innerHeight)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   // Adaptive limit: fit items into available panel height
   // Panel = 100vh - 64px(topbar). Subtract header(56), footer(68), dashboardLink(48), toggle btn(36), padding(16)
   const ITEM_HEIGHT = 44
   const PANEL_OVERHEAD = 224
   const visibleLimit = useMemo(() => {
-    const available = (typeof window !== 'undefined' ? window.innerHeight : 800) - 64 - PANEL_OVERHEAD
+    const available = windowHeight - 64 - PANEL_OVERHEAD
     return Math.max(3, Math.floor(available / ITEM_HEIGHT))
-  }, [])
+  }, [windowHeight])
   const hasHidden = boards.length > visibleLimit
   const visibleBoards = showAll ? boards : boards.slice(0, visibleLimit)
 
-  const showToast = useCallback((message: string) => {
-    setToast(message)
-    setTimeout(() => setToast(null), 3000)
-  }, [])
-
   const handleCreate = async () => {
+    if (creatingSubmitRef.current) return
+    creatingSubmitRef.current = true
+    setCreatingSubmit(true)
     const name = newName.trim() || `Ретро — Спринт ${boards.length + 1}`
     try {
       const board = await createBoard(name)
@@ -58,14 +69,23 @@ export default function BoardsPanel({
       onCreated(boardToBoardListItem(board))
     } catch (e: unknown) {
       setCreateError(getApiErrorMessage(e, 'Ошибка создания доски'))
+    } finally {
+      creatingSubmitRef.current = false
+      setCreatingSubmit(false)
     }
   }
 
   const confirmDelete = async () => {
     if (!deleteTarget) return
-    await deleteBoard(deleteTarget.id)
-    onDeleted(deleteTarget.id)
-    setDeleteTarget(null)
+    const target = deleteTarget
+    try {
+      await deleteBoard(target.id)
+      onDeleted(target.id)
+      setDeleteTarget(null)
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Не удалось удалить доску'), 'error')
+      setDeleteTarget(null)
+    }
   }
 
   return (
@@ -79,7 +99,7 @@ export default function BoardsPanel({
         <div className={styles.list}>
           <div
             className={styles.dashboardLink}
-            onClick={() => window.location.href = '/dashboard'}
+            onClick={() => router.push('/dashboard')}
           >
             <span className="material-symbols-rounded">analytics</span>
             История ретро
@@ -172,8 +192,10 @@ export default function BoardsPanel({
                   style={{
                     background: 'var(--md-primary)',
                     color: 'var(--md-on-primary)',
+                    opacity: creatingSubmit ? 0.6 : 1,
                   }}
                   onClick={handleCreate}
+                  disabled={creatingSubmit}
                   title="Создать"
                 >
                   <span className="material-symbols-rounded" style={{ fontSize: 20 }}>
@@ -224,15 +246,6 @@ export default function BoardsPanel({
           и все её колонки будут удалены без возможности восстановления.
         </p>
       </Dialog>
-
-      {toast && (
-        <div className={styles.toast}>
-          <span className="material-symbols-rounded" style={{ fontSize: 20, flexShrink: 0 }}>
-            info
-          </span>
-          {toast}
-        </div>
-      )}
     </>
   )
 }

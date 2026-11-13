@@ -13,6 +13,7 @@ interface MasterColumnProps {
   onUpdated: (item: ActionItem) => void
   onDeleted: (id: string) => void
   dropDisabled?: boolean
+  readOnly?: boolean
 }
 
 const STATUS_ICON: Record<ActionItemStatus, string> = {
@@ -36,6 +37,7 @@ export default function MasterColumn({
   onUpdated,
   onDeleted,
   dropDisabled = false,
+  readOnly = false,
 }: MasterColumnProps) {
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -136,7 +138,7 @@ export default function MasterColumn({
                 </span>
               </span>
 
-              {editingTitleId === item.id ? (
+              {!readOnly && editingTitleId === item.id ? (
                 <input
                   className={s.titleInput}
                   value={editTitle}
@@ -151,29 +153,35 @@ export default function MasterColumn({
               ) : (
                 <span
                   className={s.taskTitle}
-                  onDoubleClick={() => {
-                    setEditingTitleId(item.id)
-                    setEditTitle(item.title || item.text)
-                  }}
-                  title="Двойной клик — редактировать заголовок"
+                  onDoubleClick={
+                    readOnly
+                      ? undefined
+                      : () => {
+                          setEditingTitleId(item.id)
+                          setEditTitle(item.title || item.text)
+                        }
+                  }
+                  title={readOnly ? undefined : 'Двойной клик — редактировать заголовок'}
                 >
                   {item.title || item.text}
                 </span>
               )}
 
-              <button
-                className={s.deleteBtn}
-                onClick={() => setDeleteTarget(item)}
-                title="Удалить"
-              >
-                <span className="material-symbols-rounded" style={{ fontSize: 14 }}>
-                  close
-                </span>
-              </button>
+              {!readOnly && (
+                <button
+                  className={s.deleteBtn}
+                  onClick={() => setDeleteTarget(item)}
+                  title="Удалить"
+                >
+                  <span className="material-symbols-rounded" style={{ fontSize: 14 }}>
+                    close
+                  </span>
+                </button>
+              )}
             </div>
 
             {/* Description */}
-            {editingDescId === item.id ? (
+            {!readOnly && editingDescId === item.id ? (
               <textarea
                 className={s.editTextarea}
                 value={editDesc}
@@ -189,11 +197,15 @@ export default function MasterColumn({
             ) : (
               <div
                 className={s.taskDesc}
-                onDoubleClick={() => {
-                  setEditingDescId(item.id)
-                  setEditDesc(item.text)
-                }}
-                title="Двойной клик — редактировать описание"
+                onDoubleClick={
+                  readOnly
+                    ? undefined
+                    : () => {
+                        setEditingDescId(item.id)
+                        setEditDesc(item.text)
+                      }
+                }
+                title={readOnly ? undefined : 'Двойной клик — редактировать описание'}
               >
                 {item.text}
               </div>
@@ -201,7 +213,7 @@ export default function MasterColumn({
 
             {/* Assignee */}
             <div className={s.taskMeta}>
-              {editAssigneeId === item.id ? (
+              {!readOnly && editAssigneeId === item.id ? (
                 <input
                   className={s.assigneeInput}
                   value={editAssignee}
@@ -224,11 +236,15 @@ export default function MasterColumn({
                   </div>
                   <span
                     className={s.assigneeName}
-                    onClick={() => {
-                      setEditAssigneeId(item.id)
-                      setEditAssignee(item.assignee || '')
-                    }}
-                    title="Нажмите чтобы изменить ответственного"
+                    onClick={
+                      readOnly
+                        ? undefined
+                        : () => {
+                            setEditAssigneeId(item.id)
+                            setEditAssignee(item.assignee || '')
+                          }
+                    }
+                    title={readOnly ? undefined : 'Нажмите чтобы изменить ответственного'}
                   >
                     {item.assignee || 'Не назначен'}
                   </span>

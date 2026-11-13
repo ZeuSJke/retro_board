@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import time
@@ -23,20 +24,100 @@ def assert_single_worker() -> None:
 
 
 class ConnectionManager:
+    FACILITATOR_GRACE_SECONDS: float = 5.0
+
     def __init__(self):
         self.rooms: dict[str, list[WebSocket]] = defaultdict(list)
+        self.workspace_rooms: dict[str, list[WebSocket]] = defaultdict(list)
         self.usernames: dict[int, str] = {}  # id(ws) → username
+        self.ws_workspaces: dict[int, str] = {}  # id(ws) → workspace_id
         self.facilitators: dict[str, str] = {}  # board_id → username
         self.phases: dict[str, str] = {}  # board_id → phase
         self.timers: dict[str, dict] = {}  # board_id → timer state
         self.session_ids: dict[str, int] = {}  # board_id → session_id (timestamp)
+        self.facilitator_grace_tasks: dict[str, asyncio.Task] = {}
 
-    async def connect(self, board_id: str, ws: WebSocket):
+    def reset(self) -> None:
+        """Сбросить всё in-memory состояние (для изоляции тестов)."""
+        for task in self.facilitator_grace_tasks.values():
+            if not task.done():
+                task.cancel()
+        self.facilitator_grace_tasks.clear()
+        self.rooms.clear()
+        self.workspace_rooms.clear()
+        self.usernames.clear()
+        self.ws_workspaces.clear()
+        self.facilitators.clear()
+        self.phases.clear()
+        self.timers.clear()
+        self.session_ids.clear()
+
+    async def connect(
+        self, board_id: str, ws: WebSocket, workspace_id: str | None = None
+    ):
         await ws.accept()
         self.rooms[board_id].append(ws)
+        if workspace_id:
+            self.ws_workspaces[id(ws)] = workspace_id
 
-    def set_username(self, ws: WebSocket, username: str):
+    async def connect_workspace(self, workspace_id: str, ws: WebSocket):
+        await ws.accept()
+        self.workspace_rooms[workspace_id].append(ws)
+        self.ws_workspaces[id(ws)] = workspace_id
+
+    def disconnect_workspace(self, workspace_id: str, ws: WebSocket):
+        if ws in self.workspace_rooms[workspace_id]:
+            self.workspace_rooms[workspace_id].remove(ws)
+        if not self.workspace_rooms[workspace_id]:
+            self.workspace_rooms.pop(workspace_id, None)
+        self.ws_workspaces.pop(id(ws), None)
+
+    def cancel_facilitator_grace(self, board_id: str):
+        task = self.facilitator_grace_tasks.pop(board_id, None)
+        if task and not task.done():
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                current = None
+            if task is not current:
+                task.cancel()
+
+    def schedule_facilitator_grace(self, board_id: str, username: str):
+        """Очистить сессию фасилитатора только если он не переподключился за grace-период."""
+        self.cancel_facilitator_grace(board_id)
+
+        async def _grace_clear():
+            try:
+                await asyncio.sleep(self.FACILITATOR_GRACE_SECONDS)
+                if (
+                    self.facilitators.get(board_id) == username
+                    and username not in self.get_users(board_id)
+                ):
+                    self.clear_session(board_id)
+                    await self.broadcast(
+                        board_id,
+                        "facilitator_update",
+                        {"facilitator": None, "phase": None, "session_id": None},
+                    )
+            except asyncio.CancelledError:
+                return
+            finally:
+                if self.facilitator_grace_tasks.get(board_id) is asyncio.current_task():
+                    self.facilitator_grace_tasks.pop(board_id, None)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.clear_session(board_id)
+            return
+        self.facilitator_grace_tasks[board_id] = loop.create_task(_grace_clear())
+
+    def set_username(
+        self, ws: WebSocket, username: str, board_id: str | None = None
+    ):
         self.usernames[id(ws)] = username
+        if board_id and self.facilitators.get(board_id) == username:
+            self.cancel_facilitator_grace(board_id)
 
     def get_username(self, ws: WebSocket) -> str | None:
         return self.usernames.get(id(ws))
@@ -52,17 +133,27 @@ class ConnectionManager:
                 result.append(name)
         return result
 
-    def disconnect(self, board_id: str, ws: WebSocket):
+    def disconnect(self, board_id: str, ws: WebSocket) -> tuple[str | None, bool, bool]:
+        """Отключить сокет доски.
+
+        Возвращает (username, still_present, is_facilitator_without_tabs).
+        """
         if ws in self.rooms[board_id]:
             self.rooms[board_id].remove(ws)
         if not self.rooms[board_id]:
             self.rooms.pop(board_id, None)
+        self.ws_workspaces.pop(id(ws), None)
         username = self.usernames.pop(id(ws), None)
-        # If facilitator disconnects, clear facilitator state and session
-        if username and self.facilitators.get(board_id) == username:
-            self.clear_session(board_id)
+        still_present = bool(username and username in self.get_users(board_id))
+        fac_disconnected = bool(
+            username
+            and not still_present
+            and self.facilitators.get(board_id) == username
+        )
+        return username, still_present, fac_disconnected
 
     def set_facilitator(self, board_id: str, username: str):
+        self.cancel_facilitator_grace(board_id)
         self.facilitators[board_id] = username
         self.phases[board_id] = "brainstorm"
         # Generate new session_id when facilitator starts
@@ -72,6 +163,7 @@ class ConnectionManager:
         return self.facilitators.get(board_id)
 
     def clear_facilitator(self, board_id: str):
+        self.cancel_facilitator_grace(board_id)
         self.facilitators.pop(board_id, None)
         self.phases.pop(board_id, None)
 
@@ -91,6 +183,7 @@ class ConnectionManager:
 
     def clear_session(self, board_id: str):
         """Clear all session-related state for a board."""
+        self.cancel_facilitator_grace(board_id)
         self.facilitators.pop(board_id, None)
         self.phases.pop(board_id, None)
         self.session_ids.pop(board_id, None)
@@ -98,12 +191,14 @@ class ConnectionManager:
 
     def set_timer(self, board_id: str, event: str, data: dict):
         """Store timer state so new clients can catch up."""
+        now_ms = time.time() * 1000
         if event == "timer_start":
             self.timers[board_id] = {
                 "running": True,
                 "duration": data.get("duration", 0),
                 "remaining": data.get("remaining", 0),
-                "ts": data.get("ts", time.time() * 1000),
+                # Всегда опираемся на серверное время, чтобы избежать рассинхрона часов клиента
+                "ts": now_ms,
             }
         elif event == "timer_pause":
             t = self.timers.get(board_id)
@@ -130,19 +225,70 @@ class ConnectionManager:
         exclude: WebSocket | None = None,
     ):
         message = json.dumps({"event": event, "data": data}, default=str)
-        dead = []
-        for ws in self.rooms.get(board_id, []):
+        dead: list[WebSocket] = []
+        for ws in list(self.rooms.get(board_id, [])):
             if ws is exclude:
                 continue
             try:
                 await ws.send_text(message)
             except Exception:
                 dead.append(ws)
+        left_users: list[str] = []
         for ws in dead:
-            self.rooms[board_id].remove(ws)
-            self.usernames.pop(id(ws), None)
-        if not self.rooms.get(board_id):
-            self.rooms.pop(board_id, None)
+            uname, still_present, fac_disconnected = self.disconnect(board_id, ws)
+            if uname and not still_present:
+                left_users.append(uname)
+            if fac_disconnected and uname:
+                self.schedule_facilitator_grace(board_id, uname)
+        if left_users and event not in ("cursor_leave", "presence_update"):
+            for uname in left_users:
+                await self.broadcast(board_id, "cursor_leave", {"username": uname})
+            await self.broadcast(
+                board_id, "presence_update", {"users": self.get_users(board_id)}
+            )
+
+    async def broadcast_workspace(
+        self,
+        workspace_id: str,
+        event: str,
+        data: dict,
+    ):
+        """Разослать событие всем клиентам данного workspace (доски и дашборд)."""
+        message = json.dumps({"event": event, "data": data}, default=str)
+
+        dead_ws_sockets: list[WebSocket] = []
+        for ws in list(self.workspace_rooms.get(workspace_id, [])):
+            try:
+                await ws.send_text(message)
+            except Exception:
+                dead_ws_sockets.append(ws)
+        for ws in dead_ws_sockets:
+            self.disconnect_workspace(workspace_id, ws)
+
+        dead_board_sockets: list[tuple[str, WebSocket]] = []
+        for b_id, sockets in list(self.rooms.items()):
+            for ws in list(sockets):
+                if self.ws_workspaces.get(id(ws)) != workspace_id:
+                    continue
+                try:
+                    await ws.send_text(message)
+                except Exception:
+                    dead_board_sockets.append((b_id, ws))
+
+        if dead_board_sockets:
+            by_board: dict[str, list[str]] = defaultdict(list)
+            for b_id, ws in dead_board_sockets:
+                uname, still_present, fac_disconnected = self.disconnect(b_id, ws)
+                if uname and not still_present:
+                    by_board[b_id].append(uname)
+                if fac_disconnected and uname:
+                    self.schedule_facilitator_grace(b_id, uname)
+            for b_id, users in by_board.items():
+                for uname in users:
+                    await self.broadcast(b_id, "cursor_leave", {"username": uname})
+                await self.broadcast(
+                    b_id, "presence_update", {"users": self.get_users(b_id)}
+                )
 
 
 manager = ConnectionManager()

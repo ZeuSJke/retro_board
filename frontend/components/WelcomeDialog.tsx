@@ -30,9 +30,7 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
 
   // Sync with Zustand state after async hydration (Next.js SSR uses default state on first render)
   useEffect(() => {
-    if (workspace) {
-      setShowWorkspaceFields(false)
-    }
+    setShowWorkspaceFields(!workspace)
   }, [workspace])
 
   useEffect(() => {
@@ -42,6 +40,9 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
   }, [savedName])
 
   const handleConfirm = async () => {
+    const trimmedName = name.trim()
+    if (!trimmedName) return
+
     if (!workspace) {
       // Need to login to workspace
       setLoading(true)
@@ -52,17 +53,18 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
           access_key: accessKey,
         })
         setWorkspace(session)
-        onConfirm(name.trim() || 'Аноним')
+        setLoading(false)
+        onConfirm(trimmedName)
       } catch (err: unknown) {
         const errorMsg =
-          err instanceof Error && 'response' in err && (err as any).response?.status === 401
+          err instanceof Error && 'response' in err && (err as { response?: { status?: number } }).response?.status === 401
             ? 'Неверный код команды или ключ доступа'
             : 'Ошибка при подключении к команде'
         setError(errorMsg)
         setLoading(false)
       }
     } else {
-      onConfirm(name.trim() || 'Аноним')
+      onConfirm(trimmedName)
     }
   }
 

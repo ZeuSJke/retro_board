@@ -74,7 +74,9 @@ export function useTimer(boardId: string) {
   const handleTimerWsEvent = useCallback(
     (event: string, data: Record<string, unknown>) => {
       if (event === 'timer_start') {
-        const networkDelay = (Date.now() - ((data.ts as number) || Date.now())) / 1000
+        const ts = data.ts as number | undefined
+        const rawDelay = ts ? (Date.now() - ts) / 1000 : 0
+        const networkDelay = Math.abs(rawDelay) <= 5 ? Math.max(0, Math.min(2, rawDelay)) : 0
         const adjusted = Math.max(0, Math.round((data.remaining as number) - networkDelay))
         setTimer({ duration: data.duration as number, remaining: adjusted, running: true })
         startCountdown(adjusted)

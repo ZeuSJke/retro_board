@@ -3,7 +3,7 @@ import logging
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slugify import slugify
-from sqlalchemy import case, exists, func
+from sqlalchemy import case, exists, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from datetime import datetime, UTC
@@ -28,7 +28,29 @@ DEFAULT_COLUMNS = [
 
 
 def _make_slug(name: str) -> str:
-    return slugify(name, max_length=80, word_boundary=True) or "board"
+    return slugify(name, max_length=80, word_boundary=True) or f"board-{uuid.uuid4().hex[:8]}"
+
+
+def _resolve_unique_slug(
+    db: Session,
+    name: str,
+    workspace_id: str,
+    exclude_board_id: str | None = None,
+) -> str:
+    base = _make_slug(name)
+    candidate = base
+    for _ in range(5):
+        q = db.query(models.Board.id).filter(
+            models.Board.slug == candidate,
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace_id,
+        )
+        if exclude_board_id:
+            q = q.filter(models.Board.id != exclude_board_id)
+        if not q.first():
+            return candidate
+        candidate = f"{base[:72]}-{uuid.uuid4().hex[:6]}"
+    return f"board-{uuid.uuid4().hex[:10]}"
 
 
 @router.get("/", response_model=list[schemas.BoardListItem])
@@ -81,7 +103,7 @@ def list_boards(
 
 @router.post("/", response_model=schemas.BoardOut, status_code=201)
 @limiter.limit("30/minute")
-def create_board(
+async def create_board(
     request: Request,
     body: schemas.BoardCreate,
     db: Session = Depends(get_db),
@@ -98,18 +120,7 @@ def create_board(
     )
     if existing:
         raise HTTPException(409, "Измени название, такая доска уже есть")
-    slug = _make_slug(body.name)
-    slug_taken = (
-        db.query(models.Board.id)
-        .filter(
-            models.Board.slug == slug,
-            models.Board.deleted_at.is_(None),
-            models.Board.workspace_id == workspace.id,
-        )
-        .first()
-    )
-    if slug_taken:
-        raise HTTPException(409, "Измени название, такая доска уже есть")
+    slug = _resolve_unique_slug(db, body.name, workspace.id)
     uid = str(uuid.uuid4())
     board = models.Board(
         id=uid,
@@ -136,6 +147,12 @@ def create_board(
         )
     db.commit()
     db.refresh(board)
+    list_item = schemas.BoardListItem.model_validate(board)
+    await manager.broadcast_workspace(
+        workspace.id,
+        "board_created",
+        list_item.model_dump(mode="json"),
+    )
     return board
 
 
@@ -193,7 +210,7 @@ def get_board(
 
 @router.patch("/{board_id}", response_model=schemas.BoardOut)
 @limiter.limit("30/minute")
-def update_board(
+async def update_board(
     request: Request,
     board_id: str,
     body: schemas.BoardUpdate,
@@ -215,21 +232,10 @@ def update_board(
         )
         if existing:
             raise HTTPException(409, "Измени название, такая доска уже есть")
-        new_slug = _make_slug(body.name)
-        slug_taken = (
-            db.query(models.Board.id)
-            .filter(
-                models.Board.slug == new_slug,
-                models.Board.id != board_id,
-                models.Board.deleted_at.is_(None),
-                models.Board.workspace_id == workspace.id,
-            )
-            .first()
-        )
-        if slug_taken:
-            raise HTTPException(409, "Измени название, такая доска уже есть")
         board.name = body.name
-        board.slug = new_slug
+        board.slug = _resolve_unique_slug(
+            db, body.name, workspace.id, exclude_board_id=board_id
+        )
     if body.max_votes is not None:
         board.max_votes = body.max_votes
     try:
@@ -238,12 +244,23 @@ def update_board(
         db.rollback()
         raise HTTPException(409, "Измени название, такая доска уже есть")
     db.refresh(board)
+    await manager.broadcast_workspace(
+        workspace.id,
+        "board_updated",
+        {
+            "id": board.id,
+            "name": board.name,
+            "slug": board.slug,
+            "max_votes": board.max_votes,
+            "workspace_id": board.workspace_id,
+        },
+    )
     return board
 
 
 @router.delete("/{board_id}", status_code=204)
 @limiter.limit("30/minute")
-def delete_board(
+async def delete_board(
     request: Request,
     board_id: str,
     db: Session = Depends(get_db),
@@ -257,6 +274,11 @@ def delete_board(
     board.slug = None
     board.name = f"__deleted__{board.id}"
     db.commit()
+    await manager.broadcast_workspace(
+        workspace.id,
+        "board_deleted",
+        {"id": board.id},
+    )
 
 
 # ── Summary Endpoints ────────────────────────────────────────────────────────
@@ -433,14 +455,22 @@ async def get_summary(
 
     Returns the most recent summary for the current or last session.
     """
-    board = get_or_404(db, models.Board, board_id, "Board not found")
+    board = (
+        db.query(models.Board)
+        .filter(
+            or_(models.Board.id == board_id, models.Board.slug == board_id),
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace.id,
+        )
+        .first()
+    )
     require_live_board(board, workspace.id)
 
     # Get current session_id if active
-    session_id = manager.get_session_id(board_id)
+    session_id = manager.get_session_id(board.id)
 
     query = db.query(models.BoardSummary).filter(
-        models.BoardSummary.board_id == board_id
+        models.BoardSummary.board_id == board.id
     )
 
     if session_id:

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, memo } from 'react'
+import { useState, useRef, memo } from 'react'
 import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import CardWidget from './CardWidget'
@@ -73,6 +73,8 @@ export default memo(function Column({
   const [colorPickerOpen, setColorPickerOpen] = useState(false)
 
   const [clustering, setClustering] = useState(false)
+  const [creatingCard, setCreatingCard] = useState(false)
+  const creatingCardRef = useRef(false)
 
   const [groupAssignOpen, setGroupAssignOpen] = useState(false)
   const [assigningCardId, setAssigningCardId] = useState<string | null>(null)
@@ -123,11 +125,13 @@ export default memo(function Column({
   }
 
   const handleAddCard = async () => {
-    if (!cardText.trim()) return
+    if (!cardText.trim() || creatingCardRef.current) return
+    creatingCardRef.current = true
+    setCreatingCard(true)
     const text = cardText.trim()
     const color = cardColor
     // Optimistic: add temp card immediately
-    const tempId = `temp-${Date.now()}`
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const tempCard: Card = {
       id: tempId,
       column_id: column.id,
@@ -150,27 +154,40 @@ export default memo(function Column({
       onCardCreated(column.id, card)
     } catch {
       onCardDeleted(column.id, tempId)
+    } finally {
+      creatingCardRef.current = false
+      setCreatingCard(false)
     }
   }
 
   const handleAssignToGroup = async (groupId: string) => {
     setGroupAssignOpen(false)
     if (!assigningCardId) return
-    const updated = await addCardToGroup(groupId, assigningCardId)
-    onCardUpdated(column.id, updated)
-    setAssigningCardId(null)
-    setNewGroupTitle('')
+    try {
+      const updated = await addCardToGroup(groupId, assigningCardId)
+      onCardUpdated(column.id, updated)
+    } catch {
+      showToast('Не удалось добавить карточку в группу', 'error')
+    } finally {
+      setAssigningCardId(null)
+      setNewGroupTitle('')
+    }
   }
 
   const handleCreateAndAssign = async () => {
     if (!assigningCardId) return
     const title = newGroupTitle.trim() || 'Новая группа'
     setGroupAssignOpen(false)
-    const group = await createGroup({ column_id: column.id, title })
-    const updated = await addCardToGroup(group.id, assigningCardId)
-    onCardUpdated(column.id, updated)
-    setAssigningCardId(null)
-    setNewGroupTitle('')
+    try {
+      const group = await createGroup({ column_id: column.id, title })
+      const updated = await addCardToGroup(group.id, assigningCardId)
+      onCardUpdated(column.id, updated)
+    } catch {
+      showToast('Не удалось создать группу', 'error')
+    } finally {
+      setAssigningCardId(null)
+      setNewGroupTitle('')
+    }
   }
 
   const openGroupAssign = (cardId: string) => {
@@ -222,9 +239,9 @@ export default memo(function Column({
         <div className={s.header}>
           <div
             className={s.dot}
-            style={{ background: column.color }}
-            onClick={() => setColorPickerOpen(true)}
-            title="Изменить цвет"
+            style={{ background: column.color, cursor: readOnly ? 'default' : undefined }}
+            onClick={readOnly ? undefined : () => setColorPickerOpen(true)}
+            title={readOnly ? undefined : 'Изменить цвет'}
           />
           {editingTitle ? (
             <input
@@ -232,7 +249,13 @@ export default memo(function Column({
               value={titleVal}
               onChange={(e) => setTitleVal(e.target.value)}
               onBlur={saveTitle}
-              onKeyDown={(e) => e.key === 'Enter' && saveTitle()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveTitle()
+                if (e.key === 'Escape') {
+                  setTitleVal(column.title)
+                  setEditingTitle(false)
+                }
+              }}
               autoFocus
             />
           ) : (
@@ -248,7 +271,7 @@ export default memo(function Column({
             </span>
           )}
           <span className={s.count}>{(column.cards || []).length}</span>
-          {!readOnly && ungroupedCards.length >= 2 && (
+          {!readOnly && !brainstormHidden && ungroupedCards.length >= 2 && (
             <button
               className={s.iconBtn}
               onClick={handleAutoCluster}
@@ -385,6 +408,7 @@ export default memo(function Column({
         }}
         onConfirm={handleAddCard}
         confirmLabel="Добавить"
+        confirmDisabled={!cardText.trim() || creatingCard}
       >
         <textarea
           className={s.textarea}

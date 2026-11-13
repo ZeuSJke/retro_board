@@ -10,14 +10,23 @@ import {
   deleteAdminWorkspace,
   type WorkspaceListItem,
 } from '../../api/admin'
+import { getApiErrorMessage } from '../../utils/apiError'
+import Dialog from '../../components/Dialog'
 import styles from './admin.module.css'
 
-type PageState = 'login' | 'workspaces'
+type PageState = 'checking' | 'login' | 'workspaces'
 type EditingWorkspaceId = string | null
 type ShowingDialog = 'create' | 'rename' | 'key' | null
 
+const CYR_MAP: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z',
+  и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r',
+  с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'shch',
+  ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+}
+
 export default function AdminPage() {
-  const [pageState, setPageState] = useState<PageState>('login')
+  const [pageState, setPageState] = useState<PageState>('checking')
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState<string | null>(null)
@@ -32,10 +41,12 @@ export default function AdminPage() {
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<EditingWorkspaceId>(null)
   const [dialogLoading, setDialogLoading] = useState(false)
   const [dialogError, setDialogError] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<WorkspaceListItem | null>(null)
 
   // Form fields for create
   const [createName, setCreateName] = useState('')
   const [createSlug, setCreateSlug] = useState('')
+  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false)
   const [createAccessKey, setCreateAccessKey] = useState('')
 
   // Form fields for rename
@@ -43,6 +54,33 @@ export default function AdminPage() {
 
   // Form fields for key
   const [keyAccessKey, setKeyAccessKey] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const data = await getAdminWorkspaces()
+        if (!cancelled) {
+          setWorkspaces(data)
+          setPageState('workspaces')
+        }
+      } catch {
+        if (!cancelled) setPageState('login')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!showDialog) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !dialogLoading) {
+        setShowDialog(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showDialog, dialogLoading])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -52,13 +90,10 @@ export default function AdminPage() {
     try {
       await adminLogin({ login, password })
       setPageState('workspaces')
-      loadWorkspaces()
+      await loadWorkspaces()
     } catch (err: unknown) {
-      const errorMsg =
-        err instanceof Error && 'response' in err && (err as any).response?.status === 401
-          ? 'Неверный логин или пароль'
-          : 'Ошибка при входе'
-      setLoginError(errorMsg)
+      const status = (err as { response?: { status?: number } })?.response?.status
+      setLoginError(status === 401 ? 'Неверный логин или пароль' : 'Ошибка при входе')
     } finally {
       setLoginLoading(false)
     }
@@ -82,17 +117,25 @@ export default function AdminPage() {
     try {
       const data = await getAdminWorkspaces()
       setWorkspaces(data)
-    } catch (err) {
-      setError('Не удалось загрузить пространства')
-      console.error(err)
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 401) {
+        setPageState('login')
+      } else {
+        setError('Не удалось загрузить пространства')
+      }
     } finally {
       setLoading(false)
     }
   }
 
   const generateSlugFromName = (name: string): string => {
-    return name
+    const transliterated = name
       .toLowerCase()
+      .split('')
+      .map((ch) => CYR_MAP[ch] ?? ch)
+      .join('')
+    return transliterated
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')
   }
@@ -100,6 +143,7 @@ export default function AdminPage() {
   const openCreateDialog = () => {
     setCreateName('')
     setCreateSlug('')
+    setSlugManuallyEdited(false)
     setCreateAccessKey('')
     setDialogError(null)
     setShowDialog('create')
@@ -123,11 +167,7 @@ export default function AdminPage() {
       setWorkspaces((prev) => [newWorkspace, ...prev])
       setShowDialog(null)
     } catch (err: unknown) {
-      const errorMsg =
-        err instanceof Error && 'response' in err
-          ? (err as any).response?.data?.detail || 'Ошибка при создании'
-          : 'Ошибка при создании'
-      setDialogError(errorMsg)
+      setDialogError(getApiErrorMessage(err, 'Ошибка при создании'))
     } finally {
       setDialogLoading(false)
     }
@@ -158,8 +198,8 @@ export default function AdminPage() {
       )
       setShowDialog(null)
       setEditingWorkspaceId(null)
-    } catch (err) {
-      setDialogError('Ошибка при переименовании')
+    } catch (err: unknown) {
+      setDialogError(getApiErrorMessage(err, 'Ошибка при переименовании'))
     } finally {
       setDialogLoading(false)
     }
@@ -188,39 +228,40 @@ export default function AdminPage() {
       setShowDialog(null)
       setEditingWorkspaceId(null)
       setKeyAccessKey('')
-    } catch (err) {
-      setDialogError('Ошибка при смене ключа')
+    } catch (err: unknown) {
+      setDialogError(getApiErrorMessage(err, 'Ошибка при смене ключа'))
     } finally {
       setDialogLoading(false)
     }
   }
 
-  const handleDelete = async (ws: WorkspaceListItem) => {
-    const confirmed = window.confirm(
-      `Удалить пространство "${ws.name}"? Это удалит все ${ws.boards_count} доск${
-        ws.boards_count === 1 ? 'у' : 'и'
-      } в нём.`,
-    )
-    if (!confirmed) return
-
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    const ws = deleteTarget
+    setDeleteTarget(null)
     setLoading(true)
     setError(null)
 
     try {
       await deleteAdminWorkspace(ws.id)
       setWorkspaces((prev) => prev.filter((w) => w.id !== ws.id))
-    } catch (err) {
-      setError('Ошибка при удалении пространства')
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Ошибка при удалении пространства'))
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => {
-    if (pageState === 'workspaces') {
-      loadWorkspaces()
-    }
-  }, [pageState])
+  if (pageState === 'checking') {
+    return (
+      <div className={styles.container}>
+        <div className={styles.centered}>
+          <div className={styles.spinner} />
+          <p>Загрузка...</p>
+        </div>
+      </div>
+    )
+  }
 
   if (pageState === 'login') {
     return (
@@ -344,7 +385,7 @@ export default function AdminPage() {
                     </button>
                     <button
                       className={styles.actionBtn + ' ' + styles.deleteBtn}
-                      onClick={() => handleDelete(ws)}
+                      onClick={() => setDeleteTarget(ws)}
                       title="Удалить"
                       disabled={loading}
                     >
@@ -396,105 +437,135 @@ export default function AdminPage() {
               </button>
             </div>
 
-            <div className={styles.dialogBody}>
-              {showDialog === 'create' && (
-                <>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (dialogLoading) return
+                if (showDialog === 'create') void handleCreateConfirm()
+                else if (showDialog === 'rename') void handleRenameConfirm()
+                else if (showDialog === 'key') void handleKeyConfirm()
+              }}
+            >
+              <div className={styles.dialogBody}>
+                {showDialog === 'create' && (
+                  <>
+                    <div className={styles.formGroup}>
+                      <label>Название</label>
+                      <input
+                        type="text"
+                        value={createName}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setCreateName(val)
+                          if (!slugManuallyEdited) {
+                            setCreateSlug(generateSlugFromName(val))
+                          }
+                        }}
+                        placeholder="FMRM Core"
+                        disabled={dialogLoading}
+                        autoFocus
+                      />
+                    </div>
+
+                    <div className={styles.formGroup}>
+                      <label>Код (slug)</label>
+                      <input
+                        type="text"
+                        value={createSlug}
+                        onChange={(e) => {
+                          setSlugManuallyEdited(true)
+                          setCreateSlug(e.target.value)
+                        }}
+                        placeholder="fmrm-core"
+                        disabled={dialogLoading}
+                      />
+                      <small>Буквы, цифры и дефисы</small>
+                    </div>
+
+                    <div className={styles.formGroup}>
+                      <label>Ключ доступа</label>
+                      <input
+                        type="password"
+                        value={createAccessKey}
+                        onChange={(e) => setCreateAccessKey(e.target.value)}
+                        placeholder="Безопасный ключ"
+                        disabled={dialogLoading}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {showDialog === 'rename' && (
                   <div className={styles.formGroup}>
-                    <label>Название</label>
+                    <label>Новое название</label>
                     <input
                       type="text"
-                      value={createName}
-                      onChange={(e) => {
-                        setCreateName(e.target.value)
-                        if (!createSlug) {
-                          setCreateSlug(generateSlugFromName(e.target.value))
-                        }
-                      }}
-                      placeholder="FMRM Core"
+                      value={renameName}
+                      onChange={(e) => setRenameName(e.target.value)}
+                      placeholder="Новое название"
                       disabled={dialogLoading}
                       autoFocus
                     />
                   </div>
+                )}
 
+                {showDialog === 'key' && (
                   <div className={styles.formGroup}>
-                    <label>Код (slug)</label>
-                    <input
-                      type="text"
-                      value={createSlug}
-                      onChange={(e) => setCreateSlug(e.target.value)}
-                      placeholder="fmrm-core"
-                      disabled={dialogLoading}
-                    />
-                    <small>Буквы, цифры и дефисы</small>
-                  </div>
-
-                  <div className={styles.formGroup}>
-                    <label>Ключ доступа</label>
+                    <label>Новый ключ доступа</label>
                     <input
                       type="password"
-                      value={createAccessKey}
-                      onChange={(e) => setCreateAccessKey(e.target.value)}
-                      placeholder="Безопасный ключ"
+                      value={keyAccessKey}
+                      onChange={(e) => setKeyAccessKey(e.target.value)}
+                      placeholder="Новый ключ"
                       disabled={dialogLoading}
+                      autoFocus
                     />
                   </div>
-                </>
-              )}
+                )}
 
-              {showDialog === 'rename' && (
-                <div className={styles.formGroup}>
-                  <label>Новое название</label>
-                  <input
-                    type="text"
-                    value={renameName}
-                    onChange={(e) => setRenameName(e.target.value)}
-                    placeholder="Новое название"
-                    disabled={dialogLoading}
-                    autoFocus
-                  />
-                </div>
-              )}
+                {dialogError && <div className={styles.error}>{dialogError}</div>}
+              </div>
 
-              {showDialog === 'key' && (
-                <div className={styles.formGroup}>
-                  <label>Новый ключ доступа</label>
-                  <input
-                    type="password"
-                    value={keyAccessKey}
-                    onChange={(e) => setKeyAccessKey(e.target.value)}
-                    placeholder="Новый ключ"
-                    disabled={dialogLoading}
-                    autoFocus
-                  />
-                </div>
-              )}
-
-              {dialogError && <div className={styles.error}>{dialogError}</div>}
-            </div>
-
-            <div className={styles.dialogFooter}>
-              <button
-                className={styles.btnSecondary}
-                onClick={() => setShowDialog(null)}
-                disabled={dialogLoading}
-              >
-                Отмена
-              </button>
-              <button
-                className={styles.btn}
-                onClick={() => {
-                  if (showDialog === 'create') handleCreateConfirm()
-                  else if (showDialog === 'rename') handleRenameConfirm()
-                  else if (showDialog === 'key') handleKeyConfirm()
-                }}
-                disabled={dialogLoading}
-              >
-                {dialogLoading ? 'Сохранение...' : 'Сохранить'}
-              </button>
-            </div>
+              <div className={styles.dialogFooter}>
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  onClick={() => setShowDialog(null)}
+                  disabled={dialogLoading}
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  className={styles.btn}
+                  disabled={dialogLoading}
+                >
+                  {dialogLoading ? 'Сохранение...' : 'Сохранить'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
+
+      <Dialog
+        open={!!deleteTarget}
+        title="Удалить пространство?"
+        icon="delete"
+        danger
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+        confirmLabel="Удалить"
+      >
+        <p style={{ margin: 0, fontSize: 14, color: 'var(--md-on-surface-variant)' }}>
+          Удалить пространство{' '}
+          <strong style={{ color: 'var(--md-on-surface)' }}>
+            «{deleteTarget?.name}»
+          </strong>
+          ? Это удалит все {deleteTarget?.boards_count ?? 0} доск
+          {deleteTarget?.boards_count === 1 ? 'у' : 'и'} в нём.
+        </p>
+      </Dialog>
     </div>
   )
 }

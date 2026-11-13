@@ -157,4 +157,91 @@ describe('Column', () => {
     )
     expect(screen.getByText('Добавить карточку')).toBeInTheDocument()
   })
+
+  it('hides auto_awesome AI cluster button and other authors cards during brainstormHidden', () => {
+    const col: ColumnType = {
+      ...baseColumn,
+      cards: [
+        ...baseColumn.cards,
+        {
+          id: 'card-2',
+          column_id: 'col-1',
+          group_id: null,
+          text: 'My own thought',
+          author: 'TestUser',
+          color: '#FFFFFF',
+          position: 1,
+          likes: [],
+          created_at: '2024-01-01T00:00:00Z',
+        },
+      ],
+    }
+
+    render(
+      <Column
+        column={col}
+        onUpdate={noop}
+        onDelete={noop}
+        onCardCreated={noop}
+        onCardUpdated={noop}
+        onCardDeleted={noop}
+        onGroupCreated={noop}
+        onGroupUpdated={noop}
+        onGroupDeleted={noop}
+        groupTargetId={null}
+        collapsedGroups={{}}
+        onToggleCollapse={noop}
+        currentUser="TestUser"
+        brainstormHidden
+      />,
+    )
+
+    expect(screen.queryByTitle('Сгруппировать похожие (AI)')).not.toBeInTheDocument()
+    expect(screen.queryByText('Great teamwork')).not.toBeInTheDocument()
+    expect(screen.getByText('My own thought')).toBeInTheDocument()
+  })
+
+  it('disables color dot, title edit prompt, auto-cluster, and delete action when readOnly', () => {
+    const col: ColumnType = {
+      ...baseColumn,
+      cards: [
+        ...baseColumn.cards,
+        {
+          id: 'card-2',
+          column_id: 'col-1',
+          group_id: null,
+          text: 'Second card',
+          author: 'Bob',
+          color: '#FFFFFF',
+          position: 1,
+          likes: [],
+          created_at: '2024-01-01T00:00:00Z',
+        },
+      ],
+    }
+
+    render(
+      <Column
+        column={col}
+        onUpdate={noop}
+        onDelete={noop}
+        onCardCreated={noop}
+        onCardUpdated={noop}
+        onCardDeleted={noop}
+        onGroupCreated={noop}
+        onGroupUpdated={noop}
+        onGroupDeleted={noop}
+        groupTargetId={null}
+        collapsedGroups={{}}
+        onToggleCollapse={noop}
+        readOnly
+      />,
+    )
+
+    expect(screen.queryByTitle('Изменить цвет')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Двойной клик чтобы редактировать')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Удалить колонку')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Сгруппировать похожие (AI)')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /добавить карточку/i })).toBeDisabled()
+  })
 })

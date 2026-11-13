@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   PointerSensor,
   TouchSensor,
@@ -33,6 +33,22 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
   const [activeGroup, setActiveGroup] = useState<CardGroup | null>(null)
   const [groupTargetId, setGroupTargetId] = useState<string | null>(null)
   const savedColumnsRef = useRef<Column[] | null>(null)
+  const isDraggingRef = useRef(false)
+  const groupModifierRef = useRef(false)
+
+  useEffect(() => {
+    const updateModifier = (e: KeyboardEvent) => {
+      if (isDraggingRef.current) {
+        groupModifierRef.current = e.altKey || e.shiftKey
+      }
+    }
+    window.addEventListener('keydown', updateModifier)
+    window.addEventListener('keyup', updateModifier)
+    return () => {
+      window.removeEventListener('keydown', updateModifier)
+      window.removeEventListener('keyup', updateModifier)
+    }
+  }, [])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -63,8 +79,11 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
     return null
   }
 
-  const onDragStart = ({ active }: DragStartEvent) => {
+  const onDragStart = ({ active, activatorEvent }: DragStartEvent) => {
     savedColumnsRef.current = columns
+    isDraggingRef.current = true
+    const ev = activatorEvent as KeyboardEvent | MouseEvent | undefined
+    groupModifierRef.current = Boolean(ev?.altKey || ev?.shiftKey)
     if (String(active.id).startsWith('group-')) {
       const groupId = String(active.id).slice(6)
       for (const col of columns) {
@@ -105,11 +124,14 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
     const targetGroupId = overCard?.group_id
     const activeGroupId = activeFound.card.group_id
 
+    const canJoinExisting = Boolean(targetGroupId) && targetGroupId !== activeGroupId
+    const canCreateNew = !targetGroupId && !activeGroupId && groupModifierRef.current
+
     if (
       !isOverCol &&
       overId !== String(active.id) &&
       overColId &&
-      (targetGroupId || !activeGroupId)
+      (canJoinExisting || canCreateNew)
     ) {
       setGroupTargetId(overId)
       if (overColId !== activeFound.colId) {
@@ -142,6 +164,7 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
     setGroupTargetId(null)
 
     if (!overColId || overColId === activeFound.colId) return
+
     setColumns((prev) => {
       const srcCol = prev.find((c) => c.id === activeFound.colId)
       const dstCol = prev.find((c) => c.id === overColId)
@@ -165,12 +188,17 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
   }
 
   const onDragEnd = async ({ active, over }: DragEndEvent) => {
+    const wantsNewGroup = groupModifierRef.current
+    const saved = savedColumnsRef.current
+    isDraggingRef.current = false
+    groupModifierRef.current = false
     setActiveCard(null)
     setActiveGroup(null)
     setGroupTargetId(null)
 
     if (!over) {
-      if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
+      if (saved) setColumns(saved)
+      savedColumnsRef.current = null
       return
     }
 
@@ -180,11 +208,14 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
       const overId = String(over.id)
       const isOverCol = overId.startsWith('col-')
       const targetColId = isOverCol ? overId.slice(4) : findCard(overId)?.colId
-      if (!targetColId) return
+      if (!targetColId) {
+        savedColumnsRef.current = null
+        return
+      }
 
       let srcColId: string | null = null
       let groupData: CardGroup | null = null
-      for (const col of savedColumnsRef.current || []) {
+      for (const col of saved || []) {
         const g = (col.groups || []).find((g) => g.id === groupId)
         if (g) {
           srcColId = col.id
@@ -192,12 +223,15 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
           break
         }
       }
-      if (!groupData || targetColId === srcColId) return
+      if (!groupData || targetColId === srcColId) {
+        savedColumnsRef.current = null
+        return
+      }
       // groupData сужен до CardGroup — const для использования в замыкании ниже
       const group = groupData
 
       const groupCards =
-        (savedColumnsRef.current || [])
+        (saved || [])
           .find((c) => c.id === srcColId)
           ?.cards.filter((card) => card.group_id === groupId) || []
       setColumns((prev) =>
@@ -233,18 +267,37 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
         await moveGroup(groupId, { column_id: targetColId })
       } catch {
         showToast('Не удалось переместить группу', 'error')
-        if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
+        if (saved) setColumns(saved)
+      } finally {
+        savedColumnsRef.current = null
       }
       return
     }
 
     // ── Card drag ────────────────────────────────────────────────────────
     const activeFound = findCard(String(active.id))
-    if (!activeFound) return
+    if (!activeFound) {
+      savedColumnsRef.current = null
+      return
+    }
     const overId = String(over.id)
     const isOverCol = overId.startsWith('col-')
     const overColId = isOverCol ? overId.slice(4) : findCard(overId)?.colId
-    if (!overColId) return
+    if (!overColId) {
+      savedColumnsRef.current = null
+      return
+    }
+
+    let origColId: string | null = null
+    let origCard: Card | null = null
+    for (const col of saved || []) {
+      const c = col.cards.find((card) => card.id === String(active.id))
+      if (c) {
+        origColId = col.id
+        origCard = c
+        break
+      }
+    }
 
     if (!isOverCol && overId !== String(active.id)) {
       const targetCard = (() => {
@@ -255,21 +308,13 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
         return null
       })()
       const targetGroupId = targetCard?.group_id
-      const activeGroupId = activeFound.card.group_id
+      const activeGroupId = origCard?.group_id ?? activeFound.card.group_id
 
-      let origColId: string | null = null
-      for (const col of savedColumnsRef.current || []) {
-        if (col.cards.find((c) => c.id === String(active.id))) {
-          origColId = col.id
-          break
-        }
-      }
-
-      if (targetGroupId) {
+      if (targetGroupId && targetGroupId !== activeGroupId) {
         try {
           if (origColId && origColId !== overColId) {
             const dstCards =
-              (savedColumnsRef.current || []).find((c) => c.id === overColId)?.cards || []
+              (saved || []).find((c) => c.id === overColId)?.cards || []
             await moveCard(String(active.id), { column_id: overColId, position: dstCards.length })
           } else if (activeGroupId) {
             await removeCardFromGroup(activeGroupId, String(active.id))
@@ -285,16 +330,18 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
           )
         } catch {
           showToast('Не удалось добавить в группу', 'error')
-          if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
+          if (saved) setColumns(saved)
+        } finally {
+          savedColumnsRef.current = null
         }
         return
       }
 
-      if (!activeGroupId) {
+      if (!targetGroupId && !activeGroupId && wantsNewGroup) {
         try {
           if (origColId && origColId !== overColId) {
             const dstCards =
-              (savedColumnsRef.current || []).find((c) => c.id === overColId)?.cards || []
+              (saved || []).find((c) => c.id === overColId)?.cards || []
             await moveCard(String(active.id), { column_id: overColId, position: dstCards.length })
           }
           const group = await createGroup({ column_id: overColId, title: 'Группа' })
@@ -331,25 +378,55 @@ export function useBoardDragDrop({ columns, setColumns }: UseBoardDragDropParams
           )
         } catch {
           showToast('Не удалось создать группу', 'error')
-          if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
+          if (saved) setColumns(saved)
+        } finally {
+          savedColumnsRef.current = null
         }
         return
       }
     }
 
-    // Normal card move
+    // Normal card move / reorder
     const dstCol = columns.find((c) => c.id === overColId)
-    if (!dstCol) return
-    const overIdx = dstCol.cards.findIndex((c) => c.id === overId)
-    const newPos = overIdx >= 0 ? overIdx : dstCol.cards.length
+    if (!dstCol) {
+      savedColumnsRef.current = null
+      return
+    }
+    const activeIdx = dstCol.cards.findIndex((c) => c.id === String(active.id))
+    const overIdx = !isOverCol ? dstCol.cards.findIndex((c) => c.id === overId) : -1
+    let finalCards = dstCol.cards
+    if (activeIdx >= 0 && overIdx >= 0 && activeIdx !== overIdx) {
+      finalCards = [...dstCol.cards]
+      const [moved] = finalCards.splice(activeIdx, 1)
+      finalCards.splice(overIdx, 0, moved)
+    }
+    const computedIdx = finalCards.findIndex((c) => c.id === String(active.id))
+    const newPos = computedIdx >= 0 ? computedIdx : finalCards.length
+
+    setColumns((prev) =>
+      prev.map((c) => {
+        if (c.id !== overColId) return c
+        return {
+          ...c,
+          cards: finalCards.map((card, idx) =>
+            card.id === String(active.id)
+              ? { ...card, group_id: origColId !== overColId ? null : origCard?.group_id ? null : card.group_id, position: idx }
+              : { ...card, position: idx },
+          ),
+        }
+      }),
+    )
+
     try {
-      if (activeFound.card.group_id && overColId === activeFound.colId) {
-        await removeCardFromGroup(activeFound.card.group_id, String(active.id))
+      if (origCard?.group_id && origColId === overColId) {
+        await removeCardFromGroup(origCard.group_id, String(active.id))
       }
       await moveCard(String(active.id), { column_id: overColId, position: newPos })
     } catch {
       showToast('Не удалось переместить карточку', 'error')
-      if (savedColumnsRef.current) setColumns(savedColumnsRef.current)
+      if (saved) setColumns(saved)
+    } finally {
+      savedColumnsRef.current = null
     }
   }
 
