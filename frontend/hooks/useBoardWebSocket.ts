@@ -8,6 +8,7 @@ import { getActionItems } from '../api'
 import { asCard, asColumn, asGroup, asActionItem } from '../utils/wsData'
 import type {
   ActionItem,
+  BoardListItem,
   Column,
   WsMessage,
   WsCursorMoveData,
@@ -20,6 +21,8 @@ import type {
   WsGroupMovedData,
   WsDeletedData,
   WsGroupDeletedData,
+  WsBoardUpdatedData,
+  WsSummaryFailedData,
 } from '../types'
 
 export interface CursorPos {
@@ -33,9 +36,23 @@ interface UseBoardWebSocketParams {
   onFacilitatorChanged?: (facilitator: string | null, phase: string | null) => void
   onPhaseChanged?: (phase: string) => void
   onSummaryGenerated?: () => void
+  onSummaryFailed?: (message?: string) => void
+  onBoardCreated?: (board: BoardListItem) => void
+  onBoardUpdated?: (board: WsBoardUpdatedData) => void
+  onBoardDeleted?: (id: string) => void
 }
 
-export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChanged, onPhaseChanged, onSummaryGenerated }: UseBoardWebSocketParams) {
+export function useBoardWebSocket({
+  boardId,
+  onTimerWsEvent,
+  onFacilitatorChanged,
+  onPhaseChanged,
+  onSummaryGenerated,
+  onSummaryFailed,
+  onBoardCreated,
+  onBoardUpdated,
+  onBoardDeleted,
+}: UseBoardWebSocketParams) {
   const username = useAppStore((s) => s.username)
   const [columns, setColumns] = useState<Column[]>([])
   const cursorsRef = useRef<Record<string, CursorPos>>({})
@@ -44,10 +61,16 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
   const [activeUsers, setActiveUsers] = useState<string[]>([])
   const [facilitator, setFacilitator] = useState<string | null>(null)
   const [phase, setPhase] = useState<string | null>(null)
+  const [sessionSynced, setSessionSynced] = useState(false)
   const [actionItems, setActionItems] = useState<ActionItem[]>([])
   const cursorTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastCursorRef = useRef<CursorPos | null>(null)
   const sendMessageRef = useRef<((msg: WsMessage) => void) | null>(null)
+  const prevUsernameRef = useRef(username)
+
+  useEffect(() => {
+    setSessionSynced(false)
+  }, [boardId])
 
   const subscribeCursors = useCallback((cb: () => void) => {
     cursorListenersRef.current.add(cb)
@@ -120,6 +143,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
         const { facilitator: f, phase: p } = data as unknown as WsFacilitatorData
         setFacilitator(f)
         setPhase(p)
+        setSessionSynced(true)
         onFacilitatorChanged?.(f, p)
         return
       }
@@ -132,24 +156,32 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
       }
 
       if (event === 'action_item_created') {
-        const item = asActionItem(data)
-        setActionItems((prev) =>
-          prev.find((i) => i.id === item.id) ? prev : [...prev, item],
-        )
+        try {
+          const item = asActionItem(data)
+          setActionItems((prev) =>
+            prev.find((i) => i.id === item.id) ? prev : [...prev, item],
+          )
+        } catch {
+          /* ignore malformed action item */
+        }
         return
       }
 
       if (event === 'action_item_updated') {
-        const item = asActionItem(data)
-        setActionItems((prev) =>
-          prev.map((i) => (i.id === item.id ? item : i)),
-        )
+        try {
+          const item = asActionItem(data)
+          setActionItems((prev) =>
+            prev.map((i) => (i.id === item.id ? item : i)),
+          )
+        } catch {
+          /* ignore malformed action item */
+        }
         return
       }
 
       if (event === 'action_item_deleted') {
         const { id } = data as { id: string }
-        setActionItems((prev) => prev.filter((i) => i.id !== id))
+        if (id) setActionItems((prev) => prev.filter((i) => i.id !== id))
         return
       }
 
@@ -166,140 +198,213 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
         return
       }
 
-      setColumns((prev) => {
+      if (event === 'summary_failed') {
+        const { message } = data as unknown as WsSummaryFailedData
+        onSummaryFailed?.(message)
+        return
+      }
+
+      if (event === 'board_created') {
+        const board = data as unknown as BoardListItem
+        if (board?.id) onBoardCreated?.(board)
+        return
+      }
+
+      if (event === 'board_updated') {
+        const upd = data as unknown as WsBoardUpdatedData
+        if (upd?.id) onBoardUpdated?.(upd)
+        return
+      }
+
+      if (event === 'board_deleted') {
+        const { id } = data as unknown as WsDeletedData
+        if (id) onBoardDeleted?.(id)
+        return
+      }
+
+      let updater: ((prev: Column[]) => Column[]) | null = null
+      try {
         switch (event) {
           case 'column_created': {
             const col = asColumn(data)
-            if (prev.find((c) => c.id === col.id)) return prev
-            return [...prev, { ...col, cards: [], groups: [] }]
+            updater = (prev) =>
+              prev.find((c) => c.id === col.id) ? prev : [...prev, { ...col, cards: [], groups: [] }]
+            break
           }
           case 'column_updated': {
             const col = asColumn(data)
-            return prev.map((c) => (c.id === col.id ? { ...c, ...col } : c))
+            updater = (prev) => prev.map((c) => (c.id === col.id ? { ...c, ...col } : c))
+            break
           }
-          case 'column_deleted':
-            return prev.filter((c) => c.id !== (data as unknown as WsDeletedData).id)
+          case 'column_deleted': {
+            const deletedId = (data as unknown as WsDeletedData)?.id
+            if (deletedId) {
+              updater = (prev) => prev.filter((c) => c.id !== deletedId)
+            }
+            break
+          }
           case 'card_created': {
             const card = asCard(data)
-            return prev.map((c) =>
-              c.id === card.column_id
-                ? {
-                    ...c,
-                    cards: [
-                      ...c.cards.filter((x) => x.id !== card.id),
-                      card,
-                    ].sort((a, b) => a.position - b.position),
-                  }
-                : c,
-            )
+            updater = (prev) =>
+              prev.map((c) =>
+                c.id === card.column_id
+                  ? {
+                      ...c,
+                      cards: [
+                        ...c.cards.filter((x) => x.id !== card.id),
+                        card,
+                      ].sort((a, b) => a.position - b.position),
+                    }
+                  : c,
+              )
+            break
           }
           case 'card_updated': {
             const card = asCard(data)
-            return prev.map((c) => ({
-              ...c,
-              cards: c.cards.map((x) => (x.id === card.id ? card : x)),
-            }))
+            updater = (prev) =>
+              prev.map((c) => ({
+                ...c,
+                cards: c.cards.map((x) => (x.id === card.id ? card : x)),
+              }))
+            break
           }
           case 'card_moved': {
-            const { card, old_column_id } = data as unknown as WsCardMovedData
-            return prev.map((c) => {
-              if (c.id === old_column_id && c.id === card.column_id) {
-                const cards = [
-                  ...c.cards.filter((x) => x.id !== card.id),
-                  card,
-                ].sort((a, b) => a.position - b.position)
-                return { ...c, cards }
-              }
-              if (c.id === old_column_id)
-                return { ...c, cards: c.cards.filter((x) => x.id !== card.id) }
-              if (c.id === card.column_id) {
-                const cards = [
-                  ...c.cards.filter((x) => x.id !== card.id),
-                  card,
-                ].sort((a, b) => a.position - b.position)
-                return { ...c, cards }
-              }
-              return c
-            })
+            const moved = data as unknown as WsCardMovedData
+            if (!moved?.card || !moved.old_column_id) break
+            const { card, old_column_id } = moved
+            updater = (prev) =>
+              prev.map((c) => {
+                if (c.id === old_column_id && c.id === card.column_id) {
+                  const cards = [
+                    ...c.cards.filter((x) => x.id !== card.id),
+                    card,
+                  ].sort((a, b) => a.position - b.position)
+                  return { ...c, cards }
+                }
+                if (c.id === old_column_id)
+                  return { ...c, cards: c.cards.filter((x) => x.id !== card.id) }
+                if (c.id === card.column_id) {
+                  const cards = [
+                    ...c.cards.filter((x) => x.id !== card.id),
+                    card,
+                  ].sort((a, b) => a.position - b.position)
+                  return { ...c, cards }
+                }
+                return c
+              })
+            break
           }
-          case 'card_deleted':
-            return prev.map((c) => ({
-              ...c,
-              cards: c.cards.filter((x) => x.id !== (data as unknown as WsDeletedData).id),
-            }))
+          case 'card_deleted': {
+            const deletedId = (data as unknown as WsDeletedData)?.id
+            if (deletedId) {
+              updater = (prev) =>
+                prev.map((c) => ({
+                  ...c,
+                  cards: c.cards.filter((x) => x.id !== deletedId),
+                }))
+            }
+            break
+          }
           case 'group_created': {
             const g = asGroup(data)
-            return prev.map((c) =>
-              c.id === g.column_id
-                ? {
-                    ...c,
-                    groups: [
-                      ...(c.groups || []).filter((x) => x.id !== g.id),
-                      g,
-                    ],
-                  }
-                : c,
-            )
+            updater = (prev) =>
+              prev.map((c) =>
+                c.id === g.column_id
+                  ? {
+                      ...c,
+                      groups: [
+                        ...(c.groups || []).filter((x) => x.id !== g.id),
+                        g,
+                      ],
+                    }
+                  : c,
+              )
+            break
           }
           case 'group_updated': {
             const g = asGroup(data)
-            return prev.map((c) => ({
-              ...c,
-              groups: (c.groups || []).map((x) => (x.id === g.id ? g : x)),
-            }))
+            updater = (prev) =>
+              prev.map((c) => ({
+                ...c,
+                groups: (c.groups || []).map((x) => (x.id === g.id ? g : x)),
+              }))
+            break
           }
           case 'group_deleted': {
-            const { id, column_id, card_ids } = data as unknown as WsGroupDeletedData
-            return prev.map((c) =>
-              c.id === column_id
-                ? {
-                    ...c,
-                    groups: (c.groups || []).filter((x) => x.id !== id),
-                    cards: c.cards.map((card) =>
-                      (card_ids || []).includes(card.id)
-                        ? { ...card, group_id: null }
-                        : card,
-                    ),
-                  }
-                : c,
-            )
+            const del = data as unknown as WsGroupDeletedData
+            if (!del?.id || !del.column_id) break
+            const { id, column_id, card_ids } = del
+            updater = (prev) =>
+              prev.map((c) =>
+                c.id === column_id
+                  ? {
+                      ...c,
+                      groups: (c.groups || []).filter((x) => x.id !== id),
+                      cards: c.cards.map((card) =>
+                        (card_ids || []).includes(card.id)
+                          ? { ...card, group_id: null }
+                          : card,
+                      ),
+                    }
+                  : c,
+              )
+            break
           }
           case 'group_moved': {
-            const { group, old_column_id, cards } = data as unknown as WsGroupMovedData
+            const moved = data as unknown as WsGroupMovedData
+            if (!moved?.group || !moved.old_column_id || !Array.isArray(moved.cards)) break
+            const { group, old_column_id, cards } = moved
             const movedCardIds = cards.map((c) => c.id)
-            return prev.map((c) => {
-              if (c.id === old_column_id) {
-                return {
-                  ...c,
-                  groups: (c.groups || []).filter((x) => x.id !== group.id),
-                  cards: c.cards.filter((card) => !movedCardIds.includes(card.id)),
+            updater = (prev) =>
+              prev.map((c) => {
+                if (c.id === old_column_id) {
+                  return {
+                    ...c,
+                    groups: (c.groups || []).filter((x) => x.id !== group.id),
+                    cards: c.cards.filter((card) => !movedCardIds.includes(card.id)),
+                  }
                 }
-              }
-              if (c.id === group.column_id) {
-                return {
-                  ...c,
-                  groups: [
-                    ...(c.groups || []).filter((x) => x.id !== group.id),
-                    group,
-                  ],
-                  cards: [
-                    ...c.cards.filter((card) => !movedCardIds.includes(card.id)),
-                    ...cards,
-                  ],
+                if (c.id === group.column_id) {
+                  return {
+                    ...c,
+                    groups: [
+                      ...(c.groups || []).filter((x) => x.id !== group.id),
+                      group,
+                    ],
+                    cards: [
+                      ...c.cards.filter((card) => !movedCardIds.includes(card.id)),
+                      ...cards,
+                    ],
+                  }
                 }
-              }
-              return c
-            })
+                return c
+              })
+            break
           }
           default:
-            return prev
+            break
         }
-      })
+      } catch {
+        /* ignore malformed ws payload */
+        return
+      }
+      if (updater) setColumns(updater)
     },
-    [onTimerWsEvent, onFacilitatorChanged, onPhaseChanged, onSummaryGenerated, notifyCursorListeners, username],
+    [
+      onTimerWsEvent,
+      onFacilitatorChanged,
+      onPhaseChanged,
+      onSummaryGenerated,
+      onSummaryFailed,
+      onBoardCreated,
+      onBoardUpdated,
+      onBoardDeleted,
+      notifyCursorListeners,
+      username,
+    ],
   )
 
-  const { sendMessage } = useWebSocket(
+  const { sendMessage, connected } = useWebSocket(
     boardId,
     handleWsMessage,
     useCallback(() => {
@@ -319,6 +424,15 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
   useEffect(() => {
     sendMessageRef.current = sendMessage
   }, [sendMessage])
+
+  useEffect(() => {
+    if (prevUsernameRef.current !== username) {
+      prevUsernameRef.current = username
+      if (connected && username) {
+        sendMessage({ event: 'identify', data: { username } })
+      }
+    }
+  }, [connected, username, sendMessage])
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent, boardEl: HTMLDivElement | null) => {
@@ -347,6 +461,7 @@ export function useBoardWebSocket({ boardId, onTimerWsEvent, onFacilitatorChange
     activeUsers,
     facilitator,
     phase,
+    sessionSynced,
     actionItems,
     setActionItems,
     sendMessage,

@@ -154,19 +154,9 @@ def _reset_ws_manager():
     """
     from app.ws_manager import manager as _ws_manager
 
-    _ws_manager.rooms.clear()
-    _ws_manager.usernames.clear()
-    _ws_manager.facilitators.clear()
-    _ws_manager.phases.clear()
-    _ws_manager.timers.clear()
-    _ws_manager.session_ids.clear()
+    _ws_manager.reset()
     yield
-    _ws_manager.rooms.clear()
-    _ws_manager.usernames.clear()
-    _ws_manager.facilitators.clear()
-    _ws_manager.phases.clear()
-    _ws_manager.timers.clear()
-    _ws_manager.session_ids.clear()
+    _ws_manager.reset()
 
 
 @pytest.fixture()

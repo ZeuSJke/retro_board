@@ -50,12 +50,9 @@ def test_create_column_in_soft_deleted_board_returns_404(
     assert resp.status_code == 404
 
 
-def test_slug_collision_returns_409_not_500(client, workspace_headers):
-    """Два разных name с одним slug → 409, а не 500.
-
-    'Test Board' и 'Test Board!' slugify-ятся в один slug 'test-board',
-    но name-различны, так что проверка по имени пропускает, а ловить
-    должен slug-guard + IntegrityError-guard.
+def test_slug_collision_disambiguates_not_500(client, workspace_headers):
+    """Два разных name с одним базовым slug → 201 с уникальным суффиксом, а не 500;
+    одинаковое name по-прежнему → 409.
     """
     first = client.post(
         "/api/boards/", json={"name": "Test Board"}, headers=workspace_headers
@@ -65,7 +62,13 @@ def test_slug_collision_returns_409_not_500(client, workspace_headers):
     second = client.post(
         "/api/boards/", json={"name": "Test Board!"}, headers=workspace_headers
     )
-    assert second.status_code == 409
+    assert second.status_code == 201
+    assert second.json()["slug"] != first.json()["slug"]
+
+    dup = client.post(
+        "/api/boards/", json={"name": "Test Board"}, headers=workspace_headers
+    )
+    assert dup.status_code == 409
 
 
 def test_update_soft_deleted_board_returns_404(

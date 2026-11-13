@@ -69,6 +69,10 @@ async def update_card(
     if body.color is not None:
         card.color = body.color
     if "group_id" in body.model_fields_set:
+        if body.group_id is not None:
+            group = get_or_404(db, models.CardGroup, body.group_id, "Group not found")
+            if group.column_id != card.column_id:
+                raise HTTPException(400, "Card and group must be in the same column")
         card.group_id = body.group_id
     db.commit()
     db.refresh(card)
@@ -91,6 +95,8 @@ async def move_card(
     require_live_board(db.get(models.Board, col.board_id), workspace.id, "Card not found")
     old_col = db.get(models.Column, card.column_id)
     new_col = get_or_404(db, models.Column, body.column_id, "Target column not found")
+    if new_col.board_id != old_col.board_id:
+        raise HTTPException(400, "Columns must be on the same board")
 
     old_group_id = card.group_id if old_col.id != new_col.id else None
 
@@ -146,9 +152,14 @@ async def toggle_like(
     if not card:
         raise HTTPException(404, "Card not found")
     col = db.get(models.Column, card.column_id)
-    board = require_live_board(
-        db.get(models.Board, col.board_id), workspace.id, "Card not found"
+    # Lock board row too to prevent parallel votes across different cards from exceeding max_votes
+    board = (
+        db.query(models.Board)
+        .filter(models.Board.id == col.board_id)
+        .with_for_update()
+        .first()
     )
+    board = require_live_board(board, workspace.id, "Card not found")
     likes = list(card.likes or [])
     if username in likes:
         likes.remove(username)

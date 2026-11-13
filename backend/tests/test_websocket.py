@@ -206,8 +206,8 @@ class TestWebSocketTimerEvents:
                     )
                 )
 
-                msg1 = ws1.receive_json()
-                msg2 = ws2.receive_json()
+                msg1 = recv_event(ws1, "timer_start")
+                msg2 = recv_event(ws2, "timer_start")
                 assert msg1["event"] == "timer_start"
                 assert msg2["event"] == "timer_start"
 
@@ -224,8 +224,8 @@ class TestWebSocketTimerEvents:
                     )
                 )
 
-                msg1 = ws1.receive_json()
-                msg2 = ws2.receive_json()
+                msg1 = recv_event(ws1, "timer_pause")
+                msg2 = recv_event(ws2, "timer_pause")
                 assert msg1["event"] == "timer_pause"
                 assert msg2["event"] == "timer_pause"
                 assert msg2["data"]["remaining"] == 120
@@ -242,7 +242,7 @@ class TestWebSocketTimerEvents:
                 )
             )
 
-            msg = ws.receive_json()
+            msg = recv_event(ws, "timer_reset")
             assert msg["event"] == "timer_reset"
             assert msg["data"]["duration"] == 600
 
@@ -262,7 +262,7 @@ class TestWebSocketTimerSync:
                     }
                 )
             )
-            ws1.receive_json()
+            recv_event(ws1, "timer_start")
 
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 msg = recv_event(ws2, "timer_start")
@@ -281,7 +281,7 @@ class TestWebSocketTimerSync:
                     }
                 )
             )
-            ws1.receive_json()
+            recv_event(ws1, "timer_start")
 
             ws1.send_text(
                 json.dumps(
@@ -291,7 +291,7 @@ class TestWebSocketTimerSync:
                     }
                 )
             )
-            ws1.receive_json()
+            recv_event(ws1, "timer_pause")
 
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
                 msg = recv_event(ws2, "timer_pause")
@@ -310,9 +310,11 @@ class TestWebSocketTimerSync:
                     }
                 )
             )
-            ws1.receive_json()
+            recv_event(ws1, "timer_reset")
 
             with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
+                fac_msg = ws2.receive_json()
+                assert fac_msg["event"] == "facilitator_update"
                 ws2.send_text("ping")
 
 
@@ -330,8 +332,8 @@ class TestWebSocketGroupCollapse:
                     )
                 )
 
-                msg1 = ws1.receive_json()
-                msg2 = ws2.receive_json()
+                msg1 = recv_event(ws1, "group_collapse")
+                msg2 = recv_event(ws2, "group_collapse")
                 assert msg1["event"] == "group_collapse"
                 assert msg2["event"] == "group_collapse"
                 assert msg2["data"]["collapsed"] is True
@@ -447,7 +449,171 @@ class TestWebSocketTimerRequiresFacilitator:
                     )
                 )
 
-                msg1 = ws1.receive_json()
-                msg2 = ws2.receive_json()
+                msg1 = recv_event(ws1, "timer_start")
+                msg2 = recv_event(ws2, "timer_start")
                 assert msg1["event"] == "timer_start"
                 assert msg2["event"] == "timer_start"
+
+
+class TestWebSocketBugfixes:
+    """Tests for real-time bugfixes: unconditional facilitator_update, grace period, /ws/workspace, summary_failed."""
+
+    def test_facilitator_update_sent_unconditionally_on_connect(self, client, ws_token):
+        url = f"/ws/board-fac-init?workspace_token={ws_token}"
+        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws:
+            msg = ws.receive_json()
+            assert msg["event"] == "facilitator_update"
+            assert msg["data"]["facilitator"] is None
+            assert msg["data"]["phase"] is None
+
+    def test_deleted_board_ws_rejected(self, client, ws_token, ws_board, db_session, monkeypatch):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+        from app.routers import websocket as ws_router
+
+        ws_board.deleted_at = datetime.now(timezone.utc)
+        db_session.commit()
+
+        snapshot = SimpleNamespace(
+            id=ws_board.id,
+            workspace_id=ws_board.workspace_id,
+            deleted_at=ws_board.deleted_at,
+        )
+
+        class _FakeDB:
+            def get(self, model, key):
+                return snapshot if key == ws_board.id else None
+
+        def _fake_get_db():
+            yield _FakeDB()
+
+        monkeypatch.setattr(ws_router, "get_db", _fake_get_db)
+
+        url = f"/ws/{ws_board.id}?workspace_token={ws_token}"
+        rejected_code = None
+        try:
+            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}):
+                pass
+        except Exception as exc:
+            rejected_code = getattr(exc, "code", None)
+        assert rejected_code == 1008
+
+    def test_workspace_ws_receives_board_events(self, client, ws_token):
+        ws_headers = {"X-Workspace-Token": ws_token}
+        ws_url = f"/ws/workspace?workspace_token={ws_token}"
+        with client.websocket_connect(ws_url, headers={"origin": TEST_ORIGIN}) as ws:
+            # Create board
+            create_resp = client.post(
+                "/api/boards/",
+                json={"name": "WS Live Board"},
+                headers=ws_headers,
+            )
+            assert create_resp.status_code == 201
+            board = create_resp.json()
+            ev_created = recv_event(ws, "board_created")
+            assert ev_created["data"]["id"] == board["id"]
+            assert ev_created["data"]["name"] == "WS Live Board"
+
+            # Update board
+            upd_resp = client.patch(
+                f"/api/boards/{board['id']}",
+                json={"name": "WS Live Board Renamed"},
+                headers=ws_headers,
+            )
+            assert upd_resp.status_code == 200
+            ev_updated = recv_event(ws, "board_updated")
+            assert ev_updated["data"]["id"] == board["id"]
+            assert ev_updated["data"]["name"] == "WS Live Board Renamed"
+
+            # Delete board
+            del_resp = client.delete(
+                f"/api/boards/{board['id']}",
+                headers=ws_headers,
+            )
+            assert del_resp.status_code == 204
+            ev_deleted = recv_event(ws, "board_deleted")
+            assert ev_deleted["data"]["id"] == board["id"]
+
+    def test_facilitator_grace_period_preserves_session_on_reconnect(self, client, ws_token, monkeypatch):
+        from app.ws_manager import manager
+
+        monkeypatch.setattr(manager, "FACILITATOR_GRACE_SECONDS", 0.2)
+        url = f"/ws/board-grace?workspace_token={ws_token}"
+
+        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_other:
+            assert ws_other.receive_json()["event"] == "facilitator_update"
+            # First facilitator session connects, identifies, starts facilitator
+            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_fac:
+                assert ws_fac.receive_json()["event"] == "facilitator_update"
+                ws_fac.send_text(json.dumps({"event": "identify", "data": {"username": "Alice"}}))
+                ws_fac.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
+                ev = recv_event(ws_other, "facilitator_update")
+                assert ev["data"]["facilitator"] == "Alice"
+
+            # ws_fac disconnected (F5): grace task is scheduled, facilitator still set before expiry
+            assert manager.get_facilitator("board-grace") == "Alice"
+
+            # Reconnect quickly as Alice before 0.2s grace expires
+            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_fac2:
+                fac_ev = recv_event(ws_fac2, "facilitator_update")
+                # Initial connect already shows Alice still facilitator
+                assert fac_ev["data"]["facilitator"] == "Alice"
+                ws_fac2.send_text(json.dumps({"event": "identify", "data": {"username": "Alice"}}))
+
+                import time
+                time.sleep(0.25)
+                # After original grace window passes, Alice is still facilitator
+                assert manager.get_facilitator("board-grace") == "Alice"
+
+    def test_facilitator_grace_period_clears_when_not_reconnected(self, client, ws_token, monkeypatch):
+        from app.ws_manager import manager
+        import time
+
+        monkeypatch.setattr(manager, "FACILITATOR_GRACE_SECONDS", 0.05)
+        url = f"/ws/board-grace-exp?workspace_token={ws_token}"
+
+        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_other:
+            assert ws_other.receive_json()["event"] == "facilitator_update"
+            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_fac:
+                assert ws_fac.receive_json()["event"] == "facilitator_update"
+                ws_fac.send_text(json.dumps({"event": "identify", "data": {"username": "Alice"}}))
+                ws_fac.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
+                ev_start = recv_event(ws_other, "facilitator_update")
+                assert ev_start["data"]["facilitator"] == "Alice"
+
+            # Drain grace reset broadcast on ws_other after >0.05s
+            time.sleep(0.1)
+            ev_clear = recv_event(ws_other, "facilitator_update")
+            assert ev_clear["data"]["facilitator"] is None
+            assert manager.get_facilitator("board-grace-exp") is None
+
+    def test_identify_rename_updates_facilitator(self, client, ws_token):
+        url = f"/ws/board-rename-fac?workspace_token={ws_token}"
+        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_fac:
+            assert ws_fac.receive_json()["event"] == "facilitator_update"
+            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_other:
+                assert ws_other.receive_json()["event"] == "facilitator_update"
+                ws_fac.send_text(json.dumps({"event": "identify", "data": {"username": "Bob"}}))
+                ws_fac.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
+                ev_bob = recv_event(ws_other, "facilitator_update")
+                assert ev_bob["data"]["facilitator"] == "Bob"
+
+                ws_fac.send_text(json.dumps({"event": "identify", "data": {"username": "Robert"}}))
+                ev = recv_event(ws_other, "facilitator_update")
+                assert ev["data"]["facilitator"] == "Robert"
+
+    def test_summary_failed_event_on_generation_error(self, client, ws_token, ws_board, monkeypatch):
+        from app.routers import boards as boards_router
+
+        monkeypatch.setattr(
+            boards_router, "_generate_summary_internal", lambda *args, **kwargs: None
+        )
+
+        url = f"/ws/{ws_board.id}?workspace_token={ws_token}"
+        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws:
+            ws.send_text(json.dumps({"event": "identify", "data": {"username": "Fac"}}))
+            ws.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
+            recv_event(ws, "facilitator_update")
+            ws.send_text(json.dumps({"event": "phase_change", "data": {"phase": "summary"}}))
+            ev = recv_event(ws, "summary_failed")
+            assert "message" in ev["data"]

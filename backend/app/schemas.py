@@ -10,6 +10,15 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
+def _strip_non_empty(v: str | None, field_name: str = "Поле") -> str | None:
+    if v is None:
+        return v
+    stripped = v.strip()
+    if not stripped:
+        raise ValueError(f"{field_name} не должно быть пустым")
+    return stripped
+
+
 # ── Workspace ─────────────────────────────────────────────────────────────────
 
 
@@ -30,10 +39,20 @@ class WorkspaceCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     access_key: str = Field(..., min_length=4, max_length=100)
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        return _strip_non_empty(v, "Название команды") or ""
+
 
 class WorkspaceUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     access_key: Optional[str] = Field(default=None, min_length=4, max_length=100)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str | None) -> str | None:
+        return _strip_non_empty(v, "Название команды")
 
 
 class WorkspaceOut(BaseModel):
@@ -61,20 +80,35 @@ class AdminLoginRequest(BaseModel):
 
 class CardBase(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
-    author: str = Field(default="Аноним", max_length=60)
+    author: str = Field(default="Аноним", min_length=1, max_length=60)
     color: str = Field(default="#FFFFFF", pattern=r"^#[0-9a-fA-F]{6}$")
 
 
 class CardCreate(CardBase):
     column_id: str
 
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v: str) -> str:
+        return _strip_non_empty(v, "Текст карточки") or ""
+
+    @field_validator("author")
+    @classmethod
+    def validate_author(cls, v: str) -> str:
+        return _strip_non_empty(v, "Автор") or "Аноним"
+
 
 class CardUpdate(BaseModel):
-    text: Optional[str] = None
+    text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
     color: Optional[str] = None
     group_id: Optional[str] = None
     column_id: Optional[str] = None
-    position: Optional[int] = None
+    position: Optional[int] = Field(default=None, ge=0)
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v: str | None) -> str | None:
+        return _strip_non_empty(v, "Текст карточки")
 
     @field_validator("color")
     @classmethod
@@ -102,9 +136,19 @@ class CardGroupCreate(BaseModel):
     column_id: str
     title: str = Field(default="Группа", min_length=1, max_length=120)
 
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str) -> str:
+        return _strip_non_empty(v, "Название группы") or ""
+
 
 class CardGroupUpdate(BaseModel):
-    title: Optional[str] = None
+    title: Optional[str] = Field(default=None, min_length=1, max_length=120)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str | None) -> str | None:
+        return _strip_non_empty(v, "Название группы")
 
 
 class CardGroupOut(BaseModel):
@@ -127,11 +171,21 @@ class ColumnBase(BaseModel):
 class ColumnCreate(ColumnBase):
     board_id: str
 
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str) -> str:
+        return _strip_non_empty(v, "Название колонки") or ""
+
 
 class ColumnUpdate(BaseModel):
-    title: Optional[str] = None
+    title: Optional[str] = Field(default=None, min_length=1, max_length=80)
     color: Optional[str] = None
     position: Optional[int] = Field(default=None, ge=0)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str | None) -> str | None:
+        return _strip_non_empty(v, "Название колонки")
 
     @field_validator("color")
     @classmethod
@@ -161,6 +215,8 @@ class BoardBase(BaseModel):
     @classmethod
     def name_no_html(cls, v: str) -> str:
         v = v.strip()
+        if not v:
+            raise ValueError("Название доски не должно быть пустым")
         if _HTML_TAG_RE.search(v):
             raise ValueError("Название доски не должно содержать HTML-теги")
         return v
@@ -171,7 +227,7 @@ class BoardCreate(BoardBase):
 
 
 class BoardUpdate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     max_votes: Optional[int] = Field(default=None, ge=1, le=99)
 
     @field_validator("name")
@@ -180,6 +236,8 @@ class BoardUpdate(BaseModel):
         if v is None:
             return v
         v = v.strip()
+        if not v:
+            raise ValueError("Название доски не должно быть пустым")
         if _HTML_TAG_RE.search(v):
             raise ValueError("Название доски не должно содержать HTML-теги")
         return v
@@ -241,12 +299,22 @@ class ActionItemCreate(BaseModel):
     source_card_ids: list[str] = []
     status: ActionItemStatus = "open"
 
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v: str) -> str:
+        return _strip_non_empty(v, "Текст задачи") or ""
+
 
 class ActionItemUpdate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=200)
     text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
-    assignee: Optional[str] = None
+    assignee: Optional[str] = Field(default=None, max_length=60)
     status: Optional[ActionItemStatus] = None
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v: str | None) -> str | None:
+        return _strip_non_empty(v, "Текст задачи")
 
 
 class ActionItemOut(BaseModel):

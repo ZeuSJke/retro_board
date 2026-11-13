@@ -45,7 +45,7 @@ test.describe('Workspace — вход и изоляция', () => {
     await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 15000 })
   })
 
-  test('при повторном входе показывает информацию о workspace', async ({ page }) => {
+  test('при повторном открытии с валидной сессией пропускает welcome диалог и сохраняет workspace', async ({ page }) => {
     // Первый вход
     await page.goto('/')
     await page.getByPlaceholder(/ваше имя/i).fill('Тест 1')
@@ -56,14 +56,17 @@ test.describe('Workspace — вход и изоляция', () => {
     // Дождаться загрузки
     await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 15000 })
 
-    // Перезагрузить страницу
+    // Перезагрузить страницу — WelcomeDialog не должен появляться
     await page.reload()
+    await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 15000 })
+    await expect(page.getByRole('button', { name: /войти на доску/i })).toBeHidden()
 
-    // Должен показаться welcome диалог с информацию о workspace
-    await expect(page.getByText(/Команда: E2E Team/i)).toBeVisible({ timeout: 5000 })
+    // Информация о текущем workspace доступна в настройках пользователя в Topbar
+    await page.locator('button').filter({ hasText: /тест 1/i }).click()
+    await expect(page.getByText(/E2E Team/i)).toBeVisible({ timeout: 5000 })
   })
 
-  test('кнопка "Войти в другую команду" сбрасывает workspace', async ({ page }) => {
+  test('кнопка "Сменить" в настройках пользователя открывает поля смены workspace', async ({ page }) => {
     // Первый вход
     await page.goto('/')
     await page.getByPlaceholder(/ваше имя/i).fill('Тест 1')
@@ -74,19 +77,21 @@ test.describe('Workspace — вход и изоляция', () => {
     // Дождаться загрузки
     await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 15000 })
 
-    // Перезагрузить
+    // Перезагрузить и убедиться, что доска загрузилась напрямую
     await page.reload()
+    await expect(page.getByText(/Новая колонка/i)).toBeVisible({ timeout: 15000 })
 
-    // Должна показаться информация о workspace
-    await expect(page.getByText(/Команда: E2E Team/i)).toBeVisible({ timeout: 5000 })
+    // Открыть настройки пользователя через Topbar и нажать "Сменить"
+    await page.locator('button').filter({ hasText: /тест 1/i }).click()
+    const dialog = page.locator('div').filter({ hasText: /настройки пользователя/i }).first()
+    await expect(dialog).toBeVisible({ timeout: 5000 })
 
-    // Кликнуть на "Войти в другую команду"
-    const changeLink = page.getByText(/войти в другую команду/i)
-    await changeLink.click()
+    const changeBtn = dialog.getByRole('button', { name: 'Сменить' })
+    await changeBtn.click()
 
-    // Теперь должны видеть полные поля входа
-    await expect(page.getByPlaceholder(/код команды|fmrm/i)).toBeVisible()
-    await expect(page.getByPlaceholder(/ключ доступа/i)).toBeVisible()
+    // Теперь должны видеть поля смены команды (код команды и ключ доступа)
+    await expect(dialog.locator('input').first()).toBeVisible()
+    await expect(dialog.locator('input[type="password"]')).toBeVisible()
   })
 
   test('workspace токен передаётся в WebSocket', async ({ page }) => {

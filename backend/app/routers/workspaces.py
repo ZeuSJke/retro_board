@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
-from app.workspace_auth import verify_access_key, create_workspace_token
+from app.workspace_auth import (
+    verify_access_key,
+    create_workspace_token,
+    get_current_workspace,
+)
 from app.config import settings
 from app.limiter import limiter
 
@@ -59,3 +63,13 @@ def workspace_login(
     except Exception:
         logger.exception("Workspace login error")
         raise
+
+
+@router.get("/me", response_model=schemas.WorkspaceOut)
+@limiter.limit("60/minute")
+def get_current_workspace_info(
+    request: Request,
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Проверить текущую сессию workspace и вернуть его данные."""
+    return workspace

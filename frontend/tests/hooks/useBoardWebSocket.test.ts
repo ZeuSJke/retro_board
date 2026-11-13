@@ -416,4 +416,66 @@ describe('useBoardWebSocket', () => {
 
     expect(mockSendMessage).toHaveBeenCalledWith({ event: 'test', data: {} })
   })
+
+  it('tracks sessionSynced on facilitator_update and resets when boardId changes', () => {
+    const { result, rerender } = renderHook(
+      ({ boardId }: { boardId: string }) => useBoardWebSocket({ boardId }),
+      { initialProps: { boardId: 'board-1' } },
+    )
+
+    expect(result.current.sessionSynced).toBe(false)
+
+    act(() => {
+      wsMessageHandler?.({
+        event: 'facilitator_update',
+        data: { facilitator: null, phase: null },
+      })
+    })
+
+    expect(result.current.sessionSynced).toBe(true)
+
+    rerender({ boardId: 'board-2' })
+    expect(result.current.sessionSynced).toBe(false)
+  })
+
+  it('forwards board_created, board_updated, board_deleted, and summary_failed callbacks', () => {
+    const onBoardCreated = vi.fn()
+    const onBoardUpdated = vi.fn()
+    const onBoardDeleted = vi.fn()
+    const onSummaryFailed = vi.fn()
+    setup({ onBoardCreated, onBoardUpdated, onBoardDeleted, onSummaryFailed })
+
+    act(() => {
+      wsMessageHandler?.({
+        event: 'board_created',
+        data: {
+          id: 'b-2',
+          name: 'New Board',
+          slug: 'new-board',
+          max_votes: 5,
+          created_at: '2026-01-01T00:00:00Z',
+          action_items_total: 0,
+          action_items_open: 0,
+          has_summary: false,
+        },
+      })
+      wsMessageHandler?.({
+        event: 'board_updated',
+        data: { id: 'b-2', name: 'Renamed', slug: 'renamed', max_votes: 3 },
+      })
+      wsMessageHandler?.({
+        event: 'board_deleted',
+        data: { id: 'b-2' },
+      })
+      wsMessageHandler?.({
+        event: 'summary_failed',
+        data: { message: 'AI timeout' },
+      })
+    })
+
+    expect(onBoardCreated).toHaveBeenCalledWith(expect.objectContaining({ id: 'b-2', name: 'New Board' }))
+    expect(onBoardUpdated).toHaveBeenCalledWith({ id: 'b-2', name: 'Renamed', slug: 'renamed', max_votes: 3 })
+    expect(onBoardDeleted).toHaveBeenCalledWith('b-2')
+    expect(onSummaryFailed).toHaveBeenCalledWith('AI timeout')
+  })
 })

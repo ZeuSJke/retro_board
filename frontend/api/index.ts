@@ -5,9 +5,20 @@ import { useAppStore } from '../store'
 
 const api = axios.create({ baseURL: '/api' })
 
-function getCsrfToken(): string {
-  const match = document.cookie.match(/csrf_token=([^;]+)/)
+export function getCsrfToken(): string {
+  if (typeof document === 'undefined') return ''
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/)
   return match ? match[1] : ''
+}
+
+export function handleCommonHttpError(status?: number, detail = ''): void {
+  if (status === 429) {
+    showToast('Слишком много запросов. Подождите немного.', 'error')
+  } else if (status === 403) {
+    showToast(detail || 'Доступ запрещён', 'error')
+  } else if (status && status >= 500) {
+    showToast('Что-то пошло не так', 'error')
+  }
 }
 
 api.interceptors.request.use((config) => {
@@ -29,21 +40,15 @@ api.interceptors.response.use(
   (error) => {
     const status = error.response?.status
     const detail = error.response?.data?.detail || ''
+    const reqUrl = String(error.config?.url || '')
 
-    if (status === 401 && detail.toLowerCase().includes('workspace')) {
-      // Workspace session expired/invalid — clear state, App.tsx will show WelcomeDialog
+    if (status === 401 && !reqUrl.includes('/workspaces/login')) {
+      // Workspace session expired/invalid — clear state, App.tsx / Dashboard will show WelcomeDialog
       useAppStore.setState({ workspace: null })
       return Promise.reject(error)
     }
 
-    if (status === 429) {
-      showToast('Слишком много запросов. Подождите немного.', 'error')
-    } else if (status === 403) {
-      const msg = detail || 'Доступ запрещён'
-      showToast(msg, 'error')
-    } else if (status && status >= 500) {
-      showToast('Что-то пошло не так', 'error')
-    }
+    handleCommonHttpError(status, detail)
     return Promise.reject(error)
   },
 )
@@ -116,3 +121,6 @@ export const loginToWorkspace = (data: {
     workspaceSlug: r.data.workspace_slug,
     workspaceName: r.data.workspace_name,
   }))
+
+export const checkWorkspaceSession = (): Promise<{ id: string; slug: string; name: string }> =>
+  api.get('/workspaces/me').then((r) => r.data)

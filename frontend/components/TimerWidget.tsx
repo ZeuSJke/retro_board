@@ -72,17 +72,32 @@ export default function TimerWidget({
   const [flash, setFlash] = useState(false)
   const prevRunning = useRef(running)
   const autoAdvanceFired = useRef(false)
+  const flashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const advanceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    setSelectedDuration(duration)
+  }, [duration])
+
+  useEffect(() => {
+    return () => {
+      if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current)
+      if (advanceTimeoutRef.current) clearTimeout(advanceTimeoutRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (prevRunning.current && !running && remaining <= 0) {
       setFlash(true)
-      setTimeout(() => setFlash(false), 2000)
+      if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current)
+      flashTimeoutRef.current = setTimeout(() => setFlash(false), 2000)
 
       // Auto-advance to next phase
       if (autoAdvance && onNextPhase && !autoAdvanceFired.current) {
         autoAdvanceFired.current = true
         // Small delay so user sees "Время вышло!" before phase switch
-        setTimeout(() => {
+        if (advanceTimeoutRef.current) clearTimeout(advanceTimeoutRef.current)
+        advanceTimeoutRef.current = setTimeout(() => {
           onNextPhase()
           autoAdvanceFired.current = false
         }, 1500)

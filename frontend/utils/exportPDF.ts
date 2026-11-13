@@ -6,8 +6,10 @@
 import type { ActionItem, Board, Column, Card } from '../types'
 import { userColor, initials, isLight } from './theme'
 
-function formatDate(): string {
-  return new Date().toLocaleDateString('ru-RU', {
+function formatDate(dateStr?: string): string {
+  const date = dateStr ? new Date(dateStr) : new Date()
+  const target = isNaN(date.getTime()) ? new Date() : date
+  return target.toLocaleDateString('ru-RU', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -97,6 +99,7 @@ function actionItemHTML(item: ActionItem, index: number): string {
     <div class="action-item">
       <div class="action-item-number">${index + 1}</div>
       <div class="action-item-content">
+        ${item.title?.trim() ? `<div class="action-item-title">${escHtml(item.title)}</div>` : ''}
         <div class="action-item-text">${escHtml(item.text)}</div>
         <div class="action-item-meta">
           <div class="action-item-assignee">
@@ -186,6 +189,7 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
     .action-item { display: flex; gap: 14px; background: white; border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.10), 0 1px 2px rgba(0,0,0,0.06); border-left: 4px solid #6750A4; break-inside: avoid; }
     .action-item-number { width: 28px; height: 28px; border-radius: 50%; background: #6750A4; color: white; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
     .action-item-content { flex: 1; min-width: 0; }
+    .action-item-title { font-size: 15px; font-weight: 700; color: #1C1B1F; margin-bottom: 4px; word-break: break-word; }
     .action-item-text { font-size: 14px; font-weight: 500; line-height: 1.5; color: #1C1B1F; margin-bottom: 10px; word-break: break-word; }
     .action-item-meta { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
     .action-item-assignee { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: #49454F; }
@@ -210,7 +214,7 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
       ${totalGroups > 0 ? `<div class="cover-stat"><span class="cover-stat-value">${totalGroups}</span><span class="cover-stat-label">Групп</span></div>` : ''}
       ${actionItems.length > 0 ? `<div class="cover-stat"><span class="cover-stat-value">${actionItems.length}</span><span class="cover-stat-label">Итогов</span></div>` : ''}
     </div>
-    <div class="cover-date">${formatDate()}</div>
+    <div class="cover-date">${formatDate(board.created_at)}</div>
   </div>
   <div class="columns-area">${columnsHTML}</div>
   ${actionItemsHTML}

@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException
@@ -74,10 +73,51 @@ async def _trigger_summary_generation(
             )
         else:
             logger.warning("Summary generation returned None for board %s", board_id)
+            await manager.broadcast(
+                board_id,
+                "summary_failed",
+                {"message": "Не удалось сгенерировать итоги"},
+            )
     except Exception as e:
         logger.error("Summary generation failed for board %s: %s", board_id, e)
+        await manager.broadcast(
+            board_id,
+            "summary_failed",
+            {"message": "Не удалось сгенерировать итоги"},
+        )
     finally:
         logger.info("Summary generation task completed for board %s", board_id)
+
+
+@router.websocket("/ws/workspace")
+async def workspace_websocket_endpoint(
+    websocket: WebSocket,
+    workspace_token: str = Query(None, alias="workspace_token"),
+):
+    """WebSocket уровня workspace для live-обновления списка досок (напр., на /dashboard)."""
+    if not _origin_allowed(websocket):
+        await websocket.close(code=1008, reason="Origin not allowed")
+        return
+
+    if not workspace_token:
+        await websocket.close(code=1008, reason="Workspace token required")
+        return
+
+    try:
+        payload = decode_workspace_token(workspace_token)
+        workspace_id = payload["workspace_id"]
+    except HTTPException:
+        await websocket.close(code=1008, reason="Invalid or expired token")
+        return
+
+    await manager.connect_workspace(workspace_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect_workspace(workspace_id, websocket)
 
 
 @router.websocket("/ws/{board_id}")
@@ -104,9 +144,15 @@ async def websocket_endpoint(
     db_gen = get_db()
     try:
         db = next(db_gen)
-        if os.getenv("TESTING") != "true":
+        # Skip DB guard only under SQLite unit tests (in-memory sqlite3 isn't thread-safe across WS threads)
+        dialect_name = getattr(getattr(getattr(db, "bind", None), "dialect", None), "name", None)
+        if dialect_name != "sqlite":
             board = db.get(models.Board, board_id)
-            if not board or board.workspace_id != workspace_id:
+            if (
+                not board
+                or board.workspace_id != workspace_id
+                or board.deleted_at is not None
+            ):
                 await websocket.close(code=1008, reason="Board not found")
                 return
     except Exception:
@@ -118,26 +164,25 @@ async def websocket_endpoint(
         except StopIteration:
             pass
 
-    await manager.connect(board_id, websocket)
+    await manager.connect(board_id, websocket, workspace_id=workspace_id)
     msg_timestamps: list[float] = []
     username_announced = False
 
     try:
-        # Send current facilitator/phase state immediately on connect
+        # Всегда отправляем начальное состояние сессии, даже если фасилитатор не назначен
         fac = manager.get_facilitator(board_id)
-        if fac:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "event": "facilitator_update",
-                        "data": {
-                            "facilitator": fac,
-                            "phase": manager.get_phase(board_id),
-                            "session_id": manager.get_session_id(board_id),
-                        },
-                    }
-                )
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "facilitator_update",
+                    "data": {
+                        "facilitator": fac,
+                        "phase": manager.get_phase(board_id) if fac else None,
+                        "session_id": manager.get_session_id(board_id) if fac else None,
+                    },
+                }
             )
+        )
         # Send current timer state to new client
         timer = manager.get_timer(board_id)
         if timer:
@@ -213,9 +258,26 @@ async def websocket_endpoint(
                 if event == "identify":
                     uname = payload.get("username")
                     if uname:
-                        manager.set_username(websocket, uname)
-                        if not username_announced:
+                        prev_uname = manager.get_username(websocket)
+                        manager.set_username(websocket, uname, board_id=board_id)
+                        name_changed = bool(prev_uname and prev_uname != uname)
+                        if name_changed and manager.get_facilitator(board_id) == prev_uname:
+                            manager.facilitators[board_id] = uname
+                            await manager.broadcast(
+                                board_id,
+                                "facilitator_update",
+                                {
+                                    "facilitator": uname,
+                                    "phase": manager.get_phase(board_id),
+                                    "session_id": manager.get_session_id(board_id),
+                                },
+                            )
+                        if not username_announced or name_changed:
                             username_announced = True
+                            if name_changed and prev_uname not in manager.get_users(board_id):
+                                await manager.broadcast(
+                                    board_id, "cursor_leave", {"username": prev_uname}
+                                )
                             await manager.broadcast(
                                 board_id,
                                 "presence_update",
@@ -241,7 +303,7 @@ async def websocket_endpoint(
                 elif event == "cursor_move":
                     username = payload.get("username")
                     if username:
-                        manager.set_username(websocket, username)
+                        manager.set_username(websocket, username, board_id=board_id)
                         # Broadcast presence on first cursor_move (user joined)
                         if not username_announced:
                             username_announced = True
@@ -344,19 +406,20 @@ async def websocket_endpoint(
                 pass
 
     except WebSocketDisconnect:
-        username = manager.get_username(websocket)
-        was_facilitator = manager.get_facilitator(board_id) == username
-        manager.disconnect(board_id, websocket)
-        if username:
-            await manager.broadcast(board_id, "cursor_leave", {"username": username})
-            await manager.broadcast(
-                board_id,
-                "presence_update",
-                {"users": manager.get_users(board_id)},
-            )
-        if was_facilitator:
-            await manager.broadcast(
-                board_id,
-                "facilitator_update",
-                {"facilitator": None, "phase": None, "session_id": None},
-            )
+        pass
+    finally:
+        username, still_present, fac_disconnected = manager.disconnect(
+            board_id, websocket
+        )
+        if username and not still_present:
+            try:
+                await manager.broadcast(board_id, "cursor_leave", {"username": username})
+                await manager.broadcast(
+                    board_id,
+                    "presence_update",
+                    {"users": manager.get_users(board_id)},
+                )
+            except Exception:
+                pass
+        if fac_disconnected and username:
+            manager.schedule_facilitator_grace(board_id, username)

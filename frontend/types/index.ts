@@ -159,6 +159,17 @@ export interface WsAutoClusterCompletedData {
   groups_count: number
 }
 
+export interface WsSummaryFailedData {
+  message: string
+}
+
+export interface WsBoardUpdatedData {
+  id: string
+  name?: string
+  slug?: string
+  max_votes?: number
+}
+
 export interface TimerState {
   duration: number
   remaining: number
@@ -192,8 +203,10 @@ export interface AppStore {
   currentBoardId: string | null
   theme: Theme
   workspace: WorkspaceSession | null
+  _hasHydrated?: boolean
   setUsername: (name: string) => void
   setCurrentBoard: (id: string) => void
   setTheme: (theme: Theme) => void
   setWorkspace: (ws: WorkspaceSession | null) => void
+  setHasHydrated?: (hydrated: boolean) => void
 }

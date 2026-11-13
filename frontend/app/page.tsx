@@ -10,8 +10,10 @@ export default function HomePage() {
   const router = useRouter()
   const currentBoardId = useAppStore((s) => s.currentBoardId)
   const workspace = useAppStore((s) => s.workspace)
+  const hasHydrated = useAppStore((s) => s._hasHydrated ?? true)
 
   useEffect(() => {
+    if (!hasHydrated) return
     ;(async () => {
       // Without workspace token API calls will fail — redirect to board page
       // so App.tsx can show WelcomeDialog
@@ -30,11 +32,14 @@ export default function HomePage() {
             ? list.find((b) => b.id === currentBoardId)!
             : list[0]
         router.replace(`/board/${target.slug || target.id}`)
-      } catch {
-        // backend not available — stay on loading screen
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status
+        if (status === 401 || !useAppStore.getState().workspace) {
+          router.replace(currentBoardId ? `/board/${currentBoardId}` : '/board/start')
+        }
       }
     })()
-  }, [])
+  }, [hasHydrated])
 
   return (
     <div style={centeredStyle}>

@@ -87,18 +87,20 @@ export default function CardGroupWidget({
     <>
       <div className={styles.container} style={{ opacity: isDragging ? 0.4 : 1 }}>
         <div className={`${styles.header} ${collapsed ? styles.headerCollapsed : ''}`}>
-          <button
-            ref={setDragRef}
-            {...attributes}
-            {...listeners}
-            className={styles.dragHandle}
-            title="Перетащить группу в другую колонку"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <span className="material-symbols-rounded" style={{ fontSize: 14 }}>
-              drag_indicator
-            </span>
-          </button>
+          {!readOnly && (
+            <button
+              ref={setDragRef}
+              {...attributes}
+              {...listeners}
+              className={styles.dragHandle}
+              title="Перетащить группу в другую колонку"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span className="material-symbols-rounded" style={{ fontSize: 14 }}>
+                drag_indicator
+              </span>
+            </button>
+          )}
 
           <button
             className={styles.collapseBtn}
@@ -131,7 +133,13 @@ export default function CardGroupWidget({
               value={titleVal}
               onChange={(e) => setTitleVal(e.target.value)}
               onBlur={saveTitle}
-              onKeyDown={(e) => e.key === 'Enter' && saveTitle()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveTitle()
+                if (e.key === 'Escape') {
+                  setTitleVal(group.title)
+                  setEditingTitle(false)
+                }
+              }}
               autoFocus
             />
           ) : (
