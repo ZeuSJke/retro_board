@@ -1,251 +1,148 @@
 'use client'
 
-import { useState, useMemo, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
-import { createBoard, deleteBoard } from '../api'
-import { showToast } from '../store/toastStore'
-import { boardToBoardListItem } from '../utils/boardMapper'
-import { getApiErrorMessage } from '../utils/apiError'
-import type { BoardListItem } from '../types'
-import Dialog from './Dialog'
-import styles from './BoardsPanel.module.css'
+import { useMemo, useState } from 'react'
+import { BarChart3, Lock, Plus, Search, Sparkles } from 'lucide-react'
+import type { BoardListItem } from '@/types'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 
 interface BoardsPanelProps {
   open: boolean
+  onOpenChange: (open: boolean) => void
   boards: BoardListItem[]
-  currentId: string | undefined
-  onSelect: (id: string) => void
-  onCreated: (board: BoardListItem) => void
-  onDeleted: (id: string) => void
+  currentBoardId: string | null
+  onSelectBoard: (board: BoardListItem) => void
+  onOpenCreateBoard: () => void
+  onNavigateDashboard: () => void
 }
 
 export default function BoardsPanel({
   open,
+  onOpenChange,
   boards,
-  currentId,
-  onSelect,
-  onCreated,
-  onDeleted,
+  currentBoardId,
+  onSelectBoard,
+  onOpenCreateBoard,
+  onNavigateDashboard,
 }: BoardsPanelProps) {
-  const router = useRouter()
-  const [creating, setCreating] = useState(false)
-  const [creatingSubmit, setCreatingSubmit] = useState(false)
-  const creatingSubmitRef = useRef(false)
-  const [newName, setNewName] = useState('')
-  const [createError, setCreateError] = useState<string | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
-  const [showAll, setShowAll] = useState(false)
-  const [windowHeight, setWindowHeight] = useState(
-    () => (typeof window !== 'undefined' ? window.innerHeight : 800),
-  )
+  const [query, setQuery] = useState('')
 
-  useEffect(() => {
-    const onResize = () => setWindowHeight(window.innerHeight)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-
-  // Adaptive limit: fit items into available panel height
-  // Panel = 100vh - 64px(topbar). Subtract header(56), footer(68), dashboardLink(48), toggle btn(36), padding(16)
-  const ITEM_HEIGHT = 44
-  const PANEL_OVERHEAD = 224
-  const visibleLimit = useMemo(() => {
-    const available = windowHeight - 64 - PANEL_OVERHEAD
-    return Math.max(3, Math.floor(available / ITEM_HEIGHT))
-  }, [windowHeight])
-  const hasHidden = boards.length > visibleLimit
-  const visibleBoards = showAll ? boards : boards.slice(0, visibleLimit)
-
-  const handleCreate = async () => {
-    if (creatingSubmitRef.current) return
-    creatingSubmitRef.current = true
-    setCreatingSubmit(true)
-    const name = newName.trim() || `Ретро — Спринт ${boards.length + 1}`
-    try {
-      const board = await createBoard(name)
-      setNewName('')
-      setCreating(false)
-      setCreateError(null)
-      onCreated(boardToBoardListItem(board))
-    } catch (e: unknown) {
-      setCreateError(getApiErrorMessage(e, 'Ошибка создания доски'))
-    } finally {
-      creatingSubmitRef.current = false
-      setCreatingSubmit(false)
-    }
-  }
-
-  const confirmDelete = async () => {
-    if (!deleteTarget) return
-    const target = deleteTarget
-    try {
-      await deleteBoard(target.id)
-      onDeleted(target.id)
-      setDeleteTarget(null)
-    } catch (e: unknown) {
-      showToast(getApiErrorMessage(e, 'Не удалось удалить доску'), 'error')
-      setDeleteTarget(null)
-    }
-  }
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return boards
+    return boards.filter((b) => b.name.toLowerCase().includes(q))
+  }, [boards, query])
 
   return (
-    <>
-      <aside className={styles.panel} style={{ left: open ? 0 : -320 }}>
-        <div className={styles.header}>
-          <span className="material-symbols-rounded">dashboard</span>
-          Мои доски
-        </div>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="left" className="flex flex-col p-0 sm:max-w-sm">
+        <SheetHeader className="border-b px-5 py-4">
+          <SheetTitle>Доски команды</SheetTitle>
+          <SheetDescription>Переключайтесь между спринтами или создайте новый</SheetDescription>
+        </SheetHeader>
 
-        <div className={styles.list}>
-          <div
-            className={styles.dashboardLink}
-            onClick={() => router.push('/dashboard')}
+        <div className="space-y-3 border-b p-4">
+          <Button
+            className="w-full"
+            onClick={() => {
+              onOpenChange(false)
+              onOpenCreateBoard()
+            }}
+            data-testid="sidebar-new-board-btn"
           >
-            <span className="material-symbols-rounded">analytics</span>
-            История ретро
+            <Plus className="h-4 w-4" />
+            Новая доска
+          </Button>
+
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Поиск досок..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="pl-9"
+            />
           </div>
-          {visibleBoards.map((b) => (
-            <div
-              key={b.id}
-              className={`${styles.item} board-item`}
-              style={{
-                background:
-                  b.id === currentId ? 'var(--md-secondary-container)' : 'transparent',
-                color:
-                  b.id === currentId
-                    ? 'var(--md-on-secondary-container)'
-                    : 'var(--md-on-surface-variant)',
-              }}
-              onClick={() => onSelect(b.id)}
-            >
-              <span className="material-symbols-rounded">grid_view</span>
-              <span
-                style={{
-                  flex: 1,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {b.name}
-              </span>
-              {b.action_items_open > 0 && (
-                <span className={styles.actionBadge}>
-                  {b.action_items_open} откр.
-                </span>
-              )}
-              <button
-                className={styles.delBtn}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (boards.length <= 1) return showToast('Нельзя удалить последнюю доску')
-                  setDeleteTarget({ id: b.id, name: b.name })
-                }}
-                title="Удалить"
-              >
-                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-                  delete
-                </span>
-              </button>
-            </div>
-          ))}
-          {hasHidden && (
-            <button
-              className={styles.showMoreBtn}
-              onClick={() => setShowAll((v) => !v)}
-            >
-              <span
-                className="material-symbols-rounded"
-                style={{
-                  fontSize: 16,
-                  transform: showAll ? 'rotate(180deg)' : 'rotate(0deg)',
-                  transition: 'transform 0.2s',
-                }}
-              >
-                expand_more
-              </span>
-              {showAll ? 'Скрыть' : `Ещё ${boards.length - visibleLimit}`}
-            </button>
-          )}
         </div>
 
-        <div className={styles.footer}>
-          {creating ? (
-            <div>
-              <div className={styles.createRow}>
-                <input
-                  className={styles.input}
-                  style={{
-                    borderColor: createError ? 'var(--md-error)' : 'var(--md-outline-variant)',
-                  }}
-                  value={newName}
-                  onChange={(e) => { setNewName(e.target.value); setCreateError(null) }}
-                  placeholder="Название доски"
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleCreate()
-                    if (e.key === 'Escape') { setCreating(false); setCreateError(null) }
-                  }}
-                />
+        <ScrollArea className="flex-1 px-3 py-2">
+          <div className="space-y-1.5">
+            {filtered.map((b) => {
+              const active = b.id === currentBoardId
+              return (
                 <button
-                  className={styles.compactBtn}
-                  style={{
-                    background: 'var(--md-primary)',
-                    color: 'var(--md-on-primary)',
-                    opacity: creatingSubmit ? 0.6 : 1,
-                  }}
-                  onClick={handleCreate}
-                  disabled={creatingSubmit}
-                  title="Создать"
-                >
-                  <span className="material-symbols-rounded" style={{ fontSize: 20 }}>
-                    check
-                  </span>
-                </button>
-                <button
-                  className={styles.compactBtn}
+                  key={b.id}
+                  type="button"
                   onClick={() => {
-                    setCreating(false)
-                    setNewName('')
-                    setCreateError(null)
+                    onSelectBoard(b)
+                    onOpenChange(false)
                   }}
-                  title="Отмена"
+                  className={`flex w-full flex-col gap-1.5 rounded-xl border p-3 text-left transition-all ${
+                    active
+                      ? 'border-primary/40 bg-primary/10'
+                      : 'border-transparent hover:border-border hover:bg-muted/60'
+                  }`}
                 >
-                  <span className="material-symbols-rounded" style={{ fontSize: 20 }}>
-                    close
-                  </span>
-                </button>
-              </div>
-              {createError && (
-                <p className={styles.errorText}>{createError}</p>
-              )}
-            </div>
-          ) : (
-            <button className={styles.addBtn} onClick={() => setCreating(true)}>
-              <span className="material-symbols-rounded">add</span>
-              Новая доска
-            </button>
-          )}
-        </div>
-      </aside>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 truncate text-sm font-medium text-foreground">
+                      {b.is_locked && <Lock className="h-3.5 w-3.5 shrink-0 text-amber-500" />}
+                      <span className="truncate">{b.name}</span>
+                    </span>
+                    {b.has_summary && (
+                      <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    )}
+                  </div>
 
-      <Dialog
-        open={!!deleteTarget}
-        title="Удалить доску?"
-        icon="delete"
-        danger
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={confirmDelete}
-        confirmLabel="Удалить"
-      >
-        <p className={styles.confirmText}>
-          Доска{' '}
-          <strong style={{ color: 'var(--md-on-surface)' }}>
-            «{deleteTarget?.name}»
-          </strong>{' '}
-          и все её колонки будут удалены без возможности восстановления.
-        </p>
-      </Dialog>
-    </>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span>
+                      {new Date(b.created_at).toLocaleDateString('ru-RU', {
+                        day: 'numeric',
+                        month: 'short',
+                      })}
+                    </span>
+                    {typeof b.cards_count === 'number' && <span>• {b.cards_count} карт.</span>}
+                    {b.action_items_open > 0 && (
+                      <Badge variant="warning" className="px-1.5 py-0 text-[10px]">
+                        {b.action_items_open} открыт.
+                      </Badge>
+                    )}
+                    {b.mood_avg != null && (
+                      <span className="font-mono">• {b.mood_avg.toFixed(1)}/5</span>
+                    )}
+                  </div>
+                </button>
+              )
+            })}
+
+            {filtered.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">Доски не найдены</p>
+            )}
+          </div>
+        </ScrollArea>
+
+        <div className="border-t p-3">
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            onClick={() => {
+              onOpenChange(false)
+              onNavigateDashboard()
+            }}
+          >
+            <BarChart3 className="h-4 w-4 text-primary" />
+            Панель управления и отчёты
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }

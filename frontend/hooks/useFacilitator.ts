@@ -1,46 +1,46 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
-import type { MutableRefObject } from 'react'
-import type { SendTimerRef } from './useTimer'
+import { useState, useCallback } from 'react'
+import type { WsMessage } from '../types'
 
-export interface SendFacilitatorRef {
-  start: () => void
-  stop: () => void
-  changePhase: (phase: string) => void
-}
+export const PHASE_ORDER = ['brainstorm', 'reveal', 'discuss', 'vote', 'summary'] as const
+export type PhaseKey = (typeof PHASE_ORDER)[number]
 
 export function useFacilitator(
-  sendTimerRef: MutableRefObject<SendTimerRef | null>,
+  sendWs: (msg: WsMessage) => void,
   timerDuration: number,
+  resetTimer: (duration: number) => void,
 ) {
   const [facilitator, setFacilitator] = useState<string | null>(null)
   const [phase, setPhase] = useState<string | null>(null)
-  const sendFacilitatorRef = useRef<SendFacilitatorRef | null>(null)
 
   const handleFacilitatorStart = useCallback(() => {
-    sendFacilitatorRef.current?.start()
-  }, [])
+    sendWs({ event: 'facilitator_start', data: {} })
+  }, [sendWs])
 
-  const handleFacilitatorStop = useCallback(() => {
-    sendFacilitatorRef.current?.stop()
-  }, [])
+  const handleFacilitatorStop = useCallback(
+    (lockBoard = false) => {
+      sendWs({ event: 'facilitator_stop', data: { lock_board: lockBoard } })
+    },
+    [sendWs],
+  )
 
-  const handlePhaseChange = useCallback((p: string) => {
-    sendFacilitatorRef.current?.changePhase(p)
-  }, [])
+  const handlePhaseChange = useCallback(
+    (p: string) => {
+      sendWs({ event: 'phase_change', data: { phase: p } })
+    },
+    [sendWs],
+  )
 
   const handleNextPhase = useCallback(() => {
     if (!phase) return
-    const PHASE_ORDER = ['brainstorm', 'reveal', 'discuss', 'vote', 'summary']
-    const idx = PHASE_ORDER.indexOf(phase)
+    const idx = PHASE_ORDER.indexOf(phase as PhaseKey)
     if (idx >= 0 && idx < PHASE_ORDER.length - 1) {
       const next = PHASE_ORDER[idx + 1]
-      sendFacilitatorRef.current?.changePhase(next)
-      // Reset timer for new phase
-      sendTimerRef.current?.reset(timerDuration)
+      sendWs({ event: 'phase_change', data: { phase: next } })
+      resetTimer(timerDuration)
     }
-  }, [phase, timerDuration, sendTimerRef])
+  }, [phase, timerDuration, sendWs, resetTimer])
 
   const handleFacilitatorChanged = useCallback((f: string | null, p: string | null) => {
     setFacilitator(f)
@@ -54,7 +54,6 @@ export function useFacilitator(
   return {
     facilitator,
     phase,
-    sendFacilitatorRef,
     handleFacilitatorStart,
     handleFacilitatorStop,
     handlePhaseChange,

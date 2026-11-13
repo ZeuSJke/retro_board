@@ -1,31 +1,26 @@
+import '@fontsource/inter/400.css'
+import '@fontsource/inter/500.css'
+import '@fontsource/inter/600.css'
+import '@fontsource/inter/700.css'
+import '@fontsource/jetbrains-mono/500.css'
+import '@fontsource/jetbrains-mono/700.css'
 import './globals.css'
 import type { Metadata } from 'next'
 import ErrorBoundary from '../components/ErrorBoundary'
-import ToastContainer from '../components/Toast'
+import Providers from '../components/Providers'
 
 export const metadata: Metadata = {
-  title: 'RetroBoard',
-  description: 'Ретроспективная доска для команды',
+  title: 'RetroBoard — Ретроспектива команды',
+  description: 'Интерактивная доска ретроспектив, голосования и Action Items',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        {/* Material Symbols icon font cannot be loaded via next/font/google; App Router root layout applies globally */}
-        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-        <link
-          href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20,400,0,0&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html lang="ru" suppressHydrationWarning>
       <body>
-        <ErrorBoundary>
-          {children}
-          <ToastContainer />
-        </ErrorBoundary>
+        <Providers>
+          <ErrorBoundary>{children}</ErrorBoundary>
+        </Providers>
       </body>
     </html>
   )

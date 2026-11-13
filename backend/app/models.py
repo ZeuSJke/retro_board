@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     ARRAY,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -58,6 +59,13 @@ class Board(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     slug: Mapped[str | None] = mapped_column(String(150), nullable=True, index=True)
     max_votes: Mapped[int] = mapped_column(Integer, default=5)
+    template: Mapped[str] = mapped_column(String(40), nullable=False, default="classic")
+    is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    hide_cards_until_reveal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    anonymous_votes: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    active_facilitator: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    active_phase: Mapped[str | None] = mapped_column(String(30), nullable=True, default=None)
+    active_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
     )
@@ -85,6 +93,12 @@ class Board(Base):
         back_populates="board",
         cascade="all, delete-orphan",
         order_by="BoardSummary.created_at.desc()",
+    )
+    moods: Mapped[list["BoardMood"]] = relationship(
+        "BoardMood",
+        back_populates="board",
+        cascade="all, delete-orphan",
+        order_by="BoardMood.created_at",
     )
 
 
@@ -195,3 +209,23 @@ class BoardSummary(Base):
     )
 
     board: Mapped["Board"] = relationship("Board", back_populates="summaries")
+
+
+class BoardMood(Base):
+    __tablename__ = "board_moods"
+    __table_args__ = (
+        UniqueConstraint("board_id", "author", name="uq_mood_board_author"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    board_id: Mapped[str] = mapped_column(
+        String, ForeignKey("boards.id", ondelete="CASCADE"), index=True
+    )
+    author: Mapped[str] = mapped_column(String(60), nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc
+    )
+
+    board: Mapped["Board"] = relationship("Board", back_populates="moods")

@@ -270,7 +270,7 @@ export async function dismissWelcome(page: Page) {
   // Wait until either the welcome dialog or the board toolbar appears (loading done)
   await Promise.race([
     page.getByText('Войти на доску').waitFor({ timeout: 15000 }),
-    page.getByText('Новая колонка').waitFor({ timeout: 15000 }),
+    page.getByTestId('user-settings-btn').waitFor({ timeout: 15000 }),
   ]).catch(() => {})
 
   const btn = page.getByText('Войти на доску')
@@ -279,14 +279,26 @@ export async function dismissWelcome(page: Page) {
   }
 }
 
-/** Create a board via API and return its data. */
+/** Create a board via API and return its data (retries briefly on 429 rate-limit). */
 export async function createBoardViaAPI(request: APIRequestContext, name: string, workspaceToken?: string) {
   const csrfHeaders = await getCsrfHeaders(request)
   const headers = workspaceToken
     ? { ...csrfHeaders, 'X-Workspace-Token': workspaceToken }
     : csrfHeaders
-  const res = await request.post(`${API}/boards/`, { data: { name }, headers })
-  return res.json()
+  for (let i = 0; i <= 4; i++) {
+    const res = await request.post(`${API}/boards/`, { data: { name }, headers })
+    if (res.ok()) {
+      return res.json()
+    }
+    if (res.status() === 429 && i < 4) {
+      const retryAfter = Number(res.headers()['retry-after'] || 0)
+      const waitMs = Math.min(12000, Math.max(4000, retryAfter * 1000 || 4000 * (i + 1)))
+      await new Promise((r) => setTimeout(r, waitMs))
+      continue
+    }
+    throw new Error(`Failed to create board "${name}": ${res.status()} ${await res.text()}`)
+  }
+  throw new Error(`Failed to create board "${name}" after retries`)
 }
 
 /** Create an action item via API. */

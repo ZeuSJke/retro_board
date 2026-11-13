@@ -1,431 +1,322 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { useAppStore } from '../store'
-import { userColor, initials } from '../utils/theme'
-import { getApiErrorMessage } from '../utils/apiError'
-import { loginToWorkspace } from '../api'
-import type { TimerState } from '../types'
-import Dialog from './Dialog'
-import TimerWidget from './TimerWidget'
-import PhaseProgress from './PhaseProgress'
-import styles from './Topbar.module.css'
+import Link from 'next/link'
+import { useTheme } from 'next-themes'
+import {
+  BarChart3,
+  Check,
+  Download,
+  FileText,
+  HeartPulse,
+  LayoutGrid,
+  Lock,
+  Moon,
+  PanelLeft,
+  Printer,
+  Search,
+  Settings,
+  Sparkles,
+  Sun,
+  Users,
+} from 'lucide-react'
+import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import type { Board } from '@/types'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface TopbarProps {
-  boardName: string
-  maxVotes: number
-  votesUsed: number
-  onBoardsToggle: () => void
-  onThemeToggle: () => void
-  onBoardSettings: (data: { name?: string; max_votes?: number }) => Promise<void>
-  onExport?: () => void
-  timerState: TimerState | null
-  onTimerStart: (duration: number, remaining: number) => void
-  onTimerPause: () => void
-  onTimerReset: (duration: number) => void
-  autoAdvance?: boolean
-  onAutoAdvanceChange?: (value: boolean) => void
-  onNextPhase?: () => void
+  board: Board | null
+  workspaceName: string
+  username: string
   activeUsers: string[]
+  readyUsers: string[]
   facilitator: string | null
-  phase: string | null
-  onFacilitatorStart: () => void
-  onFacilitatorStop: () => void
-  onPhaseChange: (phase: string) => void
-  hasSummary?: boolean
-  isGeneratingSummary?: boolean
-  onSummaryClick?: () => void
+  connected: boolean
+  openActionItemsCount: number
+  onOpenBoardsDrawer: () => void
+  onOpenBoardSettings: () => void
+  onOpenUserSettings: () => void
+  onOpenMood: () => void
+  onOpenSummary: () => void
+  onExportMarkdown: () => void
+  onExportPDF: () => void
 }
 
 export default function Topbar({
-  boardName,
-  maxVotes,
-  votesUsed,
-  onBoardsToggle,
-  onThemeToggle,
-  onBoardSettings,
-  onExport,
-  timerState,
-  onTimerStart,
-  onTimerPause,
-  onTimerReset,
-  autoAdvance,
-  onAutoAdvanceChange,
-  onNextPhase,
+  board,
+  workspaceName,
+  username,
   activeUsers,
+  readyUsers,
   facilitator,
-  phase,
-  onFacilitatorStart,
-  onFacilitatorStop,
-  onPhaseChange,
-  hasSummary,
-  isGeneratingSummary,
-  onSummaryClick,
+  connected,
+  openActionItemsCount,
+  onOpenBoardsDrawer,
+  onOpenBoardSettings,
+  onOpenUserSettings,
+  onOpenMood,
+  onOpenSummary,
+  onExportMarkdown,
+  onExportPDF,
 }: TopbarProps) {
-  const router = useRouter()
-  const username = useAppStore((s) => s.username)
-  const setUsername = useAppStore((s) => s.setUsername)
-  const workspace = useAppStore((s) => s.workspace)
-  const setWorkspace = useAppStore((s) => s.setWorkspace)
-  const [usernameOpen, setUsernameOpen] = useState(false)
-  const [nameOpen, setNameOpen] = useState(false)
-  const [tempName, setTempName] = useState('')
-  const [tempBoard, setTempBoard] = useState('')
-  const [tempMaxVotes, setTempMaxVotes] = useState(String(maxVotes))
-  const [renameError, setRenameError] = useState<string | null>(null)
-  const [workspaceSlug, setWorkspaceSlug] = useState('')
-  const [accessKey, setAccessKey] = useState('')
-  const [showWorkspaceFields, setShowWorkspaceFields] = useState(false)
-  const [workspaceLoading, setWorkspaceLoading] = useState(false)
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const { theme, setTheme } = useTheme()
 
-  const isFacilitator = facilitator === username
-  const [isMobile, setIsMobile] = useState(false)
+  const moodAvg =
+    board?.moods && board.moods.length > 0
+      ? (board.moods.reduce((s, m) => s + m.score, 0) / board.moods.length).toFixed(1)
+      : null
 
-  useEffect(() => {
-    const mql = window.matchMedia('(max-width: 767px)')
-    setIsMobile(mql.matches)
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
-    mql.addEventListener('change', handler)
-    return () => mql.removeEventListener('change', handler)
-  }, [])
-
-  const MAX_VISIBLE_AVATARS = isMobile ? 2 : 4
-  const visibleUsers = activeUsers.slice(0, MAX_VISIBLE_AVATARS)
-  const extraUsers = activeUsers.length - MAX_VISIBLE_AVATARS
+  const onlineList = activeUsers.length > 0 ? activeUsers : connected && username ? [username] : []
 
   return (
-    <>
-      <header className={styles.bar}>
-        <button className={styles.iconBtn} onClick={onBoardsToggle}>
-          <span className="material-symbols-rounded">menu</span>
-        </button>
-        <div className={styles.logo}>RetroBoard</div>
-        <button
-          className={styles.boardName}
-          onClick={() => {
-            setTempBoard(boardName)
-            setTempMaxVotes(String(maxVotes))
-            setRenameError(null)
-            setNameOpen(true)
-          }}
-          title="Переименовать доску"
-        >
-          {boardName}
-        </button>
-        <div className={styles.actions}>
-          {/* Phase progress stepper */}
-          {phase && (
-            <PhaseProgress
-              phase={phase}
-              isFacilitator={isFacilitator}
-              onPhaseChange={onPhaseChange}
-            />
-          )}
-
-          {/* Facilitator stop button */}
-          {isFacilitator && (
-            <button
-              className={`${styles.iconBtn} ${styles.facStopBtn}`}
-              onClick={onFacilitatorStop}
-              title="Завершить режим ведущего"
+    <header className="no-print sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b bg-background/85 px-4 backdrop-blur-md">
+      {/* Левый блок: Доски + Хлебные крошки */}
+      <div className="flex items-center gap-2 min-w-0">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onOpenBoardsDrawer}
+              aria-label="Список досок"
+              data-testid="boards-drawer-btn"
             >
-              <span className="material-symbols-rounded">close</span>
-            </button>
-          )}
+              <PanelLeft className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Список досок</TooltipContent>
+        </Tooltip>
 
-          {/* Become facilitator button */}
-          {!facilitator && (
-            <button className={styles.iconBtn} onClick={onFacilitatorStart} title="Стать ведущим">
-              <span className="material-symbols-rounded">present_to_all</span>
-            </button>
-          )}
-
-          {/* Facilitator badge (when someone else is facilitator) */}
-          {facilitator && !isFacilitator && (
-            <span className={styles.facBadge} title={`Ведущий: ${facilitator}`}>
-              <span className="material-symbols-rounded" style={{ fontSize: 14 }}>present_to_all</span>
-              {facilitator}
-            </span>
-          )}
-
-          {timerState && (
-            <TimerWidget
-              timerState={timerState}
-              onStart={onTimerStart}
-              onPause={onTimerPause}
-              onReset={onTimerReset}
-              readOnly={!!facilitator && !isFacilitator}
-              phase={phase}
-              autoAdvance={autoAdvance}
-              onAutoAdvanceChange={onAutoAdvanceChange}
-              onNextPhase={onNextPhase}
-            />
-          )}
-
-          <button className={styles.iconBtn} onClick={() => router.push('/dashboard')} title="История ретро">
-            <span className="material-symbols-rounded">analytics</span>
-          </button>
-
-          {onSummaryClick && (
-            <button
-              className={styles.iconBtn}
-              onClick={onSummaryClick}
-              title={hasSummary ? 'Просмотреть резюме' : isGeneratingSummary ? 'Генерация итогов...' : 'Резюме недоступно'}
-              style={{ color: hasSummary ? 'var(--md-primary)' : isGeneratingSummary ? 'var(--md-tertiary)' : undefined }}
-            >
-              {isGeneratingSummary ? (
-                <span className="material-symbols-rounded" style={{ animation: 'spin 1s linear infinite' }}>
-                  hourglass_empty
-                </span>
-              ) : (
-                <span className="material-symbols-rounded" style={{ fontVariationSettings: hasSummary ? "'FILL' 1" : "'FILL' 0" }}>
-                  summarize
-                </span>
-              )}
-            </button>
-          )}
-
-          {onExport && (
-            <button className={styles.iconBtn} onClick={onExport} title="Экспорт в PDF">
-              <span className="material-symbols-rounded">picture_as_pdf</span>
-            </button>
-          )}
-
-          <span
-            className={styles.chip}
-            style={{ cursor: 'default', gap: 4, fontSize: 13 }}
-            title={`Голосов: ${votesUsed} из ${maxVotes}`}
-          >
-            <span className="material-symbols-rounded" style={{ fontSize: 16 }}>thumb_up</span>
-            {votesUsed}/{maxVotes}
-          </span>
-
-          {/* Presence avatars */}
-          {activeUsers.length > 0 && (
-            <div className={styles.presence} title={activeUsers.join(', ')}>
-              {visibleUsers.map((u) => (
-                <div key={u} className={styles.avatar} style={{ background: userColor(u) }}>
-                  {initials(u)}
-                </div>
-              ))}
-              {extraUsers > 0 && (
-                <div className={styles.avatarExtra}>+{extraUsers}</div>
-              )}
-            </div>
-          )}
-
-          <button
-            className={styles.chip}
-            onClick={() => {
-              setTempName(username)
-              setUsernameOpen(true)
-            }}
-          >
-            <span className="material-symbols-rounded">account_circle</span>
-            {username}
-          </button>
-          <button className={styles.iconBtn} onClick={onThemeToggle} title="Тема">
-            <span className="material-symbols-rounded">palette</span>
-          </button>
-        </div>
-      </header>
-
-      <Dialog
-        open={usernameOpen}
-        title="Настройки пользователя"
-        confirmDisabled={workspaceLoading}
-        onClose={() => {
-          setUsernameOpen(false)
-          setShowWorkspaceFields(false)
-          setWorkspaceError(null)
-        }}
-        onConfirm={async () => {
-          if (showWorkspaceFields) {
-            if (!workspaceSlug.trim() || !accessKey) {
-              setWorkspaceError('Введите код команды и ключ доступа')
-              return
-            }
-            setWorkspaceLoading(true)
-            setWorkspaceError(null)
-            try {
-              const session = await loginToWorkspace({
-                workspace_slug: workspaceSlug.trim(),
-                access_key: accessKey,
-              })
-              // Reset current board because it belongs to the old workspace
-              useAppStore.setState({ currentBoardId: null })
-              setWorkspace(session)
-              if (tempName.trim()) setUsername(tempName.trim())
-              setWorkspaceSlug('')
-              setAccessKey('')
-              setShowWorkspaceFields(false)
-              setUsernameOpen(false)
-              setWorkspaceLoading(false)
-              router.push('/')
-              return
-            } catch (err: unknown) {
-              const errorMsg =
-                err instanceof Error && 'response' in err && (err as { response?: { status?: number } }).response?.status === 401
-                  ? 'Неверный код команды или ключ доступа'
-                  : 'Ошибка при подключении к команде'
-              setWorkspaceError(errorMsg)
-              setWorkspaceLoading(false)
-              return
-            }
-          }
-          if (!tempName.trim()) return
-          setUsername(tempName.trim())
-          setUsernameOpen(false)
-          setShowWorkspaceFields(false)
-          setWorkspaceError(null)
-        }}
-      >
-        {workspace && !showWorkspaceFields && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, padding: '10px 12px', background: 'var(--md-surface-container-highest)', borderRadius: 8 }}>
-            <div>
-              <div style={{ fontSize: 11, color: 'var(--md-on-surface-variant)', marginBottom: 2 }}>Текущая команда</div>
-              <div style={{ fontWeight: 500 }}>{workspace.workspaceName}</div>
-            </div>
-            <button
-              style={{ background: 'var(--md-secondary-container)', border: 'none', borderRadius: 16, color: 'var(--md-on-secondary-container)', cursor: 'pointer', fontSize: 12, padding: '6px 14px', fontWeight: 500 }}
-              onClick={() => setShowWorkspaceFields(true)}
-            >
-              Сменить
-            </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+            <LayoutGrid className="h-4 w-4" />
           </div>
-        )}
-
-        {showWorkspaceFields && (
-          <>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--md-on-surface-variant)', display: 'block', marginBottom: 6 }}>Код команды</label>
-              <input
-                className={styles.input}
-                value={workspaceSlug}
-                onChange={(e) => { setWorkspaceSlug(e.target.value); setWorkspaceError(null) }}
-                placeholder="Например: fmrm-core"
-                maxLength={100}
-                autoFocus
-              />
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--md-on-surface-variant)', display: 'block', marginBottom: 6 }}>Ключ доступа</label>
-              <input
-                type="password"
-                className={styles.input}
-                value={accessKey}
-                onChange={(e) => { setAccessKey(e.target.value); setWorkspaceError(null) }}
-                placeholder="Ключ доступа"
-                maxLength={100}
-              />
-            </div>
-            {workspaceError && (
-              <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--md-error)' }}>{workspaceError}</p>
-            )}
+          <div className="hidden md:flex items-center gap-1.5 text-xs text-muted-foreground min-w-0">
+            <span className="truncate max-w-[130px] font-medium text-foreground/80">
+              {workspaceName}
+            </span>
+            <span>/</span>
+          </div>
+          {board ? (
             <button
-              style={{ background: 'none', border: 'none', color: 'var(--md-primary)', cursor: 'pointer', fontSize: 13, padding: 0, marginBottom: 16 }}
-              onClick={() => { setShowWorkspaceFields(false); setWorkspaceError(null) }}
+              type="button"
+              onClick={onOpenBoardsDrawer}
+              className="flex items-center gap-1.5 truncate rounded-lg px-2 py-1 text-sm font-semibold text-foreground hover:bg-muted/70 transition-colors"
             >
-              Отмена
+              {board.is_locked && (
+                <Lock className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label="Заблокирована" />
+              )}
+              <span className="truncate max-w-[180px] sm:max-w-[260px]">{board.name}</span>
             </button>
-          </>
+          ) : (
+            <span className="text-sm font-semibold">RetroBoard</span>
+          )}
+        </div>
+
+        <kbd className="hidden xl:inline-flex items-center gap-1 rounded-md border bg-muted/60 px-2 py-0.5 text-[11px] font-mono text-muted-foreground">
+          <Search className="h-3 w-3" /> Ctrl K
+        </kbd>
+      </div>
+
+      {/* Правый блок: Участники, Настроение, Дашборд, Экспорт, Настройки */}
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {/* Присутствие */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="flex items-center gap-2 rounded-full border bg-background px-2 py-1 text-xs hover:bg-muted/60 transition-colors"
+              aria-label="Онлайн участники"
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  connected ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'
+                }`}
+                title={connected ? 'Подключено (Live)' : 'Переподключение...'}
+              />
+              <div className="hidden sm:flex -space-x-1.5">
+                {onlineList.slice(0, 4).map((u) => (
+                  <span
+                    key={u}
+                    title={u}
+                    className={`flex h-6 w-6 items-center justify-center rounded-full border-2 border-background bg-gradient-to-br text-[10px] font-bold text-white ${getUserAvatarGradient(
+                      u,
+                    )}`}
+                  >
+                    {getUserInitials(u)}
+                  </span>
+                ))}
+              </div>
+              <span className="font-mono font-medium text-foreground">{onlineList.length}</span>
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-64 space-y-2 p-3">
+            <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <Users className="h-3.5 w-3.5" />
+                На доске ({onlineList.length})
+              </span>
+              <span>{connected ? 'Live' : 'Офлайн'}</span>
+            </div>
+            <div className="max-h-48 space-y-1.5 overflow-y-auto">
+              {onlineList.map((u) => {
+                const isMe = u === username
+                const isFac = u === facilitator
+                const isReady = readyUsers.includes(u)
+                return (
+                  <div key={u} className="flex items-center justify-between gap-2 text-xs py-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-[10px] font-bold text-white ${getUserAvatarGradient(
+                          u,
+                        )}`}
+                      >
+                        {getUserInitials(u)}
+                      </span>
+                      <span className="truncate font-medium">
+                        {u} {isMe ? '(вы)' : ''}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {isFac && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Ведущий</Badge>}
+                      {isReady && (
+                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                          <Check className="h-3 w-3" />
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        {board && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onOpenMood}
+                className="h-8 gap-1.5 rounded-full px-2.5 text-xs"
+                data-testid="mood-checkin-btn"
+              >
+                <HeartPulse className="h-3.5 w-3.5 text-rose-500" />
+                <span className="hidden md:inline">Настроение</span>
+                {moodAvg && <span className="font-mono font-semibold">{moodAvg}</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Чек-ин настроения команды</TooltipContent>
+          </Tooltip>
         )}
 
-        <div style={{ marginBottom: 0 }}>
-          <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--md-on-surface-variant)', display: 'block', marginBottom: 6 }}>Ваше имя</label>
-          <input
-            className={styles.input}
-            value={tempName}
-            onChange={(e) => setTempName(e.target.value)}
-            placeholder="Введите имя"
-            maxLength={60}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !showWorkspaceFields && tempName.trim()) {
-                setUsername(tempName.trim())
-                setUsernameOpen(false)
-              }
-            }}
-          />
-        </div>
-      </Dialog>
+        <Button asChild variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
+          <Link href="/dashboard" data-testid="dashboard-nav-link">
+            <BarChart3 className="h-3.5 w-3.5 text-primary" />
+            <span className="hidden lg:inline">Панель управления</span>
+            {openActionItemsCount > 0 && (
+              <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[10px]">
+                {openActionItemsCount}
+              </Badge>
+            )}
+          </Link>
+        </Button>
 
-      <Dialog
-        open={nameOpen}
-        title="Настройки доски"
-        onClose={() => { setNameOpen(false); setRenameError(null) }}
-        onConfirm={async () => {
-          const trimmedBoard = tempBoard.trim()
-          if (!trimmedBoard) {
-            setRenameError('Название не может быть пустым')
-            return
-          }
-          const parsedVotes = Number(tempMaxVotes)
-          if (!Number.isInteger(parsedVotes) || parsedVotes < 1 || parsedVotes > 99) {
-            setRenameError('Лимит голосов должен быть от 1 до 99')
-            return
-          }
-          try {
-            const data: { name?: string; max_votes?: number } = {}
-            if (trimmedBoard !== boardName) data.name = trimmedBoard
-            if (parsedVotes !== maxVotes) data.max_votes = parsedVotes
-            if (Object.keys(data).length > 0) await onBoardSettings(data)
-            setNameOpen(false)
-            setRenameError(null)
-          } catch (e: unknown) {
-            setRenameError(getApiErrorMessage(e, 'Ошибка сохранения'))
-          }
-        }}
-      >
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--md-on-surface-variant)' }}>Название доски</label>
-          <input
-            className={styles.input}
-            style={{ borderColor: renameError ? 'var(--md-error)' : 'var(--md-outline)', marginTop: 4 }}
-            value={tempBoard}
-            onChange={(e) => { setTempBoard(e.target.value); setRenameError(null) }}
-            placeholder="Название доски"
-            maxLength={120}
-            autoFocus
-            onKeyDown={async (e) => {
-              if (e.key !== 'Enter') return
-              const trimmedBoard = tempBoard.trim()
-              if (!trimmedBoard) { setRenameError('Название не может быть пустым'); return }
-              const parsedVotes = Number(tempMaxVotes)
-              if (!Number.isInteger(parsedVotes) || parsedVotes < 1 || parsedVotes > 99) {
-                setRenameError('Лимит голосов должен быть от 1 до 99')
-                return
-              }
-              try {
-                const data: { name?: string; max_votes?: number } = {}
-                if (trimmedBoard !== boardName) data.name = trimmedBoard
-                if (parsedVotes !== maxVotes) data.max_votes = parsedVotes
-                if (Object.keys(data).length > 0) await onBoardSettings(data)
-                setNameOpen(false)
-                setRenameError(null)
-              } catch (err: unknown) {
-                setRenameError(getApiErrorMessage(err, 'Ошибка сохранения'))
-              }
-            }}
-          />
-        </div>
-        <div>
-          <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--md-on-surface-variant)' }}>Лимит голосов на участника</label>
-          <input
-            className={styles.input}
-            style={{ marginTop: 4, width: 80 }}
-            type="number"
-            min={1}
-            max={99}
-            value={tempMaxVotes}
-            onChange={(e) => { setTempMaxVotes(e.target.value); setRenameError(null) }}
-          />
-        </div>
-        {renameError && (
-          <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--md-error)' }}>{renameError}</p>
+        {board && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs"
+                data-testid="export-menu-btn"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Экспорт</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={onOpenSummary}>
+                <Sparkles className="h-4 w-4 text-primary" />
+                Итоги ретро и AI
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onExportMarkdown}>
+                <FileText className="h-4 w-4" />
+                Скачать Markdown (.md)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onExportPDF}>
+                <Printer className="h-4 w-4" />
+                Печать / Сохранить PDF
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
-      </Dialog>
-    </>
+
+        {board && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={onOpenBoardSettings}
+                aria-label="Настройки доски"
+                data-testid="board-settings-btn"
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Настройки доски</TooltipContent>
+          </Tooltip>
+        )}
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              aria-label="Переключить тему"
+              data-testid="theme-toggle-btn"
+            >
+              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Сменить тему</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={onOpenUserSettings}
+              aria-label="Профиль и настройки"
+              data-testid="user-settings-btn"
+              className={`flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br text-xs font-bold text-white shadow-sm ring-offset-background transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${getUserAvatarGradient(
+                username,
+              )}`}
+            >
+              {getUserInitials(username)}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{username}</TooltipContent>
+        </Tooltip>
+      </div>
+    </header>
   )
 }

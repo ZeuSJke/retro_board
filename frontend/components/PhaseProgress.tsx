@@ -1,81 +1,69 @@
 'use client'
 
-import { memo } from 'react'
-import styles from './PhaseProgress.module.css'
+import { CheckCircle2, Eye, Lightbulb, MessageSquare, Sparkles, Vote } from 'lucide-react'
+import { PHASE_ORDER, type PhaseKey } from '@/hooks/useFacilitator'
+import { cn } from '@/lib/utils'
 
-const PHASES = [
-  { key: 'brainstorm', label: 'Штурм', icon: 'edit_note' },
-  { key: 'reveal', label: 'Обзор', icon: 'visibility' },
-  { key: 'discuss', label: 'Дискуссия', icon: 'forum' },
-  { key: 'vote', label: 'Голосование', icon: 'how_to_vote' },
-  { key: 'summary', label: 'Итоги', icon: 'summarize' },
-]
+const PHASE_META: Record<
+  PhaseKey,
+  { label: string; shortLabel: string; icon: React.ComponentType<{ className?: string }> }
+> = {
+  brainstorm: { label: 'Штурм', shortLabel: 'Штурм', icon: Lightbulb },
+  reveal: { label: 'Раскрытие', shortLabel: 'Показ', icon: Eye },
+  discuss: { label: 'Обсуждение', shortLabel: 'Обсуж.', icon: MessageSquare },
+  vote: { label: 'Голосование', shortLabel: 'Голос.', icon: Vote },
+  summary: { label: 'Итоги', shortLabel: 'Итоги', icon: Sparkles },
+}
 
 interface PhaseProgressProps {
   phase: string | null
   isFacilitator: boolean
-  onPhaseChange?: (phase: string) => void
+  onPhaseChange: (phase: string) => void
 }
 
-export default memo(function PhaseProgress({ phase, isFacilitator, onPhaseChange }: PhaseProgressProps) {
-  if (!phase) return null
-
-  const currentIdx = PHASES.findIndex((p) => p.key === phase)
+export default function PhaseProgress({
+  phase,
+  isFacilitator,
+  onPhaseChange,
+}: PhaseProgressProps) {
+  const currentIdx = phase ? PHASE_ORDER.indexOf(phase as PhaseKey) : -1
 
   return (
-    <div className={styles.container}>
-      {PHASES.map((p, idx) => {
-        const isDone = idx < currentIdx
+    <nav aria-label="Этапы ретроспективы" className="flex items-center gap-1 overflow-x-auto">
+      {PHASE_ORDER.map((key, idx) => {
+        const meta = PHASE_META[key]
+        const Icon = meta.icon
         const isCurrent = idx === currentIdx
-        const isFuture = idx > currentIdx
-        const clickable = isFacilitator && !isCurrent
+        const isDone = currentIdx >= 0 && idx < currentIdx
 
         return (
-          <div key={p.key} className={styles.step}>
-            {/* Connector line before step (not for first) */}
-            {idx > 0 && (
-              <div
-                className={`${styles.connector} ${isDone || isCurrent ? styles.connectorDone : ''}`}
-              />
+          <button
+            key={key}
+            type="button"
+            disabled={!isFacilitator}
+            onClick={() => isFacilitator && onPhaseChange(key)}
+            data-testid={`phase-step-${key}`}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-all whitespace-nowrap',
+              isCurrent
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : isDone
+                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-muted/70 text-muted-foreground',
+              isFacilitator && !isCurrent && 'cursor-pointer hover:bg-accent hover:text-accent-foreground',
+              !isFacilitator && 'cursor-default',
             )}
-
-            <button
-              className={`${styles.node} ${
-                isCurrent
-                  ? styles.nodeCurrent
-                  : isDone
-                    ? styles.nodeDone
-                    : styles.nodeFuture
-              } ${clickable ? styles.nodeClickable : ''}`}
-              onClick={clickable ? () => onPhaseChange?.(p.key) : undefined}
-              disabled={!clickable}
-              title={
-                clickable
-                  ? `Переключить на: ${p.label}`
-                  : isCurrent
-                    ? `Текущая фаза: ${p.label}`
-                    : p.label
-              }
-            >
-              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-                {isDone ? 'check' : p.icon}
-              </span>
-            </button>
-
-            <span
-              className={`${styles.label} ${
-                isCurrent
-                  ? styles.labelCurrent
-                  : isDone
-                    ? styles.labelDone
-                    : styles.labelFuture
-              }`}
-            >
-              {p.label}
-            </span>
-          </div>
+          >
+            {isDone ? (
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+            ) : (
+              <Icon className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <span className="hidden sm:inline">{meta.label}</span>
+            <span className="sm:hidden">{meta.shortLabel}</span>
+          </button>
         )
       })}
-    </div>
+    </nav>
   )
-})
+}

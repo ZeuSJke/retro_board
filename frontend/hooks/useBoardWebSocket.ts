@@ -9,7 +9,9 @@ import { asCard, asColumn, asGroup, asActionItem } from '../utils/wsData'
 import type {
   ActionItem,
   BoardListItem,
+  BoardMood,
   Column,
+  ReactionBubble,
   WsMessage,
   WsCursorMoveData,
   WsCursorLeaveData,
@@ -40,6 +42,7 @@ interface UseBoardWebSocketParams {
   onBoardCreated?: (board: BoardListItem) => void
   onBoardUpdated?: (board: WsBoardUpdatedData) => void
   onBoardDeleted?: (id: string) => void
+  onMoodUpdated?: (mood: BoardMood) => void
 }
 
 export function useBoardWebSocket({
@@ -52,6 +55,7 @@ export function useBoardWebSocket({
   onBoardCreated,
   onBoardUpdated,
   onBoardDeleted,
+  onMoodUpdated,
 }: UseBoardWebSocketParams) {
   const username = useAppStore((s) => s.username)
   const [columns, setColumns] = useState<Column[]>([])
@@ -59,22 +63,31 @@ export function useBoardWebSocket({
   const cursorListenersRef = useRef<Set<() => void>>(new Set())
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const [activeUsers, setActiveUsers] = useState<string[]>([])
+  const [readyUsers, setReadyUsers] = useState<string[]>([])
+  const [spotlightCardId, setSpotlightCardId] = useState<string | null>(null)
+  const [reactions, setReactions] = useState<ReactionBubble[]>([])
   const [facilitator, setFacilitator] = useState<string | null>(null)
   const [phase, setPhase] = useState<string | null>(null)
   const [sessionSynced, setSessionSynced] = useState(false)
   const [actionItems, setActionItems] = useState<ActionItem[]>([])
   const cursorTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const reactionTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastCursorRef = useRef<CursorPos | null>(null)
   const sendMessageRef = useRef<((msg: WsMessage) => void) | null>(null)
   const prevUsernameRef = useRef(username)
 
   useEffect(() => {
     setSessionSynced(false)
+    setReadyUsers([])
+    setSpotlightCardId(null)
+    setReactions([])
   }, [boardId])
 
   const subscribeCursors = useCallback((cb: () => void) => {
     cursorListenersRef.current.add(cb)
-    return () => { cursorListenersRef.current.delete(cb) }
+    return () => {
+      cursorListenersRef.current.delete(cb)
+    }
   }, [])
 
   const notifyCursorListeners = useCallback(() => {
@@ -82,14 +95,18 @@ export function useBoardWebSocket({
   }, [])
 
   useEffect(() => {
+    const cTimeouts = cursorTimeouts.current
+    const rTimeouts = reactionTimeouts.current
     return () => {
-      Object.values(cursorTimeouts.current).forEach(clearTimeout)
+      Object.values(cTimeouts).forEach(clearTimeout)
+      Object.values(rTimeouts).forEach(clearTimeout)
     }
   }, [])
 
-  // Load existing action items on mount
   useEffect(() => {
-    getActionItems(boardId).then(setActionItems).catch((err) => console.error('Failed to load action items:', err))
+    getActionItems(boardId)
+      .then(setActionItems)
+      .catch((err) => console.error('Failed to load action items:', err))
   }, [boardId])
 
   const handleWsMessage = useCallback(
@@ -139,11 +156,53 @@ export function useBoardWebSocket({
         return
       }
 
+      if (event === 'ready_update') {
+        const users = Array.isArray(data.ready_users)
+          ? (data.ready_users.filter((u): u is string => typeof u === 'string'))
+          : []
+        setReadyUsers(users)
+        return
+      }
+
+      if (event === 'spotlight_update') {
+        const cardId = typeof data.card_id === 'string' ? data.card_id : null
+        setSpotlightCardId(cardId)
+        return
+      }
+
+      if (event === 'reaction') {
+        const emoji = typeof data.emoji === 'string' ? data.emoji : ''
+        const sender = typeof data.username === 'string' ? data.username : ''
+        const id =
+          typeof data.id === 'string'
+            ? data.id
+            : `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+        if (!emoji) return
+        const xOffset = 15 + Math.floor(Math.random() * 70)
+        setReactions((prev) => [...prev.slice(-14), { id, emoji, username: sender, xOffset }])
+        reactionTimeouts.current[id] = setTimeout(() => {
+          setReactions((prev) => prev.filter((r) => r.id !== id))
+          delete reactionTimeouts.current[id]
+        }, 2500)
+        return
+      }
+
+      if (event === 'mood_updated') {
+        if (typeof data?.id === 'string' && typeof data?.score === 'number') {
+          onMoodUpdated?.(data as unknown as BoardMood)
+        }
+        return
+      }
+
       if (event === 'facilitator_update') {
         const { facilitator: f, phase: p } = data as unknown as WsFacilitatorData
         setFacilitator(f)
         setPhase(p)
         setSessionSynced(true)
+        if (!f) {
+          setReadyUsers([])
+          setSpotlightCardId(null)
+        }
         onFacilitatorChanged?.(f, p)
         return
       }
@@ -151,6 +210,8 @@ export function useBoardWebSocket({
       if (event === 'phase_update') {
         const { phase: p } = data as unknown as WsPhaseData
         setPhase(p)
+        setReadyUsers([])
+        setSpotlightCardId(null)
         onPhaseChanged?.(p)
         return
       }
@@ -158,9 +219,7 @@ export function useBoardWebSocket({
       if (event === 'action_item_created') {
         try {
           const item = asActionItem(data)
-          setActionItems((prev) =>
-            prev.find((i) => i.id === item.id) ? prev : [...prev, item],
-          )
+          setActionItems((prev) => (prev.find((i) => i.id === item.id) ? prev : [...prev, item]))
         } catch {
           /* ignore malformed action item */
         }
@@ -170,9 +229,7 @@ export function useBoardWebSocket({
       if (event === 'action_item_updated') {
         try {
           const item = asActionItem(data)
-          setActionItems((prev) =>
-            prev.map((i) => (i.id === item.id ? item : i)),
-          )
+          setActionItems((prev) => prev.map((i) => (i.id === item.id ? item : i)))
         } catch {
           /* ignore malformed action item */
         }
@@ -250,10 +307,9 @@ export function useBoardWebSocket({
                 c.id === card.column_id
                   ? {
                       ...c,
-                      cards: [
-                        ...c.cards.filter((x) => x.id !== card.id),
-                        card,
-                      ].sort((a, b) => a.position - b.position),
+                      cards: [...c.cards.filter((x) => x.id !== card.id), card].sort(
+                        (a, b) => a.position - b.position,
+                      ),
                     }
                   : c,
               )
@@ -275,19 +331,18 @@ export function useBoardWebSocket({
             updater = (prev) =>
               prev.map((c) => {
                 if (c.id === old_column_id && c.id === card.column_id) {
-                  const cards = [
-                    ...c.cards.filter((x) => x.id !== card.id),
-                    card,
-                  ].sort((a, b) => a.position - b.position)
+                  const cards = [...c.cards.filter((x) => x.id !== card.id), card].sort(
+                    (a, b) => a.position - b.position,
+                  )
                   return { ...c, cards }
                 }
-                if (c.id === old_column_id)
+                if (c.id === old_column_id) {
                   return { ...c, cards: c.cards.filter((x) => x.id !== card.id) }
+                }
                 if (c.id === card.column_id) {
-                  const cards = [
-                    ...c.cards.filter((x) => x.id !== card.id),
-                    card,
-                  ].sort((a, b) => a.position - b.position)
+                  const cards = [...c.cards.filter((x) => x.id !== card.id), card].sort(
+                    (a, b) => a.position - b.position,
+                  )
                   return { ...c, cards }
                 }
                 return c
@@ -310,13 +365,7 @@ export function useBoardWebSocket({
             updater = (prev) =>
               prev.map((c) =>
                 c.id === g.column_id
-                  ? {
-                      ...c,
-                      groups: [
-                        ...(c.groups || []).filter((x) => x.id !== g.id),
-                        g,
-                      ],
-                    }
+                  ? { ...c, groups: [...(c.groups || []).filter((x) => x.id !== g.id), g] }
                   : c,
               )
             break
@@ -341,9 +390,7 @@ export function useBoardWebSocket({
                       ...c,
                       groups: (c.groups || []).filter((x) => x.id !== id),
                       cards: c.cards.map((card) =>
-                        (card_ids || []).includes(card.id)
-                          ? { ...card, group_id: null }
-                          : card,
+                        (card_ids || []).includes(card.id) ? { ...card, group_id: null } : card,
                       ),
                     }
                   : c,
@@ -367,10 +414,7 @@ export function useBoardWebSocket({
                 if (c.id === group.column_id) {
                   return {
                     ...c,
-                    groups: [
-                      ...(c.groups || []).filter((x) => x.id !== group.id),
-                      group,
-                    ],
+                    groups: [...(c.groups || []).filter((x) => x.id !== group.id), group],
                     cards: [
                       ...c.cards.filter((card) => !movedCardIds.includes(card.id)),
                       ...cards,
@@ -385,7 +429,6 @@ export function useBoardWebSocket({
             break
         }
       } catch {
-        /* ignore malformed ws payload */
         return
       }
       if (updater) setColumns(updater)
@@ -399,6 +442,7 @@ export function useBoardWebSocket({
       onBoardCreated,
       onBoardUpdated,
       onBoardDeleted,
+      onMoodUpdated,
       notifyCursorListeners,
       username,
     ],
@@ -408,19 +452,20 @@ export function useBoardWebSocket({
     boardId,
     handleWsMessage,
     useCallback(() => {
-      // Announce username immediately on connect
       sendMessageRef.current?.({
         event: 'identify',
         data: { username },
       })
       const pos = lastCursorRef.current
-      if (pos)
+      if (pos) {
         sendMessageRef.current?.({
           event: 'cursor_move',
           data: { username, ...pos },
         })
+      }
     }, [username]),
   )
+
   useEffect(() => {
     sendMessageRef.current = sendMessage
   }, [sendMessage])
@@ -459,9 +504,13 @@ export function useBoardWebSocket({
     subscribeCursors,
     collapsedGroups,
     activeUsers,
+    readyUsers,
+    spotlightCardId,
+    reactions,
     facilitator,
     phase,
     sessionSynced,
+    connected,
     actionItems,
     setActionItems,
     sendMessage,

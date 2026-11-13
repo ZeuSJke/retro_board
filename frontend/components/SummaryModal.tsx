@@ -1,215 +1,249 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { getBoardSummary } from '../api'
-import type { BoardSummary } from '../types'
-import styles from './SummaryModal.module.css'
+import { useMemo, useState } from 'react'
+import {
+  Check,
+  Copy,
+  Download,
+  Lightbulb,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  Tag,
+} from 'lucide-react'
+import { regenerateBoardSummary } from '@/api'
+import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown'
+import { showToast } from '@/store/toastStore'
+import { getApiErrorMessage } from '@/utils/apiError'
+import type { ActionItem, Board, BoardSummary } from '@/types'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 interface SummaryModalProps {
-  boardId: string
-  hasSummary: boolean
-  isGeneratingSummary?: boolean
-  onClose: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  board: Board
+  actionItems: ActionItem[]
+  summary: BoardSummary | null
+  loading: boolean
+  error: string | null
+  onSummaryUpdated: (summary: BoardSummary) => void
 }
 
-export default function SummaryModal({ boardId, hasSummary, isGeneratingSummary, onClose }: SummaryModalProps) {
-  const [summary, setSummary] = useState<BoardSummary | null>(null)
-  const [loading, setLoading] = useState(true)
+export default function SummaryModal({
+  open,
+  onOpenChange,
+  board,
+  actionItems,
+  summary,
+  loading,
+  error,
+  onSummaryUpdated,
+}: SummaryModalProps) {
+  const [regenerating, setRegenerating] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [exportTab, setExportTab] = useState<'summary' | 'markdown'>('summary')
 
-  const loadSummary = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true)
-    try {
-      const data = await getBoardSummary(boardId)
-      setSummary(data)
-    } catch {
-      // Ignore errors
-    } finally {
-      if (!silent) setLoading(false)
+  const fullMarkdown = useMemo(
+    () => formatBoardMarkdown(board, actionItems, summary),
+    [board, actionItems, summary],
+  )
+
+  const slackText = useMemo(() => {
+    const lines: string[] = [`*Итоги ретро «${board.name}»*`]
+    if (summary?.summary_text) {
+      lines.push('', summary.summary_text)
     }
-  }, [boardId])
-
-  useEffect(() => {
-    if (hasSummary) {
-      loadSummary()
-    } else {
-      setLoading(false)
-      setSummary(null)
+    if (summary?.key_themes?.length) {
+      lines.push('', '*Ключевые темы:*')
+      summary.key_themes.forEach((t) => lines.push(`• ${t}`))
     }
-  }, [hasSummary, loadSummary])
-
-  useEffect(() => {
-    if (isGeneratingSummary && !hasSummary) {
-      const interval = setInterval(() => {
-        loadSummary(true)
-      }, 2000)
-      return () => clearInterval(interval)
+    if (actionItems.length > 0) {
+      lines.push('', `*Action Items (${actionItems.length}):*`)
+      actionItems.forEach((a) => {
+        const who = a.assignee ? ` — @${a.assignee}` : ''
+        lines.push(`• ${a.title || a.text}${who}`)
+      })
     }
-  }, [isGeneratingSummary, hasSummary, loadSummary])
+    return lines.join('\n')
+  }, [board.name, summary, actionItems])
 
-  const handleCopy = async () => {
-    if (!summary) return
-
-    const text = [
-      '📝 Резюме ретроспективы',
-      '',
-      summary.summary_text,
-      '',
-      '🎯 Ключевые темы:',
-      ...summary.key_themes.map((t) => `• ${t}`),
-      '',
-      '💡 Рекомендации:',
-      ...summary.recommendations.map((r) => `• ${r}`),
-    ].join('\n')
-
+  const handleCopy = async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      showToast(label, 'success')
+      setTimeout(() => setCopied(false), 1800)
     } catch {
-      // Fallback - ignore errors
+      showToast('Не удалось скопировать в буфер', 'error')
     }
   }
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('ru-RU', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
+  const handleRegenerate = async () => {
+    if (regenerating) return
+    setRegenerating(true)
+    try {
+      const fresh = await regenerateBoardSummary(board.id)
+      onSummaryUpdated(fresh)
+      showToast('Итоги обновлены', 'success')
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось перегенерировать итоги'), 'error')
+    } finally {
+      setRegenerating(false)
+    }
   }
 
-  const isLoading = loading || isGeneratingSummary
-
   return (
-    <div
-      className={styles.overlay}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) {
-          e.currentTarget.setAttribute('data-clicking-overlay', 'true')
-        } else {
-          e.currentTarget.removeAttribute('data-clicking-overlay')
-        }
-      }}
-      onMouseUp={(e) => {
-        if (
-          e.target === e.currentTarget &&
-          e.currentTarget.getAttribute('data-clicking-overlay') === 'true'
-        ) {
-          onClose()
-        }
-        e.currentTarget.removeAttribute('data-clicking-overlay')
-      }}
-    >
-      <div className={styles.dialog} onMouseDown={(e) => e.stopPropagation()} onMouseUp={(e) => e.stopPropagation()}>
-        <div className={styles.header}>
-          <div className={`${styles.iconWrap} ${hasSummary ? styles.hasSummary : ''}`}>
-            <span className={`material-symbols-rounded ${styles.icon}`}>
-              summarize
-            </span>
-          </div>
-          <div className={styles.titleWrap}>
-            <div className={styles.title}>Резюме ретроспективы</div>
-            {summary && (
-              <div className={styles.subtitle}>AI-сгенерированные итоги</div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            Итоги ретроспективы
+          </DialogTitle>
+          <DialogDescription>{board.name}</DialogDescription>
+        </DialogHeader>
+
+        <Tabs value={exportTab} onValueChange={(v) => setExportTab(v as 'summary' | 'markdown')}>
+          <TabsList className="w-full justify-start">
+            <TabsTrigger value="summary">AI-резюме и темы</TabsTrigger>
+            <TabsTrigger value="markdown">Markdown и Slack</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="summary" className="space-y-4 pt-1">
+            {(loading || regenerating) && (
+              <div className="flex flex-col items-center justify-center gap-3 py-10 text-muted-foreground">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-sm">Анализируем карточки и формируем выводы...</p>
+              </div>
             )}
-          </div>
-        </div>
 
-        <div className={styles.content}>
-          {isLoading ? (
-            <div className={styles.loadingState}>
-              <div className={styles.spinner} />
-              <div className={styles.loadingText}>
-                {isGeneratingSummary ? 'Генерация итогов...' : 'Загрузка...'}
+            {!loading && !regenerating && error && (
+              <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                {error}
               </div>
-              <div className={styles.loadingHint}>
-                {isGeneratingSummary 
-                  ? 'Искусственный интеллект анализирует данные' 
-                  : 'Подождите, пожалуйста'}
-              </div>
-            </div>
-          ) : !hasSummary || !summary ? (
-            <div className={styles.emptyState}>
-              <span className={`material-symbols-rounded ${styles.emptyIcon}`}>summarize</span>
-              <div className={styles.emptyText}>Резюме ещё не создано</div>
-              <div className={styles.emptyHint}>
-                Резюме автоматически сгенерируется после перехода в фазу подведения итогов
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className={styles.mainText}>{summary.summary_text}</div>
+            )}
 
-              {summary.key_themes.length > 0 && (
-                <div className={styles.sections}>
-                  <div className={styles.section}>
-                    <div className={styles.sectionHeader}>
-                      <div className={`${styles.sectionIcon} ${styles.themes}`}>
-                        <span className="material-symbols-rounded">label</span>
-                      </div>
-                      <div className={styles.sectionTitle}>Ключевые темы</div>
+            {!loading && !regenerating && !error && !summary && (
+              <div className="rounded-xl border border-dashed p-8 text-center space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  AI-резюме для этой доски ещё не создано. Переведите сессию на этап «Итоги» или
+                  сгенерируйте его вручную.
+                </p>
+                <Button variant="outline" size="sm" onClick={handleRegenerate}>
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  Сгенерировать AI-резюме
+                </Button>
+              </div>
+            )}
+
+            {!loading && !regenerating && summary && (
+              <div className="space-y-4">
+                <div className="rounded-xl border bg-muted/40 p-4">
+                  <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Общий вывод
+                  </div>
+                  <p className="text-sm leading-relaxed text-foreground">{summary.summary_text}</p>
+                </div>
+
+                {summary.key_themes.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <Tag className="h-3.5 w-3.5" />
+                      Ключевые темы
                     </div>
-                    <div className={styles.list}>
+                    <div className="flex flex-wrap gap-2">
                       {summary.key_themes.map((theme, idx) => (
-                        <div key={idx} className={styles.listItem}>
-                          <div className={`${styles.bullet} ${styles.themes}`} />
+                        <Badge key={idx} variant="secondary" className="px-3 py-1 text-xs">
                           {theme}
-                        </div>
+                        </Badge>
                       ))}
                     </div>
                   </div>
+                )}
 
-                  {summary.recommendations.length > 0 && (
-                    <div className={styles.section}>
-                      <div className={styles.sectionHeader}>
-                        <div className={`${styles.sectionIcon} ${styles.recommendations}`}>
-                          <span className="material-symbols-rounded">lightbulb</span>
-                        </div>
-                        <div className={styles.sectionTitle}>Рекомендации</div>
-                      </div>
-                      <div className={styles.list}>
-                        {summary.recommendations.map((rec, idx) => (
-                          <div key={idx} className={styles.listItem}>
-                            <div className={`${styles.bullet} ${styles.recommendations}`} />
-                            {rec}
-                          </div>
-                        ))}
-                      </div>
+                {summary.recommendations.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <Lightbulb className="h-3.5 w-3.5 text-amber-500" />
+                      Рекомендации
                     </div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        <div className={styles.footer}>
-          {summary && (
-            <div className={styles.timestamp}>
-              <span className={`material-symbols-rounded ${styles.timestampIcon}`}>schedule</span>
-              {formatDate(summary.created_at)}
-            </div>
-          )}
-
-          <div className={styles.actions}>
-            <button className={styles.textBtn} onClick={onClose}>
-              Закрыть
-            </button>
-
-            {hasSummary && summary && (
-              <button className={`${styles.filledBtn} ${styles.secondaryBtn}`} onClick={handleCopy}>
-                <span className="material-symbols-rounded" style={{ fontSize: 18 }}>
-                  {copied ? 'check' : 'content_copy'}
-                </span>
-                {copied ? 'Скопировано' : 'Копировать'}
-              </button>
+                    <ul className="space-y-2">
+                      {summary.recommendations.map((rec, idx) => (
+                        <li
+                          key={idx}
+                          className="rounded-lg border bg-card px-3 py-2 text-sm text-foreground"
+                        >
+                          {rec}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             )}
-          </div>
-        </div>
-      </div>
-    </div>
+          </TabsContent>
+
+          <TabsContent value="markdown" className="space-y-3 pt-1">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleCopy(slackText, 'Краткая сводка для Slack/Telegram скопирована')}
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Скопировать пост для Slack
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleCopy(fullMarkdown, 'Полный Markdown скопирован')}
+              >
+                {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                Скопировать Markdown
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => downloadMarkdownFile(`${board.slug || board.id}.md`, fullMarkdown)}
+              >
+                <Download className="h-3.5 w-3.5" />
+                Скачать .md
+              </Button>
+            </div>
+
+            <pre className="max-h-72 overflow-auto rounded-xl border bg-muted/50 p-3.5 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap">
+              {fullMarkdown}
+            </pre>
+          </TabsContent>
+        </Tabs>
+
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleRegenerate}
+            disabled={regenerating}
+          >
+            <RefreshCw className={`h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
+            Перегенерировать
+          </Button>
+          <Button type="button" onClick={() => onOpenChange(false)}>
+            Готово
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -17,18 +17,21 @@ test.describe('Dashboard', () => {
   test('отображает секции и пустое состояние', async ({ page }) => {
     await page.goto('/dashboard')
 
-    await expect(page.locator('h1')).toContainText('История ретро')
-    await expect(page.locator('body')).toContainText('Прошлые ретро')
-    await expect(page.locator('body')).toContainText('Все задачи')
-    await expect(page.locator('body')).toContainText('Нет досок')
+    await expect(page.locator('header')).toContainText('Панель управления')
+    await expect(page.getByRole('tab', { name: /Action Items/i })).toBeVisible()
+    await expect(page.getByRole('tab', { name: /Доски/i })).toBeVisible()
+
+    await page.getByRole('tab', { name: /Доски/i }).click()
+    await expect(page.locator('body')).toContainText('Пока нет досок')
   })
 
-  test('отображает доски в секции "Прошлые ретро"', async ({ page, request }) => {
+  test('отображает доски во вкладке "Доски"', async ({ page, request }) => {
     const wsData = await ensureE2EWorkspace(request)
     await createBoardViaAPI(request, 'Спринт 10', wsData.token)
     await createBoardViaAPI(request, 'Спринт 11', wsData.token)
 
     await page.goto('/dashboard')
+    await page.getByRole('tab', { name: /Доски/i }).click()
 
     await expect(page.locator('body')).toContainText('Спринт 10')
     await expect(page.locator('body')).toContainText('Спринт 11')
@@ -52,7 +55,7 @@ test.describe('Dashboard', () => {
     await expect(page.locator('body')).not.toContainText('Задача Б')
 
     // Expand
-    await page.getByText(/Выполненные/).click()
+    await page.getByText(/Завершённые/).click()
     await expect(page.locator('body')).toContainText('Задача Б')
   })
 
@@ -67,8 +70,9 @@ test.describe('Dashboard', () => {
     await expect(page.locator('body')).toContainText('Первая')
     await expect(page.locator('body')).toContainText('Вторая')
 
-    const boardSelect = page.locator('select').nth(1)
-    await boardSelect.selectOption({ label: 'Доска Один' })
+    const boardSelectTrigger = page.getByRole('combobox').nth(1)
+    await boardSelectTrigger.click()
+    await page.getByRole('option', { name: 'Доска Один' }).click()
 
     await expect(page.locator('body')).toContainText('Первая')
     await expect(page.locator('body')).not.toContainText('Вторая')
@@ -82,9 +86,9 @@ test.describe('Dashboard', () => {
 
     await page.goto('/dashboard')
 
-    await expect(page.locator('body')).toContainText('Тренды задач по ретро')
+    await expect(page.locator('body')).toContainText('Динамика Action Items')
     // Recharts renders SVG
-    await expect(page.locator('.recharts-responsive-container')).toBeVisible()
+    await expect(page.locator('.recharts-responsive-container').first()).toBeVisible()
   })
 
   test('навигация на доску по клику', async ({ page, request }) => {
@@ -92,8 +96,8 @@ test.describe('Dashboard', () => {
     await createBoardViaAPI(request, 'Кликни меня', wsData.token)
 
     await page.goto('/dashboard')
-    // Board name appears in both board card and select — click the card name specifically
-    await page.locator('[class*="boardCardName"]').filter({ hasText: 'Кликни меня' }).click()
+    await page.getByRole('tab', { name: /Доски/i }).click()
+    await page.getByRole('button', { name: /Открыть доску/i }).first().click()
 
     await expect(page).toHaveURL(/\/board\//)
   })

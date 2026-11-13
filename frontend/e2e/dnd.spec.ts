@@ -56,8 +56,8 @@ test.describe('Drag and Drop', () => {
     await expect(page.locator('body')).toContainText('Колонка Б')
 
     // Find the card and the target column drop zone
-    const card = page.locator('.card-widget').filter({ hasText: 'Перетащи меня' })
-    const targetCol = page.locator('.column').filter({ hasText: 'Колонка Б' })
+    const card = page.getByTestId('card-widget').filter({ hasText: 'Перетащи меня' })
+    const targetCol = page.getByTestId('board-column').filter({ hasText: 'Колонка Б' })
 
     // Perform drag: use Playwright's built-in drag-to
     await card.dragTo(targetCol, { force: true })

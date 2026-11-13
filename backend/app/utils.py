@@ -22,3 +22,11 @@ def require_live_board(board, workspace_id: str, detail: str = "Board not found"
     ):
         raise HTTPException(404, detail)
     return board
+
+
+def require_unlocked_board(board, workspace_id: str, detail: str = "Board not found"):
+    """Ensure the board is live in the workspace and not locked for edits."""
+    live = require_live_board(board, workspace_id, detail)
+    if live.is_locked:
+        raise HTTPException(423, "Доска заблокирована для изменений")
+    return live

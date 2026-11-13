@@ -1,30 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useFacilitator } from '../../hooks/useFacilitator'
-import type { MutableRefObject } from 'react'
-import type { SendTimerRef } from '../../hooks/useTimer'
+import type { WsMessage } from '../../types'
 
 describe('useFacilitator', () => {
-  let sendTimerRef: MutableRefObject<SendTimerRef | null>
+  let sendWs: ReturnType<typeof vi.fn<(msg: WsMessage) => void>>
+  let resetTimer: ReturnType<typeof vi.fn<(duration: number) => void>>
 
   beforeEach(() => {
-    sendTimerRef = {
-      current: {
-        start: vi.fn(),
-        pause: vi.fn(),
-        reset: vi.fn(),
-      },
-    }
+    sendWs = vi.fn()
+    resetTimer = vi.fn()
   })
 
   it('returns initial state with null facilitator and phase', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
+    const { result } = renderHook(() => useFacilitator(sendWs, 300, resetTimer))
     expect(result.current.facilitator).toBeNull()
     expect(result.current.phase).toBeNull()
   })
 
   it('handleFacilitatorChanged sets facilitator and phase', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
+    const { result } = renderHook(() => useFacilitator(sendWs, 300, resetTimer))
 
     act(() => {
       result.current.handleFacilitatorChanged('Alice', 'brainstorm')
@@ -35,7 +30,7 @@ describe('useFacilitator', () => {
   })
 
   it('handlePhaseChanged updates phase', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
+    const { result } = renderHook(() => useFacilitator(sendWs, 300, resetTimer))
 
     act(() => {
       result.current.handleFacilitatorChanged('Alice', 'brainstorm')
@@ -49,146 +44,118 @@ describe('useFacilitator', () => {
     expect(result.current.facilitator).toBe('Alice')
   })
 
-  it('handleFacilitatorStart calls sendFacilitatorRef.start', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
-    const mockStart = vi.fn()
-    result.current.sendFacilitatorRef.current = { start: mockStart, stop: vi.fn(), changePhase: vi.fn() }
+  it('handleFacilitatorStart sends facilitator_start event', () => {
+    const { result } = renderHook(() => useFacilitator(sendWs, 300, resetTimer))
 
     act(() => {
       result.current.handleFacilitatorStart()
     })
 
-    expect(mockStart).toHaveBeenCalled()
+    expect(sendWs).toHaveBeenCalledWith({ event: 'facilitator_start', data: {} })
   })
 
-  it('handleFacilitatorStop calls sendFacilitatorRef.stop', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
-    const mockStop = vi.fn()
-    result.current.sendFacilitatorRef.current = { start: vi.fn(), stop: mockStop, changePhase: vi.fn() }
+  it('handleFacilitatorStop sends facilitator_stop with lock_board flag', () => {
+    const { result } = renderHook(() => useFacilitator(sendWs, 300, resetTimer))
 
     act(() => {
       result.current.handleFacilitatorStop()
     })
+    expect(sendWs).toHaveBeenCalledWith({
+      event: 'facilitator_stop',
+      data: { lock_board: false },
+    })
 
-    expect(mockStop).toHaveBeenCalled()
+    act(() => {
+      result.current.handleFacilitatorStop(true)
+    })
+    expect(sendWs).toHaveBeenCalledWith({
+      event: 'facilitator_stop',
+      data: { lock_board: true },
+    })
   })
 
-  it('handlePhaseChange calls sendFacilitatorRef.changePhase', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
-    const mockChangePhase = vi.fn()
-    result.current.sendFacilitatorRef.current = { start: vi.fn(), stop: vi.fn(), changePhase: mockChangePhase }
+  it('handlePhaseChange sends phase_change event', () => {
+    const { result } = renderHook(() => useFacilitator(sendWs, 300, resetTimer))
 
     act(() => {
       result.current.handlePhaseChange('discuss')
     })
 
-    expect(mockChangePhase).toHaveBeenCalledWith('discuss')
+    expect(sendWs).toHaveBeenCalledWith({
+      event: 'phase_change',
+      data: { phase: 'discuss' },
+    })
   })
 
-  it('handleNextPhase advances from brainstorm to reveal', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
-    const mockChangePhase = vi.fn()
-    result.current.sendFacilitatorRef.current = { start: vi.fn(), stop: vi.fn(), changePhase: mockChangePhase }
+  it('handleNextPhase advances from brainstorm to reveal and resets timer', () => {
+    const { result } = renderHook(() => useFacilitator(sendWs, 300, resetTimer))
 
     act(() => {
       result.current.handleFacilitatorChanged('Alice', 'brainstorm')
     })
-
     act(() => {
       result.current.handleNextPhase()
     })
 
-    expect(mockChangePhase).toHaveBeenCalledWith('reveal')
-    expect(sendTimerRef.current!.reset).toHaveBeenCalledWith(300)
+    expect(sendWs).toHaveBeenCalledWith({
+      event: 'phase_change',
+      data: { phase: 'reveal' },
+    })
+    expect(resetTimer).toHaveBeenCalledWith(300)
   })
 
-  it('handleNextPhase advances from reveal to discuss', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
-    const mockChangePhase = vi.fn()
-    result.current.sendFacilitatorRef.current = { start: vi.fn(), stop: vi.fn(), changePhase: mockChangePhase }
+  it('handleNextPhase advances across reveal -> discuss -> vote -> summary', () => {
+    const { result } = renderHook(() => useFacilitator(sendWs, 300, resetTimer))
 
-    act(() => {
-      result.current.handleFacilitatorChanged('Alice', 'reveal')
+    act(() => result.current.handleFacilitatorChanged('Alice', 'reveal'))
+    act(() => result.current.handleNextPhase())
+    expect(sendWs).toHaveBeenLastCalledWith({
+      event: 'phase_change',
+      data: { phase: 'discuss' },
     })
 
-    act(() => {
-      result.current.handleNextPhase()
+    act(() => result.current.handlePhaseChanged('discuss'))
+    act(() => result.current.handleNextPhase())
+    expect(sendWs).toHaveBeenLastCalledWith({
+      event: 'phase_change',
+      data: { phase: 'vote' },
     })
 
-    expect(mockChangePhase).toHaveBeenCalledWith('discuss')
+    act(() => result.current.handlePhaseChanged('vote'))
+    act(() => result.current.handleNextPhase())
+    expect(sendWs).toHaveBeenLastCalledWith({
+      event: 'phase_change',
+      data: { phase: 'summary' },
+    })
   })
 
-  it('handleNextPhase advances from discuss to vote', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
-    const mockChangePhase = vi.fn()
-    result.current.sendFacilitatorRef.current = { start: vi.fn(), stop: vi.fn(), changePhase: mockChangePhase }
+  it('handleNextPhase does nothing when phase is null or summary', () => {
+    const { result } = renderHook(() => useFacilitator(sendWs, 300, resetTimer))
 
-    act(() => {
-      result.current.handleFacilitatorChanged('Alice', 'discuss')
-    })
+    act(() => result.current.handleNextPhase())
+    expect(sendWs).not.toHaveBeenCalled()
 
-    act(() => {
-      result.current.handleNextPhase()
-    })
-
-    expect(mockChangePhase).toHaveBeenCalledWith('vote')
-  })
-
-  it('handleNextPhase advances from vote to summary', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
-    const mockChangePhase = vi.fn()
-    result.current.sendFacilitatorRef.current = { start: vi.fn(), stop: vi.fn(), changePhase: mockChangePhase }
-
-    act(() => {
-      result.current.handleFacilitatorChanged('Alice', 'vote')
-    })
-
-    act(() => {
-      result.current.handleNextPhase()
-    })
-
-    expect(mockChangePhase).toHaveBeenCalledWith('summary')
-  })
-
-  it('handleNextPhase does nothing when phase is null', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
-    const mockChangePhase = vi.fn()
-    result.current.sendFacilitatorRef.current = { start: vi.fn(), stop: vi.fn(), changePhase: mockChangePhase }
-
-    act(() => {
-      result.current.handleNextPhase()
-    })
-
-    expect(mockChangePhase).not.toHaveBeenCalled()
+    act(() => result.current.handleFacilitatorChanged('Alice', 'summary'))
+    act(() => result.current.handleNextPhase())
+    expect(sendWs).not.toHaveBeenCalled()
   })
 
   it('handleFacilitatorChanged clears facilitator on null', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 300))
+    const { result } = renderHook(() => useFacilitator(sendWs, 300, resetTimer))
 
-    act(() => {
-      result.current.handleFacilitatorChanged('Alice', 'brainstorm')
-    })
-
-    act(() => {
-      result.current.handleFacilitatorChanged(null, null)
-    })
+    act(() => result.current.handleFacilitatorChanged('Alice', 'brainstorm'))
+    act(() => result.current.handleFacilitatorChanged(null, null))
 
     expect(result.current.facilitator).toBeNull()
     expect(result.current.phase).toBeNull()
   })
 
   it('handleNextPhase resets timer with provided duration', () => {
-    const { result } = renderHook(() => useFacilitator(sendTimerRef, 600))
-    result.current.sendFacilitatorRef.current = { start: vi.fn(), stop: vi.fn(), changePhase: vi.fn() }
+    const { result } = renderHook(() => useFacilitator(sendWs, 600, resetTimer))
 
-    act(() => {
-      result.current.handleFacilitatorChanged('Alice', 'brainstorm')
-    })
+    act(() => result.current.handleFacilitatorChanged('Alice', 'brainstorm'))
+    act(() => result.current.handleNextPhase())
 
-    act(() => {
-      result.current.handleNextPhase()
-    })
-
-    expect(sendTimerRef.current!.reset).toHaveBeenCalledWith(600)
+    expect(resetTimer).toHaveBeenCalledWith(600)
   })
 })

@@ -30,7 +30,7 @@ test.describe('Action items — CRUD и статусы', () => {
     await page.getByTitle(/В работе → Выполнено/).click()
 
     // Should move to done section
-    await expect(page.locator('body')).toContainText('Выполненные')
+    await expect(page.locator('body')).toContainText('Завершённые')
   })
 
   test('удаление задачи', async ({ page, request }) => {
@@ -82,7 +82,7 @@ test.describe('Action items — CRUD и статусы', () => {
     await expect(page.locator('body')).toContainText('Алиса работает')
     await expect(page.locator('body')).toContainText('Боб работает')
 
-    await page.getByPlaceholder('Ответственный').fill('Алиса')
+    await page.getByPlaceholder('Поиск по задаче или имени...').fill('Алиса')
 
     await expect(page.locator('body')).toContainText('Алиса работает')
     await expect(page.locator('body')).not.toContainText('Боб работает')

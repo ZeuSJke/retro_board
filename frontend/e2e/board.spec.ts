@@ -48,11 +48,11 @@ test.describe('Доска — колонки и карточки', () => {
     const board = await createBoardViaAPI(request, 'E2E Доска', wsData.token)
     await openBoard(page, board.slug)
 
-    await page.getByText('Новая колонка').click()
+    await page.getByRole('button', { name: 'Колонка' }).click()
 
-    const input = page.getByPlaceholder('Например: Что прошло хорошо?')
+    const input = page.getByPlaceholder('Например: Благодарности')
     await input.fill('Хорошее')
-    await page.getByRole('button', { name: 'Создать' }).click()
+    await page.getByRole('button', { name: 'Добавить колонку' }).click()
 
     await expect(page.locator('body')).toContainText('Хорошее')
   })
@@ -73,9 +73,9 @@ test.describe('Доска — колонки и карточки', () => {
     await expect(addBtn).toBeEnabled({ timeout: 10000 })
     await addBtn.click()
 
-    const textarea = page.getByPlaceholder('Что думаете?')
+    const textarea = page.getByPlaceholder(/Опишите мысль/i)
     await textarea.fill('Отличный спринт!')
-    await page.getByRole('button', { name: 'Добавить', exact: true }).click()
+    await page.getByTestId('board-column').first().getByRole('button', { name: 'Добавить', exact: true }).click()
 
     await expect(page.locator('body')).toContainText('Отличный спринт!')
   })
@@ -100,10 +100,10 @@ test.describe('Доска — колонки и карточки', () => {
     await expect(page.locator('body')).toContainText('Карточка для лайка')
 
     // Find like button inside the card context and click
-    const card = page.locator('.card-widget').filter({ hasText: 'Карточка для лайка' })
-    const likeBtn = card.locator('button').filter({ hasText: 'thumb_up' }).first()
+    const card = page.getByTestId('card-widget').filter({ hasText: 'Карточка для лайка' })
+    const likeBtn = card.getByTitle('Лайк')
     await likeBtn.click()
-    await expect(page.getByTitle('Убрать лайк')).toBeVisible()
+    await expect(card.getByTitle('Убрать лайк')).toBeVisible()
   })
 
   test('удаление карточки', async ({ page, request }) => {
@@ -116,15 +116,17 @@ test.describe('Доска — колонки и карточки', () => {
     })
     const col = await colRes.json()
     await request.post('http://localhost:8000/api/cards/', {
-      data: { column_id: col.id, text: 'Удали меня' },
+      data: { column_id: col.id, text: 'Удали меня', author: 'E2E Тестер' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
 
     await openBoard(page, board.slug)
     await expect(page.locator('body')).toContainText('Удали меня')
 
-    await page.getByText('Удали меня').hover()
-    await page.getByTitle('Удалить карточку').click()
+    const card = page.getByTestId('card-widget').filter({ hasText: 'Удали меня' })
+    await card.hover()
+    await card.getByRole('button', { name: 'Действия с карточкой' }).click()
+    await page.getByRole('menuitem', { name: 'Удалить' }).click()
     await page.getByRole('button', { name: 'Удалить' }).click()
 
     await expect(page.locator('body')).not.toContainText('Удали меня')
@@ -143,8 +145,7 @@ test.describe('Доска — колонки и карточки', () => {
     await expect(page.locator('body')).toContainText('Ненужная колонка')
 
     // Find the specific column, then its delete button
-    const colHeader = page.getByText('Ненужная колонка')
-    const column = colHeader.locator('..').locator('..')
+    const column = page.getByTestId('board-column').filter({ hasText: 'Ненужная колонка' })
     await column.getByTitle('Удалить колонку').click()
 
     await page.getByRole('button', { name: 'Удалить' }).click()

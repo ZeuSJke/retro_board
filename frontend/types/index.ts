@@ -1,11 +1,59 @@
+export interface BoardMood {
+  id: string
+  board_id: string
+  author: string
+  score: number
+  note: string | null
+  created_at: string
+}
+
+export interface ColumnSeed {
+  title: string
+  color: string
+}
+
+export interface BoardTemplateInfo {
+  id: string
+  name: string
+  description: string
+  columns: ColumnSeed[]
+}
+
 export interface Board {
   id: string
   name: string
   slug: string | null
   max_votes: number
+  template?: string
+  is_locked?: boolean
+  hide_cards_until_reveal?: boolean
+  anonymous_votes?: boolean
+  active_facilitator?: string | null
+  active_phase?: string | null
+  active_session_id?: number | null
   created_at: string
-  has_summary: boolean
+  has_summary?: boolean
   columns: Column[]
+  moods?: BoardMood[]
+}
+
+export interface BoardCreatePayload {
+  name: string
+  max_votes?: number
+  template?: string
+  custom_columns?: ColumnSeed[]
+  source_board_id?: string | null
+  carry_forward_items?: boolean
+  hide_cards_until_reveal?: boolean
+  anonymous_votes?: boolean
+}
+
+export interface BoardUpdatePayload {
+  name?: string
+  max_votes?: number
+  is_locked?: boolean
+  hide_cards_until_reveal?: boolean
+  anonymous_votes?: boolean
 }
 
 export interface BoardListItem {
@@ -13,10 +61,15 @@ export interface BoardListItem {
   name: string
   slug: string | null
   max_votes: number
+  template?: string
+  is_locked?: boolean
   created_at: string
   action_items_total: number
   action_items_open: number
   has_summary: boolean
+  cards_count?: number
+  mood_avg?: number | null
+  mood_count?: number
 }
 
 export interface Column {
@@ -81,13 +134,36 @@ export interface TrendPoint {
   total: number
 }
 
+export interface MoodTrendPoint {
+  board_id: string
+  board_name: string
+  created_at: string
+  mood_avg: number | null
+  mood_count: number
+  cards_count: number
+  action_items_total: number
+  action_items_done: number
+}
+
+export interface WorkspaceInsights {
+  recurring_themes: string[]
+  recommendations: string[]
+  summary_text: string
+  boards_analyzed: number
+  generated_by_ai: boolean
+}
+
+export interface ReactionBubble {
+  id: string
+  emoji: string
+  username: string
+  xOffset: number
+}
+
 export interface WsMessage {
   event: string
   data: Record<string, unknown>
 }
-
-// ── Typed WS event payloads ────────────────────────────────────────────────
-// These cover the most common WS events for type-safe access in handlers.
 
 export interface WsCursorMoveData {
   username: string
@@ -168,6 +244,10 @@ export interface WsBoardUpdatedData {
   name?: string
   slug?: string
   max_votes?: number
+  template?: string
+  is_locked?: boolean
+  hide_cards_until_reveal?: boolean
+  anonymous_votes?: boolean
 }
 
 export interface TimerState {
@@ -191,7 +271,7 @@ export interface WorkspaceSession {
 export interface BoardSummary {
   id: string
   board_id: string
-  session_id: string | null
+  session_id: string | number | null
   summary_text: string
   key_themes: string[]
   recommendations: string[]
@@ -202,11 +282,13 @@ export interface AppStore {
   username: string
   currentBoardId: string | null
   theme: Theme
+  dotGrid: boolean
   workspace: WorkspaceSession | null
   _hasHydrated?: boolean
   setUsername: (name: string) => void
   setCurrentBoard: (id: string) => void
   setTheme: (theme: Theme) => void
+  setDotGrid: (enabled: boolean) => void
   setWorkspace: (ws: WorkspaceSession | null) => void
   setHasHydrated?: (hydrated: boolean) => void
 }

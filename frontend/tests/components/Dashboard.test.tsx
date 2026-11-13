@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import Dashboard from '../../components/Dashboard'
 
-// Mock next/navigation
 const mockPush = vi.fn()
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
 }))
 
-// Mock API
 const mockBoards = [
   {
     id: 'b1',
@@ -18,6 +17,10 @@ const mockBoards = [
     created_at: '2026-01-10T10:00:00Z',
     action_items_total: 3,
     action_items_open: 2,
+    has_summary: true,
+    cards_count: 8,
+    mood_avg: 4.2,
+    mood_count: 5,
   },
   {
     id: 'b2',
@@ -27,6 +30,10 @@ const mockBoards = [
     created_at: '2026-02-10T10:00:00Z',
     action_items_total: 1,
     action_items_open: 0,
+    has_summary: false,
+    cards_count: 4,
+    mood_avg: null,
+    mood_count: 0,
   },
 ]
 
@@ -38,6 +45,7 @@ const mockItems = [
     text: 'Fix CI pipeline description',
     assignee: 'Alice',
     status: 'open',
+    source_card_ids: [],
     completed_at: null,
     created_at: '2026-01-11T10:00:00Z',
     board_name: 'Sprint 1',
@@ -49,6 +57,7 @@ const mockItems = [
     text: 'Update documentation for API',
     assignee: 'Bob',
     status: 'done',
+    source_card_ids: [],
     completed_at: '2026-01-15T10:00:00Z',
     created_at: '2026-01-12T10:00:00Z',
     board_name: 'Sprint 1',
@@ -60,25 +69,33 @@ const mockItems = [
     text: 'Write unit tests for dashboard',
     assignee: null,
     status: 'in_progress',
+    source_card_ids: [],
     completed_at: null,
     created_at: '2026-02-11T10:00:00Z',
     board_name: 'Sprint 2',
   },
 ]
 
+const mockGetWorkspaceInsights = vi.fn(() =>
+  Promise.resolve({
+    recurring_themes: ['CI/CD', 'Документация'],
+    recommendations: ['Автоматизировать тесты'],
+    summary_text: 'Команда стабильно закрывает задачи.',
+    boards_analyzed: 2,
+    generated_by_ai: false,
+  }),
+)
+
 vi.mock('../../api', () => ({
   getBoards: vi.fn(() => Promise.resolve(mockBoards)),
   getAllActionItems: vi.fn(() => Promise.resolve(mockItems)),
-  updateActionItem: vi.fn((_id: string, data: Record<string, unknown>) => Promise.resolve({ ...mockItems[0], ...data })),
+  getActionItemTrends: vi.fn(() => Promise.resolve([])),
+  getMoodTrends: vi.fn(() => Promise.resolve([])),
+  getWorkspaceInsights: () => mockGetWorkspaceInsights(),
+  updateActionItem: vi.fn((_id: string, data: Record<string, unknown>) =>
+    Promise.resolve({ ...mockItems[0], ...data }),
+  ),
   deleteActionItem: vi.fn(() => Promise.resolve()),
-}))
-
-// Mock CSS modules
-vi.mock('../../components/Dashboard.module.css', () => ({
-  default: new Proxy({}, { get: (_, key) => key }),
-}))
-vi.mock('../../components/TrendChart.module.css', () => ({
-  default: new Proxy({}, { get: (_, key) => key }),
 }))
 
 describe('Dashboard', () => {
@@ -86,89 +103,89 @@ describe('Dashboard', () => {
     vi.clearAllMocks()
   })
 
-  it('renders sections after loading', async () => {
+  it('renders KPI header, AI insights card, and tabs after loading', async () => {
     render(<Dashboard />)
 
     await waitFor(() => {
-      expect(screen.getByText('История ретро')).toBeDefined()
+      expect(screen.getByText('Панель управления')).toBeInTheDocument()
     })
 
-    expect(screen.getByText('Прошлые ретро')).toBeDefined()
-    expect(screen.getByText('Все задачи')).toBeDefined()
+    expect(screen.getByText('Доски команды')).toBeInTheDocument()
+    expect(screen.getByText('Кросс-спринт AI-аналитика')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Action Items/i })).toBeInTheDocument()
   })
 
-  it('renders board cards', async () => {
+  it('switches to boards tab and navigates to board on click', async () => {
+    const user = userEvent.setup()
     render(<Dashboard />)
 
     await waitFor(() => {
-      expect(screen.getAllByText('Sprint 1').length).toBeGreaterThan(0)
+      expect(screen.getByRole('tab', { name: /Доски/i })).toBeInTheDocument()
     })
-    // Check board card names specifically by class
-    const boardCards = screen.getAllByText('Sprint 1').filter(
-      el => el.className === 'boardCardName'
-    )
-    expect(boardCards).toHaveLength(1)
-    expect(screen.getAllByText('Sprint 2').length).toBeGreaterThan(0)
-  })
 
-  it('renders action items', async () => {
-    render(<Dashboard />)
+    await user.click(screen.getByRole('tab', { name: /Доски/i }))
+    expect(screen.getByText('Sprint 2')).toBeInTheDocument()
 
-    await waitFor(() => {
-      expect(screen.getByText('Fix CI')).toBeDefined()
-    })
-    expect(screen.getByText('Fix CI pipeline description')).toBeDefined()
-    expect(screen.getByText('Add tests')).toBeDefined()
-
-    // Done items are collapsed by default
-    expect(screen.queryByText('Update documentation for API')).toBeNull()
-
-    // Expand done section
-    fireEvent.click(screen.getByText(/Выполненные/))
-    expect(screen.getByText('Update docs')).toBeDefined()
-    expect(screen.getByText('Update documentation for API')).toBeDefined()
-  })
-
-  it('navigates to board on click', async () => {
-    render(<Dashboard />)
-
-    await waitFor(() => {
-      expect(screen.getAllByText('Sprint 1').length).toBeGreaterThan(0)
-    })
-    // Click specifically on the board card name
-    const boardCard = screen.getAllByText('Sprint 1').find(
-      el => el.className === 'boardCardName'
-    )!
-    fireEvent.click(boardCard)
+    const openButtons = screen.getAllByRole('button', { name: /Открыть доску/i })
+    await user.click(openButtons[0])
     expect(mockPush).toHaveBeenCalledWith('/board/sprint-1')
   })
 
-  it('navigates home on back button click', async () => {
+  it('renders action items and expands completed section', async () => {
     render(<Dashboard />)
 
     await waitFor(() => {
-      expect(screen.getByText('История ретро')).toBeDefined()
+      expect(screen.getByText('Fix CI')).toBeInTheDocument()
     })
-    fireEvent.click(screen.getByTitle('Назад'))
+    expect(screen.getByText('Fix CI pipeline description')).toBeInTheDocument()
+    expect(screen.getByText('Add tests')).toBeInTheDocument()
+
+    expect(screen.queryByText('Update documentation for API')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByText(/Завершённые/))
+    expect(screen.getByText('Update docs')).toBeInTheDocument()
+    expect(screen.getByText('Update documentation for API')).toBeInTheDocument()
+  })
+
+  it('switches between list and kanban views', async () => {
+    const user = userEvent.setup()
+    render(<Dashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Fix CI')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /Канбан/i }))
+    expect(screen.getByText('Открыто')).toBeInTheDocument()
+    expect(screen.getByText('В работе')).toBeInTheDocument()
+    expect(screen.getByText('Выполнено')).toBeInTheDocument()
+    expect(screen.getByText('Update docs')).toBeInTheDocument()
+  })
+
+  it('fetches AI insights when clicking button', async () => {
+    const user = userEvent.setup()
+    render(<Dashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Собрать инсайты/i })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /Собрать инсайты/i }))
+    await waitFor(() => {
+      expect(mockGetWorkspaceInsights).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.getByText('Команда стабильно закрывает задачи.')).toBeInTheDocument()
+  })
+
+  it('navigates home on back button click', async () => {
+    const user = userEvent.setup()
+    render(<Dashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /К доске/i })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /К доске/i }))
     expect(mockPush).toHaveBeenCalledWith('/')
   })
-
-  it('filters items by status', async () => {
-    render(<Dashboard />)
-
-    await waitFor(() => {
-      expect(screen.getByText('Fix CI')).toBeDefined()
-    })
-
-    // Select "Выполнено" (done) — done items show in main list, no collapse
-    const statusSelect = screen.getAllByRole('combobox')[0]
-    fireEvent.change(statusSelect, { target: { value: 'done' } })
-
-    expect(screen.queryByText('Fix CI')).toBeNull()
-    expect(screen.getByText('Update docs')).toBeDefined()
-    expect(screen.queryByText('Add tests')).toBeNull()
-    // No collapsed section when filtering by specific status
-    expect(screen.queryByText(/Выполненные/)).toBeNull()
-  })
-
 })

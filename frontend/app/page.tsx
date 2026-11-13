@@ -2,8 +2,9 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { Loader2 } from 'lucide-react'
 import { useAppStore } from '../store'
-import { getBoards, createBoard } from '../api'
+import { createBoard, getBoards } from '../api'
 import { boardToBoardListItem } from '../utils/boardMapper'
 
 export default function HomePage() {
@@ -16,8 +17,6 @@ export default function HomePage() {
     if (!hasHydrated) return
     let cancelled = false
     ;(async () => {
-      // Without workspace token API calls will fail — redirect to board page
-      // so App.tsx can show WelcomeDialog
       if (!workspace) {
         router.replace(currentBoardId ? `/board/${currentBoardId}` : '/board/start')
         return
@@ -49,29 +48,9 @@ export default function HomePage() {
   }, [hasHydrated, router, workspace, currentBoardId])
 
   return (
-    <div style={centeredStyle}>
-      <div style={spinnerStyle} />
-      <p style={{ color: 'var(--md-on-surface-variant)', fontSize: 14 }}>
-        Загрузка...
-      </p>
+    <div className="flex h-screen flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
+      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <p className="text-sm">Загрузка рабочего пространства...</p>
     </div>
   )
-}
-
-const centeredStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  height: '100vh',
-  gap: 12,
-}
-
-const spinnerStyle: React.CSSProperties = {
-  width: 40,
-  height: 40,
-  borderRadius: '50%',
-  border: '3px solid var(--md-outline-variant)',
-  borderTopColor: 'var(--md-primary)',
-  animation: 'spin 0.8s linear infinite',
 }

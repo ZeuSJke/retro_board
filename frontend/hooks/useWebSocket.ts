@@ -19,6 +19,7 @@ export function useWebSocket(
   onOpenRef.current = onOpen
 
   const wsRef = useRef<WebSocket | null>(null)
+  const pendingQueueRef = useRef<WsMessage[]>([])
   const attemptsRef = useRef(0)
   const [connected, setConnected] = useState(false)
   // Токен воркспейса — в deps эффекта ниже: смена токена переподключает сокет
@@ -27,6 +28,12 @@ export function useWebSocket(
   const sendMessage = useCallback((msg: WsMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg))
+      return
+    }
+    // Не теряем пользовательские действия (старт ведущего, фаза, таймер, готово)
+    // пока сокет ещё подключается или переподключается
+    if (msg.event !== 'cursor_move' && msg.event !== 'cursor_leave') {
+      pendingQueueRef.current = [...pendingQueueRef.current.slice(-19), msg]
     }
   }, [])
 
@@ -45,7 +52,7 @@ export function useWebSocket(
     }
 
     const connect = () => {
-      if (cancelled) return
+      if (cancelled || typeof WebSocket === 'undefined') return
 
       // Закрыть старый сокет перед новым connect (смена токена/boardId),
       // подавив его onclose чтобы не планировать лишнее переподключение
@@ -66,6 +73,11 @@ export function useWebSocket(
         attemptsRef.current = 0
         setConnected(true)
         onOpenRef.current?.()
+        if (pendingQueueRef.current.length > 0 && ws.readyState === WebSocket.OPEN) {
+          const queued = pendingQueueRef.current
+          pendingQueueRef.current = []
+          queued.forEach((m) => ws.send(JSON.stringify(m)))
+        }
       }
 
       ws.onmessage = (e) => {
@@ -98,6 +110,7 @@ export function useWebSocket(
 
     return () => {
       cancelled = true
+      pendingQueueRef.current = []
       if (reconnectTimer) clearTimeout(reconnectTimer)
       clearInterval(ping)
       wsRef.current?.close()

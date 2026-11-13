@@ -146,12 +146,10 @@ export function exportBoardToPDF(board: Board, columns: Column[], actionItems: A
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RetroBoard — ${escHtml(board.name)}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Roboto', sans-serif; background: #F8F5FF; color: #1C1B1F; font-size: 13px; line-height: 1.5; }
-    .cover { background: linear-gradient(135deg, #6750A4 0%, #0061A4 100%); color: white; padding: 40px 48px 36px; }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F8F8FC; color: #111827; font-size: 13px; line-height: 1.5; }
+    .cover { background: linear-gradient(135deg, #4F46E5 0%, #0EA5E9 100%); color: white; padding: 40px 48px 36px; }
     .cover-eyebrow { font-size: 11px; font-weight: 500; letter-spacing: 2.5px; text-transform: uppercase; opacity: 0.75; margin-bottom: 10px; }
     .cover-name { font-size: 30px; font-weight: 700; margin-bottom: 16px; line-height: 1.25; }
     .cover-stats { display: flex; gap: 24px; flex-wrap: wrap; }
