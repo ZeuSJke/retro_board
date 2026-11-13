@@ -222,13 +222,76 @@ class BoardBase(BaseModel):
         return v
 
 
+class ColumnSeed(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
+    color: str = Field(default="#6750A4", pattern=_HEX_COLOR_RE.pattern)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str) -> str:
+        stripped = _strip_non_empty(v, "Название колонки") or ""
+        if _HTML_TAG_RE.search(stripped):
+            raise ValueError("Название колонки не должно содержать HTML-теги")
+        return stripped
+
+
+class BoardMoodCreate(BaseModel):
+    author: str = Field(..., min_length=1, max_length=60)
+    score: int = Field(..., ge=1, le=5)
+    note: Optional[str] = Field(default=None, max_length=200)
+
+    @field_validator("author")
+    @classmethod
+    def validate_author(cls, v: str) -> str:
+        return _strip_non_empty(v, "Имя автора") or ""
+
+    @field_validator("note")
+    @classmethod
+    def validate_note(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            return None
+        if _HTML_TAG_RE.search(stripped):
+            raise ValueError("Комментарий не должен содержать HTML-теги")
+        return stripped
+
+
+class BoardMoodOut(BaseModel):
+    id: str
+    board_id: str
+    author: str
+    score: int
+    note: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BoardTemplateInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    columns: list[ColumnSeed]
+
+
 class BoardCreate(BoardBase):
     max_votes: int = Field(default=5, ge=1, le=99)
+    template: str = Field(default="classic", max_length=40)
+    custom_columns: Optional[list[ColumnSeed]] = Field(default=None, max_length=10)
+    source_board_id: Optional[str] = Field(default=None, max_length=100)
+    carry_forward_items: bool = False
+    hide_cards_until_reveal: bool = False
+    anonymous_votes: bool = False
 
 
 class BoardUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     max_votes: Optional[int] = Field(default=None, ge=1, le=99)
+    is_locked: Optional[bool] = None
+    hide_cards_until_reveal: Optional[bool] = None
+    anonymous_votes: Optional[bool] = None
 
     @field_validator("name")
     @classmethod
@@ -247,9 +310,17 @@ class BoardOut(BoardBase):
     id: str
     slug: Optional[str] = None
     max_votes: int
+    template: str = "classic"
+    is_locked: bool = False
+    hide_cards_until_reveal: bool = False
+    anonymous_votes: bool = False
+    active_facilitator: Optional[str] = None
+    active_phase: Optional[str] = None
+    active_session_id: Optional[int] = None
     created_at: datetime
     workspace_id: Optional[str] = None
     columns: list[ColumnOut] = []
+    moods: list[BoardMoodOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -258,11 +329,16 @@ class BoardListItem(BoardBase):
     id: str
     slug: Optional[str] = None
     max_votes: int
+    template: str = "classic"
+    is_locked: bool = False
     created_at: datetime
     workspace_id: Optional[str] = None
     action_items_total: int = 0
     action_items_open: int = 0
     has_summary: bool = False
+    cards_count: int = 0
+    mood_avg: Optional[float] = None
+    mood_count: int = 0
     model_config = {"from_attributes": True}
 
 
@@ -400,3 +476,25 @@ class ClusterGroupInfo(BaseModel):
 class AutoClusterResult(BaseModel):
     created_groups: list[ClusterGroupInfo]
     ungrouped_card_ids: list[str]
+
+
+# ── Workspace Insights & Trends ─────────────────────────────────────────────
+
+
+class MoodTrendPoint(BaseModel):
+    board_id: str
+    board_name: str
+    created_at: datetime
+    mood_avg: Optional[float] = None
+    mood_count: int = 0
+    cards_count: int = 0
+    action_items_total: int = 0
+    action_items_done: int = 0
+
+
+class WorkspaceInsightsOut(BaseModel):
+    recurring_themes: list[str] = []
+    recommendations: list[str] = []
+    summary_text: str
+    boards_analyzed: int = 0
+    generated_by_ai: bool = False

@@ -1,20 +1,25 @@
 import asyncio
 import logging
 import uuid
+from datetime import datetime, UTC
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slugify import slugify
 from sqlalchemy import case, exists, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
-from datetime import datetime, UTC
 
+from app.ai.prompts.summary_generation import generate_summary
+from app.ai.prompts.workspace_insights import generate_workspace_insights
+from app.config import settings
 from app.database import get_db
 from app import models, schemas
-from app.utils import get_or_404, require_live_board
 from app.limiter import limiter
+from app.models import now_utc
+from app.routers.action_items import copy_unresolved_action_items
+from app.utils import get_or_404, require_live_board
 from app.workspace_auth import get_current_workspace
 from app.ws_manager import manager
-from app.ai.prompts.summary_generation import generate_summary
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +30,65 @@ DEFAULT_COLUMNS = [
     {"title": "😟 Что улучшить", "color": "#BA1A1A"},
     {"title": "💡 Идеи", "color": "#E8760A"},
 ]
+
+BOARD_TEMPLATES: list[dict] = [
+    {
+        "id": "classic",
+        "name": "Классическое ретро",
+        "description": "Три базовые колонки: что прошло хорошо, что улучшить и идеи",
+        "columns": DEFAULT_COLUMNS,
+    },
+    {
+        "id": "start_stop_continue",
+        "name": "Start / Stop / Continue",
+        "description": "Фокус на действиях: что начать, что прекратить и что продолжать",
+        "columns": [
+            {"title": "🚀 Start (Начать)", "color": "#006E1C"},
+            {"title": "🛑 Stop (Прекратить)", "color": "#BA1A1A"},
+            {"title": "🔁 Continue (Продолжать)", "color": "#6750A4"},
+        ],
+    },
+    {
+        "id": "4ls",
+        "name": "4Ls (Liked / Learned / Lacked / Longed for)",
+        "description": "Глубокий разбор эмоций, инсайтов и ожиданий команды",
+        "columns": [
+            {"title": "❤️ Liked (Понравилось)", "color": "#006E1C"},
+            {"title": "🎓 Learned (Узнали)", "color": "#00639B"},
+            {"title": "🔍 Lacked (Не хватило)", "color": "#E8760A"},
+            {"title": "✨ Longed for (Хочется)", "color": "#6750A4"},
+        ],
+    },
+    {
+        "id": "sailboat",
+        "name": "Парусник (Sailboat)",
+        "description": "Метафора пути команды: ветер, якоря, рифы и цель",
+        "columns": [
+            {"title": "💨 Ветер (Двигает вперёд)", "color": "#006E1C"},
+            {"title": "⚓ Якорь (Тормозит)", "color": "#E8760A"},
+            {"title": "🪨 Рифы (Риски)", "color": "#BA1A1A"},
+            {"title": "🏝️ Цель (Остров)", "color": "#6750A4"},
+        ],
+    },
+    {
+        "id": "mad_sad_glad",
+        "name": "Mad / Sad / Glad",
+        "description": "Эмоциональный срез спринта: что злит, грустит и радует",
+        "columns": [
+            {"title": "😠 Mad (Злит)", "color": "#BA1A1A"},
+            {"title": "😔 Sad (Грустно)", "color": "#00639B"},
+            {"title": "😄 Glad (Радует)", "color": "#006E1C"},
+        ],
+    },
+    {
+        "id": "empty",
+        "name": "Пустая доска",
+        "description": "Чистый холст — добавьте собственные колонки вручную",
+        "columns": [],
+    },
+]
+
+_TEMPLATE_MAP: dict[str, dict] = {tpl["id"]: tpl for tpl in BOARD_TEMPLATES}
 
 
 def _make_slug(name: str) -> str:
@@ -51,6 +115,184 @@ def _resolve_unique_slug(
             return candidate
         candidate = f"{base[:72]}-{uuid.uuid4().hex[:6]}"
     return f"board-{uuid.uuid4().hex[:10]}"
+
+
+def _board_card_counts(db: Session, board_ids: list[str]) -> dict[str, int]:
+    if not board_ids:
+        return {}
+    rows = (
+        db.query(models.Column.board_id, func.count(models.Card.id))
+        .join(models.Card, models.Card.column_id == models.Column.id)
+        .filter(models.Column.board_id.in_(board_ids))
+        .group_by(models.Column.board_id)
+        .all()
+    )
+    return {board_id: count for board_id, count in rows}
+
+
+def _board_mood_stats(db: Session, board_ids: list[str]) -> dict[str, tuple[float | None, int]]:
+    if not board_ids:
+        return {}
+    rows = (
+        db.query(
+            models.BoardMood.board_id,
+            func.avg(models.BoardMood.score),
+            func.count(models.BoardMood.id),
+        )
+        .filter(models.BoardMood.board_id.in_(board_ids))
+        .group_by(models.BoardMood.board_id)
+        .all()
+    )
+    return {
+        board_id: (round(float(avg_val), 2) if avg_val is not None else None, cnt)
+        for board_id, avg_val, cnt in rows
+    }
+
+
+def _find_live_board(
+    db: Session, board_id_or_slug: str, workspace_id: str
+) -> models.Board:
+    board = (
+        db.query(models.Board)
+        .filter(
+            or_(
+                models.Board.id == board_id_or_slug,
+                models.Board.slug == board_id_or_slug,
+            ),
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    require_live_board(board, workspace_id)
+    assert board is not None
+    return board
+
+
+@router.get("/templates", response_model=list[schemas.BoardTemplateInfo])
+@limiter.limit("100/minute")
+def list_templates(
+    request: Request,
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Список доступных шаблонов ретроспективы."""
+    return [
+        schemas.BoardTemplateInfo(
+            id=tpl["id"],
+            name=tpl["name"],
+            description=tpl["description"],
+            columns=[schemas.ColumnSeed(**col) for col in tpl["columns"]],
+        )
+        for tpl in BOARD_TEMPLATES
+    ]
+
+
+@router.get("/mood-trends", response_model=list[schemas.MoodTrendPoint])
+@limiter.limit("30/minute")
+def get_mood_trends(
+    request: Request,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Динамика настроения, карточек и выполнения задач по всем доскам команды."""
+    boards = (
+        db.query(models.Board)
+        .filter(
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace.id,
+        )
+        .order_by(models.Board.created_at)
+        .all()
+    )
+    board_ids = [b.id for b in boards]
+    card_counts = _board_card_counts(db, board_ids)
+    mood_stats = _board_mood_stats(db, board_ids)
+
+    action_stats: dict[str, tuple[int, int]] = {}
+    if board_ids:
+        action_rows = (
+            db.query(
+                models.ActionItem.board_id,
+                func.count(models.ActionItem.id),
+                func.count(case((models.ActionItem.status == "done", 1))),
+            )
+            .filter(models.ActionItem.board_id.in_(board_ids))
+            .group_by(models.ActionItem.board_id)
+            .all()
+        )
+        action_stats = {bid: (total, done) for bid, total, done in action_rows}
+
+    points: list[schemas.MoodTrendPoint] = []
+    for board in boards:
+        mood_avg, mood_count = mood_stats.get(board.id, (None, 0))
+        ai_total, ai_done = action_stats.get(board.id, (0, 0))
+        points.append(
+            schemas.MoodTrendPoint(
+                board_id=board.id,
+                board_name=board.name,
+                created_at=board.created_at,
+                mood_avg=mood_avg,
+                mood_count=mood_count,
+                cards_count=card_counts.get(board.id, 0),
+                action_items_total=ai_total,
+                action_items_done=ai_done,
+            )
+        )
+    return points
+
+
+@router.post("/workspace-insights", response_model=schemas.WorkspaceInsightsOut)
+@limiter.limit("15/minute")
+async def get_workspace_insights(
+    request: Request,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Кросс-спринт анализ последних ретроспектив команды."""
+    boards = (
+        db.query(models.Board)
+        .options(
+            selectinload(models.Board.columns).selectinload(models.Column.cards),
+            selectinload(models.Board.action_items),
+            selectinload(models.Board.summaries),
+            selectinload(models.Board.moods),
+        )
+        .filter(
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace.id,
+        )
+        .order_by(models.Board.created_at.desc())
+        .limit(8)
+        .all()
+    )
+
+    snapshot: list[dict] = []
+    for board in reversed(boards):
+        all_cards = [c for col in board.columns for c in col.cards]
+        top_cards = sorted(
+            all_cards, key=lambda c: len(c.likes or []), reverse=True
+        )[:5]
+        open_count = sum(1 for item in board.action_items if item.status != "done")
+        done_count = sum(1 for item in board.action_items if item.status == "done")
+        mood_scores = [m.score for m in board.moods]
+        mood_avg = (
+            round(sum(mood_scores) / len(mood_scores), 2) if mood_scores else None
+        )
+        latest_summary = board.summaries[0] if board.summaries else None
+        snapshot.append(
+            {
+                "name": board.name,
+                "mood_avg": mood_avg,
+                "cards_count": len(all_cards),
+                "action_items_open": open_count,
+                "action_items_done": done_count,
+                "summary_themes": latest_summary.key_themes if latest_summary else [],
+                "top_cards": [c.text for c in top_cards],
+            }
+        )
+
+    result = await asyncio.to_thread(generate_workspace_insights, snapshot)
+    return schemas.WorkspaceInsightsOut(**result)
 
 
 @router.get("/", response_model=list[schemas.BoardListItem])
@@ -91,12 +333,20 @@ def list_boards(
         .order_by(models.Board.created_at.desc())
         .all()
     )
+    board_ids = [board.id for board, _, _, _ in rows]
+    card_counts = _board_card_counts(db, board_ids)
+    mood_stats = _board_mood_stats(db, board_ids)
+
     result = []
     for board, total, open_count, has_summary in rows:
         item = schemas.BoardListItem.model_validate(board)
         item.action_items_total = total
         item.action_items_open = open_count
         item.has_summary = bool(has_summary)
+        item.cards_count = card_counts.get(board.id, 0)
+        mood_avg, mood_count = mood_stats.get(board.id, (None, 0))
+        item.mood_avg = mood_avg
+        item.mood_count = mood_count
         result.append(item)
     return result
 
@@ -120,6 +370,39 @@ async def create_board(
     )
     if existing:
         raise HTTPException(409, "Измени название, такая доска уже есть")
+
+    src_board: models.Board | None = None
+    if body.source_board_id:
+        src_board = (
+            db.query(models.Board)
+            .options(selectinload(models.Board.columns))
+            .filter(
+                models.Board.id == body.source_board_id,
+                models.Board.deleted_at.is_(None),
+                models.Board.workspace_id == workspace.id,
+            )
+            .first()
+        )
+        if not src_board:
+            raise HTTPException(404, "Исходная доска не найдена")
+
+    if body.template == "copy":
+        if src_board is None:
+            raise HTTPException(400, "Укажите исходную доску для копирования")
+        columns_spec = [
+            {"title": col.title, "color": col.color}
+            for col in sorted(src_board.columns, key=lambda c: c.position)
+        ]
+    elif body.template == "custom":
+        columns_spec = [
+            {"title": col.title, "color": col.color}
+            for col in (body.custom_columns or [])
+        ]
+    elif body.template in _TEMPLATE_MAP:
+        columns_spec = _TEMPLATE_MAP[body.template]["columns"]
+    else:
+        raise HTTPException(400, f"Неизвестный шаблон доски: {body.template}")
+
     slug = _resolve_unique_slug(db, body.name, workspace.id)
     uid = str(uuid.uuid4())
     board = models.Board(
@@ -127,6 +410,9 @@ async def create_board(
         name=body.name,
         slug=slug,
         max_votes=body.max_votes,
+        template=body.template,
+        hide_cards_until_reveal=body.hide_cards_until_reveal,
+        anonymous_votes=body.anonymous_votes,
         workspace_id=workspace.id,
     )
     db.add(board)
@@ -135,7 +421,8 @@ async def create_board(
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Измени название, такая доска уже есть")
-    for i, col in enumerate(DEFAULT_COLUMNS):
+
+    for i, col in enumerate(columns_spec):
         db.add(
             models.Column(
                 id=str(uuid.uuid4()),
@@ -145,9 +432,31 @@ async def create_board(
                 position=i,
             )
         )
+
+    carried_count = 0
+    if body.carry_forward_items:
+        carry_src_id = src_board.id if src_board else None
+        if carry_src_id is None:
+            prev_board = (
+                db.query(models.Board.id)
+                .filter(
+                    models.Board.workspace_id == workspace.id,
+                    models.Board.deleted_at.is_(None),
+                    models.Board.id != board.id,
+                )
+                .order_by(models.Board.created_at.desc())
+                .first()
+            )
+            carry_src_id = prev_board[0] if prev_board else None
+        if carry_src_id:
+            carried = copy_unresolved_action_items(db, carry_src_id, board.id)
+            carried_count = len(carried)
+
     db.commit()
-    db.refresh(board)
+    board = _board_query(db).filter(models.Board.id == board.id).first() or board
     list_item = schemas.BoardListItem.model_validate(board)
+    list_item.action_items_total = carried_count
+    list_item.action_items_open = carried_count
     await manager.broadcast_workspace(
         workspace.id,
         "board_created",
@@ -157,10 +466,11 @@ async def create_board(
 
 
 def _board_query(db: Session):
-    """Board query with eager-loaded columns → cards + groups (avoids N+1)."""
+    """Board query with eager-loaded columns → cards + groups + moods (avoids N+1)."""
     return db.query(models.Board).options(
         selectinload(models.Board.columns).selectinload(models.Column.cards),
         selectinload(models.Board.columns).selectinload(models.Column.groups),
+        selectinload(models.Board.moods),
     )
 
 
@@ -238,23 +548,31 @@ async def update_board(
         )
     if body.max_votes is not None:
         board.max_votes = body.max_votes
+    if body.is_locked is not None:
+        board.is_locked = body.is_locked
+    if body.hide_cards_until_reveal is not None:
+        board.hide_cards_until_reveal = body.hide_cards_until_reveal
+    if body.anonymous_votes is not None:
+        board.anonymous_votes = body.anonymous_votes
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Измени название, такая доска уже есть")
-    db.refresh(board)
-    await manager.broadcast_workspace(
-        workspace.id,
-        "board_updated",
-        {
-            "id": board.id,
-            "name": board.name,
-            "slug": board.slug,
-            "max_votes": board.max_votes,
-            "workspace_id": board.workspace_id,
-        },
-    )
+    board = _board_query(db).filter(models.Board.id == board.id).first() or board
+    payload = {
+        "id": board.id,
+        "name": board.name,
+        "slug": board.slug,
+        "max_votes": board.max_votes,
+        "template": board.template,
+        "is_locked": board.is_locked,
+        "hide_cards_until_reveal": board.hide_cards_until_reveal,
+        "anonymous_votes": board.anonymous_votes,
+        "workspace_id": board.workspace_id,
+    }
+    await manager.broadcast_workspace(workspace.id, "board_updated", payload)
+    await manager.broadcast(board.id, "board_updated", payload)
     return board
 
 
@@ -443,6 +761,45 @@ def _generate_summary_internal(
         db.close()
 
 
+@router.post("/{board_id}/mood", response_model=schemas.BoardMoodOut)
+@limiter.limit("60/minute")
+async def upsert_mood(
+    request: Request,
+    board_id: str,
+    body: schemas.BoardMoodCreate,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Сохранить или обновить оценку настроения участника для доски."""
+    board = _find_live_board(db, board_id, workspace.id)
+    mood = (
+        db.query(models.BoardMood)
+        .filter(
+            models.BoardMood.board_id == board.id,
+            models.BoardMood.author == body.author,
+        )
+        .first()
+    )
+    if mood:
+        mood.score = body.score
+        mood.note = body.note
+        mood.created_at = now_utc()
+    else:
+        mood = models.BoardMood(
+            id=str(uuid.uuid4()),
+            board_id=board.id,
+            author=body.author,
+            score=body.score,
+            note=body.note,
+        )
+        db.add(mood)
+    db.commit()
+    db.refresh(mood)
+    out = schemas.BoardMoodOut.model_validate(mood)
+    await manager.broadcast(board.id, "mood_updated", out.model_dump(mode="json"))
+    return out
+
+
 @router.get("/{board_id}/summary", response_model=schemas.BoardSummaryOut)
 @limiter.limit("30/minute")
 async def get_summary(
@@ -455,16 +812,7 @@ async def get_summary(
 
     Returns the most recent summary for the current or last session.
     """
-    board = (
-        db.query(models.Board)
-        .filter(
-            or_(models.Board.id == board_id, models.Board.slug == board_id),
-            models.Board.deleted_at.is_(None),
-            models.Board.workspace_id == workspace.id,
-        )
-        .first()
-    )
-    require_live_board(board, workspace.id)
+    board = _find_live_board(db, board_id, workspace.id)
 
     # Get current session_id if active
     session_id = manager.get_session_id(board.id)
@@ -492,10 +840,65 @@ async def get_summary(
     return summary
 
 
-# NOTE: POST /{board_id}/summary/generate removed
-# Generation happens automatically when facilitator transitions to 'summary' phase
-# via WebSocket phase_change event. Manual generation via HTTP is not supported.
-#
-# Security: The facilitator check is done in websocket.py when handling
-# phase_change event - only the actual facilitator can trigger the phase change.
-# Full user_id based authorization requires adding User model to the system.
+@router.post("/{board_id}/summary/regenerate", response_model=schemas.BoardSummaryOut)
+@limiter.limit("10/minute")
+async def regenerate_summary(
+    request: Request,
+    board_id: str,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Принудительно перегенерировать AI-резюме для доски."""
+    board = _find_live_board(db, board_id, workspace.id)
+    if not settings.ai_configured:
+        raise HTTPException(503, "AI сервис не настроен")
+
+    board_data = _get_board_full_data(db, board.id, workspace.id)
+    if not board_data:
+        raise HTTPException(404, "Board not found")
+
+    try:
+        ai_result = await asyncio.to_thread(generate_summary, board_data)
+    except Exception as exc:
+        logger.exception("Manual summary regeneration failed for board %s: %s", board.id, exc)
+        raise HTTPException(502, "Не удалось сгенерировать AI-резюме") from exc
+
+    session_id = (
+        manager.get_session_id(board.id)
+        or board.active_session_id
+        or int(datetime.now(UTC).timestamp())
+    )
+
+    summary = (
+        db.query(models.BoardSummary)
+        .filter(
+            models.BoardSummary.board_id == board.id,
+            models.BoardSummary.session_id == session_id,
+        )
+        .first()
+    )
+    if summary:
+        summary.summary_text = ai_result.get("summary_text", "")
+        summary.key_themes = ai_result.get("key_themes", [])
+        summary.recommendations = ai_result.get("recommendations", [])
+        summary.created_at = now_utc()
+    else:
+        summary = models.BoardSummary(
+            id=str(uuid.uuid4()),
+            board_id=board.id,
+            session_id=session_id,
+            summary_text=ai_result.get("summary_text", ""),
+            key_themes=ai_result.get("key_themes", []),
+            recommendations=ai_result.get("recommendations", []),
+        )
+        db.add(summary)
+
+    db.commit()
+    db.refresh(summary)
+    out = schemas.BoardSummaryOut.model_validate(summary)
+    await manager.broadcast(
+        board.id,
+        "summary_generated",
+        {"summary": out.model_dump(mode="json"), "board_id": board.id},
+    )
+    return out

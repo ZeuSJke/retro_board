@@ -1,124 +1,185 @@
-:root {
-    --md-primary: #6750a4;
-    --md-on-primary: #ffffff;
-    --md-primary-container: #eaddff;
-    --md-on-primary-container: #21005d;
-    --md-secondary: #625b71;
-    --md-secondary-container: #e8def8;
-    --md-on-secondary-container: #1d192b;
-    --md-surface: #fef7ff;
-    --md-surface-container: #f3edf7;
-    --md-surface-variant: #e7e0ec;
-    --md-on-surface: #1c1b1f;
-    --md-on-surface-variant: #49454f;
-    --md-outline: #79747e;
-    --md-outline-variant: #cac4d0;
-    --md-background: #fef7ff;
-    --md-error: #b3261e;
-    --md-error-container: #f9dedc;
-    --md-surface-1: color-mix(in srgb, var(--md-primary) 5%, var(--md-surface));
-    --md-surface-2: color-mix(in srgb, var(--md-primary) 8%, var(--md-surface));
-    --transition: 0.2s cubic-bezier(0.2, 0, 0, 1);
-    --elevation-1:
-        0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px 1px rgba(0, 0, 0, 0.15);
-    --elevation-2:
-        0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 6px 2px rgba(0, 0, 0, 0.15);
-    --elevation-3:
-        0 4px 8px 3px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.3);
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+    --background: 240 20% 99%;
+    --foreground: 240 10% 8%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 8%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 8%;
+
+    --primary: 243 75% 59%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 10% 95%;
+    --secondary-foreground: 240 10% 14%;
+
+    --muted: 240 10% 95%;
+    --muted-foreground: 240 6% 44%;
+
+    --accent: 243 60% 96%;
+    --accent-foreground: 243 75% 42%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 10% 89%;
+    --input: 240 10% 87%;
+    --ring: 243 75% 59%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 240 16% 7%;
+    --foreground: 240 10% 96%;
+
+    --card: 240 15% 11%;
+    --card-foreground: 240 10% 96%;
+
+    --popover: 240 15% 10%;
+    --popover-foreground: 240 10% 96%;
+
+    --primary: 243 85% 68%;
+    --primary-foreground: 240 16% 7%;
+
+    --secondary: 240 14% 16%;
+    --secondary-foreground: 240 10% 92%;
+
+    --muted: 240 14% 15%;
+    --muted-foreground: 240 8% 64%;
+
+    --accent: 243 35% 20%;
+    --accent-foreground: 243 85% 84%;
+
+    --destructive: 0 68% 58%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 13% 20%;
+    --input: 240 13% 22%;
+    --ring: 243 85% 68%;
+  }
+
+  /* Акцентные палитры (Light) */
+  :root[data-accent='indigo'] {
+    --primary: 226 70% 55%;
+    --ring: 226 70% 55%;
+    --accent: 226 60% 95%;
+    --accent-foreground: 226 70% 40%;
+  }
+  :root[data-accent='emerald'] {
+    --primary: 152 69% 35%;
+    --ring: 152 69% 35%;
+    --accent: 152 55% 94%;
+    --accent-foreground: 152 69% 25%;
+  }
+  :root[data-accent='amber'] {
+    --primary: 32 95% 44%;
+    --ring: 32 95% 44%;
+    --accent: 36 85% 94%;
+    --accent-foreground: 28 90% 30%;
+  }
+  :root[data-accent='rose'] {
+    --primary: 346 77% 50%;
+    --ring: 346 77% 50%;
+    --accent: 346 70% 95%;
+    --accent-foreground: 346 77% 36%;
+  }
+  :root[data-accent='sky'] {
+    --primary: 199 89% 42%;
+    --ring: 199 89% 42%;
+    --accent: 199 80% 94%;
+    --accent-foreground: 199 89% 28%;
+  }
+
+  /* Акцентные палитры (Dark) */
+  .dark[data-accent='indigo'] {
+    --primary: 226 85% 68%;
+    --ring: 226 85% 68%;
+    --accent: 226 35% 20%;
+    --accent-foreground: 226 85% 85%;
+  }
+  .dark[data-accent='emerald'] {
+    --primary: 152 65% 52%;
+    --ring: 152 65% 52%;
+    --accent: 152 30% 18%;
+    --accent-foreground: 152 65% 80%;
+  }
+  .dark[data-accent='amber'] {
+    --primary: 38 92% 60%;
+    --ring: 38 92% 60%;
+    --accent: 36 35% 19%;
+    --accent-foreground: 38 92% 82%;
+  }
+  .dark[data-accent='rose'] {
+    --primary: 346 82% 66%;
+    --ring: 346 82% 66%;
+    --accent: 346 35% 20%;
+    --accent-foreground: 346 82% 85%;
+  }
+  .dark[data-accent='sky'] {
+    --primary: 199 85% 58%;
+    --ring: 199 85% 58%;
+    --accent: 199 35% 19%;
+    --accent-foreground: 199 85% 84%;
+  }
 }
 
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-}
+@layer base {
+  * {
+    @apply border-border;
+  }
 
-body {
-    font-family: "Roboto", sans-serif;
-    background: var(--md-background);
-    color: var(--md-on-surface);
-    min-height: 100vh;
+  html,
+  body {
+    height: 100%;
     overflow-x: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
 }
 
+.bg-dot-grid {
+  background-image: radial-gradient(hsl(var(--foreground) / 0.11) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.dark .bg-dot-grid {
+  background-image: radial-gradient(hsl(var(--foreground) / 0.13) 1px, transparent 1px);
+}
+
+/* Тонкие аккуратные скроллбары */
 ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+  width: 7px;
+  height: 7px;
 }
+
 ::-webkit-scrollbar-track {
-    background: transparent;
+  background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
-    background: var(--md-outline-variant);
-    border-radius: 3px;
+  background: hsl(var(--foreground) / 0.15);
+  border-radius: 9999px;
 }
 
-.material-symbols-rounded {
-    font-family: "Material Symbols Rounded";
-    font-weight: normal;
-    font-style: normal;
-    font-size: 20px;
-    line-height: 1;
-    letter-spacing: normal;
-    text-transform: none;
-    display: inline-block;
-    white-space: nowrap;
-    direction: ltr;
-    font-variation-settings:
-        "FILL" 0,
-        "wght" 400,
-        "GRAD" 0,
-        "opsz" 20;
-    user-select: none;
-}
-.material-symbols-rounded.filled {
-    font-variation-settings:
-        "FILL" 1,
-        "wght" 400,
-        "GRAD" 0,
-        "opsz" 20;
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--foreground) / 0.28);
 }
 
-/* Card hover actions */
-.card-widget:hover {
-    box-shadow: var(--elevation-2) !important;
-}
-
-/* Column delete button */
-.col-del-btn {
-    opacity: 0;
-    transition: var(--transition);
-}
-.column:hover .col-del-btn {
-    opacity: 1;
-}
-
-/* Board list item */
-.board-item:hover {
-    background: var(--md-surface-variant) !important;
-}
-
-/* Spinner animation */
-@keyframes spin {
-    to {
-        transform: rotate(360deg);
-    }
-}
-
-@keyframes fadeInUp {
-    from {
-        opacity: 0;
-        transform: translateX(-50%) translateY(12px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(-50%) translateY(0);
-    }
-}
-
-/* Input/textarea focus */
-input:focus,
-textarea:focus {
-    border-color: var(--md-primary) !important;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-primary) 20%, transparent);
+@media print {
+  .no-print {
+    display: none !important;
+  }
 }

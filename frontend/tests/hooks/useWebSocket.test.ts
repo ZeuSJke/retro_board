@@ -146,4 +146,30 @@ describe('useWebSocket', () => {
     })
     expect(onMessage).toHaveBeenCalledWith({ event: 'ok', data: {} })
   })
+
+  it('queues non-cursor actions sent while connecting and flushes on open after onOpen', () => {
+    const order: string[] = []
+    const onOpen = vi.fn(() => {
+      order.push('identify')
+    })
+    const { result, ws } = setup('board-1', vi.fn(), onOpen)
+
+    act(() => {
+      result.current.sendMessage({ event: 'cursor_move', data: { x: 1, y: 2 } })
+      result.current.sendMessage({ event: 'facilitator_start', data: {} })
+    })
+    expect(ws.send).not.toHaveBeenCalled()
+
+    ws.readyState = MockWebSocket.OPEN
+    ws.send.mockImplementation((raw: string) => {
+      order.push(JSON.parse(raw).event)
+    })
+    act(() => {
+      ws.onopen?.({})
+    })
+
+    expect(order).toEqual(['identify', 'facilitator_start'])
+    expect(ws.send).toHaveBeenCalledTimes(1)
+    expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ event: 'facilitator_start', data: {} }))
+  })
 })

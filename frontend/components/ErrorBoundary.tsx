@@ -1,6 +1,8 @@
 'use client'
 
 import React from 'react'
+import { AlertTriangle, RotateCcw } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 interface State {
   hasError: boolean
@@ -19,41 +21,20 @@ export default class ErrorBoundary extends React.Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100vh',
-            gap: 16,
-            fontFamily: 'Roboto, sans-serif',
-          }}
-        >
-          <span
-            className="material-symbols-rounded"
-            style={{ fontSize: 48, color: 'var(--md-error, #BA1A1A)' }}
-          >
-            error
-          </span>
-          <p style={{ fontSize: 16, color: 'var(--md-on-surface, #1C1B1F)' }}>
-            Произошла ошибка. Попробуйте обновить страницу.
-          </p>
-          <button
-            onClick={() => window.location.reload()}
-            style={{
-              padding: '10px 24px',
-              borderRadius: 20,
-              border: 'none',
-              background: 'var(--md-primary, #6750A4)',
-              color: 'var(--md-on-primary, #FFFFFF)',
-              fontSize: 14,
-              fontWeight: 500,
-              cursor: 'pointer',
-            }}
-          >
+        <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+            <AlertTriangle className="h-7 w-7" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-foreground">Что-то пошло не так</h2>
+            <p className="text-sm text-muted-foreground">
+              Произошла непредвиденная ошибка интерфейса. Попробуйте обновить страницу.
+            </p>
+          </div>
+          <Button onClick={() => window.location.reload()}>
+            <RotateCcw className="h-4 w-4" />
             Обновить страницу
-          </button>
+          </Button>
         </div>
       )
     }

@@ -20,6 +20,8 @@ WS_RATE_WINDOW = 1.0  # seconds
 
 VALID_PHASES = ("brainstorm", "reveal", "discuss", "vote", "summary")
 
+ALLOWED_REACTIONS = frozenset({"❤️", "👍", "🔥", "🎉", "💡", "👏", "😂"})
+
 KNOWN_EVENTS = frozenset(
     {
         "identify",
@@ -33,8 +35,74 @@ KNOWN_EVENTS = frozenset(
         "facilitator_stop",
         "phase_change",
         "summary_generated",
+        "ready_toggle",
+        "spotlight_card",
+        "reaction",
     }
 )
+
+
+def _open_ws_db(websocket: WebSocket):
+    app = getattr(websocket, "app", None)
+    overrides = getattr(app, "dependency_overrides", {}) or {}
+    db_dep = overrides.get(get_db, get_db)
+    return db_dep()
+
+
+def _sync_board_session_db(
+    websocket: WebSocket | None,
+    board_id: str,
+    workspace_id: str | None,
+    facilitator: str | None,
+    phase: str | None,
+    session_id: int | None,
+    lock_board: bool = False,
+) -> dict | None:
+    """Persist active session state on Board row (best-effort for unit tests without DB rows)."""
+    db_gen = _open_ws_db(websocket) if websocket is not None else get_db()
+    try:
+        db = next(db_gen)
+        board = db.get(models.Board, board_id)
+        if (
+            not board
+            or board.deleted_at is not None
+            or (workspace_id is not None and board.workspace_id != workspace_id)
+        ):
+            return None
+        board.active_facilitator = facilitator
+        board.active_phase = phase
+        board.active_session_id = session_id
+        if lock_board:
+            board.is_locked = True
+        db.commit()
+        if lock_board:
+            return {
+                "id": board.id,
+                "name": board.name,
+                "slug": board.slug,
+                "max_votes": board.max_votes,
+                "template": board.template,
+                "is_locked": board.is_locked,
+                "hide_cards_until_reveal": board.hide_cards_until_reveal,
+                "anonymous_votes": board.anonymous_votes,
+                "workspace_id": board.workspace_id,
+            }
+        return None
+    except Exception:
+        logger.debug("Skipping DB session sync for board %s", board_id, exc_info=True)
+        return None
+    finally:
+        try:
+            next(db_gen)
+        except StopIteration:
+            pass
+
+
+def _clear_board_session_on_grace(board_id: str) -> None:
+    _sync_board_session_db(None, board_id, None, None, None, None, lock_board=False)
+
+
+manager.on_session_cleared = _clear_board_session_on_grace
 
 MAX_USERNAME_LENGTH = 100
 MAX_COORD_VALUE = 10000
@@ -143,13 +211,17 @@ async def websocket_endpoint(
     if not workspace_id:
         return
 
-    db_gen = get_db()
+    db_gen = _open_ws_db(websocket)
     try:
         db = next(db_gen)
-        # Skip DB guard only under SQLite unit tests (in-memory sqlite3 isn't thread-safe across WS threads)
+        # Skip DB guard only under SQLite unit tests (tests often connect to synthetic board IDs)
         dialect_name = getattr(getattr(getattr(db, "bind", None), "dialect", None), "name", None)
-        if dialect_name != "sqlite":
+        board = None
+        try:
             board = db.get(models.Board, board_id)
+        except Exception:
+            board = None
+        if dialect_name != "sqlite":
             if (
                 not board
                 or board.workspace_id != workspace_id
@@ -157,6 +229,19 @@ async def websocket_endpoint(
             ):
                 await websocket.close(code=1008, reason="Board not found")
                 return
+        if (
+            board is not None
+            and board.deleted_at is None
+            and board.workspace_id == workspace_id
+            and manager.get_facilitator(board_id) is None
+            and board.active_facilitator
+        ):
+            manager.hydrate_session(
+                board_id,
+                board.active_facilitator,
+                board.active_phase,
+                board.active_session_id,
+            )
     except Exception:
         await websocket.close(code=1011, reason="Server error")
         return
@@ -185,6 +270,26 @@ async def websocket_endpoint(
                 }
             )
         )
+        ready_users = manager.get_ready_users(board_id)
+        if ready_users:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "event": "ready_update",
+                        "data": {"ready_users": ready_users},
+                    }
+                )
+            )
+        spotlight_id = manager.get_spotlight(board_id)
+        if spotlight_id:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "event": "spotlight_update",
+                        "data": {"card_id": spotlight_id},
+                    }
+                )
+            )
         # Send current timer state to new client
         timer = manager.get_timer(board_id)
         if timer:
@@ -265,6 +370,14 @@ async def websocket_endpoint(
                         name_changed = bool(prev_uname and prev_uname != uname)
                         if name_changed and manager.get_facilitator(board_id) == prev_uname:
                             manager.facilitators[board_id] = uname
+                            _sync_board_session_db(
+                                websocket,
+                                board_id,
+                                workspace_id,
+                                uname,
+                                manager.get_phase(board_id),
+                                manager.get_session_id(board_id),
+                            )
                             await manager.broadcast(
                                 board_id,
                                 "facilitator_update",
@@ -356,26 +469,68 @@ async def websocket_endpoint(
                 elif event == "facilitator_start":
                     username = manager.get_username(websocket)
                     if username and not manager.get_facilitator(board_id):
-                        manager.set_facilitator(board_id, username)
+                        had_ready, had_spot = manager.set_facilitator(board_id, username)
+                        session_id = manager.get_session_id(board_id)
+                        _sync_board_session_db(
+                            websocket,
+                            board_id,
+                            workspace_id,
+                            username,
+                            "brainstorm",
+                            session_id,
+                        )
                         await manager.broadcast(
                             board_id,
                             "facilitator_update",
                             {
                                 "facilitator": username,
                                 "phase": "brainstorm",
-                                "session_id": manager.get_session_id(board_id),
+                                "session_id": session_id,
                             },
                         )
+                        if had_ready:
+                            await manager.broadcast(
+                                board_id, "ready_update", {"ready_users": []}
+                            )
+                        if had_spot:
+                            await manager.broadcast(
+                                board_id, "spotlight_update", {"card_id": None}
+                            )
 
                 elif event == "facilitator_stop":
                     username = manager.get_username(websocket)
                     if username and manager.get_facilitator(board_id) == username:
-                        manager.clear_session(board_id)
+                        lock_board = bool(
+                            isinstance(payload, dict) and payload.get("lock_board")
+                        )
+                        had_ready, had_spot = manager.clear_session(board_id)
+                        board_payload = _sync_board_session_db(
+                            websocket,
+                            board_id,
+                            workspace_id,
+                            None,
+                            None,
+                            None,
+                            lock_board=lock_board,
+                        )
                         await manager.broadcast(
                             board_id,
                             "facilitator_update",
                             {"facilitator": None, "phase": None, "session_id": None},
                         )
+                        if had_ready:
+                            await manager.broadcast(
+                                board_id, "ready_update", {"ready_users": []}
+                            )
+                        if had_spot:
+                            await manager.broadcast(
+                                board_id, "spotlight_update", {"card_id": None}
+                            )
+                        if board_payload:
+                            await manager.broadcast(board_id, "board_updated", board_payload)
+                            await manager.broadcast_workspace(
+                                workspace_id, "board_updated", board_payload
+                            )
 
                 elif event == "phase_change":
                     username = manager.get_username(websocket)
@@ -389,10 +544,26 @@ async def websocket_endpoint(
                         and manager.get_facilitator(board_id) == username
                         and phase in VALID_PHASES
                     ):
-                        manager.set_phase(board_id, phase)
+                        had_ready, had_spot = manager.set_phase(board_id, phase)
+                        _sync_board_session_db(
+                            websocket,
+                            board_id,
+                            workspace_id,
+                            username,
+                            phase,
+                            manager.get_session_id(board_id),
+                        )
                         await manager.broadcast(
                             board_id, "phase_update", {"phase": phase}
                         )
+                        if had_ready:
+                            await manager.broadcast(
+                                board_id, "ready_update", {"ready_users": []}
+                            )
+                        if had_spot:
+                            await manager.broadcast(
+                                board_id, "spotlight_update", {"card_id": None}
+                            )
                         if phase == "summary":
                             logger.info(
                                 "Creating summary task for board %s, user %s",
@@ -404,6 +575,67 @@ async def websocket_endpoint(
                                 )
                             )
 
+                elif event == "ready_toggle":
+                    username = manager.get_username(websocket)
+                    if username:
+                        ready_flag = (
+                            payload.get("ready")
+                            if isinstance(payload, dict)
+                            and isinstance(payload.get("ready"), bool)
+                            else None
+                        )
+                        ready_users = manager.toggle_ready(
+                            board_id, username, ready=ready_flag
+                        )
+                        await manager.broadcast(
+                            board_id, "ready_update", {"ready_users": ready_users}
+                        )
+
+                elif event == "spotlight_card":
+                    username = manager.get_username(websocket)
+                    fac = manager.get_facilitator(board_id)
+                    if not username or (fac and username != fac):
+                        continue
+                    card_id = (
+                        payload.get("card_id") if isinstance(payload, dict) else None
+                    )
+                    if card_id is not None and (
+                        not isinstance(card_id, str) or len(card_id) > 100
+                    ):
+                        continue
+                    manager.set_spotlight(board_id, card_id)
+                    await manager.broadcast(
+                        board_id, "spotlight_update", {"card_id": card_id}
+                    )
+
+                elif event == "reaction":
+                    emoji = payload.get("emoji") if isinstance(payload, dict) else None
+                    if not isinstance(emoji, str) or emoji not in ALLOWED_REACTIONS:
+                        continue
+                    username = (
+                        manager.get_username(websocket)
+                        or (
+                            payload.get("username")
+                            if isinstance(payload, dict)
+                            else None
+                        )
+                        or "Участник"
+                    )
+                    reaction_id = (
+                        payload.get("id")
+                        if isinstance(payload, dict) and isinstance(payload.get("id"), str)
+                        else f"{time.time():.6f}"
+                    )
+                    await manager.broadcast(
+                        board_id,
+                        "reaction",
+                        {
+                            "id": reaction_id[:64],
+                            "emoji": emoji,
+                            "username": str(username)[:60],
+                        },
+                    )
+
             except (json.JSONDecodeError, KeyError):
                 pass
 
@@ -414,6 +646,7 @@ async def websocket_endpoint(
             board_id, websocket
         )
         if username and not still_present:
+            ready_changed = manager.remove_ready_user(board_id, username)
             try:
                 await manager.broadcast(board_id, "cursor_leave", {"username": username})
                 await manager.broadcast(
@@ -421,6 +654,12 @@ async def websocket_endpoint(
                     "presence_update",
                     {"users": manager.get_users(board_id)},
                 )
+                if ready_changed:
+                    await manager.broadcast(
+                        board_id,
+                        "ready_update",
+                        {"ready_users": manager.get_ready_users(board_id)},
+                    )
             except Exception:
                 pass
         if fac_disconnected and username:

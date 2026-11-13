@@ -9,13 +9,15 @@ export const useAppStore = create<AppStore>()(
     (set) => ({
       username: 'Аноним',
       currentBoardId: null,
-      theme: { primary: '#6750A4', dark: false },
+      theme: { primary: 'violet', dark: false },
+      dotGrid: true,
       workspace: null,
       _hasHydrated: false,
 
       setUsername: (name: string) => set({ username: name }),
       setCurrentBoard: (id: string) => set({ currentBoardId: id }),
       setTheme: (theme) => set({ theme }),
+      setDotGrid: (enabled: boolean) => set({ dotGrid: enabled }),
       setWorkspace: (ws: WorkspaceSession | null) => set({ workspace: ws }),
       setHasHydrated: (hydrated: boolean) => set({ _hasHydrated: hydrated }),
     }),
@@ -25,6 +27,7 @@ export const useAppStore = create<AppStore>()(
         username: state.username,
         currentBoardId: state.currentBoardId,
         theme: state.theme,
+        dotGrid: state.dotGrid,
         workspace: state.workspace,
       }),
       onRehydrateStorage: () => (state) => {

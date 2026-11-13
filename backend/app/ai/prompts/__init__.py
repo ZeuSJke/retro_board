@@ -8,6 +8,11 @@ from app.ai.prompts.summary_generation import (
     generate_summary,
     format_board_data,
 )
+from app.ai.prompts.workspace_insights import (
+    WORKSPACE_INSIGHTS_PROMPT,
+    WORKSPACE_INSIGHTS_CONFIG,
+    generate_workspace_insights,
+)
 
 __all__ = [
     "TITLE_GENERATION_PROMPT",
@@ -16,4 +21,7 @@ __all__ = [
     "SUMMARY_GENERATION_CONFIG",
     "generate_summary",
     "format_board_data",
+    "WORKSPACE_INSIGHTS_PROMPT",
+    "WORKSPACE_INSIGHTS_CONFIG",
+    "generate_workspace_insights",
 ]

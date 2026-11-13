@@ -42,9 +42,9 @@ test.describe('Drag and Drop', () => {
       headers,
     })
 
-    // Create a card in column A
+    // Create a card in column A (owned by current test user so it stays visible during brainstorm)
     await request.post('http://localhost:8000/api/cards/', {
-      data: { column_id: col1.id, text: 'Перетащи меня' },
+      data: { column_id: col1.id, text: 'Перетащи меня', author: 'E2E Тестер' },
       headers,
     })
 
@@ -56,8 +56,8 @@ test.describe('Drag and Drop', () => {
     await expect(page.locator('body')).toContainText('Колонка Б')
 
     // Find the card and the target column drop zone
-    const card = page.locator('.card-widget').filter({ hasText: 'Перетащи меня' })
-    const targetCol = page.locator('.column').filter({ hasText: 'Колонка Б' })
+    const card = page.getByTestId('card-widget').filter({ hasText: 'Перетащи меня' })
+    const targetCol = page.getByTestId('board-column').filter({ hasText: 'Колонка Б' })
 
     // Perform drag: use Playwright's built-in drag-to
     await card.dragTo(targetCol, { force: true })

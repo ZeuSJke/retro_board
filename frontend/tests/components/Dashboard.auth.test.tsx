@@ -91,6 +91,9 @@ describe('Dashboard — 401 and workspace expiration recovery', () => {
       })
     })
 
+    const boardsTab = await screen.findByRole('tab', { name: /Доски \(1\)/i })
+    await user.click(boardsTab)
+
     await waitFor(() => {
       expect(screen.getAllByText('Восстановленная доска').length).toBeGreaterThan(0)
     })

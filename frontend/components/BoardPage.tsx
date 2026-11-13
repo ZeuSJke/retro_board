@@ -1,77 +1,204 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react'
-import { DndContext, DragOverlay } from '@dnd-kit/core'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import {
+  DndContext,
+  DragOverlay,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import { Layers, Sparkles } from 'lucide-react'
+import {
+  createActionItem,
+  createColumn,
+  generateActionItemTitle,
+  getBoardSummary,
+  updateActionItem,
+} from '../api'
+import { useAppStore } from '../store'
+import { showToast } from '../store/toastStore'
+import { useBoardDragDrop } from '../hooks/useBoardDragDrop'
+import { useBoardWebSocket } from '../hooks/useBoardWebSocket'
+import { useFacilitator } from '../hooks/useFacilitator'
+import { useTimer } from '../hooks/useTimer'
+import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown'
+import { getCardColorPreset } from '@/lib/board-themes'
+import { exportBoardToPDF } from '../utils/exportPDF'
+import { getApiErrorMessage } from '../utils/apiError'
+import type {
+  ActionItem,
+  Board,
+  BoardListItem,
+  BoardMood,
+  BoardSummary,
+  Card,
+  CardGroup,
+  Column as ColumnType,
+  WsBoardUpdatedData,
+  WsMessage,
+} from '../types'
+import BoardSettingsDialog from './BoardSettingsDialog'
+import BoardToolbar from './BoardToolbar'
+import BoardsPanel from './BoardsPanel'
 import Column from './Column'
-import CardWidget from './CardWidget'
+import CommandPalette from './CommandPalette'
 import CursorMarker from './CursorMarker'
 import MasterColumn from './MasterColumn'
-import Dialog from './Dialog'
-import type { DragEndEvent } from '@dnd-kit/core'
-import { createColumn, createActionItem, updateActionItem, generateActionItemTitle } from '../api'
-import { useAppStore } from '../store'
-import { useBoardWebSocket } from '../hooks/useBoardWebSocket'
-import { useBoardDragDrop } from '../hooks/useBoardDragDrop'
-import { exportBoardToPDF } from '../utils/exportPDF'
-import type { ActionItem, Board, BoardListItem, Card, CardGroup, Column as ColumnType, WsBoardUpdatedData } from '../types'
-import styles from './BoardPage.module.css'
-
-const COLUMN_COLORS = [
-  '#6750A4', '#0061A4', '#006E1C', '#BA1A1A', '#E8760A',
-  '#006A60', '#7D5260', '#FF6D00', '#43A047', '#1B6CA8',
-]
+import MoodDialog from './MoodDialog'
+import SessionBar from './SessionBar'
+import SpotlightModal from './SpotlightModal'
+import SummaryModal from './SummaryModal'
+import Topbar from './Topbar'
+import UserSettingsDialog from './UserSettingsDialog'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { cn } from '@/lib/utils'
 
 interface BoardPageProps {
   board: Board
-  onBoardUpdate: (board: Board) => void
-  exportRef: React.MutableRefObject<(() => void) | null>
-  onTimerWsEvent?: (event: string, data: Record<string, unknown>) => void
-  sendTimerRef: React.MutableRefObject<{
-    start: (duration: number, remaining: number) => void
-    pause: (remaining: number) => void
-    reset: (duration: number) => void
-  } | null>
-  onVotesChanged?: (used: number) => void
-  onPresenceChanged?: (users: string[]) => void
-  onFacilitatorChanged?: (facilitator: string | null, phase: string | null) => void
-  onPhaseChanged?: (phase: string) => void
-  onSummaryGenerated?: () => void
-  onSummaryFailed?: (message?: string) => void
-  onBoardCreated?: (board: BoardListItem) => void
-  onBoardUpdated?: (board: WsBoardUpdatedData) => void
-  onBoardDeleted?: (id: string) => void
-  sendFacilitatorRef: React.MutableRefObject<{
-    start: () => void
-    stop: () => void
-    changePhase: (phase: string) => void
-  } | null>
+  boards: BoardListItem[]
+  workspaceName: string
+  onBoardUpdated: (board: Board) => void
+  onBoardDeleted: (boardId: string) => void
+  onSelectBoard: (board: BoardListItem) => void
+  onOpenCreateBoard: () => void
+  onBoardsListCreated: (board: BoardListItem) => void
+  onBoardsListUpdated: (data: WsBoardUpdatedData) => void
+  onBoardsListDeleted: (boardId: string) => void
+}
+
+function triggerConfetti() {
+  if (typeof window === 'undefined') return
+  import('canvas-confetti')
+    .then((mod) => {
+      mod.default?.({
+        particleCount: 70,
+        spread: 65,
+        origin: { y: 0.65 },
+      })
+    })
+    .catch(() => {})
 }
 
 export default function BoardPage({
   board,
-  onBoardUpdate,
-  exportRef,
-  onTimerWsEvent,
-  sendTimerRef,
-  onVotesChanged,
-  onPresenceChanged,
-  onFacilitatorChanged,
-  onPhaseChanged,
-  onSummaryGenerated,
-  onSummaryFailed,
-  onBoardCreated,
+  boards,
+  workspaceName,
   onBoardUpdated,
   onBoardDeleted,
-  sendFacilitatorRef,
+  onSelectBoard,
+  onOpenCreateBoard,
+  onBoardsListCreated,
+  onBoardsListUpdated,
+  onBoardsListDeleted,
 }: BoardPageProps) {
-  const [addColOpen, setAddColOpen] = useState(false)
-  const [newColTitle, setNewColTitle] = useState('')
-  const [newColColor, setNewColColor] = useState('#6750A4')
-  const [colCreating, setColCreating] = useState(false)
-  const colCreatingRef = useRef(false)
-  const [masterOpen, setMasterOpen] = useState(false)
-  const boardRef = useRef<HTMLDivElement>(null)
-  const lastSentRef = useRef(0)
+  const router = useRouter()
+  const username = useAppStore((s) => s.username)
+  const dotGrid = useAppStore((s) => s.dotGrid)
+
+  const [boardsPanelOpen, setBoardsPanelOpen] = useState(false)
+  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false)
+  const [userSettingsOpen, setUserSettingsOpen] = useState(false)
+  const [moodOpen, setMoodOpen] = useState(false)
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [masterOpen, setMasterOpen] = useState(true)
+  const [mobileMasterOpen, setMobileMasterOpen] = useState(false)
+
+  const [searchQuery, setSearchQuery] = useState('')
+  const [onlyMine, setOnlyMine] = useState(false)
+  const [sortBy, setSortBy] = useState<'order' | 'votes'>('order')
+
+  const [moods, setMoods] = useState<BoardMood[]>(board.moods || [])
+  const [summary, setSummary] = useState<BoardSummary | null>(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
+
+  const canvasRef = useRef<HTMLDivElement>(null)
+  const cursorNodeTick = useState(0)
+  const forceCursorRender = cursorNodeTick[1]
+
+  const sendMessageRef = useRef<(msg: WsMessage) => void>(() => {})
+  const sendWs = useCallback((msg: WsMessage) => {
+    sendMessageRef.current(msg)
+  }, [])
+
+  const {
+    timer,
+    autoAdvance,
+    setAutoAdvance,
+    soundMuted,
+    toggleSoundMuted,
+    restoreTimer,
+    handleTimerWsEvent,
+    handleTimerStart,
+    handleTimerPause,
+    handleTimerReset,
+    handleAddTime,
+  } = useTimer(board.id, sendWs)
+
+  const {
+    facilitator,
+    phase,
+    handleFacilitatorStart,
+    handleFacilitatorStop,
+    handlePhaseChange,
+    handleNextPhase,
+    handleFacilitatorChanged,
+    handlePhaseChanged,
+  } = useFacilitator(sendWs, timer.duration, handleTimerReset)
+
+  const loadSummary = useCallback(async () => {
+    setSummaryLoading(true)
+    setSummaryError(null)
+    try {
+      const data = await getBoardSummary(board.id)
+      setSummary(data)
+    } catch (err) {
+      setSummaryError(getApiErrorMessage(err, 'Не удалось загрузить AI-итоги'))
+    } finally {
+      setSummaryLoading(false)
+    }
+  }, [board.id])
+
+  const handleSummaryGenerated = useCallback(() => {
+    setSummaryOpen(true)
+    loadSummary()
+    triggerConfetti()
+  }, [loadSummary])
+
+  const handleSummaryFailed = useCallback((msg?: string) => {
+    setSummaryLoading(false)
+    setSummaryError(msg || 'Ошибка генерации AI-итогов')
+    showToast(msg || 'Не удалось сгенерировать AI-итоги', 'error')
+  }, [])
+
+  const handleWsBoardUpdated = useCallback(
+    (data: WsBoardUpdatedData) => {
+      onBoardsListUpdated(data)
+      if (data.id === board.id) {
+        onBoardUpdated({
+          ...board,
+          name: data.name ?? board.name,
+          slug: data.slug ?? board.slug,
+          max_votes: data.max_votes ?? board.max_votes,
+          template: data.template ?? board.template,
+          is_locked: data.is_locked ?? board.is_locked,
+          hide_cards_until_reveal:
+            data.hide_cards_until_reveal ?? board.hide_cards_until_reveal,
+          anonymous_votes: data.anonymous_votes ?? board.anonymous_votes,
+        })
+      }
+    },
+    [board, onBoardUpdated, onBoardsListUpdated],
+  )
+
+  const handleWsMoodUpdated = useCallback((mood: BoardMood) => {
+    setMoods((prev) => {
+      const exists = prev.some((m) => m.author === mood.author)
+      return exists
+        ? prev.map((m) => (m.author === mood.author ? mood : m))
+        : [...prev, mood]
+    })
+  }, [])
 
   const {
     columns,
@@ -80,98 +207,68 @@ export default function BoardPage({
     subscribeCursors,
     collapsedGroups,
     activeUsers,
-    facilitator,
-    phase,
+    readyUsers,
+    spotlightCardId,
+    reactions,
     sessionSynced,
+    connected,
     actionItems,
     setActionItems,
     sendMessage,
-    handleMouseMove: wsMouseMove,
+    handleMouseMove,
     handleMouseLeave,
   } = useBoardWebSocket({
     boardId: board.id,
-    onTimerWsEvent,
-    onFacilitatorChanged,
-    onPhaseChanged,
-    onSummaryGenerated,
-    onSummaryFailed,
-    onBoardCreated,
-    onBoardUpdated,
-    onBoardDeleted,
-  })
-
-  // Subscribe to cursor user list changes (add/remove only, not position)
-  const cursorUserKeys = useSyncExternalStore(
-    subscribeCursors,
-    () => Object.keys(cursorsRef.current).join('\n'),
-    () => '',
-  )
-  const cursorUsers = useMemo(
-    () => (cursorUserKeys ? cursorUserKeys.split('\n') : []),
-    [cursorUserKeys],
-  )
-
-  const username = useAppStore((s) => s.username)
-
-  // Track if retro session ended (facilitator was active then stopped)
-  // Persisted to localStorage so state survives navigation (dashboard → board)
-  const lockKey = `retro_locked_${board.id}`
-  const hadFacilitatorRef = useRef(false)
-  const [boardLocked, setBoardLocked] = useState(() => {
-    try { return localStorage.getItem(lockKey) === '1' } catch { return false }
+    onTimerWsEvent: handleTimerWsEvent,
+    onFacilitatorChanged: handleFacilitatorChanged,
+    onPhaseChanged: handlePhaseChanged,
+    onSummaryGenerated: handleSummaryGenerated,
+    onSummaryFailed: handleSummaryFailed,
+    onBoardCreated: onBoardsListCreated,
+    onBoardUpdated: handleWsBoardUpdated,
+    onBoardDeleted: onBoardsListDeleted,
+    onMoodUpdated: handleWsMoodUpdated,
   })
 
   useEffect(() => {
-    if (facilitator) {
-      hadFacilitatorRef.current = true
-      setBoardLocked(false)
-      try { localStorage.removeItem(lockKey) } catch { /* ignore */ }
-    } else if (hadFacilitatorRef.current) {
-      setBoardLocked(true)
-      try { localStorage.setItem(lockKey, '1') } catch { /* ignore */ }
-    }
-  }, [facilitator, lockKey])
+    sendMessageRef.current = sendMessage
+  }, [sendMessage])
 
-  // Initialize columns from board prop
   useEffect(() => {
     setColumns(board.columns || [])
-  }, [board.columns, setColumns])
-
-  // Cards used in action items — from persisted source_card_ids
-  const usedCardIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const ai of actionItems) {
-      for (const cid of ai.source_card_ids || []) ids.add(cid)
+    setMoods(board.moods || [])
+    setSummary(null)
+    setSummaryError(null)
+    restoreTimer(board.id)
+    if (board.has_summary) {
+      getBoardSummary(board.id)
+        .then((s) => s && setSummary(s))
+        .catch(() => {})
     }
-    return ids
-  }, [actionItems])
+  }, [board.id, board.columns, board.moods, board.has_summary, setColumns, restoreTimer])
 
-  // Count votes used by current user
-  const votesUsed = useMemo(() => {
-    let count = 0
-    for (const col of columns) {
-      for (const card of col.cards || []) {
-        if ((card.likes || []).includes(username)) count++
-      }
+  // Subscribe cursor arrivals to render CursorMarker components dynamically
+  useEffect(() => {
+    return subscribeCursors(() => {
+      forceCursorRender((n) => n + 1)
+    })
+  }, [subscribeCursors, forceCursorRender])
+
+  // Auto-advance timer when it hits 0 during active facilitation by current user
+  const prevRemainingRef = useRef(timer.remaining)
+  useEffect(() => {
+    const prev = prevRemainingRef.current
+    prevRemainingRef.current = timer.remaining
+    if (
+      prev > 0 &&
+      timer.remaining === 0 &&
+      autoAdvance &&
+      facilitator === username &&
+      phase
+    ) {
+      handleNextPhase()
     }
-    return count
-  }, [columns, username])
-
-  useEffect(() => {
-    onVotesChanged?.(votesUsed)
-  }, [votesUsed, onVotesChanged])
-
-  useEffect(() => {
-    onPresenceChanged?.(activeUsers)
-  }, [activeUsers, onPresenceChanged])
-
-  // Sync facilitator/phase to App — covers initial state and any edge cases
-  useEffect(() => {
-    onFacilitatorChanged?.(facilitator, phase)
-  }, [facilitator, phase, onFacilitatorChanged])
-
-  const votingAllowed = boardLocked ? false : !facilitator || phase === 'vote'
-  const canVote = votingAllowed && votesUsed < (board.max_votes ?? 5)
+  }, [timer.remaining, autoAdvance, facilitator, username, phase, handleNextPhase])
 
   const {
     sensors,
@@ -184,125 +281,101 @@ export default function BoardPage({
     onDragEnd,
   } = useBoardDragDrop({ columns, setColumns })
 
+  const boardLocked = Boolean(board.is_locked)
+  const effectivePhase = sessionSynced ? phase : board.active_phase ?? null
+  const hideOtherCards =
+    effectivePhase === 'brainstorm' ||
+    (Boolean(board.hide_cards_until_reveal) &&
+      (!effectivePhase || effectivePhase === 'brainstorm'))
+  const anonymousMode = Boolean(board.anonymous_votes)
+  const readOnly = boardLocked
+
+  const userTotalVotes = useMemo(
+    () =>
+      columns.reduce(
+        (sum, col) =>
+          sum +
+          col.cards.filter((c) => (c.likes || []).includes(username)).length,
+        0,
+      ),
+    [columns, username],
+  )
+
+  const participants = useMemo(() => {
+    const set = new Set<string>(activeUsers)
+    columns.forEach((c) => c.cards.forEach((card) => set.add(card.author)))
+    return Array.from(set).filter((name) => name && name !== 'Аноним')
+  }, [activeUsers, columns])
+
+  const createActionItemFromCards = useCallback(
+    async (text: string, sourceCardIds: string[], authorHint?: string | null) => {
+      try {
+        const item = await createActionItem({
+          board_id: board.id,
+          title: 'Генерация...',
+          text,
+          assignee: !anonymousMode && authorHint ? authorHint : undefined,
+          source_card_ids: sourceCardIds,
+        })
+        setActionItems((prev) =>
+          prev.find((i) => i.id === item.id) ? prev : [...prev, item],
+        )
+        showToast('Добавлено в Action Items', 'success')
+        generateActionItemTitle(text)
+          .then((generatedTitle) =>
+            updateActionItem(item.id, { title: generatedTitle }).then((updated) => {
+              setActionItems((prev) =>
+                prev.map((i) => (i.id === item.id ? updated : i)),
+              )
+            }),
+          )
+          .catch(() => {
+            updateActionItem(item.id, {
+              title: text.slice(0, 60) || 'Action Item',
+            }).catch(() => {})
+          })
+      } catch (err) {
+        showToast(getApiErrorMessage(err, 'Не удалось создать Action Item'), 'error')
+      }
+    },
+    [anonymousMode, board.id, setActionItems],
+  )
+
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const overId = event.over ? String(event.over.id) : ''
-      const droppingOnMaster = overId === 'master-col'
-      const blockedByFacilitator = facilitator && facilitator !== username
-
-      if (droppingOnMaster && activeCard) {
-        if (blockedByFacilitator) {
-          onDragEnd({ ...event, over: null } as DragEndEvent)
-          return
-        }
-        try {
-          const item = await createActionItem({
-            board_id: board.id,
-            title: 'Генерация...',
-            text: activeCard.text,
-            assignee: activeCard.author,
-            source_card_ids: [activeCard.id],
-          })
-          setActionItems((prev) =>
-            prev.find((i) => i.id === item.id) ? prev : [...prev, item],
+      if (overId === 'master-col' && activeCard) {
+        if (!readOnly) {
+          await createActionItemFromCards(
+            activeCard.text,
+            [activeCard.id],
+            activeCard.author,
           )
-          generateActionItemTitle(activeCard.text)
-            .then((generatedTitle) =>
-              updateActionItem(item.id, { title: generatedTitle }).then((updated) => {
-                setActionItems((prev) =>
-                  prev.map((i) => (i.id === item.id ? updated : i)),
-                )
-              }),
-            )
-            .catch(() => {
-              updateActionItem(item.id, { title: activeCard.text.slice(0, 50) || 'Новая задача' }).catch(() => {})
-            })
-        } catch { /* toast via interceptor */ }
+        }
         onDragEnd({ ...event, over: null } as DragEndEvent)
         return
       }
 
-      if (droppingOnMaster && activeGroup) {
-        if (blockedByFacilitator) {
-          onDragEnd({ ...event, over: null } as DragEndEvent)
-          return
-        }
-        const groupCards = columns
-          .flatMap((col) => col.cards)
-          .filter((c) => c.group_id === activeGroup.id)
-        const combinedText = groupCards.map((c) => c.text).join(' ')
-        try {
-          const item = await createActionItem({
-            board_id: board.id,
-            title: 'Генерация...',
-            text: combinedText || activeGroup.title,
-            assignee: groupCards[0]?.author ?? null,
-            source_card_ids: groupCards.map((c) => c.id),
-          })
-          setActionItems((prev) =>
-            prev.find((i) => i.id === item.id) ? prev : [...prev, item],
+      if (overId === 'master-col' && activeGroup) {
+        if (!readOnly) {
+          const groupCards = columns
+            .flatMap((col) => col.cards)
+            .filter((c) => c.group_id === activeGroup.id)
+          const combined = groupCards.map((c) => c.text).join(' ')
+          await createActionItemFromCards(
+            combined || activeGroup.title,
+            groupCards.map((c) => c.id),
+            groupCards[0]?.author ?? null,
           )
-          generateActionItemTitle(combinedText || activeGroup.title)
-            .then((generatedTitle) =>
-              updateActionItem(item.id, { title: generatedTitle }).then((updated) => {
-                setActionItems((prev) =>
-                  prev.map((i) => (i.id === item.id ? updated : i)),
-                )
-              }),
-            )
-            .catch(() => {
-              updateActionItem(item.id, { title: combinedText.slice(0, 50) || activeGroup.title }).catch(() => {})
-            })
-        } catch { /* toast via interceptor */ }
+        }
         onDragEnd({ ...event, over: null } as DragEndEvent)
         return
       }
 
       onDragEnd(event)
     },
-    [activeCard, activeGroup, board.id, columns, setActionItems, onDragEnd, facilitator, username],
+    [activeCard, activeGroup, columns, createActionItemFromCards, onDragEnd, readOnly],
   )
-
-  // Expose export function via ref
-  useEffect(() => {
-    if (exportRef) {
-      exportRef.current = () => exportBoardToPDF(board, columns, actionItems)
-    }
-  }, [exportRef, board, columns, actionItems])
-
-  // Expose WS timer send functions via ref
-  useEffect(() => {
-    if (sendTimerRef) {
-      sendTimerRef.current = {
-        start: (duration: number, remaining: number) =>
-          sendMessage({
-            event: 'timer_start',
-            data: { duration, remaining, ts: Date.now() },
-          }),
-        pause: (remaining: number) =>
-          sendMessage({ event: 'timer_pause', data: { remaining } }),
-        reset: (duration: number) =>
-          sendMessage({ event: 'timer_reset', data: { duration } }),
-      }
-    }
-  }, [sendTimerRef, sendMessage])
-
-  // Expose WS facilitator send functions via ref
-  useEffect(() => {
-    if (sendFacilitatorRef) {
-      sendFacilitatorRef.current = {
-        start: () => sendMessage({ event: 'facilitator_start', data: {} }),
-        stop: () => sendMessage({ event: 'facilitator_stop', data: {} }),
-        changePhase: (p: string) =>
-          sendMessage({ event: 'phase_change', data: { phase: p } }),
-      }
-    }
-  }, [sendFacilitatorRef, sendMessage])
-
-  const isBrainstorm = phase === 'brainstorm'
-  const brainstormHidden = !sessionSynced || isBrainstorm
-  const cardCreationDisabled = boardLocked || !facilitator
-  const readOnly = boardLocked
 
   const handleColumnUpdate = useCallback(
     (updated: ColumnType) =>
@@ -354,19 +427,18 @@ export default function BoardPage({
   )
 
   const handleGroupCreated = useCallback(
-    (colId: string, group: CardGroup) =>
+    (colId: string, group: CardGroup, cardIds: string[]) =>
       setColumns((prev) =>
-        prev.map((c) =>
-          c.id === colId
-            ? {
-                ...c,
-                groups: [
-                  ...(c.groups || []).filter((g) => g.id !== group.id),
-                  group,
-                ],
-              }
-            : c,
-        ),
+        prev.map((c) => {
+          if (c.id !== colId) return c
+          const groups = (c.groups || []).some((g) => g.id === group.id)
+            ? c.groups
+            : [...(c.groups || []), group]
+          const cards = c.cards.map((card) =>
+            cardIds.includes(card.id) ? { ...card, group_id: group.id } : card,
+          )
+          return { ...c, groups, cards }
+        }),
       ),
     [setColumns],
   )
@@ -408,110 +480,257 @@ export default function BoardPage({
 
   const handleToggleCollapse = useCallback(
     (groupId: string) => {
-      const newCollapsed = !collapsedGroups[groupId]
+      const next = !collapsedGroups[groupId]
       sendMessage({
         event: 'group_collapse',
-        data: { group_id: groupId, collapsed: newCollapsed },
+        data: { group_id: groupId, collapsed: next },
       })
     },
     [collapsedGroups, sendMessage],
   )
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      const now = Date.now()
-      if (now - lastSentRef.current < 50) return
-      lastSentRef.current = now
-      wsMouseMove(e, boardRef.current)
-    },
-    [wsMouseMove],
-  )
-
-  const openAddCol = () => {
-    setNewColTitle('')
-    setNewColColor('#6750A4')
-    setAddColOpen(true)
-  }
-
-  const confirmAddColumn = async () => {
-    if (!newColTitle.trim() || colCreatingRef.current) return
-    colCreatingRef.current = true
-    setColCreating(true)
-    setAddColOpen(false)
-    const title = newColTitle.trim()
-    const color = newColColor
-    const tempId = `temp-col-${Date.now()}`
-    const tempCol = { id: tempId, board_id: board.id, title, color, position: columns.length, cards: [], groups: [] }
-    setColumns((prev) => [...prev, tempCol])
+  const handleAddColumn = async (title: string, color: string) => {
     try {
       const col = await createColumn({ board_id: board.id, title, color })
-      setColumns((prev) => {
-        if (prev.find((c) => c.id === col.id)) {
-          return prev.filter((c) => c.id !== tempId)
-        }
-        return prev.map((c) =>
-          c.id === tempId ? { ...col, cards: [], groups: [] } : c,
-        )
-      })
-    } catch {
-      setColumns((prev) => prev.filter((c) => c.id !== tempId))
-    } finally {
-      colCreatingRef.current = false
-      setColCreating(false)
+      setColumns((prev) =>
+        prev.some((c) => c.id === col.id) ? prev : [...prev, col],
+      )
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось добавить колонку'), 'error')
     }
   }
 
+  const handleSpotlight = (cardId: string) => {
+    const next = spotlightCardId === cardId ? null : cardId
+    sendMessage({ event: 'spotlight_card', data: { card_id: next } })
+  }
+
+  const spotlightData = useMemo(() => {
+    if (!spotlightCardId) return null
+    for (const col of columns) {
+      const card = col.cards.find((c) => c.id === spotlightCardId)
+      if (card) return { card, column: col }
+    }
+    return null
+  }, [spotlightCardId, columns])
+
+  const handleToggleMaster = () => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setMobileMasterOpen((prev) => !prev)
+    } else {
+      setMasterOpen((prev) => !prev)
+    }
+  }
+
+  const handleExportMarkdown = () => {
+    const md = formatBoardMarkdown(
+      { ...board, columns },
+      actionItems,
+      summary,
+    )
+    const filename = `retro-${board.name.replace(/[^а-яёa-z0-9]/gi, '_')}.md`
+    downloadMarkdownFile(filename, md)
+    showToast('Markdown экспортирован', 'success')
+  }
+
+  const handleExportPDF = () => {
+    exportBoardToPDF(board, columns, actionItems)
+  }
+
+  const remoteCursors = Object.keys(cursorsRef.current).filter(
+    (name) => name !== username,
+  )
+
   return (
-    <DndContext
-      sensors={boardLocked ? [] : sensors}
-      collisionDetection={collisionDetection}
-      onDragStart={boardLocked ? undefined : onDragStart}
-      onDragOver={boardLocked ? undefined : onDragOver}
-      onDragEnd={boardLocked ? undefined : handleDragEnd}
-    >
-      <div
-        ref={boardRef}
-        className={styles.board}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      <Topbar
+        board={{ ...board, moods }}
+        workspaceName={workspaceName}
+        username={username}
+        activeUsers={activeUsers}
+        readyUsers={readyUsers}
+        facilitator={facilitator}
+        connected={connected}
+        openActionItemsCount={actionItems.filter((i) => i.status !== 'done').length}
+        onOpenBoardsDrawer={() => setBoardsPanelOpen(true)}
+        onOpenBoardSettings={() => setBoardSettingsOpen(true)}
+        onOpenUserSettings={() => setUserSettingsOpen(true)}
+        onOpenMood={() => setMoodOpen(true)}
+        onOpenSummary={() => {
+          setSummaryOpen(true)
+          loadSummary()
+        }}
+        onExportMarkdown={handleExportMarkdown}
+        onExportPDF={handleExportPDF}
+      />
+
+      <SessionBar
+        facilitator={facilitator}
+        phase={effectivePhase}
+        username={username}
+        activeUsers={activeUsers}
+        readyUsers={readyUsers}
+        isLocked={boardLocked}
+        usedVotes={userTotalVotes}
+        maxVotes={board.max_votes}
+        timer={timer}
+        autoAdvance={autoAdvance}
+        soundMuted={soundMuted}
+        onToggleSoundMuted={toggleSoundMuted}
+        onAutoAdvanceChange={setAutoAdvance}
+        onTimerStart={handleTimerStart}
+        onTimerPause={handleTimerPause}
+        onTimerReset={handleTimerReset}
+        onAddTime={handleAddTime}
+        onFacilitatorStart={handleFacilitatorStart}
+        onFacilitatorStop={(lock) => handleFacilitatorStop(lock)}
+        onPhaseChange={handlePhaseChange}
+        onNextPhase={handleNextPhase}
+        onToggleReady={() => sendMessage({ event: 'ready_toggle', data: {} })}
+        onSendReaction={(emoji) =>
+          sendMessage({ event: 'reaction', data: { emoji } })
+        }
+      />
+
+      <BoardToolbar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        onlyMine={onlyMine}
+        onOnlyMineChange={setOnlyMine}
+        sortBy={sortBy}
+        onSortByChange={setSortBy}
+        readOnly={readOnly}
+        masterOpen={masterOpen}
+        onToggleMaster={handleToggleMaster}
+        actionItemsCount={actionItems.length}
+        onAddColumn={handleAddColumn}
+      />
+
+      {/* Board workspace */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={collisionDetection}
+        onDragStart={onDragStart}
+        onDragOver={onDragOver}
+        onDragEnd={handleDragEnd}
       >
-        {columns.map((col) => (
-          <Column
-            key={col.id}
-            column={col}
-            canVote={canVote}
-            readOnly={readOnly}
-            cardCreationDisabled={cardCreationDisabled}
-            brainstormHidden={brainstormHidden}
-            currentUser={username}
-            isFacilitator={facilitator === username}
-            groupTargetId={groupTargetId}
-            collapsedGroups={collapsedGroups}
-            onToggleCollapse={handleToggleCollapse}
-            onUpdate={handleColumnUpdate}
-            onDelete={handleColumnDelete}
-            onCardCreated={handleCardCreated}
-            onCardUpdated={handleCardUpdated}
-            onCardDeleted={handleCardDeleted}
-            onGroupCreated={handleGroupCreated}
-            onGroupUpdated={handleGroupUpdated}
-            onGroupDeleted={handleGroupDeleted}
-            usedCardIds={usedCardIds}
-          />
-        ))}
-
-        {masterOpen && (
+        <main
+          className={cn(
+            'relative flex min-h-0 flex-1 overflow-hidden',
+            dotGrid && 'bg-dot-grid',
+          )}
+        >
+          {/* Horizontal columns canvas */}
           <div
-            className={styles.masterOverlay}
-            onClick={() => setMasterOpen(false)}
-          />
-        )}
+            ref={canvasRef}
+            onMouseMove={(e) => handleMouseMove(e, canvasRef.current)}
+            onMouseLeave={handleMouseLeave}
+            className="relative flex flex-1 gap-4 overflow-x-auto overflow-y-hidden p-4 md:p-5"
+          >
+            {columns.map((col) => (
+              <Column
+                key={col.id}
+                column={col}
+                maxVotes={board.max_votes}
+                userTotalVotes={userTotalVotes}
+                currentUser={username}
+                onUpdate={handleColumnUpdate}
+                onDelete={handleColumnDelete}
+                onCardCreated={(card) => handleCardCreated(col.id, card)}
+                onCardUpdated={(card) => handleCardUpdated(col.id, card)}
+                onCardDeleted={(cardId) => handleCardDeleted(col.id, cardId)}
+                onGroupCreated={(group, ids) =>
+                  handleGroupCreated(col.id, group, ids)
+                }
+                onGroupUpdated={(group) => handleGroupUpdated(col.id, group)}
+                onGroupDeleted={(gid) => handleGroupDeleted(col.id, gid)}
+                groupTargetId={groupTargetId}
+                collapsedGroups={collapsedGroups}
+                onToggleCollapse={handleToggleCollapse}
+                hideOtherCards={hideOtherCards}
+                anonymous={anonymousMode}
+                readOnly={readOnly}
+                cardCreationDisabled={readOnly}
+                searchQuery={searchQuery}
+                onlyMine={onlyMine}
+                sortBy={sortBy}
+                spotlightCardId={spotlightCardId}
+                onSpotlight={handleSpotlight}
+                onCreateActionItem={(card) =>
+                  createActionItemFromCards(card.text, [card.id], card.author)
+                }
+              />
+            ))}
 
-        <div className={`${styles.masterWrapper} ${masterOpen ? styles.masterWrapperOpen : ''}`}>
+            {/* Multiplayer cursors layer */}
+            {remoteCursors.map((name) => (
+              <CursorMarker key={name} username={name} posRef={cursorsRef} />
+            ))}
+          </div>
+
+          {/* Desktop Action Items Sidebar */}
+          {masterOpen && (
+            <aside className="hidden w-[340px] shrink-0 flex-col border-l bg-background/90 backdrop-blur-sm lg:flex">
+              <MasterColumn
+                boardId={board.id}
+                actionItems={actionItems}
+                participants={participants}
+                onCreated={(item) =>
+                  setActionItems((prev) =>
+                    prev.find((i) => i.id === item.id) ? prev : [...prev, item],
+                  )
+                }
+                onUpdated={(item) =>
+                  setActionItems((prev) =>
+                    prev.map((i) => (i.id === item.id ? item : i)),
+                  )
+                }
+                onDeleted={(id) =>
+                  setActionItems((prev) => prev.filter((i) => i.id !== id))
+                }
+                dropDisabled={readOnly}
+                readOnly={readOnly}
+              />
+            </aside>
+          )}
+        </main>
+
+        <DragOverlay>
+          {activeCard ? (
+            <div
+              className={cn(
+                'w-[300px] rotate-1 rounded-xl border p-3.5 shadow-xl opacity-95',
+                getCardColorPreset(activeCard.color).cardClass,
+              )}
+            >
+              <p className="line-clamp-3 text-sm text-foreground">
+                {activeCard.text}
+              </p>
+            </div>
+          ) : activeGroup ? (
+            <div className="flex w-[300px] items-center gap-2 rounded-xl border border-primary/40 bg-card p-3 shadow-xl">
+              <Layers className="h-4 w-4 text-primary" />
+              <span className="text-xs font-semibold">{activeGroup.title}</span>
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+
+      {/* Mobile Action Items Sheet */}
+      <Sheet open={mobileMasterOpen} onOpenChange={setMobileMasterOpen}>
+        <SheetContent side="right" className="w-[340px] p-0 sm:max-w-sm">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Итоги доски</SheetTitle>
+          </SheetHeader>
           <MasterColumn
+            boardId={board.id}
             actionItems={actionItems}
-            dropDisabled={readOnly || (!!facilitator && facilitator !== username)}
-            readOnly={readOnly}
+            participants={participants}
+            onCreated={(item) =>
+              setActionItems((prev) =>
+                prev.find((i) => i.id === item.id) ? prev : [...prev, item],
+              )
+            }
             onUpdated={(item) =>
               setActionItems((prev) =>
                 prev.map((i) => (i.id === item.id ? item : i)),
@@ -520,137 +739,124 @@ export default function BoardPage({
             onDeleted={(id) =>
               setActionItems((prev) => prev.filter((i) => i.id !== id))
             }
+            dropDisabled
+            readOnly={readOnly}
           />
-        </div>
+        </SheetContent>
+      </Sheet>
 
-        <button
-          className={styles.masterToggle}
-          onClick={() => setMasterOpen((v) => !v)}
-          title="Итоги"
+      {/* Floating emoji reactions */}
+      {reactions.length > 0 && (
+        <div
+          className="pointer-events-none fixed inset-x-0 bottom-14 z-50 h-44 overflow-hidden"
+          aria-hidden="true"
         >
-          <span className="material-symbols-rounded" style={{ fontSize: 24 }}>
-            {masterOpen ? 'close' : 'assignment'}
-          </span>
-          {!masterOpen && actionItems.length > 0 && (
-            <span className={styles.masterBadge}>{actionItems.length}</span>
-          )}
-        </button>
-
-        {!readOnly && (
-          <button className={styles.addColBtn} onClick={openAddCol}>
-            <span className="material-symbols-rounded">add</span>
-            Новая колонка
-          </button>
-        )}
-
-        {cursorUsers.map((u) => (
-          <CursorMarker key={u} username={u} posRef={cursorsRef} />
-        ))}
-      </div>
-
-      <Dialog
-        open={addColOpen}
-        title="Новая колонка"
-        icon="view_column"
-        onClose={() => setAddColOpen(false)}
-        onConfirm={confirmAddColumn}
-        confirmLabel="Создать"
-        confirmDisabled={colCreatingRef.current}
-      >
-        <div className={styles.field}>
-          <label className={styles.label}>Название</label>
-          <input
-            className={styles.input}
-            value={newColTitle}
-            onChange={(e) => setNewColTitle(e.target.value)}
-            placeholder="Например: Что прошло хорошо?"
-            maxLength={80}
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                e.stopPropagation()
-                confirmAddColumn()
-              }
-            }}
-          />
-        </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Цвет метки</label>
-          <div className={styles.colorGrid}>
-            {COLUMN_COLORS.map((c) => (
-              <button
-                key={c}
-                onClick={() => setNewColColor(c)}
-                className={styles.colorSwatch}
-                style={{
-                  background: c,
-                  outline:
-                    c === newColColor ? `3px solid ${c}` : '3px solid transparent',
-                  outlineOffset: 2,
-                  transform: c === newColColor ? 'scale(1.18)' : 'scale(1)',
-                }}
-              />
-            ))}
-          </div>
-        </div>
-        <div className={styles.preview} style={{ borderLeftColor: newColColor }}>
-          <div className={styles.previewDot} style={{ background: newColColor }} />
-          <span className={styles.previewTitle}>
-            {newColTitle.trim() || 'Название колонки'}
-          </span>
-          <span className={styles.previewCount}>0</span>
-        </div>
-      </Dialog>
-
-      <DragOverlay>
-        {activeCard && (
-          <div style={{ transform: 'rotate(3deg)', opacity: 0.9 }}>
-            <CardWidget
-              card={activeCard}
-              onUpdate={() => {}}
-              onDelete={() => {}}
-              dragOverlay
-            />
-          </div>
-        )}
-        {activeGroup && (
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '8px 14px',
-              borderRadius: 10,
-              background:
-                'color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))',
-              border: '1.5px solid var(--md-outline-variant)',
-              boxShadow: 'var(--elevation-2)',
-              opacity: 0.9,
-              transform: 'rotate(2deg)',
-              cursor: 'grabbing',
-            }}
-          >
-            <span
-              className="material-symbols-rounded"
-              style={{ fontSize: 14, color: 'var(--md-primary)' }}
+          {reactions.map((r) => (
+            <div
+              key={r.id}
+              style={{ left: `${r.xOffset}%` }}
+              className="animate-float-up absolute bottom-0 flex flex-col items-center gap-0.5"
             >
-              folder
-            </span>
-            <span
-              style={{
-                fontSize: 12,
-                fontWeight: 700,
-                color: 'var(--md-primary)',
-                textTransform: 'uppercase',
-                letterSpacing: 0.5,
-              }}
-            >
-              {activeGroup.title}
-            </span>
+              <span className="text-3xl drop-shadow-sm">{r.emoji}</span>
+              {r.username && (
+                <span className="rounded-full bg-background/90 px-2 py-0.5 text-[10px] font-medium shadow">
+                  {r.username}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Drawers & Dialogs */}
+      <BoardsPanel
+        open={boardsPanelOpen}
+        onOpenChange={setBoardsPanelOpen}
+        boards={boards}
+        currentBoardId={board.id}
+        onSelectBoard={onSelectBoard}
+        onOpenCreateBoard={onOpenCreateBoard}
+        onNavigateDashboard={() => router.push('/dashboard')}
+      />
+
+      <CommandPalette
+        boards={boards}
+        onSelectBoard={onSelectBoard}
+        onCreateBoard={onOpenCreateBoard}
+        onNavigateDashboard={() => router.push('/dashboard')}
+      />
+
+      <BoardSettingsDialog
+        open={boardSettingsOpen}
+        onOpenChange={setBoardSettingsOpen}
+        board={board}
+        onBoardUpdated={onBoardUpdated}
+        onBoardDeleted={onBoardDeleted}
+      />
+
+      <UserSettingsDialog
+        open={userSettingsOpen}
+        onOpenChange={setUserSettingsOpen}
+      />
+
+      <MoodDialog
+        open={moodOpen}
+        onOpenChange={setMoodOpen}
+        boardId={board.id}
+        username={username}
+        moods={moods}
+        onMoodSubmitted={handleWsMoodUpdated}
+      />
+
+      <SummaryModal
+        open={summaryOpen}
+        onOpenChange={setSummaryOpen}
+        board={{ ...board, columns }}
+        actionItems={actionItems}
+        summary={summary}
+        loading={summaryLoading}
+        error={summaryError}
+        onSummaryUpdated={(updated) => {
+          setSummary(updated)
+          onBoardUpdated({ ...board, has_summary: true })
+        }}
+      />
+
+      <SpotlightModal
+        card={spotlightData?.card || null}
+        column={spotlightData?.column}
+        anonymous={anonymousMode}
+        isFacilitator={!facilitator || facilitator === username}
+        currentUser={username}
+        onClose={() => {
+          if (!facilitator || facilitator === username) {
+            sendMessage({ event: 'spotlight_card', data: { card_id: null } })
+          }
+        }}
+        onCreateActionItem={(card) =>
+          createActionItemFromCards(card.text, [card.id], card.author)
+        }
+        onLike={() => {
+          if (spotlightData) {
+            // Re-use CardWidget/API toggle via Sparkles focus
+            import('../api').then(({ toggleLike }) =>
+              toggleLike(spotlightData.card.id, username).then((updated) =>
+                handleCardUpdated(spotlightData.column.id, updated),
+              ),
+            )
+          }
+        }}
+      />
+
+      {/* Quick hint pill in brainstorm */}
+      {effectivePhase === 'brainstorm' && (
+        <div className="pointer-events-none fixed bottom-4 left-1/2 z-30 -translate-x-1/2">
+          <div className="flex items-center gap-2 rounded-full border bg-background/95 px-4 py-1.5 text-xs font-medium shadow-lg backdrop-blur-md">
+            <Sparkles className="h-3.5 w-3.5 text-primary" />
+            <span>Слепой режим: карточки других участников скрыты до фазы раскрытия</span>
           </div>
-        )}
-      </DragOverlay>
-    </DndContext>
+        </div>
+      )}
+    </div>
   )
 }

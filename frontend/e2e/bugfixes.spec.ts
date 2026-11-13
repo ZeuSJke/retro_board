@@ -88,8 +88,9 @@ test.describe('Ключевые исправления (сессия, live-до�
       await loginWorkspace(page1, request)
 
       await page1.goto(`/board/${board1.slug}`)
-      await expect(page1.getByText('Новая колонка')).toBeVisible({ timeout: 15000 })
-      // Ждём завершения WS-подключения (presence с именем наблюдателя) перед созданием второй доски
+      await expect(page1.getByRole('button', { name: 'Колонка' })).toBeVisible({ timeout: 15000 })
+      // Ждём завершения WS-подключения (Live + presence с именем наблюдателя) перед созданием второй доски
+      await expect(page1.getByTitle('Подключено (Live)')).toBeVisible({ timeout: 10000 })
       await expect(page1.locator('[title="Наблюдатель"]')).toBeVisible({ timeout: 10000 })
 
       // Открываем панель досок на первой вкладке
@@ -136,7 +137,8 @@ test.describe('Ключевые исправления (сессия, live-до�
 
       await facPage.goto(`/board/${board.slug}`)
       await expect(facPage.getByText('Секрет ведущего')).toBeVisible({ timeout: 15000 })
-      // Ждём завершения WS-подключения и identify (появление presence с именем ведущего)
+      // Ждём завершения WS-подключения и identify (Live + presence с именем ведущего)
+      await expect(facPage.getByTitle('Подключено (Live)')).toBeVisible({ timeout: 10000 })
       await expect(facPage.locator('[title="Ведущий"]')).toBeVisible({ timeout: 10000 })
 
       // Включаем режим ведущего (стартовая фаза — brainstorm)

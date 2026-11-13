@@ -1,8 +1,9 @@
 'use client'
 
-import { memo, useRef, useEffect } from 'react'
-import { userColor } from '../utils/theme'
-import type { CursorPos } from '../hooks/useBoardWebSocket'
+import { memo, useEffect, useRef } from 'react'
+import { getUserAvatarGradient } from '@/lib/board-themes'
+import { userColor } from '@/utils/theme'
+import type { CursorPos } from '@/hooks/useBoardWebSocket'
 
 interface CursorMarkerProps {
   username: string
@@ -11,6 +12,7 @@ interface CursorMarkerProps {
 
 export default memo(function CursorMarker({ username, posRef }: CursorMarkerProps) {
   const color = userColor(username)
+  const gradient = getUserAvatarGradient(username)
   const nodeRef = useRef<HTMLDivElement>(null)
   const rafRef = useRef<number>(0)
 
@@ -37,25 +39,14 @@ export default memo(function CursorMarker({ username, posRef }: CursorMarkerProp
   return (
     <div
       ref={nodeRef}
-      style={{
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        pointerEvents: 'none',
-        zIndex: 500,
-        willChange: 'transform',
-        userSelect: 'none',
-      }}
+      className="pointer-events-none absolute left-0 top-0 z-40 select-none will-change-transform"
     >
       <svg
         width="20"
         height="24"
         viewBox="0 0 20 24"
         fill="none"
-        style={{
-          display: 'block',
-          filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.35))',
-        }}
+        className="block drop-shadow-sm"
       >
         <path
           d="M2 2L2 18L6.5 13L11 22L13.5 20.8L9 12L15 12L2 2Z"
@@ -66,21 +57,8 @@ export default memo(function CursorMarker({ username, posRef }: CursorMarkerProp
         />
       </svg>
       <div
-        style={{
-          position: 'absolute',
-          top: 18,
-          left: 14,
-          background: color,
-          color: 'white',
-          borderRadius: 10,
-          padding: '2px 8px',
-          fontSize: 11,
-          fontWeight: 700,
-          fontFamily: "'Roboto', sans-serif",
-          whiteSpace: 'nowrap',
-          boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
-          letterSpacing: 0.2,
-        }}
+        className="absolute left-3.5 top-4 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold text-white shadow-md"
+        style={{ background: gradient }}
       >
         {username}
       </div>

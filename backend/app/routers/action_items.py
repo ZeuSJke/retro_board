@@ -104,6 +104,36 @@ async def list_all_action_items(
     ]
 
 
+def copy_unresolved_action_items(
+    db: Session, source_board_id: str, target_board_id: str
+) -> list[schemas.ActionItemOut]:
+    """Копировать нерешённые задачи со старой доски на целевую (без commit)."""
+    items = (
+        db.query(models.ActionItem)
+        .filter(
+            models.ActionItem.board_id == source_board_id,
+            models.ActionItem.status != "done",
+        )
+        .order_by(models.ActionItem.created_at)
+        .all()
+    )
+    created: list[schemas.ActionItemOut] = []
+    for src in items:
+        new_item = models.ActionItem(
+            id=str(uuid.uuid4()),
+            board_id=target_board_id,
+            title=src.title,
+            text=src.text,
+            assignee=src.assignee,
+            status="open",
+        )
+        db.add(new_item)
+        db.flush()
+        db.refresh(new_item)
+        created.append(schemas.ActionItemOut.model_validate(new_item))
+    return created
+
+
 @router.post(
     "/carry-forward", response_model=list[schemas.ActionItemOut], status_code=201
 )
@@ -124,31 +154,9 @@ async def carry_forward(
     )
     require_live_board(tgt_board, workspace.id, "Target board not found")
 
-    items = (
-        db.query(models.ActionItem)
-        .filter(
-            models.ActionItem.board_id == body.source_board_id,
-            models.ActionItem.status != "done",
-        )
-        .order_by(models.ActionItem.created_at)
-        .all()
+    created = copy_unresolved_action_items(
+        db, body.source_board_id, body.target_board_id
     )
-
-    created = []
-    for src in items:
-        new_item = models.ActionItem(
-            id=str(uuid.uuid4()),
-            board_id=body.target_board_id,
-            title=src.title,
-            text=src.text,
-            assignee=src.assignee,
-            status="open",
-        )
-        db.add(new_item)
-        db.flush()
-        db.refresh(new_item)
-        out = schemas.ActionItemOut.model_validate(new_item)
-        created.append(out)
     db.commit()
 
     for out in created:

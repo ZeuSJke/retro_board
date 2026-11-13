@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app import models, schemas
-from app.utils import get_or_404, require_live_board
+from app.utils import get_or_404, require_unlocked_board
 from app.ws_manager import manager
 from app.limiter import limiter
 from app.workspace_auth import get_current_workspace
@@ -28,7 +28,7 @@ async def create_group(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     col = get_or_404(db, models.Column, body.column_id, "Column not found")
-    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
     pos = db.query(func.count(models.CardGroup.id)).filter(models.CardGroup.column_id == body.column_id).scalar() or 0
     group = models.CardGroup(
         id=str(uuid.uuid4()),
@@ -55,7 +55,7 @@ async def update_group(
 ):
     group = get_or_404(db, models.CardGroup, group_id, "Group not found")
     col = db.get(models.Column, group.column_id)
-    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Group not found")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Group not found")
     if body.title is not None:
         group.title = body.title
     db.commit()
@@ -75,7 +75,7 @@ async def delete_group(
 ):
     group = get_or_404(db, models.CardGroup, group_id, "Group not found")
     col = db.get(models.Column, group.column_id)
-    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Group not found")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Group not found")
     board_id = col.board_id
     col_id = group.column_id  # capture before deletion
 
@@ -106,7 +106,7 @@ async def set_card_group(
     """Add a card to a group."""
     group = get_or_404(db, models.CardGroup, group_id, "Group not found")
     col = db.get(models.Column, group.column_id)
-    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Group not found")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Group not found")
     card = get_or_404(db, models.Card, card_id, "Card not found")
     if card.column_id != group.column_id:
         raise HTTPException(400, "Card and group must be in the same column")
@@ -130,7 +130,7 @@ async def move_group(
     """Move a group (and all its cards) to a different column."""
     group = get_or_404(db, models.CardGroup, group_id, "Group not found")
     col = db.get(models.Column, group.column_id)
-    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Group not found")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Group not found")
     old_col = db.get(models.Column, group.column_id)
     new_col = get_or_404(db, models.Column, body.column_id, "Column not found")
     if old_col.board_id != new_col.board_id:
@@ -171,7 +171,7 @@ async def remove_card_from_group(
     """Remove a card from its group. Auto-deletes the group if it becomes empty."""
     card = get_or_404(db, models.Card, card_id, "Card not found")
     col = db.get(models.Column, card.column_id)
-    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Card not found")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Card not found")
     if card.group_id != group_id:
         raise HTTPException(400, "Card is not in this group")
     card.group_id = None
@@ -208,7 +208,7 @@ async def auto_cluster(
 
     # Load column, verify workspace ownership
     col = get_or_404(db, models.Column, body.column_id, "Колонка не найдена")
-    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Колонка не найдена")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Колонка не найдена")
 
     # Get ungrouped cards in column
     ungrouped_cards = (

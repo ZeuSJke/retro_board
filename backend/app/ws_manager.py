@@ -35,7 +35,10 @@ class ConnectionManager:
         self.phases: dict[str, str] = {}  # board_id → phase
         self.timers: dict[str, dict] = {}  # board_id → timer state
         self.session_ids: dict[str, int] = {}  # board_id → session_id (timestamp)
+        self.ready_users: dict[str, set[str]] = defaultdict(set)  # board_id → set[username]
+        self.spotlights: dict[str, str] = {}  # board_id → card_id
         self.facilitator_grace_tasks: dict[str, asyncio.Task] = {}
+        self.on_session_cleared = None  # Optional callback(board_id)
 
     def reset(self) -> None:
         """Сбросить всё in-memory состояние (для изоляции тестов)."""
@@ -51,6 +54,8 @@ class ConnectionManager:
         self.phases.clear()
         self.timers.clear()
         self.session_ids.clear()
+        self.ready_users.clear()
+        self.spotlights.clear()
 
     async def connect(
         self, board_id: str, ws: WebSocket, workspace_id: str | None = None
@@ -94,10 +99,21 @@ class ConnectionManager:
                     and username not in self.get_users(board_id)
                 ):
                     self.clear_session(board_id)
+                    if self.on_session_cleared:
+                        try:
+                            self.on_session_cleared(board_id)
+                        except Exception:
+                            pass
                     await self.broadcast(
                         board_id,
                         "facilitator_update",
                         {"facilitator": None, "phase": None, "session_id": None},
+                    )
+                    await self.broadcast(
+                        board_id, "ready_update", {"ready_users": []}
+                    )
+                    await self.broadcast(
+                        board_id, "spotlight_update", {"card_id": None}
                     )
             except asyncio.CancelledError:
                 return
@@ -152,12 +168,30 @@ class ConnectionManager:
         )
         return username, still_present, fac_disconnected
 
-    def set_facilitator(self, board_id: str, username: str):
+    def set_facilitator(self, board_id: str, username: str) -> tuple[bool, bool]:
         self.cancel_facilitator_grace(board_id)
         self.facilitators[board_id] = username
         self.phases[board_id] = "brainstorm"
         # Generate new session_id when facilitator starts
         self.session_ids[board_id] = int(time.time())
+        had_ready = bool(self.ready_users.pop(board_id, None))
+        had_spot = bool(self.spotlights.pop(board_id, None))
+        return had_ready, had_spot
+
+    def hydrate_session(
+        self,
+        board_id: str,
+        facilitator: str | None,
+        phase: str | None,
+        session_id: int | None,
+    ):
+        """Восстановить состояние сессии из БД без генерации нового session_id."""
+        if facilitator:
+            self.facilitators[board_id] = facilitator
+        if phase:
+            self.phases[board_id] = phase
+        if session_id is not None:
+            self.session_ids[board_id] = session_id
 
     def get_facilitator(self, board_id: str) -> str | None:
         return self.facilitators.get(board_id)
@@ -167,8 +201,11 @@ class ConnectionManager:
         self.facilitators.pop(board_id, None)
         self.phases.pop(board_id, None)
 
-    def set_phase(self, board_id: str, phase: str):
+    def set_phase(self, board_id: str, phase: str) -> tuple[bool, bool]:
         self.phases[board_id] = phase
+        had_ready = bool(self.ready_users.pop(board_id, None))
+        had_spot = bool(self.spotlights.pop(board_id, None))
+        return had_ready, had_spot
 
     def get_phase(self, board_id: str) -> str | None:
         return self.phases.get(board_id)
@@ -181,13 +218,49 @@ class ConnectionManager:
         """Get current session_id for a board."""
         return self.session_ids.get(board_id)
 
-    def clear_session(self, board_id: str):
+    def clear_session(self, board_id: str) -> tuple[bool, bool]:
         """Clear all session-related state for a board."""
         self.cancel_facilitator_grace(board_id)
         self.facilitators.pop(board_id, None)
         self.phases.pop(board_id, None)
         self.session_ids.pop(board_id, None)
         self.timers.pop(board_id, None)
+        had_ready = bool(self.ready_users.pop(board_id, None))
+        had_spot = bool(self.spotlights.pop(board_id, None))
+        return had_ready, had_spot
+
+    def toggle_ready(
+        self, board_id: str, username: str, ready: bool | None = None
+    ) -> list[str]:
+        bucket = self.ready_users[board_id]
+        if ready is True:
+            bucket.add(username)
+        elif ready is False:
+            bucket.discard(username)
+        elif username in bucket:
+            bucket.discard(username)
+        else:
+            bucket.add(username)
+        return sorted(bucket)
+
+    def get_ready_users(self, board_id: str) -> list[str]:
+        return sorted(self.ready_users.get(board_id, set()))
+
+    def remove_ready_user(self, board_id: str, username: str) -> bool:
+        bucket = self.ready_users.get(board_id)
+        if bucket and username in bucket:
+            bucket.discard(username)
+            return True
+        return False
+
+    def set_spotlight(self, board_id: str, card_id: str | None):
+        if card_id:
+            self.spotlights[board_id] = card_id
+        else:
+            self.spotlights.pop(board_id, None)
+
+    def get_spotlight(self, board_id: str) -> str | None:
+        return self.spotlights.get(board_id)
 
     def set_timer(self, board_id: str, event: str, data: dict):
         """Store timer state so new clients can catch up."""

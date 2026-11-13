@@ -73,22 +73,18 @@ test.describe('Workspace switch — переключение между workspac
 
     await expect(page.getByRole('button', { name: 'Ретро Q1' })).toBeVisible({ timeout: 15000 })
 
-    await page.locator('button').filter({ hasText: /тестер ws1/i }).click()
-    await page.waitForTimeout(500)
+    await page.getByTestId('user-settings-btn').click()
 
-    const dialog = page.locator('div').filter({ hasText: /настройки пользователя/i }).first()
+    const dialog = page.getByRole('dialog')
     await expect(dialog).toBeVisible()
 
-    const changeBtn = dialog.getByRole('button', { name: 'Сменить' })
-    if (await changeBtn.isVisible()) {
-      await changeBtn.click()
-      await page.waitForTimeout(500)
-    }
+    await dialog.getByRole('button', { name: 'Выйти' }).click()
 
-    await dialog.locator('input').first().fill(SECOND_WORKSPACE_SLUG)
-    await dialog.locator('input[type="password"]').fill(SECOND_WORKSPACE_KEY)
+    await expect(page.getByPlaceholder(/код команды|fmrm/i)).toBeVisible({ timeout: 5000 })
+    await page.getByPlaceholder(/код команды|fmrm/i).fill(SECOND_WORKSPACE_SLUG)
+    await page.getByPlaceholder(/ключ доступа/i).fill(SECOND_WORKSPACE_KEY)
 
-    const confirmBtn = dialog.getByRole('button', { name: 'Сохранить' })
+    const confirmBtn = page.getByRole('button', { name: /войти на доску/i })
     await expect(confirmBtn).toBeVisible({ timeout: 5000 })
     await confirmBtn.click()
 

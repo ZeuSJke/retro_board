@@ -21,7 +21,7 @@ test.describe('Admin — управление пространствами', () 
 
   test('показывает форму логина', async ({ page }) => {
     await page.goto(ADMIN_URL)
-    await expect(page.getByText('Панель управления')).toBeVisible()
+    await expect(page.getByText('Панель администратора')).toBeVisible()
     await expect(page.getByPlaceholder(/логин/i)).toBeVisible()
     await expect(page.getByPlaceholder(/пароль/i)).toBeVisible()
   })
@@ -39,8 +39,8 @@ test.describe('Admin — управление пространствами', () 
     await page.getByPlaceholder(/логин/i).fill(ADMIN_LOGIN)
     await page.getByPlaceholder(/пароль/i).fill(ADMIN_PASSWORD)
     await page.getByRole('button', { name: /войти/i }).click()
-    await expect(page.getByText(/пространства/i)).toBeVisible({ timeout: 5000 })
-    await expect(page.getByRole('button', { name: /создать/i })).toBeVisible()
+    await expect(page.getByText(/Рабочие пространства/i)).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('button', { name: /Создать workspace/i })).toBeVisible()
   })
 
   test('создание нового пространства', async ({ page, request }) => {
@@ -48,27 +48,27 @@ test.describe('Admin — управление пространствами', () 
     await page.getByPlaceholder(/логин/i).fill(ADMIN_LOGIN)
     await page.getByPlaceholder(/пароль/i).fill(ADMIN_PASSWORD)
     await page.getByRole('button', { name: /войти/i }).click()
-    await page.getByText(/пространства/i).waitFor({ timeout: 5000 })
+    await page.getByText(/Рабочие пространства/i).waitFor({ timeout: 5000 })
 
     const uniqueSuffix = Date.now()
     const workspaceSlug = `test-ws-${uniqueSuffix}`
     createdWorkspaceSlugs.push(workspaceSlug)
 
-    const createBtn = page.getByRole('button', { name: /создать пространство/i })
+    const createBtn = page.getByRole('button', { name: /Создать workspace/i })
     await createBtn.click()
 
-    const nameInput = page.getByPlaceholder(/FMRM Core/)
+    const nameInput = page.getByPlaceholder(/Платформа/i)
     await nameInput.fill(`Test WS ${uniqueSuffix}`)
 
-    const slugInput = page.getByPlaceholder(/fmrm-core/)
+    const slugInput = page.getByPlaceholder('platform-team')
     await slugInput.fill(workspaceSlug)
 
     const keyInputs = page.locator('input[type="password"]')
     const passwordInput = keyInputs.last()
     await passwordInput.fill('test-key-123')
 
-    const saveBtn = page.getByRole('button', { name: /сохранить/i }).last()
-    await saveBtn.click()
+    const submitBtn = page.getByRole('dialog').getByRole('button', { name: 'Создать' })
+    await submitBtn.click()
 
     await expect(page.getByText(`Test WS ${uniqueSuffix}`)).toBeVisible({ timeout: 5000 })
   })
@@ -84,17 +84,18 @@ test.describe('Admin — управление пространствами', () 
     await page.getByPlaceholder(/логин/i).fill(ADMIN_LOGIN)
     await page.getByPlaceholder(/пароль/i).fill(ADMIN_PASSWORD)
     await page.getByRole('button', { name: /войти/i }).click()
-    await page.getByText(/пространства/i).waitFor({ timeout: 5000 })
+    await page.getByText(/Рабочие пространства/i).waitFor({ timeout: 5000 })
 
-    const row = page.locator('[class*="tableRow"]').filter({ hasText: 'e2e-team' })
-    const editBtn = row.getByRole('button').nth(0)
-    await editBtn.click()
+    const row = page.locator('tbody tr').filter({
+      has: page.locator('code', { hasText: /^e2e-team$/ }),
+    })
+    await row.getByRole('button', { name: 'Переименовать' }).click()
 
     const input = page.getByPlaceholder(/Новое название/)
     await input.clear()
     await input.fill(`${originalName} (Updated)`)
 
-    const saveBtn = page.getByRole('button', { name: /сохранить/i }).last()
+    const saveBtn = page.getByRole('dialog').getByRole('button', { name: 'Сохранить' })
     await saveBtn.click()
 
     await expect(page.getByText(`${originalName} (Updated)`)).toBeVisible({ timeout: 5000 })
@@ -107,11 +108,11 @@ test.describe('Admin — управление пространствами', () 
     await page.getByPlaceholder(/логин/i).fill(ADMIN_LOGIN)
     await page.getByPlaceholder(/пароль/i).fill(ADMIN_PASSWORD)
     await page.getByRole('button', { name: /войти/i }).click()
-    await page.getByText(/пространства/i).waitFor({ timeout: 5000 })
+    await page.getByText(/Рабочие пространства/i).waitFor({ timeout: 5000 })
 
     const logoutBtn = page.getByRole('button', { name: /выйти/i })
     await logoutBtn.click()
 
-    await expect(page.getByText('Панель управления')).toBeVisible()
+    await expect(page.getByText('Панель администратора')).toBeVisible()
   })
 })

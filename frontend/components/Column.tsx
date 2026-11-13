@@ -1,55 +1,70 @@
 'use client'
 
-import { useState, useRef, memo } from 'react'
-import { useDroppable, useDndContext } from '@dnd-kit/core'
+import { useMemo, useRef, useState } from 'react'
+import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react'
+import { autoClusterColumn, createCard, deleteColumn, updateColumn } from '../api'
+import { CARD_COLOR_PRESETS, COLUMN_COLOR_PALETTE } from '@/lib/board-themes'
+import { useAppStore } from '../store'
+import { showToast } from '../store/toastStore'
+import { getApiErrorMessage } from '../utils/apiError'
+import type { Card, CardGroup, Column as ColumnType } from '../types'
 import CardWidget from './CardWidget'
 import CardGroupWidget from './CardGroupWidget'
-import Dialog from './Dialog'
 import {
-  updateColumn,
-  deleteColumn,
-  createCard,
-  createGroup,
-  addCardToGroup,
-  autoClusterColumn,
-} from '../api'
-import { showToast } from '../store/toastStore'
-import { useAppStore } from '../store'
-import { CARD_COLORS } from '../utils/theme'
-import type { Column as ColumnType, Card, CardGroup } from '../types'
-import s from './Column.module.css'
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 
 interface ColumnProps {
   column: ColumnType
-  canVote?: boolean
-  readOnly?: boolean
-  cardCreationDisabled?: boolean
-  brainstormHidden?: boolean
+  maxVotes?: number
+  userTotalVotes?: number
   currentUser?: string
-  isFacilitator?: boolean
-  onUpdate: (column: ColumnType) => void
-  onDelete: (id: string) => void
-  onCardCreated: (colId: string, card: Card) => void
-  onCardUpdated: (colId: string, card: Card) => void
-  onCardDeleted: (colId: string, cardId: string) => void
-  onGroupCreated: (colId: string, group: CardGroup) => void
-  onGroupUpdated: (colId: string, group: CardGroup) => void
-  onGroupDeleted: (colId: string, groupId: string) => void
+  onUpdate: (col: ColumnType) => void
+  onDelete: (colId: string) => void
+  onCardCreated: (card: Card) => void
+  onCardUpdated: (card: Card) => void
+  onCardDeleted: (cardId: string) => void
+  onGroupCreated: (group: CardGroup, cardIds: string[]) => void
+  onGroupUpdated: (group: CardGroup) => void
+  onGroupDeleted: (groupId: string) => void
   groupTargetId: string | null
   collapsedGroups: Record<string, boolean>
   onToggleCollapse: (groupId: string) => void
-  usedCardIds?: Set<string>
+  hideOtherCards?: boolean
+  brainstormHidden?: boolean
+  anonymous?: boolean
+  dragDisabled?: boolean
+  readOnly?: boolean
+  cardCreationDisabled?: boolean
+  searchQuery?: string
+  onlyMine?: boolean
+  sortBy?: 'order' | 'votes'
+  spotlightCardId?: string | null
+  onSpotlight?: (cardId: string) => void
+  onCreateActionItem?: (card: Card) => void
 }
 
-export default memo(function Column({
+export default function Column({
   column,
-  canVote = true,
-  readOnly = false,
-  cardCreationDisabled = false,
-  brainstormHidden = false,
+  maxVotes = 0,
+  userTotalVotes = 0,
   currentUser,
-  isFacilitator = false,
   onUpdate,
   onDelete,
   onCardCreated,
@@ -61,461 +76,452 @@ export default memo(function Column({
   groupTargetId,
   collapsedGroups,
   onToggleCollapse,
-  usedCardIds,
+  hideOtherCards = false,
+  brainstormHidden = false,
+  anonymous = false,
+  dragDisabled = false,
+  readOnly = false,
+  cardCreationDisabled = false,
+  searchQuery = '',
+  onlyMine = false,
+  sortBy = 'order',
+  spotlightCardId = null,
+  onSpotlight,
+  onCreateActionItem,
 }: ColumnProps) {
-  const username = useAppStore((s) => s.username)
-  const [addOpen, setAddOpen] = useState(false)
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [cardText, setCardText] = useState('')
-  const [cardColor, setCardColor] = useState('#FFFFFF')
+  const storeUser = useAppStore((s) => s.username)
+  const resolvedUser = currentUser ?? storeUser
+  const effectiveHide = hideOtherCards || brainstormHidden
+
   const [editingTitle, setEditingTitle] = useState(false)
-  const [titleVal, setTitleVal] = useState(column.title)
-  const [colorPickerOpen, setColorPickerOpen] = useState(false)
-
+  const [titleDraft, setTitleDraft] = useState(column.title)
   const [clustering, setClustering] = useState(false)
-  const [creatingCard, setCreatingCard] = useState(false)
-  const creatingCardRef = useRef(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
-  const [groupAssignOpen, setGroupAssignOpen] = useState(false)
-  const [assigningCardId, setAssigningCardId] = useState<string | null>(null)
-  const [newGroupTitle, setNewGroupTitle] = useState('')
+  // Inline card creation
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [draftText, setDraftText] = useState('')
+  const [draftColor, setDraftColor] = useState<string>('#FFFFFF')
+  const [creating, setCreating] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const { setNodeRef, isOver } = useDroppable({
     id: `col-${column.id}`,
-    data: { type: 'column', columnId: column.id },
   })
 
-  const { active } = useDndContext()
+  const filteredAndSortedCards = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    const filtered = (column.cards || []).filter((card) => {
+      const isHidden = effectiveHide && card.author !== resolvedUser
+      if (onlyMine && card.author !== resolvedUser) return false
+      if (q) {
+        if (isHidden) return false
+        const matchText = card.text.toLowerCase().includes(q)
+        const matchAuthor = !anonymous && card.author.toLowerCase().includes(q)
+        if (!matchText && !matchAuthor) return false
+      }
+      return true
+    })
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'votes') {
+        const diff = (b.likes?.length || 0) - (a.likes?.length || 0)
+        if (diff !== 0) return diff
+      }
+      return (a.position ?? 0) - (b.position ?? 0)
+    })
+  }, [column.cards, searchQuery, onlyMine, sortBy, effectiveHide, resolvedUser, anonymous])
+
+  const groups = column.groups || []
+  const groupIds = new Set(groups.map((g) => g.id))
+  const ungroupedCards = filteredAndSortedCards.filter(
+    (c) => !c.group_id || !groupIds.has(c.group_id),
+  )
+  const ungroupedTotalCount = (column.cards || []).filter(
+    (c) => !c.group_id || !groupIds.has(c.group_id),
+  ).length
 
   const saveTitle = async () => {
     setEditingTitle(false)
-    const trimmed = titleVal.trim()
-    if (trimmed && trimmed !== column.title) {
-      onUpdate({ ...column, title: trimmed })
-      try {
-        await updateColumn(column.id, { title: trimmed })
-      } catch {
-        onUpdate({ ...column })
-        setTitleVal(column.title)
-        showToast('Не удалось обновить название', 'error')
-      }
+    const trimmed = titleDraft.trim()
+    if (!trimmed || trimmed === column.title) return
+    onUpdate({ ...column, title: trimmed })
+    try {
+      const updated = await updateColumn(column.id, { title: trimmed })
+      onUpdate({ ...column, ...updated })
+    } catch (err) {
+      onUpdate(column)
+      showToast(getApiErrorMessage(err, 'Не удалось переименовать колонку'), 'error')
     }
   }
 
-  const saveColor = async (color: string) => {
-    setColorPickerOpen(false)
-    const prev = column
+  const handleColorChange = async (color: string) => {
+    if (readOnly) return
     onUpdate({ ...column, color })
     try {
-      await updateColumn(column.id, { color })
-    } catch {
-      onUpdate(prev)
-      showToast('Не удалось обновить цвет', 'error')
+      const updated = await updateColumn(column.id, { color })
+      onUpdate({ ...column, ...updated })
+    } catch (err) {
+      onUpdate(column)
+      showToast(getApiErrorMessage(err, 'Не удалось изменить цвет колонки'), 'error')
     }
   }
 
-  const confirmDelete = async () => {
+  const handleConfirmDelete = async () => {
     setDeleteOpen(false)
     onDelete(column.id)
     try {
       await deleteColumn(column.id)
-    } catch {
-      showToast('Не удалось удалить колонку', 'error')
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось удалить колонку'), 'error')
     }
-  }
-
-  const handleAddCard = async () => {
-    if (!cardText.trim() || creatingCardRef.current) return
-    creatingCardRef.current = true
-    setCreatingCard(true)
-    const text = cardText.trim()
-    const color = cardColor
-    // Optimistic: add temp card immediately
-    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const tempCard: Card = {
-      id: tempId,
-      column_id: column.id,
-      group_id: null,
-      text,
-      author: username,
-      color,
-      position: (column.cards || []).length,
-      likes: [],
-      created_at: new Date().toISOString(),
-    }
-    onCardCreated(column.id, tempCard)
-    setCardText('')
-    setCardColor('#FFFFFF')
-    setAddOpen(false)
-    try {
-      const card = await createCard({ column_id: column.id, text, author: username, color })
-      // Replace temp card with real one
-      onCardDeleted(column.id, tempId)
-      onCardCreated(column.id, card)
-    } catch {
-      onCardDeleted(column.id, tempId)
-    } finally {
-      creatingCardRef.current = false
-      setCreatingCard(false)
-    }
-  }
-
-  const handleAssignToGroup = async (groupId: string) => {
-    setGroupAssignOpen(false)
-    if (!assigningCardId) return
-    try {
-      const updated = await addCardToGroup(groupId, assigningCardId)
-      onCardUpdated(column.id, updated)
-    } catch {
-      showToast('Не удалось добавить карточку в группу', 'error')
-    } finally {
-      setAssigningCardId(null)
-      setNewGroupTitle('')
-    }
-  }
-
-  const handleCreateAndAssign = async () => {
-    if (!assigningCardId) return
-    const title = newGroupTitle.trim() || 'Новая группа'
-    setGroupAssignOpen(false)
-    try {
-      const group = await createGroup({ column_id: column.id, title })
-      const updated = await addCardToGroup(group.id, assigningCardId)
-      onCardUpdated(column.id, updated)
-    } catch {
-      showToast('Не удалось создать группу', 'error')
-    } finally {
-      setAssigningCardId(null)
-      setNewGroupTitle('')
-    }
-  }
-
-  const openGroupAssign = (cardId: string) => {
-    setNewGroupTitle('')
-    setAssigningCardId(cardId)
-    setGroupAssignOpen(true)
   }
 
   const handleAutoCluster = async () => {
+    if (clustering || readOnly) return
     setClustering(true)
     try {
-      const result = await autoClusterColumn(column.id, username)
-      if (result?.created_groups?.length > 0) {
-        showToast('Карточки сгруппированы', 'info')
-      } else {
+      const result = await autoClusterColumn(column.id, resolvedUser)
+      const createdGroups: Array<{ group: CardGroup; card_ids: string[] }> =
+        result?.created_groups || []
+      if (createdGroups.length === 0) {
         showToast('AI не нашёл похожих карточек для группировки', 'info')
+        return
       }
+      for (const entry of createdGroups) {
+        if (entry?.group) {
+          onGroupCreated(entry.group, entry.card_ids || [])
+        }
+      }
+      showToast('Карточки сгруппированы', 'info')
     } catch (err: unknown) {
-      const status = (err as { response?: { status?: number; data?: { detail?: string } } })?.response?.status
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 503) {
         showToast('AI-сервис временно недоступен', 'error')
-      } else if (status === 400 && detail) {
-        showToast(detail, 'error')
       } else {
-        showToast('Не удалось сгруппировать карточки', 'error')
+        showToast(getApiErrorMessage(err, 'Не удалось сгруппировать карточки'), 'error')
       }
     } finally {
       setClustering(false)
     }
   }
 
-  const groups = column.groups || []
-  const ungroupedCards = (column.cards || []).filter((c) => !c.group_id)
-  const cardIds = ungroupedCards.map((c) => c.id)
+  const handleAddCard = async () => {
+    const text = draftText.trim()
+    if (!text || creating || readOnly || cardCreationDisabled) return
+    setCreating(true)
+    try {
+      const created = await createCard({
+        column_id: column.id,
+        text,
+        author: resolvedUser,
+        color: draftColor,
+      })
+      onCardCreated(created)
+      setDraftText('')
+      textareaRef.current?.focus()
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось создать карточку'), 'error')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const canCreateCard = !readOnly && !cardCreationDisabled
 
   return (
     <>
-      <div
-        className={`${s.column} column`}
-        style={{
-          background: isOver
-            ? 'color-mix(in srgb, var(--md-primary) 8%, var(--md-surface-variant))'
-            : 'var(--md-surface-variant)',
-          maxHeight: active ? '90vh' : 'calc(100vh - 120px)',
-          transition: 'max-height 0.2s ease, background 0.15s',
-        }}
+      <section
+        data-testid="board-column"
+        data-column-id={column.id}
+        className={cn(
+          'flex max-h-full w-[336px] shrink-0 flex-col rounded-2xl border bg-card/85 shadow-sm backdrop-blur-sm transition-colors',
+          isOver && 'border-primary/70 ring-2 ring-primary/20',
+        )}
       >
-        <div className={s.header}>
-          <div
-            className={s.dot}
-            style={{ background: column.color, cursor: readOnly ? 'default' : undefined }}
-            onClick={readOnly ? undefined : () => setColorPickerOpen(true)}
-            title={readOnly ? undefined : 'Изменить цвет'}
-          />
+        {/* Top accent strip */}
+        <div
+          className="h-1 w-full shrink-0 rounded-t-2xl"
+          style={{ backgroundColor: column.color || '#6366F1' }}
+        />
+
+        {/* Header */}
+        <div className="flex items-center gap-2 px-3.5 py-3">
+          {readOnly ? (
+            <span
+              className="h-3 w-3 shrink-0 rounded-full"
+              style={{ backgroundColor: column.color || '#6366F1' }}
+            />
+          ) : (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  title="Изменить цвет"
+                  className="h-3.5 w-3.5 shrink-0 rounded-full ring-2 ring-transparent transition-transform hover:scale-110 hover:ring-border"
+                  style={{ backgroundColor: column.color || '#6366F1' }}
+                />
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-auto p-2.5">
+                <div className="flex items-center gap-1.5">
+                  {COLUMN_COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => handleColorChange(c)}
+                      className={cn(
+                        'h-5 w-5 rounded-full transition-transform hover:scale-110',
+                        column.color === c && 'ring-2 ring-primary ring-offset-2',
+                      )}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+
           {editingTitle ? (
-            <input
-              className={s.titleInput}
-              value={titleVal}
-              onChange={(e) => setTitleVal(e.target.value)}
+            <Input
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              autoFocus
+              className="h-7 flex-1 px-2 text-sm font-semibold"
               onBlur={saveTitle}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') saveTitle()
                 if (e.key === 'Escape') {
-                  setTitleVal(column.title)
+                  setTitleDraft(column.title)
                   setEditingTitle(false)
                 }
               }}
-              autoFocus
             />
           ) : (
-            <span
-              className={s.title}
-              onDoubleClick={readOnly ? undefined : () => {
-                setTitleVal(column.title)
-                setEditingTitle(true)
+            <h3
+              title={readOnly ? undefined : 'Двойной клик чтобы редактировать'}
+              onDoubleClick={() => {
+                if (!readOnly) {
+                  setTitleDraft(column.title)
+                  setEditingTitle(true)
+                }
               }}
-              title={readOnly ? column.title : 'Двойной клик чтобы редактировать'}
+              className={cn(
+                'min-w-0 flex-1 truncate text-sm font-semibold text-foreground',
+                !readOnly && 'cursor-text',
+              )}
             >
               {column.title}
-            </span>
+            </h3>
           )}
-          <span className={s.count}>{(column.cards || []).length}</span>
-          {!readOnly && !brainstormHidden && ungroupedCards.length >= 2 && (
-            <button
-              className={s.iconBtn}
-              onClick={handleAutoCluster}
-              disabled={clustering}
-              title="Сгруппировать похожие (AI)"
-            >
-              {clustering ? (
-                <span
-                  className="material-symbols-rounded"
-                  style={{ fontSize: 16, animation: 'spin 1s linear infinite' }}
+
+          <Badge variant="secondary" className="h-5 shrink-0 px-2 text-xs font-medium">
+            {column.cards.length}
+          </Badge>
+
+          {!readOnly && !effectiveHide && ungroupedTotalCount >= 2 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-7 w-7 shrink-0 text-primary hover:bg-primary/10"
+                  onClick={handleAutoCluster}
+                  disabled={clustering}
+                  title="Сгруппировать похожие (AI)"
                 >
-                  progress_activity
-                </span>
-              ) : (
-                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-                  auto_awesome
-                </span>
-              )}
-            </button>
+                  {clustering ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Сгруппировать похожие (AI)</TooltipContent>
+            </Tooltip>
           )}
+
           {!readOnly && (
-            <button
-              className={`${s.iconBtn} col-del-btn`}
-              onClick={() => setDeleteOpen(true)}
-              title="Удалить колонку"
-            >
-              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-                close
-              </span>
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => setDeleteOpen(true)}
+                  title="Удалить колонку"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Удалить колонку</TooltipContent>
+            </Tooltip>
           )}
         </div>
 
-        <div ref={setNodeRef} className={s.cards}>
-          {groups.map((group) => (
-            <CardGroupWidget
-              key={group.id}
-              group={group}
-              columnId={column.id}
-              canVote={canVote}
-              readOnly={readOnly}
-              brainstormHidden={brainstormHidden}
-              currentUser={currentUser}
-              isFacilitator={isFacilitator}
-              cards={(column.cards || []).filter((c) => c.group_id === group.id)}
-              collapsed={collapsedGroups?.[group.id] || false}
-              onToggleCollapse={() => onToggleCollapse?.(group.id)}
-              onGroupUpdated={(updated) => onGroupUpdated(column.id, updated)}
-              onGroupDeleted={(_, id) => onGroupDeleted(column.id, id)}
-              onCardUpdated={(updated) => onCardUpdated(column.id, updated)}
-              onCardDeleted={(id) => onCardDeleted(column.id, id)}
-              usedCardIds={usedCardIds}
-            />
-          ))}
-
-          <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
-            {ungroupedCards.map((card) => {
-              const hidden = brainstormHidden && !isFacilitator && card.author !== currentUser
+        {/* Scrollable cards area */}
+        <div
+          ref={setNodeRef}
+          className="flex-1 space-y-2.5 overflow-y-auto px-3 pb-3 min-h-[72px]"
+        >
+          <SortableContext
+            items={filteredAndSortedCards.map((c) => c.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {groups.map((group) => {
+              const groupCards = filteredAndSortedCards.filter((c) => c.group_id === group.id)
+              if (groupCards.length === 0 && (searchQuery.trim() || onlyMine)) return null
               return (
-                <CardWidget
-                  key={card.id}
-                  card={card}
-                  canVote={canVote}
+                <CardGroupWidget
+                  key={group.id}
+                  group={group}
+                  cards={groupCards}
+                  collapsed={Boolean(collapsedGroups[group.id])}
+                  onToggleCollapse={() => onToggleCollapse(group.id)}
+                  currentUser={resolvedUser}
+                  maxVotes={maxVotes}
+                  userTotalVotes={userTotalVotes}
+                  onUpdated={onGroupUpdated}
+                  onDeleted={onGroupDeleted}
+                  onCardUpdated={onCardUpdated}
+                  onCardDeleted={onCardDeleted}
+                  groupTargetId={groupTargetId}
+                  dragDisabled={dragDisabled}
+                  hideOtherCards={effectiveHide}
+                  anonymous={anonymous}
                   readOnly={readOnly}
-                  hidden={hidden}
-                  usedInAction={usedCardIds?.has(card.id)}
-                  onUpdate={(updated) => onCardUpdated(column.id, updated)}
-                  onDelete={(id) => onCardDeleted(column.id, id)}
-                  groups={groups}
-                  onAssignGroup={readOnly ? undefined : openGroupAssign}
-                  isGroupTarget={card.id === groupTargetId}
+                  spotlightCardId={spotlightCardId}
+                  onSpotlight={onSpotlight}
+                  onCreateActionItem={onCreateActionItem}
                 />
               )
             })}
-          </SortableContext>
 
-          {ungroupedCards.length === 0 && groups.length === 0 && (
-            <div className={s.emptyDrop}>Перетащи карточку сюда</div>
-          )}
-        </div>
-
-        <div className={s.footer}>
-          <button
-            className={s.addBtn}
-            onClick={() => setAddOpen(true)}
-            disabled={readOnly || cardCreationDisabled}
-            title={readOnly ? 'Ретро завершено' : cardCreationDisabled ? 'Дождитесь начала сессии (фасилитатор ещё не назначен)' : undefined}
-          >
-            <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-              add
-            </span>
-            Добавить карточку
-          </button>
-        </div>
-      </div>
-
-      {colorPickerOpen && (
-        <div className={s.colorOverlay} onClick={() => setColorPickerOpen(false)}>
-          <div className={s.colorPopover} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: 'var(--md-on-surface)' }}>
-              Цвет колонки
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-              {[
-                '#6750A4','#0061A4','#006E1C','#BA1A1A','#E8760A',
-                '#006A60','#7D5260','#FF6D00','#43A047',
-              ].map((c) => (
-                <div
-                  key={c}
-                  className={s.swatchSmall}
-                  style={{ background: c }}
-                  onClick={() => saveColor(c)}
-                />
-              ))}
-            </div>
-            <input
-              type="color"
-              value={column.color}
-              onChange={(e) => saveColor(e.target.value)}
-              style={{ cursor: 'pointer' }}
-            />
-          </div>
-        </div>
-      )}
-
-      <Dialog
-        open={addOpen}
-        title="Новая карточка"
-        icon="edit_note"
-        onClose={() => {
-          setAddOpen(false)
-          setCardText('')
-          setCardColor('#FFFFFF')
-        }}
-        onConfirm={handleAddCard}
-        confirmLabel="Добавить"
-        confirmDisabled={!cardText.trim() || creatingCard}
-      >
-        <textarea
-          className={s.textarea}
-          value={cardText}
-          onChange={(e) => setCardText(e.target.value)}
-          placeholder="Что думаете?"
-          rows={4}
-          autoFocus
-          onKeyDown={(e) => e.key === 'Enter' && e.ctrlKey && handleAddCard()}
-        />
-        <div style={{ marginTop: 16 }}>
-          <div className={s.sectionLabel}>Цвет карточки</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {CARD_COLORS.map((c) => (
-              <div
-                key={c}
-                onClick={() => setCardColor(c)}
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: '50%',
-                  cursor: 'pointer',
-                  background: c,
-                  border:
-                    c === cardColor
-                      ? '3px solid var(--md-primary)'
-                      : '2px solid var(--md-outline-variant)',
-                  transform: c === cardColor ? 'scale(1.18)' : 'scale(1)',
-                  transition: 'all 0.15s',
-                  boxShadow:
-                    c === cardColor ? '0 0 0 2px var(--md-primary-container)' : 'none',
-                }}
+            {ungroupedCards.map((card) => (
+              <CardWidget
+                key={card.id}
+                card={card}
+                currentUser={resolvedUser}
+                maxVotes={maxVotes}
+                userTotalVotes={userTotalVotes}
+                onUpdated={onCardUpdated}
+                onDeleted={onCardDeleted}
+                isGroupTarget={groupTargetId === card.id}
+                dragDisabled={dragDisabled}
+                hidden={effectiveHide && card.author !== resolvedUser}
+                anonymous={anonymous}
+                readOnly={readOnly}
+                isSpotlighted={spotlightCardId === card.id}
+                onSpotlight={onSpotlight}
+                onCreateActionItem={onCreateActionItem}
               />
             ))}
-          </div>
-        </div>
-      </Dialog>
+          </SortableContext>
 
-      <Dialog
-        open={deleteOpen}
-        title="Удалить колонку?"
-        icon="delete"
-        danger
-        onClose={() => setDeleteOpen(false)}
-        onConfirm={confirmDelete}
-        confirmLabel="Удалить"
-      >
-        <p className={s.confirmText}>
-          Колонка{' '}
-          <strong style={{ color: 'var(--md-on-surface)' }}>
-            «{column.title}»
-          </strong>{' '}
-          и все её карточки ({(column.cards || []).length}) будут удалены без возможности
-          восстановления.
-        </p>
-      </Dialog>
-
-      <Dialog
-        open={groupAssignOpen}
-        title="Добавить в группу"
-        icon="folder"
-        onClose={() => {
-          setGroupAssignOpen(false)
-          setAssigningCardId(null)
-          setNewGroupTitle('')
-        }}
-        onConfirm={null}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {groups.map((g) => (
-            <button
-              key={g.id}
-              className={s.groupPickBtn}
-              onClick={() => handleAssignToGroup(g.id)}
-            >
-              <span
-                className="material-symbols-rounded"
-                style={{ fontSize: 16, color: 'var(--md-primary)' }}
-              >
-                folder
-              </span>
-              {g.title}
-            </button>
-          ))}
-
-          {groups.length > 0 && (
-            <div style={{ height: 1, background: 'var(--md-outline-variant)', margin: '4px 0' }} />
+          {filteredAndSortedCards.length === 0 && !composerOpen && (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-xs text-muted-foreground">
+              <span>Пока нет карточек</span>
+            </div>
           )}
-
-          <div className={s.newGroupRow}>
-            <input
-              className={s.newGroupInput}
-              value={newGroupTitle}
-              onChange={(e) => setNewGroupTitle(e.target.value)}
-              placeholder="Название новой группы"
-              maxLength={120}
-              onKeyDown={(e) => e.key === 'Enter' && handleCreateAndAssign()}
-            />
-            <button className={s.newGroupBtn} onClick={handleCreateAndAssign}>
-              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-                add
-              </span>
-              Создать
-            </button>
-          </div>
         </div>
-      </Dialog>
+
+        {/* Inline card composer */}
+        <div className="shrink-0 border-t px-3 py-2.5">
+          {composerOpen && canCreateCard ? (
+            <div className="space-y-2 rounded-xl border bg-background p-2.5 shadow-sm">
+              <Textarea
+                ref={textareaRef}
+                value={draftText}
+                onChange={(e) => setDraftText(e.target.value)}
+                rows={2}
+                autoFocus
+                placeholder="Опишите мысль... (Enter — добавить)"
+                className="min-h-[60px] resize-none border-0 bg-transparent p-1 text-sm focus-visible:ring-0"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleAddCard()
+                  } else if (e.key === 'Escape') {
+                    setComposerOpen(false)
+                  }
+                }}
+              />
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <div className="flex items-center gap-1">
+                  {CARD_COLOR_PRESETS.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setDraftColor(c.hex)}
+                      title={c.name}
+                      className={cn(
+                        'h-4 w-4 rounded-full border transition-transform hover:scale-110',
+                        c.swatchClass,
+                        draftColor.toLowerCase() === c.hex.toLowerCase() &&
+                          'ring-2 ring-primary ring-offset-1',
+                      )}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="h-7 w-7"
+                    onClick={() => setComposerOpen(false)}
+                    aria-label="Отменить"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 px-3 text-xs"
+                    disabled={!draftText.trim() || creating}
+                    onClick={handleAddCard}
+                  >
+                    {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    Добавить
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={!canCreateCard}
+              onClick={() => setComposerOpen(true)}
+              className="w-full justify-start gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              <Plus className="h-4 w-4" />
+              Добавить карточку
+            </Button>
+          )}
+        </div>
+      </section>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить колонку «{column.title}»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Колонка и все её карточки ({column.cards.length}) будут удалены безвозвратно.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
-})
+}

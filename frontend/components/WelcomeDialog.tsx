@@ -1,10 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useAppStore } from '../store'
-import { loginToWorkspace } from '../api'
-import { userColor, initials } from '../utils/theme'
-import styles from './WelcomeDialog.module.css'
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { ArrowRight, Eye, EyeOff, KeyRound, Layers, Loader2, Sparkles, Users } from 'lucide-react'
+import { useAppStore } from '@/store'
+import { loginToWorkspace } from '@/api'
+import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
 
 interface WelcomeDialogProps {
   onConfirm: (name: string) => void
@@ -18,20 +24,9 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
   const [name, setName] = useState(savedName === 'Аноним' ? '' : savedName)
   const [workspaceSlug, setWorkspaceSlug] = useState('')
   const [accessKey, setAccessKey] = useState('')
-  const [visible, setVisible] = useState(false)
+  const [showKey, setShowKey] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showWorkspaceFields, setShowWorkspaceFields] = useState(!workspace)
-
-  useEffect(() => {
-    const t = setTimeout(() => setVisible(true), 50)
-    return () => clearTimeout(t)
-  }, [])
-
-  // Sync with Zustand state after async hydration (Next.js SSR uses default state on first render)
-  useEffect(() => {
-    setShowWorkspaceFields(!workspace)
-  }, [workspace])
 
   useEffect(() => {
     if (savedName && savedName !== 'Аноним') {
@@ -39,12 +34,16 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
     }
   }, [savedName])
 
-  const handleConfirm = async () => {
-    const trimmedName = name.trim()
-    if (!trimmedName) return
+  const trimmedName = name.trim()
+  const canSubmit = workspace
+    ? trimmedName.length > 0
+    : trimmedName.length > 0 && workspaceSlug.trim().length > 0 && accessKey.length > 0
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!canSubmit || loading) return
 
     if (!workspace) {
-      // Need to login to workspace
       setLoading(true)
       setError(null)
       try {
@@ -53,14 +52,18 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
           access_key: accessKey,
         })
         setWorkspace(session)
-        setLoading(false)
         onConfirm(trimmedName)
       } catch (err: unknown) {
-        const errorMsg =
-          err instanceof Error && 'response' in err && (err as { response?: { status?: number } }).response?.status === 401
+        const status =
+          err instanceof Error && 'response' in err
+            ? (err as { response?: { status?: number } }).response?.status
+            : undefined
+        setError(
+          status === 401
             ? 'Неверный код команды или ключ доступа'
-            : 'Ошибка при подключении к команде'
-        setError(errorMsg)
+            : 'Ошибка при подключении к команде',
+        )
+      } finally {
         setLoading(false)
       }
     } else {
@@ -70,154 +73,160 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
 
   const handleChangeWorkspace = () => {
     setWorkspace(null)
-    setShowWorkspaceFields(true)
     setError(null)
     setWorkspaceSlug('')
     setAccessKey('')
   }
 
-  const displayName = name.trim() || '?'
-  const avatarColor = name.trim() ? userColor(name.trim()) : '#CAC4D0'
-  const canSubmit = workspace
-    ? name.trim().length > 0
-    : name.trim().length > 0 && workspaceSlug.trim().length > 0 && accessKey.length > 0
-
   return (
-    <div className={styles.overlay} style={{ opacity: visible ? 1 : 0 }}>
+    <div className="relative flex min-h-screen items-center justify-center bg-background bg-dot-grid p-4">
       <div
-        className={styles.card}
-        style={{
-          transform: visible
-            ? 'translateY(0) scale(1)'
-            : 'translateY(24px) scale(0.97)',
-        }}
-      >
-        <div className={styles.logoStrip}>
-          <span className="material-symbols-rounded filled" style={{ fontSize: 22, color: 'white' }}>
-            sticky_note_2
-          </span>
-          <span className={styles.logoText}>RetroBoard</span>
-        </div>
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,hsl(var(--primary)/0.14),transparent_55%)]"
+      />
 
-        <div className={styles.body}>
-          <div className={styles.avatar} style={{ background: avatarColor }}>
-            <span className={styles.avatarText}>{initials(displayName)}</span>
-            {name.trim() && (
-              <div className={styles.avatarRing} style={{ borderColor: avatarColor }} />
-            )}
+      <Card className="relative z-10 w-full max-w-md border-border/80 bg-background/95 shadow-2xl backdrop-blur-md">
+        <CardHeader className="items-center space-y-3 pb-4 text-center">
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="gap-1.5 px-3 py-1 text-xs font-medium">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              RetroBoard
+            </Badge>
           </div>
 
-          <h1 className={styles.title}>Добро пожаловать!</h1>
-          <p className={styles.subtitle}>
-            {workspace ? 'Введите имя для участия в доске' : 'Войдите в рабочее пространство'}
-          </p>
+          <div
+            className={`flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br text-xl font-bold text-white shadow-lg transition-all ${
+              trimmedName ? getUserAvatarGradient(trimmedName) : 'from-zinc-400 to-zinc-500'
+            }`}
+          >
+            {trimmedName ? getUserInitials(trimmedName) : <Users className="h-7 w-7" />}
+          </div>
 
-          {workspace && !showWorkspaceFields && (
-            <div className={styles.workspaceInfo}>
-              <div className={styles.workspaceName}>Команда: {workspace.workspaceName}</div>
-              <button className={styles.workspaceChange} onClick={handleChangeWorkspace}>
-                Войти в другую команду
-              </button>
-            </div>
-          )}
+          <div className="space-y-1">
+            <CardTitle className="text-2xl font-bold">Добро пожаловать!</CardTitle>
+            <CardDescription>
+              {workspace
+                ? `Команда «${workspace.workspaceName}». Представьтесь для входа на доску.`
+                : 'Подключитесь к командному пространству, чтобы начать ретроспективу.'}
+            </CardDescription>
+          </div>
+        </CardHeader>
 
-          {showWorkspaceFields && (
-            <>
-              <div className={styles.section}>
-                <div className={styles.sectionTitle}>Данные команды</div>
-
-                <div className={styles.inputWrap}>
-                  <span className={`material-symbols-rounded ${styles.inputIcon}`}>
-                    business
-                  </span>
-                  <input
-                    className={styles.input}
-                    value={workspaceSlug}
-                    onChange={(e) => setWorkspaceSlug(e.target.value)}
-                    placeholder="Например: fmrm-core"
-                    maxLength={100}
-                    disabled={loading}
-                    onKeyDown={(e) => e.key === 'Enter' && canSubmit && handleConfirm()}
-                    spellCheck={false}
-                  />
-                </div>
-
-                <div className={styles.inputWrap}>
-                  <span className={`material-symbols-rounded ${styles.inputIcon}`}>
-                    key
-                  </span>
-                  <input
-                    type="password"
-                    className={styles.input}
-                    value={accessKey}
-                    onChange={(e) => setAccessKey(e.target.value)}
-                    placeholder="Ключ доступа"
-                    maxLength={100}
-                    disabled={loading}
-                    onKeyDown={(e) => e.key === 'Enter' && canSubmit && handleConfirm()}
-                    spellCheck={false}
-                  />
-                </div>
-
-                {error && <div className={styles.error}>{error}</div>}
-              </div>
-            </>
-          )}
-
-          <div className={styles.section}>
-            <div className={styles.sectionTitle}>Ваше имя</div>
-
-            <div className={styles.inputWrap}>
-              <span className={`material-symbols-rounded ${styles.inputIcon}`}>
-                person
-              </span>
-              <input
-                className={styles.input}
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="welcome-name">Ваше имя</Label>
+              <Input
+                id="welcome-name"
+                placeholder="Ваше имя"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Ваше имя"
                 maxLength={60}
-                autoFocus={!showWorkspaceFields}
-                disabled={loading}
-                onKeyDown={(e) => e.key === 'Enter' && canSubmit && handleConfirm()}
-                spellCheck={false}
+                autoFocus
+                data-testid="welcome-name-input"
               />
-              {name.trim() && (
-                <button
-                  className={styles.clearBtn}
-                  onClick={() => setName('')}
-                  disabled={loading}
-                >
-                  <span className="material-symbols-rounded" style={{ fontSize: 18 }}>
-                    close
-                  </span>
-                </button>
-              )}
             </div>
+
+            {workspace ? (
+              <div className="flex items-center justify-between rounded-xl border bg-muted/50 px-3.5 py-2.5 text-sm">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Layers className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{workspace.workspaceName}</div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      /{workspace.workspaceSlug}
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleChangeWorkspace}
+                  className="shrink-0 text-xs"
+                >
+                  Сменить команду
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="welcome-slug">Код команды</Label>
+                  <Input
+                    id="welcome-slug"
+                    placeholder="Например: fmrm-core"
+                    value={workspaceSlug}
+                    onChange={(e) => setWorkspaceSlug(e.target.value)}
+                    data-testid="workspace-slug-input"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="welcome-key">Ключ доступа</Label>
+                  <div className="relative">
+                    <KeyRound className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="welcome-key"
+                      type={showKey ? 'text' : 'password'}
+                      placeholder="Ключ доступа команды"
+                      value={accessKey}
+                      onChange={(e) => setAccessKey(e.target.value)}
+                      className="pl-9 pr-9"
+                      data-testid="workspace-key-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowKey((prev) => !prev)}
+                      aria-label={showKey ? 'Скрыть ключ' : 'Показать ключ'}
+                      className="absolute right-2.5 top-2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                    >
+                      {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {error && (
+              <div
+                role="alert"
+                className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive"
+              >
+                {error}
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              disabled={!canSubmit || loading}
+              className="w-full"
+              size="lg"
+              data-testid="welcome-submit-btn"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Подключаемся...
+                </>
+              ) : (
+                <>
+                  Войти на доску
+                  <ArrowRight className="h-4 w-4" />
+                </>
+              )}
+            </Button>
+          </form>
+
+          <div className="mt-5 border-t pt-4 text-center text-xs text-muted-foreground">
+            Нужно создать новую команду?{' '}
+            <Link href="/admin" className="font-medium text-primary hover:underline">
+              Открыть админ-панель
+            </Link>
           </div>
-
-          <button
-            className={styles.btn}
-            onClick={handleConfirm}
-            disabled={loading || !canSubmit}
-            style={{
-              opacity: loading || !canSubmit ? 0.6 : 1,
-              cursor: loading || !canSubmit ? 'not-allowed' : 'pointer',
-            }}
-          >
-            <span>{loading ? 'Вход...' : 'Войти на доску'}</span>
-            <span className="material-symbols-rounded" style={{ fontSize: 20 }}>
-              arrow_forward
-            </span>
-          </button>
-
-          <p className={styles.hint}>
-            {showWorkspaceFields
-              ? 'Введите код команды и ключ доступа, затем имя'
-              : 'Нажмите Enter или кнопку выше, чтобы продолжить'}
-          </p>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }

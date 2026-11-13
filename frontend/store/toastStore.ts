@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from 'react'
+import { toast } from 'sonner'
 
 export interface Toast {
   id: number
   message: string
-  type: 'error' | 'info'
+  type: 'error' | 'info' | 'success'
 }
 
 let nextId = 0
@@ -14,10 +15,21 @@ function notify() {
   listeners.forEach((l) => l())
 }
 
-export function showToast(message: string, type: 'error' | 'info' = 'info') {
+export function showToast(message: string, type: 'error' | 'info' | 'success' = 'info') {
   const id = ++nextId
   toasts = [...toasts, { id, message, type }]
   notify()
+
+  if (typeof window !== 'undefined') {
+    if (type === 'error') {
+      toast.error(message)
+    } else if (type === 'success') {
+      toast.success(message)
+    } else {
+      toast(message)
+    }
+  }
+
   setTimeout(() => {
     toasts = toasts.filter((t) => t.id !== id)
     notify()
@@ -27,6 +39,9 @@ export function showToast(message: string, type: 'error' | 'info' = 'info') {
 export function dismissToast(id: number) {
   toasts = toasts.filter((t) => t.id !== id)
   notify()
+  if (typeof window !== 'undefined') {
+    toast.dismiss()
+  }
 }
 
 function getSnapshot() {

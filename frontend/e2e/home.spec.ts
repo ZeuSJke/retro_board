@@ -52,12 +52,12 @@ test.describe('Главная страница', () => {
     await expect(page).toHaveURL(/\/board\//)
 
     // Open sidebar via hamburger menu
-    await page.locator('header button').first().click()
+    await page.getByTestId('boards-drawer-btn').click()
 
     // Click "Новая доска" in sidebar
     await page.getByText('Новая доска').click()
 
-    const input = page.getByPlaceholder('Название доски')
+    const input = page.getByTestId('create-board-name-input')
     await input.fill('Вторая доска')
     await input.press('Enter')
 

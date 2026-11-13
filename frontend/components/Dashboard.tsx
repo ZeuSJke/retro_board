@@ -1,33 +1,91 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import dynamic from 'next/dynamic'
-import { getBoards, getAllActionItems, updateActionItem, deleteActionItem } from '../api'
+import { useTheme } from 'next-themes'
+import {
+  ArrowLeft,
+  ArrowRight,
+  BarChart3,
+  CheckCircle2,
+  Circle,
+  Clock,
+  ExternalLink,
+  HeartPulse,
+  Kanban,
+  Layers,
+  List,
+  ListTodo,
+  Loader2,
+  Lock,
+  Moon,
+  Plus,
+  Repeat,
+  Search,
+  Sparkles,
+  Sun,
+  Trash2,
+} from 'lucide-react'
+import {
+  deleteActionItem,
+  getActionItemTrends,
+  getAllActionItems,
+  getBoard,
+  getBoardSummary,
+  getBoards,
+  getMoodTrends,
+  getWorkspaceInsights,
+  updateActionItem,
+} from '../api'
 import { useAppStore } from '../store'
-import { showToast } from '../store/toastStore'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { showToast } from '../store/toastStore'
 import { getApiErrorMessage } from '../utils/apiError'
-import { userColor, initials } from '../utils/theme'
-import type { BoardListItem, DashboardActionItem, ActionItemStatus, WsBoardUpdatedData, WsDeletedData, WsMessage } from '../types'
-import Dialog from './Dialog'
+import { boardToBoardListItem } from '../utils/boardMapper'
+import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import type {
+  ActionItemStatus,
+  Board,
+  BoardListItem,
+  BoardSummary,
+  DashboardActionItem,
+  MoodTrendPoint,
+  TrendPoint,
+  WorkspaceInsights,
+  WsBoardUpdatedData,
+  WsMessage,
+} from '../types'
+import CarryForwardDialog from './CarryForwardDialog'
+import CreateBoardDialog from './CreateBoardDialog'
+import MoodTrendChart from './MoodTrendChart'
 import SummaryModal from './SummaryModal'
+import TrendChart from './TrendChart'
 import WelcomeDialog from './WelcomeDialog'
-import s from './Dashboard.module.css'
-
-const TrendChart = dynamic(() => import('./TrendChart'), {
-  loading: () => <div style={{ height: 280 }} />,
-  ssr: false,
-})
-
-type StatusFilter = 'all' | 'open' | 'in_progress' | 'done'
-
-const STATUS_LABELS: Record<StatusFilter, string> = {
-  all: 'Все',
-  open: 'Открыто',
-  in_progress: 'В работе',
-  done: 'Выполнено',
-}
+import WorkspaceInsightsCard from './WorkspaceInsightsCard'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
 
 const NEXT_STATUS: Record<ActionItemStatus, ActionItemStatus> = {
   open: 'in_progress',
@@ -35,127 +93,181 @@ const NEXT_STATUS: Record<ActionItemStatus, ActionItemStatus> = {
   done: 'open',
 }
 
-const STATUS_ICON: Record<ActionItemStatus, string> = {
-  open: 'radio_button_unchecked',
-  in_progress: 'pending',
-  done: 'check_circle',
-}
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('ru-RU', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })
+const STATUS_META: Record<
+  ActionItemStatus,
+  { label: string; colorClass: string; badgeVariant: 'warning' | 'secondary' | 'success'; Icon: typeof Circle }
+> = {
+  open: {
+    label: 'Открыто',
+    colorClass: 'text-amber-600 dark:text-amber-400',
+    badgeVariant: 'warning',
+    Icon: Circle,
+  },
+  in_progress: {
+    label: 'В работе',
+    colorClass: 'text-sky-600 dark:text-sky-400',
+    badgeVariant: 'secondary',
+    Icon: Clock,
+  },
+  done: {
+    label: 'Выполнено',
+    colorClass: 'text-emerald-600 dark:text-emerald-400',
+    badgeVariant: 'success',
+    Icon: CheckCircle2,
+  },
 }
 
 export default function Dashboard() {
   const router = useRouter()
-  const setUsername = useAppStore((s) => s.setUsername)
+  const { theme, setTheme } = useTheme()
   const workspace = useAppStore((s) => s.workspace)
+  const username = useAppStore((s) => s.username)
+  const setUsername = useAppStore((s) => s.setUsername)
+  const hasHydrated = useAppStore((s) => s._hasHydrated ?? true)
 
   const [boards, setBoards] = useState<BoardListItem[]>([])
   const [items, setItems] = useState<DashboardActionItem[]>([])
+  const [trends, setTrends] = useState<TrendPoint[]>([])
+  const [moodTrends, setMoodTrends] = useState<MoodTrendPoint[]>([])
+  const [insights, setInsights] = useState<WorkspaceInsights | null>(null)
+  const [insightsLoading, setInsightsLoading] = useState(false)
+
   const [loading, setLoading] = useState(true)
-  const [authRequired, setAuthRequired] = useState(false)
-
-  // Filters
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const [boardFilter, setBoardFilter] = useState<string>('all')
-  const [assigneeFilter, setAssigneeFilter] = useState('')
-
-  const loadData = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true)
-    try {
-      const [boardsData, itemsData] = await Promise.all([
-        getBoards(),
-        getAllActionItems(),
-      ])
-      setBoards(boardsData)
-      setItems(itemsData)
-      setAuthRequired(false)
-    } catch (e: unknown) {
-      const status = (e as { response?: { status?: number } })?.response?.status
-      if (status === 401 || !useAppStore.getState().workspace) {
-        setAuthRequired(true)
-      } else if (!silent) {
-        showToast(getApiErrorMessage(e, 'Не удалось загрузить данные'), 'error')
-      }
-    } finally {
-      if (!silent) setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void loadData()
-  }, [loadData])
-
+  const [error, setError] = useState<string | null>(null)
+  const [needsAuth, setNeedsAuth] = useState(false)
   const hadWorkspaceRef = useRef(Boolean(workspace))
 
   useEffect(() => {
     if (workspace) {
       hadWorkspaceRef.current = true
-    } else if (hadWorkspaceRef.current) {
-      setAuthRequired(true)
     }
   }, [workspace])
 
-  useEffect(() => {
-    const onFocus = () => {
-      if (useAppStore.getState().workspace) {
-        void loadData(true)
-      }
-    }
-    window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
-  }, [loadData])
+  const [activeTab, setActiveTab] = useState<'tasks' | 'boards'>('tasks')
+  const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list')
+  const [statusFilter, setStatusFilter] = useState<'all' | ActionItemStatus>('all')
+  const [boardFilter, setBoardFilter] = useState<string>('all')
+  const [assigneeFilter, setAssigneeFilter] = useState<string>('')
+  const [doneCollapsed, setDoneCollapsed] = useState(true)
 
-  const handleWorkspaceWsMessage = useCallback((msg: WsMessage) => {
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editingDescId, setEditingDescId] = useState<string | null>(null)
+  const [editDesc, setEditDesc] = useState('')
+  const [editAssigneeId, setEditAssigneeId] = useState<string | null>(null)
+  const [editAssignee, setEditAssignee] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<DashboardActionItem | null>(null)
+
+  const [createBoardOpen, setCreateBoardOpen] = useState(false)
+  const [carryOpen, setCarryOpen] = useState(false)
+
+  // Summary modal state
+  const [summaryModalBoard, setSummaryModalBoard] = useState<Board | null>(null)
+  const [summaryData, setSummaryData] = useState<BoardSummary | null>(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    setNeedsAuth(false)
     try {
-      if (msg.event === 'board_created') {
-        const board = msg.data as unknown as BoardListItem
-        if (board?.id) {
-          setBoards((prev) => (prev.some((b) => b.id === board.id) ? prev : [board, ...prev]))
-        }
-      } else if (msg.event === 'board_updated') {
-        const upd = msg.data as unknown as WsBoardUpdatedData
-        if (upd?.id) {
-          setBoards((prev) => prev.map((b) => (b.id === upd.id ? { ...b, ...upd } : b)))
-          if (upd.name) {
-            setItems((prev) =>
-              prev.map((i) => (i.board_id === upd.id ? { ...i, board_name: upd.name! } : i)),
-            )
-          }
-        }
-      } else if (msg.event === 'board_deleted') {
-        const { id } = msg.data as unknown as WsDeletedData
-        if (id) {
-          setBoards((prev) => prev.filter((b) => b.id !== id))
-          setItems((prev) => prev.filter((i) => i.board_id !== id))
-        }
+      const [boardsRes, itemsRes, trendsRes, moodRes] = await Promise.all([
+        getBoards(),
+        getAllActionItems(),
+        typeof getActionItemTrends === 'function'
+          ? getActionItemTrends().catch(() => [] as TrendPoint[])
+          : Promise.resolve([] as TrendPoint[]),
+        typeof getMoodTrends === 'function'
+          ? getMoodTrends().catch(() => [] as MoodTrendPoint[])
+          : Promise.resolve([] as MoodTrendPoint[]),
+      ])
+      setBoards(boardsRes)
+      setItems(itemsRes)
+      setTrends(trendsRes)
+      setMoodTrends(moodRes)
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 401 || !useAppStore.getState().workspace) {
+        setNeedsAuth(true)
+      } else {
+        setError(getApiErrorMessage(err, 'Не удалось загрузить аналитику'))
       }
-    } catch {
-      /* ignore malformed workspace ws message */
+    } finally {
+      setLoading(false)
     }
   }, [])
 
-  useWebSocket('workspace', handleWorkspaceWsMessage)
+  useEffect(() => {
+    if (!hasHydrated) return
+    loadData()
+  }, [hasHydrated, loadData])
 
-  // Compute trend data from local items + boards (updates in real-time)
-  const trends = useMemo(() => {
-    const grouped = new Map<string, { open: number; in_progress: number; done: number }>()
-    for (const item of items) {
-      let counts = grouped.get(item.board_id)
-      if (!counts) {
-        counts = { open: 0, in_progress: 0, done: 0 }
-        grouped.set(item.board_id, counts)
-      }
-      if (item.status in counts) counts[item.status as keyof typeof counts]++
+  const handleWorkspaceWs = useCallback((msg: WsMessage) => {
+    if (msg.event === 'board_created') {
+      const created = msg.data as unknown as BoardListItem
+      setBoards((prev) => (prev.some((b) => b.id === created.id) ? prev : [created, ...prev]))
+    } else if (msg.event === 'board_updated') {
+      const updated = msg.data as unknown as WsBoardUpdatedData
+      setBoards((prev) =>
+        prev.map((b) =>
+          b.id === updated.id
+            ? {
+                ...b,
+                name: updated.name ?? b.name,
+                max_votes: updated.max_votes ?? b.max_votes,
+                is_locked: updated.is_locked ?? b.is_locked,
+              }
+            : b,
+        ),
+      )
+    } else if (msg.event === 'board_deleted') {
+      const deleted = msg.data as unknown as { id: string }
+      setBoards((prev) => prev.filter((b) => b.id !== deleted.id))
     }
+  }, [])
+
+  useWebSocket('workspace', handleWorkspaceWs)
+
+  const openBoardSummary = async (item: BoardListItem) => {
+    setSummaryLoading(true)
+    setSummaryError(null)
+    setSummaryData(null)
+    try {
+      const full = await getBoard(item.id)
+      setSummaryModalBoard(full)
+      const s = await getBoardSummary(item.id)
+      setSummaryData(s)
+    } catch (err) {
+      setSummaryError(getApiErrorMessage(err, 'Не удалось загрузить AI-итоги'))
+    } finally {
+      setSummaryLoading(false)
+    }
+  }
+
+  const handleFetchInsights = async () => {
+    setInsightsLoading(true)
+    try {
+      const res = await getWorkspaceInsights()
+      setInsights(res)
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось получить инсайты'), 'error')
+    } finally {
+      setInsightsLoading(false)
+    }
+  }
+
+  const computedTrends = useMemo(() => {
+    if (trends.length > 0) return trends
+    const byBoard: Record<string, { open: number; in_progress: number; done: number }> = {}
+    items.forEach((it) => {
+      if (!byBoard[it.board_id]) byBoard[it.board_id] = { open: 0, in_progress: 0, done: 0 }
+      byBoard[it.board_id][it.status]++
+    })
     return boards
-      .filter((b) => grouped.has(b.id))
+      .filter((b) => byBoard[b.id])
       .map((b) => {
-        const c = grouped.get(b.id)!
+        const c = byBoard[b.id]
         return {
           board_id: b.id,
           board_name: b.name,
@@ -166,15 +278,36 @@ export default function Dashboard() {
           total: c.open + c.in_progress + c.done,
         }
       })
-  }, [items, boards])
+  }, [trends, items, boards])
+
+  const kpi = useMemo(() => {
+    const open = items.filter((i) => i.status === 'open').length
+    const inProgress = items.filter((i) => i.status === 'in_progress').length
+    const done = items.filter((i) => i.status === 'done').length
+    const moodRated = boards.filter((b) => typeof b.mood_avg === 'number')
+    const moodAvg =
+      moodRated.length > 0
+        ? moodRated.reduce((s, b) => s + (b.mood_avg || 0), 0) / moodRated.length
+        : null
+    return {
+      boardsCount: boards.length,
+      open,
+      inProgress,
+      done,
+      moodAvg,
+    }
+  }, [boards, items])
 
   const filteredItems = useMemo(() => {
-    return items.filter((item) => {
-      if (statusFilter !== 'all' && item.status !== statusFilter) return false
-      if (boardFilter !== 'all' && item.board_id !== boardFilter) return false
+    const q = assigneeFilter.trim().toLowerCase()
+    return items.filter((it) => {
+      if (statusFilter !== 'all' && it.status !== statusFilter) return false
+      if (boardFilter !== 'all' && it.board_id !== boardFilter) return false
       if (
-        assigneeFilter.trim() &&
-        !(item.assignee ?? '').toLowerCase().includes(assigneeFilter.trim().toLowerCase())
+        q &&
+        !(it.assignee || '').toLowerCase().includes(q) &&
+        !(it.title || '').toLowerCase().includes(q) &&
+        !it.text.toLowerCase().includes(q)
       ) {
         return false
       }
@@ -182,421 +315,755 @@ export default function Dashboard() {
     })
   }, [items, statusFilter, boardFilter, assigneeFilter])
 
-  const showDoneSeparately = statusFilter === 'all'
   const activeItems = useMemo(
-    () => (showDoneSeparately ? filteredItems.filter((i) => i.status !== 'done') : filteredItems),
-    [filteredItems, showDoneSeparately],
+    () => (statusFilter === 'all' ? filteredItems.filter((i) => i.status !== 'done') : filteredItems),
+    [filteredItems, statusFilter],
   )
   const doneItems = useMemo(
-    () => (showDoneSeparately ? filteredItems.filter((i) => i.status === 'done') : []),
-    [filteredItems, showDoneSeparately],
+    () => (statusFilter === 'all' ? filteredItems.filter((i) => i.status === 'done') : []),
+    [filteredItems, statusFilter],
   )
 
-  const [doneCollapsed, setDoneCollapsed] = useState(true)
-  const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
-  const [editTitle, setEditTitle] = useState('')
-  const [editingDescId, setEditingDescId] = useState<string | null>(null)
-  const [editDesc, setEditDesc] = useState('')
-  const [editAssigneeId, setEditAssigneeId] = useState<string | null>(null)
-  const [editAssignee, setEditAssignee] = useState('')
-  const [deleteTarget, setDeleteTarget] = useState<DashboardActionItem | null>(null)
-  const [summaryBoard, setSummaryBoard] = useState<BoardListItem | null>(null)
-
-
-  async function toggleStatus(item: DashboardActionItem) {
+  const toggleStatus = async (item: DashboardActionItem, explicitStatus?: ActionItemStatus) => {
+    const next = explicitStatus ?? NEXT_STATUS[item.status]
+    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: next } : i)))
     try {
-      const next = NEXT_STATUS[item.status]
       const updated = await updateActionItem(item.id, { status: next })
-      setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
-    } catch (e) {
-      showToast(getApiErrorMessage(e, 'Не удалось обновить статус'), 'error')
+      setItems((prev) =>
+        prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)),
+      )
+    } catch (err) {
+      setItems((prev) => prev.map((i) => (i.id === item.id ? item : i)))
+      showToast(getApiErrorMessage(err, 'Не удалось обновить статус'), 'error')
     }
   }
 
-  async function saveTitle(id: string) {
+  const saveTitle = async (id: string) => {
     setEditingTitleId(null)
-    if (editTitle.trim()) {
-      try {
-        const updated = await updateActionItem(id, { title: editTitle.trim() })
-        setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
-      } catch (e) {
-        showToast(getApiErrorMessage(e, 'Не удалось сохранить название'), 'error')
-      }
+    if (!editTitle.trim()) return
+    try {
+      const updated = await updateActionItem(id, { title: editTitle.trim() })
+      setItems((prev) =>
+        prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)),
+      )
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось обновить название'), 'error')
     }
   }
 
-  async function saveDesc(id: string) {
+  const saveDesc = async (id: string) => {
     setEditingDescId(null)
-    if (editDesc.trim()) {
-      try {
-        const updated = await updateActionItem(id, { text: editDesc.trim() })
-        setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
-      } catch (e) {
-        showToast(getApiErrorMessage(e, 'Не удалось сохранить описание'), 'error')
-      }
+    if (!editDesc.trim()) return
+    try {
+      const updated = await updateActionItem(id, { text: editDesc.trim() })
+      setItems((prev) =>
+        prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)),
+      )
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось обновить описание'), 'error')
     }
   }
 
-  async function saveAssignee(id: string) {
+  const saveAssignee = async (id: string) => {
     setEditAssigneeId(null)
     try {
       const updated = await updateActionItem(id, { assignee: editAssignee.trim() || null })
-      setItems((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)))
-    } catch (e) {
-      showToast(getApiErrorMessage(e, 'Не удалось сохранить ответственного'), 'error')
+      setItems((prev) =>
+        prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)),
+      )
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось сохранить ответственного'), 'error')
     }
   }
 
-  async function confirmDeleteItem() {
+  const confirmDeleteItem = async () => {
     if (!deleteTarget) return
+    const target = deleteTarget
+    setDeleteTarget(null)
     try {
-      await deleteActionItem(deleteTarget.id)
-      setItems((prev) => prev.filter((i) => i.id !== deleteTarget.id))
-      setDeleteTarget(null)
-    } catch (e) {
-      showToast(getApiErrorMessage(e, 'Не удалось удалить задачу'), 'error')
+      await deleteActionItem(target.id)
+      setItems((prev) => prev.filter((i) => i.id !== target.id))
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось удалить задачу'), 'error')
     }
   }
 
-
-  function navigateToBoard(board: BoardListItem) {
-    const path = board.slug ? `/board/${board.slug}` : `/board/${board.id}`
-    router.push(path)
+  const navigateToBoard = (b: { id: string; slug?: string | null }) => {
+    router.push(`/board/${b.slug || b.id}`)
   }
 
-  function renderTaskCard(item: DashboardActionItem) {
+  const renderTaskCard = (item: DashboardActionItem, kanbanMode = false) => {
+    const meta = STATUS_META[item.status]
+    const StatusIcon = meta.Icon
+    const isDone = item.status === 'done'
     return (
       <div
         key={item.id}
-        className={`${s.taskCard} ${
-          item.status === 'done' ? s.taskDone : item.status === 'in_progress' ? s.taskProgress : s.taskOpen
-        }`}
+        className={cn(
+          'group rounded-xl border bg-card p-3.5 shadow-sm transition-all hover:shadow-md',
+          isDone && 'opacity-75',
+        )}
       >
-        <div className={s.taskHeader}>
+        <div className="flex items-start gap-2.5">
           <button
-            className={`${s.statusBtn} ${
-              item.status === 'done' ? s.statusBtnDone : item.status === 'in_progress' ? s.statusBtnProgress : ''
-            }`}
+            type="button"
             onClick={() => toggleStatus(item)}
-            title={`${STATUS_LABELS[item.status]} → ${STATUS_LABELS[NEXT_STATUS[item.status]]}`}
+            title={`${meta.label} → ${STATUS_META[NEXT_STATUS[item.status]].label}`}
+            className={cn('mt-0.5 shrink-0 transition-transform hover:scale-110', meta.colorClass)}
           >
-            <span className="material-symbols-rounded" style={{ fontSize: 20 }}>
-              {STATUS_ICON[item.status]}
-            </span>
+            <StatusIcon className="h-4 w-4" />
           </button>
 
-          {editingTitleId === item.id ? (
-            <input
-              className={s.taskTitleInput}
-              value={editTitle}
-              onChange={(e) => setEditTitle(e.target.value)}
-              onBlur={() => saveTitle(item.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') saveTitle(item.id)
-                if (e.key === 'Escape') setEditingTitleId(null)
-              }}
-              autoFocus
-            />
-          ) : (
-            <span
-              className={s.taskTitle}
-              onDoubleClick={() => {
-                setEditingTitleId(item.id)
-                setEditTitle(item.title || item.text)
-              }}
-              title="Двойной клик — редактировать"
-            >
-              {item.title || item.text}
-            </span>
-          )}
+          <div className="min-w-0 flex-1 space-y-1">
+            {editingTitleId === item.id ? (
+              <Input
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onBlur={() => saveTitle(item.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveTitle(item.id)
+                  if (e.key === 'Escape') setEditingTitleId(null)
+                }}
+                autoFocus
+                className="h-7 text-xs font-semibold"
+              />
+            ) : (
+              <div
+                onDoubleClick={() => {
+                  setEditingTitleId(item.id)
+                  setEditTitle(item.title || item.text)
+                }}
+                title="Двойной клик — редактировать"
+                className={cn('cursor-text text-sm font-semibold leading-snug', isDone && 'line-through')}
+              >
+                {item.title || item.text}
+              </div>
+            )}
 
-          <button
-            className={s.taskDelBtn}
+            {editingDescId === item.id ? (
+              <Textarea
+                value={editDesc}
+                onChange={(e) => setEditDesc(e.target.value)}
+                onBlur={() => saveDesc(item.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && e.ctrlKey) saveDesc(item.id)
+                  if (e.key === 'Escape') setEditingDescId(null)
+                }}
+                autoFocus
+                rows={2}
+                className="min-h-[54px] resize-none text-xs"
+              />
+            ) : (
+              <p
+                onDoubleClick={() => {
+                  setEditingDescId(item.id)
+                  setEditDesc(item.text)
+                }}
+                title="Двойной клик — редактировать описание"
+                className="cursor-text whitespace-pre-wrap break-words text-xs text-muted-foreground"
+              >
+                {item.text}
+              </p>
+            )}
+          </div>
+
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="h-7 w-7 opacity-80 sm:opacity-0 transition-opacity sm:group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
             onClick={() => setDeleteTarget(item)}
             title="Удалить"
           >
-            <span className="material-symbols-rounded" style={{ fontSize: 16 }}>
-              delete
-            </span>
-          </button>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
         </div>
 
-        {editingDescId === item.id ? (
-          <textarea
-            className={s.taskDescInput}
-            value={editDesc}
-            onChange={(e) => setEditDesc(e.target.value)}
-            onBlur={() => saveDesc(item.id)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && e.ctrlKey) saveDesc(item.id)
-              if (e.key === 'Escape') setEditingDescId(null)
-            }}
-            autoFocus
-          />
-        ) : (
-          <div
-            className={s.taskDesc}
-            onDoubleClick={() => {
-              setEditingDescId(item.id)
-              setEditDesc(item.text)
-            }}
-            title="Двойной клик — редактировать описание"
-          >
-            {item.text}
-          </div>
-        )}
-
-        <div className={s.taskMetaRow}>
-          {editAssigneeId === item.id ? (
-            <input
-              className={s.assigneeInput}
-              value={editAssignee}
-              onChange={(e) => setEditAssignee(e.target.value)}
-              onBlur={() => saveAssignee(item.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') saveAssignee(item.id)
-                if (e.key === 'Escape') setEditAssigneeId(null)
-              }}
-              placeholder="Ответственный"
-              autoFocus
-            />
-          ) : (
-            <span
-              className={s.assigneeTag}
-              onClick={() => {
-                setEditAssigneeId(item.id)
-                setEditAssignee(item.assignee || '')
-              }}
-              title="Нажмите чтобы изменить"
-            >
-              <span
-                className={s.avatar}
-                style={{ background: userColor(item.assignee || '?') }}
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-2.5 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            {editAssigneeId === item.id ? (
+              <Input
+                value={editAssignee}
+                onChange={(e) => setEditAssignee(e.target.value)}
+                onBlur={() => saveAssignee(item.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveAssignee(item.id)
+                  if (e.key === 'Escape') setEditAssigneeId(null)
+                }}
+                placeholder="Ответственный"
+                autoFocus
+                className="h-6 w-36 text-xs"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditAssigneeId(item.id)
+                  setEditAssignee(item.assignee || '')
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] hover:bg-accent"
               >
-                {initials(item.assignee || '?')}
-              </span>
-              {item.assignee || 'Не назначен'}
-            </span>
+                {item.assignee ? (
+                  <>
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded-full bg-gradient-to-br text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
+                    >
+                      {getUserInitials(item.assignee)}
+                    </span>
+                    <span>{item.assignee}</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">+ Назначить</span>
+                )}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                const boardObj = boards.find((b) => b.id === item.board_id)
+                navigateToBoard({ id: item.board_id, slug: boardObj?.slug })
+              }}
+              className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground"
+            >
+              <ExternalLink className="h-2.5 w-2.5" />
+              <span className="max-w-[140px] truncate">{item.board_name}</span>
+            </button>
+          </div>
+
+          {kanbanMode && (
+            <div className="flex items-center gap-1">
+              {item.status !== 'open' && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[10px]"
+                  onClick={() => toggleStatus(item, 'open')}
+                >
+                  Открыть
+                </Button>
+              )}
+              {item.status !== 'in_progress' && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[10px]"
+                  onClick={() => toggleStatus(item, 'in_progress')}
+                >
+                  В работу
+                </Button>
+              )}
+              {item.status !== 'done' && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[10px] text-emerald-600 dark:text-emerald-400"
+                  onClick={() => toggleStatus(item, 'done')}
+                >
+                  Готово
+                </Button>
+              )}
+            </div>
           )}
-
-          <span className={s.metaTag}>
-            <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
-              dashboard
-            </span>
-            {item.board_name}
-          </span>
-
-          <span className={s.metaTag}>
-            {formatDate(item.created_at)}
-          </span>
         </div>
       </div>
     )
   }
 
-  if (authRequired) {
+  if (needsAuth || (hadWorkspaceRef.current && !workspace)) {
     return (
       <WelcomeDialog
         onConfirm={(name) => {
           setUsername(name)
-          setAuthRequired(false)
-          void loadData()
+          loadData()
         }}
       />
     )
   }
 
-  if (loading) {
-    return (
-      <div className={s.container}>
-        <div className={s.loading}>
-          <span className="material-symbols-rounded" style={{ fontSize: 24, marginRight: 8 }}>
-            hourglass_empty
-          </span>
-          Загрузка...
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className={s.container}>
+    <div className="min-h-screen bg-background text-foreground">
       {/* Header */}
-      <div className={s.header}>
-        <button className={s.backBtn} onClick={() => router.push('/')} title="Назад">
-          <span className="material-symbols-rounded">arrow_back</span>
-        </button>
-        <h1 className={s.pageTitle}>История ретро</h1>
-      </div>
-
-      {/* Boards section */}
-      <section className={s.section}>
-        <div className={s.sectionTitle}>
-          <span className="material-symbols-rounded" style={{ fontSize: 20 }}>grid_view</span>
-          Прошлые ретро
-        </div>
-        {boards.length === 0 ? (
-          <p className={s.emptyText}>Нет досок</p>
-        ) : (
-          <div className={s.boardGrid}>
-            {boards.map((b) => (
-              <div key={b.id} className={s.boardCard}>
-                <div className={s.boardCardContent} onClick={() => navigateToBoard(b)}>
-                  <div className={s.boardCardName}>{b.name}</div>
-                  <div className={s.boardCardMeta}>
-                    <span>{formatDate(b.created_at)}</span>
-                    {b.action_items_total > 0 && (
-                      <span className={s.badge}>
-                        <span className="material-symbols-rounded" style={{ fontSize: 12 }}>
-                          task_alt
-                        </span>
-                        {b.action_items_open}/{b.action_items_total}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <button
-                  className={`${s.summaryBtn} ${b.has_summary ? s.summaryBtnActive : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setSummaryBoard(b)
-                  }}
-                  title={b.has_summary ? 'Просмотреть резюме' : 'Резюме недоступно'}
-                >
-                  <span
-                    className="material-symbols-rounded"
-                    style={{ fontVariationSettings: b.has_summary ? "'FILL' 1" : "'FILL' 0" }}
-                  >
-                    summarize
-                  </span>
-                </button>
+      <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4 md:px-6">
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => router.push('/')}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              К доске
+            </Button>
+            <div className="h-4 w-px bg-border" />
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                <BarChart3 className="h-4 w-4" />
               </div>
-            ))}
+              <span className="font-semibold tracking-tight">Панель управления</span>
+            </div>
+            {workspace && (
+              <Badge variant="outline" className="hidden sm:inline-flex">
+                {workspace.workspaceName}
+              </Badge>
+            )}
           </div>
-        )}
-      </section>
 
-      {/* Trends chart */}
-      {trends.length > 0 && (
-        <section className={s.section}>
-          <div className={s.sectionTitle}>
-            <span className="material-symbols-rounded" style={{ fontSize: 20 }}>trending_up</span>
-            Тренды задач по ретро
+          <div className="flex items-center gap-2">
+            {username && username !== 'Аноним' && (
+              <span className="hidden text-xs text-muted-foreground sm:inline">{username}</span>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              aria-label="Переключить тему"
+            >
+              <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+              <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => setCreateBoardOpen(true)}
+            >
+              <Plus className="h-4 w-4" />
+              Новая доска
+            </Button>
           </div>
-          <TrendChart data={trends} />
-        </section>
-      )}
-
-      {/* Action items section */}
-      <section className={s.section}>
-        <div className={s.sectionTitle}>
-          <span className="material-symbols-rounded" style={{ fontSize: 20 }}>checklist</span>
-          Все задачи
         </div>
+      </header>
 
-        <div className={s.filters}>
-          <select
-            className={s.filterSelect}
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-          >
-            {(Object.keys(STATUS_LABELS) as StatusFilter[]).map((k) => (
-              <option key={k} value={k}>
-                {STATUS_LABELS[k]}
-              </option>
-            ))}
-          </select>
-
-          <select
-            className={s.filterSelect}
-            value={boardFilter}
-            onChange={(e) => setBoardFilter(e.target.value)}
-          >
-            <option value="all">Все доски</option>
-            {boards.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-
-          <input
-            className={s.filterInput}
-            placeholder="Ответственный"
-            value={assigneeFilter}
-            onChange={(e) => setAssigneeFilter(e.target.value)}
-          />
-        </div>
-
-        {activeItems.length === 0 && doneItems.length === 0 ? (
-          <p className={s.emptyText}>Задачи не найдены</p>
+      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 md:px-6">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
+            <Loader2 className="mb-3 h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm">Загружаем отчёты...</p>
+          </div>
+        ) : error ? (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+              <p className="text-sm text-destructive">{error}</p>
+              <Button onClick={loadData}>Повторить</Button>
+            </CardContent>
+          </Card>
         ) : (
           <>
-            <div className={s.taskList}>
-              {activeItems.map((item) => renderTaskCard(item))}
+            {/* KPI Summary Grid */}
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Card>
+                <CardContent className="flex items-center justify-between p-4">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Доски команды</p>
+                    <p className="mt-1 font-mono text-2xl font-bold">{kpi.boardsCount}</p>
+                  </div>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <Layers className="h-5 w-5" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="flex items-center justify-between p-4">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Открытых задач</p>
+                    <p className="mt-1 font-mono text-2xl font-bold text-amber-600 dark:text-amber-400">
+                      {kpi.open}
+                    </p>
+                  </div>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <Circle className="h-5 w-5" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="flex items-center justify-between p-4">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Выполнено задач</p>
+                    <p className="mt-1 font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                      {kpi.done}
+                    </p>
+                  </div>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="h-5 w-5" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="flex items-center justify-between p-4">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Индекс настроения</p>
+                    <p className="mt-1 font-mono text-2xl font-bold">
+                      {kpi.moodAvg !== null ? `${kpi.moodAvg.toFixed(1)}/5` : '—'}
+                    </p>
+                  </div>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                    <HeartPulse className="h-5 w-5" />
+                  </div>
+                </CardContent>
+              </Card>
             </div>
 
-            {doneItems.length > 0 && (
-              <div className={s.doneSection}>
-                <button
-                  className={s.doneToggle}
-                  onClick={() => setDoneCollapsed((v) => !v)}
-                >
-                  <span
-                    className="material-symbols-rounded"
-                    style={{
-                      fontSize: 18,
-                      transform: doneCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
-                      transition: 'transform 0.2s',
-                    }}
-                  >
-                    expand_more
-                  </span>
-                  <span className="material-symbols-rounded" style={{ fontSize: 16, color: '#006E1C' }}>
-                    check_circle
-                  </span>
-                  Выполненные ({doneItems.length})
-                </button>
+            {/* Cross-sprint AI Insights */}
+            <WorkspaceInsightsCard
+              insights={insights}
+              loading={insightsLoading}
+              onRefresh={handleFetchInsights}
+            />
 
-                {!doneCollapsed && (
-                  <div className={s.taskList}>
-                    {doneItems.map((item) => renderTaskCard(item))}
-                  </div>
+            {/* Charts */}
+            {(computedTrends.length > 0 || moodTrends.some((m) => m.mood_avg !== null)) && (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {computedTrends.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold">Динамика Action Items</CardTitle>
+                      <CardDescription className="text-xs">
+                        Соотношение открытых, активных и завершённых задач по спринтам
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <TrendChart data={computedTrends} />
+                    </CardContent>
+                  </Card>
+                )}
+
+                {moodTrends.some((m) => m.mood_avg !== null || m.cards_count > 0) && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold">Настроение команды</CardTitle>
+                      <CardDescription className="text-xs">
+                        Средняя оценка чек-ина настроения по ретроспективам (от 1 до 5)
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <MoodTrendChart data={moodTrends} />
+                    </CardContent>
+                  </Card>
                 )}
               </div>
             )}
+
+            {/* Tabs: Action Items vs Boards */}
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'tasks' | 'boards')}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <TabsList>
+                  <TabsTrigger value="tasks" className="gap-1.5">
+                    <ListTodo className="h-4 w-4" />
+                    Action Items ({items.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="boards" className="gap-1.5">
+                    <Layers className="h-4 w-4" />
+                    Доски ({boards.length})
+                  </TabsTrigger>
+                </TabsList>
+
+                {boards.length >= 2 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setCarryOpen(true)}
+                  >
+                    <Repeat className="h-4 w-4" />
+                    Перенести незакрытые
+                  </Button>
+                )}
+              </div>
+
+              <TabsContent value="tasks" className="space-y-4">
+                {/* Filter & View Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative w-52">
+                      <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                      <Input
+                        value={assigneeFilter}
+                        onChange={(e) => setAssigneeFilter(e.target.value)}
+                        placeholder="Поиск по задаче или имени..."
+                        className="h-8 pl-8 text-xs"
+                      />
+                    </div>
+
+                    {viewMode === 'list' && (
+                      <Select
+                        value={statusFilter}
+                        onValueChange={(v) => setStatusFilter(v as 'all' | ActionItemStatus)}
+                      >
+                        <SelectTrigger className="h-8 w-36 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Все статусы</SelectItem>
+                          <SelectItem value="open">Открыто</SelectItem>
+                          <SelectItem value="in_progress">В работе</SelectItem>
+                          <SelectItem value="done">Выполнено</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+
+                    <Select value={boardFilter} onValueChange={setBoardFilter}>
+                      <SelectTrigger className="h-8 w-44 text-xs">
+                        <SelectValue placeholder="Все доски" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Все доски</SelectItem>
+                        {boards.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center rounded-lg border bg-muted/50 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('list')}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                        viewMode === 'list'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      <List className="h-3.5 w-3.5" />
+                      Список
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('kanban')}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                        viewMode === 'kanban'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      <Kanban className="h-3.5 w-3.5" />
+                      Канбан
+                    </button>
+                  </div>
+                </div>
+
+                {viewMode === 'kanban' ? (
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                    {(['open', 'in_progress', 'done'] as ActionItemStatus[]).map((st) => {
+                      const colItems = filteredItems.filter((i) => i.status === st)
+                      const meta = STATUS_META[st]
+                      const Icon = meta.Icon
+                      return (
+                        <div
+                          key={st}
+                          className="flex flex-col rounded-2xl border bg-muted/30 p-3"
+                        >
+                          <div className="mb-3 flex items-center justify-between px-1">
+                            <div className="flex items-center gap-2 text-sm font-semibold">
+                              <Icon className={cn('h-4 w-4', meta.colorClass)} />
+                              <span>{meta.label}</span>
+                            </div>
+                            <Badge variant="secondary">{colItems.length}</Badge>
+                          </div>
+                          <div className="space-y-2.5">
+                            {colItems.length === 0 ? (
+                              <div className="rounded-xl border border-dashed py-8 text-center text-xs text-muted-foreground">
+                                Пусто
+                              </div>
+                            ) : (
+                              colItems.map((it) => renderTaskCard(it, true))
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {activeItems.length === 0 && doneItems.length === 0 ? (
+                      <Card>
+                        <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                          Задач по выбранным фильтрам не найдено
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {activeItems.map((it) => renderTaskCard(it))}
+                      </div>
+                    )}
+
+                    {doneItems.length > 0 && (
+                      <div className="space-y-3">
+                        <button
+                          type="button"
+                          onClick={() => setDoneCollapsed((prev) => !prev)}
+                          className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                        >
+                          <span>
+                            {doneCollapsed ? '▶' : '▼'} Завершённые ({doneItems.length})
+                          </span>
+                        </button>
+                        {!doneCollapsed && (
+                          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            {doneItems.map((it) => renderTaskCard(it))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="boards">
+                {boards.length === 0 ? (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center gap-3 py-14 text-center">
+                      <Layers className="h-9 w-9 text-muted-foreground/40" />
+                      <p className="text-sm font-medium text-muted-foreground">Пока нет досок</p>
+                      <Button size="sm" onClick={() => setCreateBoardOpen(true)}>
+                        <Plus className="h-4 w-4" />
+                        Создать первую доску
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {boards.map((b) => (
+                    <Card
+                      key={b.id}
+                      className="group flex flex-col justify-between transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+                    >
+                      <CardHeader className="pb-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <CardTitle className="flex items-center gap-1.5 text-base leading-snug">
+                            {b.is_locked && (
+                              <Lock className="h-4 w-4 shrink-0 text-amber-500" />
+                            )}
+                            <span>{b.name}</span>
+                          </CardTitle>
+                          {b.has_summary && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="h-7 w-7 shrink-0 text-primary"
+                              title="AI-итоги"
+                              onClick={() => openBoardSummary(b)}
+                            >
+                              <Sparkles className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                        <CardDescription className="text-xs">
+                          {new Date(b.created_at).toLocaleDateString('ru-RU', {
+                            day: 'numeric',
+                            month: 'long',
+                            year: 'numeric',
+                          })}
+                        </CardDescription>
+                      </CardHeader>
+
+                      <CardContent className="space-y-4">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {typeof b.cards_count === 'number' && (
+                            <Badge variant="outline" className="text-xs">
+                              {b.cards_count} карт.
+                            </Badge>
+                          )}
+                          <Badge
+                            variant={b.action_items_open > 0 ? 'warning' : 'success'}
+                            className="text-xs"
+                          >
+                            {b.action_items_open > 0
+                              ? `${b.action_items_open} открыт.`
+                              : 'Все задачи закрыты'}
+                          </Badge>
+                          {b.mood_avg != null && (
+                            <Badge variant="secondary" className="font-mono text-xs">
+                              😊 {b.mood_avg.toFixed(1)}/5
+                            </Badge>
+                          )}
+                        </div>
+
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="w-full justify-between"
+                          onClick={() => navigateToBoard(b)}
+                        >
+                          <span>Открыть доску</span>
+                          <ArrowRight className="h-4 w-4" />
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+                )}
+              </TabsContent>
+            </Tabs>
           </>
         )}
-      </section>
+      </main>
 
-      {/* Delete action item dialog */}
-      <Dialog
-        open={!!deleteTarget}
-        title="Удалить задачу?"
-        icon="delete"
-        danger
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={confirmDeleteItem}
-        confirmLabel="Удалить"
-      >
-        <p className={s.emptyText} style={{ textAlign: 'left', padding: 0 }}>
-          Задача{' '}
-          <strong style={{ color: 'var(--md-on-surface)' }}>
-            «{deleteTarget?.title || deleteTarget?.text}»
-          </strong>{' '}
-          будет удалена без возможности восстановления.
-        </p>
-      </Dialog>
+      <CreateBoardDialog
+        open={createBoardOpen}
+        onOpenChange={setCreateBoardOpen}
+        existingBoards={boards}
+        onCreated={(created) => {
+          setBoards((prev) => [boardToBoardListItem(created), ...prev])
+          navigateToBoard(created)
+        }}
+      />
 
-      {/* Summary modal */}
-      {summaryBoard && (
+      <CarryForwardDialog
+        open={carryOpen}
+        onOpenChange={setCarryOpen}
+        boards={boards}
+        onCarried={() => loadData()}
+      />
+
+      {summaryModalBoard && (
         <SummaryModal
-          boardId={summaryBoard.id}
-          hasSummary={summaryBoard.has_summary}
-          onClose={() => setSummaryBoard(null)}
+          open={Boolean(summaryModalBoard)}
+          onOpenChange={(open) => !open && setSummaryModalBoard(null)}
+          board={summaryModalBoard}
+          actionItems={items.filter((i) => i.board_id === summaryModalBoard.id)}
+          summary={summaryData}
+          loading={summaryLoading}
+          error={summaryError}
+          onSummaryUpdated={(s) => setSummaryData(s)}
         />
       )}
 
+      <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить Action Item?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Задача «{deleteTarget?.title || deleteTarget?.text}» будет удалена безвозвратно.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteItem}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

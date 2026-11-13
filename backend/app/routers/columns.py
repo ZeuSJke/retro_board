@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
-from app.utils import get_or_404, require_live_board
+from app.utils import get_or_404, require_unlocked_board
 from app.ws_manager import manager
 from app.limiter import limiter
 from app.workspace_auth import get_current_workspace
@@ -22,7 +22,7 @@ async def create_column(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     board = get_or_404(db, models.Board, body.board_id, "Board not found")
-    require_live_board(board, workspace.id)
+    require_unlocked_board(board, workspace.id)
     pos = (
         db.query(func.count(models.Column.id))
         .filter(models.Column.board_id == body.board_id)
@@ -54,7 +54,7 @@ async def update_column(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     col = get_or_404(db, models.Column, column_id, "Column not found")
-    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
     if body.title is not None:
         col.title = body.title
     if body.color is not None:
@@ -85,7 +85,7 @@ async def delete_column(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     col = get_or_404(db, models.Column, column_id, "Column not found")
-    require_live_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
     board_id = col.board_id
     db.delete(col)
     db.commit()
