@@ -4,17 +4,32 @@ import * as React from 'react'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 import { cn } from '@/lib/utils'
 
-const TooltipProvider = TooltipPrimitive.Provider
+const InsideTooltipProviderContext = React.createContext(false)
+
+function TooltipProvider({
+  children,
+  delayDuration = 250,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Provider>) {
+  return (
+    <InsideTooltipProviderContext.Provider value={true}>
+      <TooltipPrimitive.Provider delayDuration={delayDuration} {...props}>
+        {children}
+      </TooltipPrimitive.Provider>
+    </InsideTooltipProviderContext.Provider>
+  )
+}
 
 function Tooltip({
   children,
   ...props
 }: React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Root>) {
-  return (
-    <TooltipPrimitive.Provider delayDuration={250}>
-      <TooltipPrimitive.Root {...props}>{children}</TooltipPrimitive.Root>
-    </TooltipPrimitive.Provider>
-  )
+  const hasProvider = React.useContext(InsideTooltipProviderContext)
+  const root = <TooltipPrimitive.Root {...props}>{children}</TooltipPrimitive.Root>
+
+  // Fallback for isolated component tests rendered outside <TooltipProvider>
+  if (hasProvider) return root
+  return <TooltipPrimitive.Provider delayDuration={250}>{root}</TooltipPrimitive.Provider>
 }
 
 const TooltipTrigger = TooltipPrimitive.Trigger

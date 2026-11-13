@@ -243,7 +243,7 @@ export default function Topbar({
         </Button>
 
         {board && (
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button
                 type="button"

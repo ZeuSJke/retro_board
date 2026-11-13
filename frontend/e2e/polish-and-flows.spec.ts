@@ -532,4 +532,21 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     const col0After = (await page.getByTestId('board-column').first().boundingBox())!.width
     expect(col0After).toBeGreaterThan(col0Before + 40)
   })
+
+  test('non-modal export dropdown lets user open board settings in a single click', async ({
+    page,
+    request,
+  }) => {
+    const board = await createBoardViaAPI(request, 'Topbar Dropdown Flow', workspaceToken)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(`/board/${board.slug || board.id}`)
+    await dismissWelcome(page)
+
+    await page.getByTestId('export-menu-btn').click()
+    await expect(page.getByRole('menuitem', { name: 'Итоги ретро и AI' })).toBeVisible()
+
+    // Direct single click on neighboring button opens settings without being blocked by an overlay
+    await page.getByTestId('board-settings-btn').click()
+    await expect(page.getByRole('dialog')).toContainText('Настройки доски')
+  })
 })
