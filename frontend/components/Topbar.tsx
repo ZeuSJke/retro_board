@@ -80,7 +80,7 @@ export default function Topbar({
   const onlineList = activeUsers.length > 0 ? activeUsers : connected && username ? [username] : []
 
   return (
-    <header className="no-print sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b bg-background/85 px-4 backdrop-blur-md">
+    <header className="no-print sticky top-0 z-30 flex h-14 items-center justify-between gap-2 sm:gap-3 border-b bg-background/85 px-2.5 sm:px-4 backdrop-blur-md">
       {/* Левый блок: Доски + Хлебные крошки */}
       <div className="flex items-center gap-2 min-w-0">
         <Tooltip>
@@ -116,7 +116,7 @@ export default function Topbar({
               {board.is_locked && (
                 <Lock className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label="Заблокирована" />
               )}
-              <span className="truncate max-w-[180px] sm:max-w-[260px]">{board.name}</span>
+              <span className="truncate max-w-[130px] sm:max-w-[240px] md:max-w-[280px]">{board.name}</span>
             </button>
           ) : (
             <span className="text-sm font-semibold">RetroBoard</span>

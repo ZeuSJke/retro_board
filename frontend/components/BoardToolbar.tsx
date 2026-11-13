@@ -56,8 +56,8 @@ export default function BoardToolbar({
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-background/70 px-3 py-2 backdrop-blur-sm md:px-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-44 sm:w-56">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-none">
+        <div className="relative min-w-[140px] flex-1 sm:w-56 sm:flex-none">
           <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             value={searchQuery}
@@ -81,18 +81,19 @@ export default function BoardToolbar({
           type="button"
           variant={onlyMine ? 'default' : 'outline'}
           size="sm"
-          className="h-8 gap-1.5 text-xs"
+          className="h-8 gap-1.5 text-xs transition-transform active:scale-95"
           onClick={() => onOnlyMineChange(!onlyMine)}
         >
           <User className="h-3.5 w-3.5" />
-          Только мои
+          <span className="hidden sm:inline">Только мои</span>
+          <span className="sm:hidden">Мои</span>
         </Button>
 
         <Button
           type="button"
           variant={sortBy === 'votes' ? 'default' : 'outline'}
           size="sm"
-          className="h-8 gap-1.5 text-xs"
+          className="h-8 gap-1.5 text-xs transition-transform active:scale-95"
           onClick={() => onSortByChange(sortBy === 'order' ? 'votes' : 'order')}
         >
           {sortBy === 'votes' ? (
@@ -104,13 +105,18 @@ export default function BoardToolbar({
         </Button>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {!readOnly && (
           <Popover open={colPopoverOpen} onOpenChange={setColPopoverOpen}>
             <PopoverTrigger asChild>
-              <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs transition-transform active:scale-95"
+              >
                 <Plus className="h-3.5 w-3.5" />
-                Колонка
+                <span className="hidden sm:inline">Колонка</span>
               </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-72">

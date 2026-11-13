@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { motion } from 'motion/react'
 import { ArrowRight, Eye, EyeOff, KeyRound, Layers, Loader2, Users } from 'lucide-react'
 import { BrandMark } from '@/components/BrandLogo'
 import { useAppStore } from '@/store'
@@ -86,7 +87,13 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,hsl(var(--primary)/0.14),transparent_55%)]"
       />
 
-      <Card className="relative z-10 w-full max-w-md border-border/80 bg-background/95 shadow-2xl backdrop-blur-md">
+      <motion.div
+        initial={{ opacity: 0, y: 18, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+        className="relative z-10 w-full max-w-md"
+      >
+        <Card className="w-full border-border/80 bg-background/95 shadow-2xl backdrop-blur-md">
         <CardHeader className="items-center space-y-3 pb-4 text-center">
           <div className="flex items-center gap-2">
             <div className="inline-flex items-center gap-2 rounded-full border bg-muted/60 px-3 py-1 text-xs font-semibold text-foreground">
@@ -227,7 +234,8 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
             </Link>
           </div>
         </CardContent>
-      </Card>
+        </Card>
+      </motion.div>
     </div>
   )
 }

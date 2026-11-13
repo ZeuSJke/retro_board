@@ -1,6 +1,7 @@
 'use client'
 
 import { CheckCircle2, Eye, Lightbulb, MessageSquare, Sparkles, Vote } from 'lucide-react'
+import { motion } from 'motion/react'
 import { PHASE_ORDER, type PhaseKey } from '@/hooks/useFacilitator'
 import { cn } from '@/lib/utils'
 
@@ -29,7 +30,7 @@ export default function PhaseProgress({
   const currentIdx = phase ? PHASE_ORDER.indexOf(phase as PhaseKey) : -1
 
   return (
-    <nav aria-label="Этапы ретроспективы" className="flex items-center gap-1 overflow-x-auto">
+    <nav aria-label="Этапы ретроспективы" className="relative isolate flex items-center gap-1 overflow-x-auto">
       {PHASE_ORDER.map((key, idx) => {
         const meta = PHASE_META[key]
         const Icon = meta.icon
@@ -44,9 +45,9 @@ export default function PhaseProgress({
             onClick={() => isFacilitator && onPhaseChange(key)}
             data-testid={`phase-step-${key}`}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-all whitespace-nowrap',
+              'relative inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap',
               isCurrent
-                ? 'bg-primary text-primary-foreground shadow-sm'
+                ? 'text-primary-foreground'
                 : isDone
                   ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
                   : 'bg-muted/70 text-muted-foreground',
@@ -54,6 +55,14 @@ export default function PhaseProgress({
               !isFacilitator && 'cursor-default',
             )}
           >
+            {isCurrent && (
+              <motion.span
+                layoutId="phase-active-pill"
+                transition={{ type: 'spring', stiffness: 430, damping: 32 }}
+                className="pointer-events-none absolute inset-0 -z-10 rounded-full bg-primary shadow-sm"
+                aria-hidden="true"
+              />
+            )}
             {isDone ? (
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
             ) : (

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
+import { AnimatePresence, motion } from 'motion/react'
 import {
   CheckCircle2,
   Circle,
@@ -227,44 +228,56 @@ export default function MasterColumn({
       </div>
 
       {/* Inline create form */}
-      {addingNew && !readOnly && (
-        <form onSubmit={handleCreateManual} className="space-y-2 border-b bg-muted/30 p-3">
-          <Input
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            placeholder="Краткий заголовок (опционально)"
-            className="h-8 text-xs"
-          />
-          <Textarea
-            value={newText}
-            onChange={(e) => setNewText(e.target.value)}
-            placeholder="Что нужно сделать..."
-            rows={2}
-            required
-            className="min-h-[56px] resize-none text-xs"
-          />
-          <div className="flex items-center gap-1.5">
-            <Input
-              value={newAssignee}
-              onChange={(e) => setNewAssignee(e.target.value)}
-              placeholder="Ответственный"
-              className="h-8 flex-1 text-xs"
-              list="board-participants-list"
-            />
-            <Button type="submit" size="sm" className="h-8 px-3 text-xs" disabled={creating}>
-              {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-              Создать
-            </Button>
-          </div>
-          {participants.length > 0 && (
-            <datalist id="board-participants-list">
-              {participants.map((p) => (
-                <option key={p} value={p} />
-              ))}
-            </datalist>
-          )}
-        </form>
-      )}
+      <AnimatePresence initial={false}>
+        {addingNew && !readOnly && (
+          <motion.form
+            key="master-create-form"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            onSubmit={handleCreateManual}
+            className="overflow-hidden border-b bg-muted/30"
+          >
+            <div className="space-y-2 p-3">
+              <Input
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="Краткий заголовок (опционально)"
+                className="h-8 text-xs"
+              />
+              <Textarea
+                value={newText}
+                onChange={(e) => setNewText(e.target.value)}
+                placeholder="Что нужно сделать..."
+                rows={2}
+                required
+                className="min-h-[56px] resize-none text-xs"
+              />
+              <div className="flex items-center gap-1.5">
+                <Input
+                  value={newAssignee}
+                  onChange={(e) => setNewAssignee(e.target.value)}
+                  placeholder="Ответственный"
+                  className="h-8 flex-1 text-xs"
+                  list="board-participants-list"
+                />
+                <Button type="submit" size="sm" className="h-8 px-3 text-xs" disabled={creating}>
+                  {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                  Создать
+                </Button>
+              </div>
+              {participants.length > 0 && (
+                <datalist id="board-participants-list">
+                  {participants.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
+              )}
+            </div>
+          </motion.form>
+        )}
+      </AnimatePresence>
 
       {/* Droppable list */}
       <div
@@ -283,32 +296,46 @@ export default function MasterColumn({
             </p>
           </div>
         ) : (
-          actionItems.map((item) => {
-            const meta = STATUS_META[item.status] || STATUS_META.open
-            const StatusIcon = meta.Icon
-            const isDone = item.status === 'done'
+          <AnimatePresence initial={false}>
+            {actionItems.map((item) => {
+              const meta = STATUS_META[item.status] || STATUS_META.open
+              const StatusIcon = meta.Icon
+              const isDone = item.status === 'done'
 
-            return (
-              <div
-                key={item.id}
-                className={cn(
-                  'group/ai rounded-xl border bg-card p-3 shadow-sm transition-all',
-                  isDone && 'opacity-70',
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <button
-                    type="button"
-                    disabled={readOnly}
-                    onClick={() => handleCycleStatus(item)}
-                    title={`Статус: ${meta.label} (нажмите чтобы сменить)`}
-                    className={cn(
-                      'mt-0.5 shrink-0 transition-transform hover:scale-110 disabled:cursor-default',
-                      meta.colorClass,
-                    )}
-                  >
-                    <StatusIcon className="h-4 w-4" />
-                  </button>
+              return (
+                <motion.div
+                  key={item.id}
+                  layout="position"
+                  initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.94, height: 0, marginTop: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  className={cn(
+                    'group/ai overflow-hidden rounded-xl border bg-card p-3 shadow-sm transition-colors hover:border-border',
+                    isDone && 'opacity-70',
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <button
+                      type="button"
+                      disabled={readOnly}
+                      onClick={() => handleCycleStatus(item)}
+                      title={`Статус: ${meta.label} (нажмите чтобы сменить)`}
+                      className={cn(
+                        'mt-0.5 shrink-0 transition-transform hover:scale-110 active:scale-95 disabled:cursor-default',
+                        meta.colorClass,
+                      )}
+                    >
+                      <motion.span
+                        key={item.status}
+                        initial={{ scale: 0.7, rotate: -15 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        transition={{ type: 'spring', stiffness: 480, damping: 20 }}
+                        className="inline-flex"
+                      >
+                        <StatusIcon className="h-4 w-4" />
+                      </motion.span>
+                    </button>
 
                   <div className="min-w-0 flex-1 space-y-1">
                     {editingTitleId === item.id ? (
@@ -482,9 +509,10 @@ export default function MasterColumn({
                     </div>
                   </div>
                 </div>
-              </div>
-            )
-          })
+                </motion.div>
+              )
+            })}
+          </AnimatePresence>
         )}
       </div>
 

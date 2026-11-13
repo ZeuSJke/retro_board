@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
+import { motion } from 'motion/react'
 import { BrandMark } from '@/components/BrandLogo'
 import {
   ArrowLeft,
@@ -656,59 +657,83 @@ export default function Dashboard() {
           <>
             {/* KPI Summary Grid */}
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <Card>
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground">Доски команды</p>
-                    <p className="mt-1 font-mono text-2xl font-bold">{kpi.boardsCount}</p>
-                  </div>
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                    <Layers className="h-5 w-5" />
-                  </div>
-                </CardContent>
-              </Card>
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.24, delay: 0 }}
+              >
+                <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
+                  <CardContent className="flex items-center justify-between p-4">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Доски команды</p>
+                      <p className="mt-1 font-mono text-2xl font-bold">{kpi.boardsCount}</p>
+                    </div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <Layers className="h-5 w-5" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
 
-              <Card>
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground">Открытых задач</p>
-                    <p className="mt-1 font-mono text-2xl font-bold text-amber-600 dark:text-amber-400">
-                      {kpi.open}
-                    </p>
-                  </div>
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                    <Circle className="h-5 w-5" />
-                  </div>
-                </CardContent>
-              </Card>
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.24, delay: 0.05 }}
+              >
+                <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
+                  <CardContent className="flex items-center justify-between p-4">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Открытых задач</p>
+                      <p className="mt-1 font-mono text-2xl font-bold text-amber-600 dark:text-amber-400">
+                        {kpi.open}
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                      <Circle className="h-5 w-5" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
 
-              <Card>
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground">Выполнено задач</p>
-                    <p className="mt-1 font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-                      {kpi.done}
-                    </p>
-                  </div>
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                    <CheckCircle2 className="h-5 w-5" />
-                  </div>
-                </CardContent>
-              </Card>
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.24, delay: 0.1 }}
+              >
+                <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
+                  <CardContent className="flex items-center justify-between p-4">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Выполнено задач</p>
+                      <p className="mt-1 font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                        {kpi.done}
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="h-5 w-5" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
 
-              <Card>
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground">Индекс настроения</p>
-                    <p className="mt-1 font-mono text-2xl font-bold">
-                      {kpi.moodAvg !== null ? `${kpi.moodAvg.toFixed(1)}/5` : '—'}
-                    </p>
-                  </div>
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
-                    <HeartPulse className="h-5 w-5" />
-                  </div>
-                </CardContent>
-              </Card>
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.24, delay: 0.15 }}
+              >
+                <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
+                  <CardContent className="flex items-center justify-between p-4">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Индекс настроения</p>
+                      <p className="mt-1 font-mono text-2xl font-bold">
+                        {kpi.moodAvg !== null ? `${kpi.moodAvg.toFixed(1)}/5` : '—'}
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                      <HeartPulse className="h-5 w-5" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
             </div>
 
             {/* Cross-sprint AI Insights */}
@@ -825,17 +850,25 @@ export default function Dashboard() {
                     </Select>
                   </div>
 
-                  <div className="flex items-center rounded-lg border bg-muted/50 p-0.5">
+                  <div className="relative isolate flex items-center rounded-lg border bg-muted/50 p-0.5">
                     <button
                       type="button"
                       onClick={() => setViewMode('list')}
                       className={cn(
-                        'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                        'relative inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
                         viewMode === 'list'
-                          ? 'bg-background text-foreground shadow-sm'
+                          ? 'text-foreground'
                           : 'text-muted-foreground hover:text-foreground',
                       )}
                     >
+                      {viewMode === 'list' && (
+                        <motion.span
+                          layoutId="dashboard-view-pill"
+                          transition={{ type: 'spring', stiffness: 450, damping: 34 }}
+                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-sm"
+                          aria-hidden="true"
+                        />
+                      )}
                       <List className="h-3.5 w-3.5" />
                       Список
                     </button>
@@ -843,12 +876,20 @@ export default function Dashboard() {
                       type="button"
                       onClick={() => setViewMode('kanban')}
                       className={cn(
-                        'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                        'relative inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
                         viewMode === 'kanban'
-                          ? 'bg-background text-foreground shadow-sm'
+                          ? 'text-foreground'
                           : 'text-muted-foreground hover:text-foreground',
                       )}
                     >
+                      {viewMode === 'kanban' && (
+                        <motion.span
+                          layoutId="dashboard-view-pill"
+                          transition={{ type: 'spring', stiffness: 450, damping: 34 }}
+                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-sm"
+                          aria-hidden="true"
+                        />
+                      )}
                       <Kanban className="h-3.5 w-3.5" />
                       Канбан
                     </button>

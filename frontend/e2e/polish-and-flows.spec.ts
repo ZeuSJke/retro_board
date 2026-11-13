@@ -409,4 +409,127 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     expect(reactionBox).not.toBeNull()
     expect(reactionBox!.y).toBeLessThan(400)
   })
+
+  test('responsive columns fill 1920px, center on 2560px ultrawide, scroll with 6 columns, and adapt on mobile', async ({
+    page,
+    request,
+  }) => {
+    const board = await createBoardViaAPI(request, 'Responsive Layout Board', workspaceToken)
+    const headers = await apiHeaders(request, workspaceToken)
+
+    // 1. 1920x1080: 3 columns expand beyond old 336px and fill space next to MasterColumn
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    await page.goto(`/board/${board.slug || board.id}`)
+    await dismissWelcome(page)
+
+    const cols = page.getByTestId('board-column')
+    await expect(cols).toHaveCount(3, { timeout: 15000 })
+
+    const col0Fhd = await cols.nth(0).boundingBox()
+    const col2Fhd = await cols.nth(2).boundingBox()
+    const masterFhd = await page.getByTestId('master-column').boundingBox()
+    expect(col0Fhd).not.toBeNull()
+    expect(col2Fhd).not.toBeNull()
+    expect(masterFhd).not.toBeNull()
+
+    // Each column stretches cleanly (> 420px instead of fixed 336px) and leaves no huge void
+    expect(col0Fhd!.width).toBeGreaterThan(420)
+    expect(masterFhd!.x - (col2Fhd!.x + col2Fhd!.width)).toBeLessThan(40)
+
+    // 2. 2560x1440 ultrawide: columns cap near max-w-[580px] and center inside canvas
+    await page.setViewportSize({ width: 2560, height: 1440 })
+    await page.waitForTimeout(150)
+    const col0Uw = await cols.nth(0).boundingBox()
+    const col2Uw = await cols.nth(2).boundingBox()
+    const masterUw = await page.getByTestId('master-column').boundingBox()
+    expect(col0Uw).not.toBeNull()
+    expect(col2Uw).not.toBeNull()
+    expect(masterUw).not.toBeNull()
+
+    expect(col0Uw!.width).toBeGreaterThanOrEqual(520)
+    expect(col0Uw!.width).toBeLessThanOrEqual(585)
+    const leftGap = col0Uw!.x
+    const rightGap = masterUw!.x - (col2Uw!.x + col2Uw!.width)
+    expect(Math.abs(leftGap - rightGap)).toBeLessThan(24)
+
+    // 3. 6 columns on 1280x800 -> horizontal overflow without clipping left edge + scroll arrow
+    for (let i = 4; i <= 6; i++) {
+      await request.post(`${API}/columns/`, {
+        headers,
+        data: { board_id: board.id, title: `Extra Col ${i}`, color: '#6366F1' },
+      })
+    }
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.reload()
+    await dismissWelcome(page)
+    await expect(cols).toHaveCount(6, { timeout: 15000 })
+
+    const col0Overflow = await cols.nth(0).boundingBox()
+    expect(col0Overflow).not.toBeNull()
+    expect(col0Overflow!.x).toBeGreaterThanOrEqual(0)
+    expect(col0Overflow!.width).toBeGreaterThanOrEqual(276)
+
+    const rightScrollBtn = page.getByRole('button', { name: 'Прокрутить колонки вправо' })
+    await expect(rightScrollBtn).toBeVisible()
+    await rightScrollBtn.click()
+    await expect(page.getByRole('button', { name: 'Прокрутить колонки влево' })).toBeVisible({
+      timeout: 5000,
+    })
+
+    // 4. Mobile 390x844 -> single focused column ~86vw, page has no overflow
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForTimeout(150)
+    const col0Mob = await cols.nth(0).boundingBox()
+    expect(col0Mob).not.toBeNull()
+    expect(col0Mob!.width).toBeGreaterThan(290)
+    expect(col0Mob!.width).toBeLessThan(370)
+  })
+
+  test('resizable Action Items sidebar toggles cleanly and remembers drag width', async ({
+    page,
+    request,
+  }) => {
+    const board = await createBoardViaAPI(request, 'Resizable Sidebar Board', workspaceToken)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(`/board/${board.slug || board.id}`)
+    await dismissWelcome(page)
+
+    const masterCol = page.getByTestId('master-column')
+    await expect(masterCol).toBeVisible({ timeout: 15000 })
+    const initialBox = await masterCol.boundingBox()
+    expect(initialBox).not.toBeNull()
+
+    // Drag separator left to widen sidebar
+    const separator = page.getByRole('separator', { name: 'Изменить ширину панели Итоги' })
+    const sepBox = await separator.boundingBox()
+    expect(sepBox).not.toBeNull()
+
+    await page.mouse.move(sepBox!.x + sepBox!.width / 2, sepBox!.y + sepBox!.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(sepBox!.x - 100, sepBox!.y + sepBox!.height / 2, { steps: 5 })
+    await page.mouse.up()
+
+    const widenedBox = await masterCol.boundingBox()
+    expect(widenedBox).not.toBeNull()
+    expect(widenedBox!.width).toBeGreaterThan(initialBox!.width + 60)
+
+    // Double-click separator resets width back to adaptive default
+    const updatedSepBox = await separator.boundingBox()
+    await page.mouse.dblclick(
+      updatedSepBox!.x + updatedSepBox!.width / 2,
+      updatedSepBox!.y + updatedSepBox!.height / 2,
+    )
+    await expect.poll(async () => (await masterCol.boundingBox())!.width).toBeCloseTo(
+      initialBox!.width,
+      -1,
+    )
+
+    // Toggle Итоги off -> master column hides & columns reclaim space
+    const col0Before = (await page.getByTestId('board-column').first().boundingBox())!.width
+    await page.getByRole('button', { name: /Итоги/ }).click()
+    await expect(masterCol).not.toBeVisible({ timeout: 5000 })
+    await page.waitForTimeout(260)
+    const col0After = (await page.getByTestId('board-column').first().boundingBox())!.width
+    expect(col0After).toBeGreaterThan(col0Before + 40)
+  })
 })

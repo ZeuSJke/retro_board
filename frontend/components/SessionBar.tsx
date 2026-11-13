@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { motion } from 'motion/react'
 import {
   ArrowRight,
   Check,
@@ -161,19 +162,24 @@ export default function SessionBar({
                   <Vote className={cn('h-3.5 w-3.5', limitReached ? 'text-amber-500' : 'text-primary')} />
                   {maxVotes <= 10 ? (
                     <div className="flex items-center gap-1">
-                      {Array.from({ length: maxVotes }).map((_, idx) => (
-                        <span
-                          key={idx}
-                          className={cn(
-                            'h-2 w-2 rounded-full transition-colors',
-                            idx < usedVotes
-                              ? limitReached
-                                ? 'bg-amber-500'
-                                : 'bg-primary'
-                              : 'bg-muted-foreground/30',
-                          )}
-                        />
-                      ))}
+                      {Array.from({ length: maxVotes }).map((_, idx) => {
+                        const used = idx < usedVotes
+                        return (
+                          <motion.span
+                            key={idx}
+                            animate={{ scale: used ? [1, 1.3, 1] : 1 }}
+                            transition={{ duration: 0.22 }}
+                            className={cn(
+                              'h-2 w-2 rounded-full transition-colors',
+                              used
+                                ? limitReached
+                                  ? 'bg-amber-500'
+                                  : 'bg-primary'
+                                : 'bg-muted-foreground/30',
+                            )}
+                          />
+                        )
+                      })}
                     </div>
                   ) : null}
                   <span className="font-mono font-semibold">
@@ -235,14 +241,17 @@ export default function SessionBar({
               <PopoverContent align="end" className="w-auto p-1.5">
                 <div className="flex items-center gap-1">
                   {QUICK_REACTIONS.map((emoji) => (
-                    <button
+                    <motion.button
                       key={emoji}
                       type="button"
+                      whileHover={{ scale: 1.28, y: -2 }}
+                      whileTap={{ scale: 0.88 }}
+                      transition={{ type: 'spring', stiffness: 500, damping: 20 }}
                       onClick={() => onSendReaction(emoji)}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg text-lg transition-transform hover:scale-125 hover:bg-muted"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-lg hover:bg-muted"
                     >
                       {emoji}
-                    </button>
+                    </motion.button>
                   ))}
                 </div>
               </PopoverContent>

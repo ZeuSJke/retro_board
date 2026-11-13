@@ -79,11 +79,34 @@ const config: Config = {
           '68%': { transform: 'translate3d(calc(-50% + 14px), -66vh, 0) scale(1.0)', opacity: '0.92' },
           '100%': { transform: 'translate3d(calc(-50% - 8px), -92vh, 0) scale(0.9)', opacity: '0' },
         },
+        // Используем отдельные CSS-свойства scale/translate вместо transform,
+        // чтобы не перебивать inline style.transform от @dnd-kit/sortable.
+        'card-enter': {
+          '0%': { opacity: '0', scale: '0.95', translate: '0 10px' },
+          '100%': { opacity: '1', scale: '1', translate: '0 0' },
+        },
+        'card-glow': {
+          '0%': { boxShadow: '0 0 0 2px hsl(var(--primary) / 0.45), 0 8px 24px -6px hsl(var(--primary) / 0.25)' },
+          '100%': { boxShadow: '0 0 0 0px hsl(var(--primary) / 0), 0 1px 2px 0 rgb(0 0 0 / 0.05)' },
+        },
+        'card-reveal': {
+          '0%': { opacity: '0.35', scale: '0.97', filter: 'blur(4px)' },
+          '100%': { opacity: '1', scale: '1', filter: 'blur(0px)' },
+        },
+        'vote-pop': {
+          '0%': { opacity: '1', transform: 'translate(-50%, 0) scale(0.85)' },
+          '40%': { opacity: '1', transform: 'translate(-50%, -12px) scale(1.12)' },
+          '100%': { opacity: '0', transform: 'translate(-50%, -22px) scale(0.95)' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
         'float-up': 'float-up 3.4s cubic-bezier(0.22, 1, 0.36, 1) forwards',
+        'card-enter': 'card-enter 0.32s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'card-glow': 'card-glow 1.3s ease-out forwards',
+        'card-reveal': 'card-reveal 0.38s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'vote-pop': 'vote-pop 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards',
       },
     },
   },
