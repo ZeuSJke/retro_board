@@ -173,16 +173,25 @@ test.describe('Доска — колонки и карточки', () => {
 
     await card.hover()
     await card.getByRole('button', { name: 'Действия с карточкой' }).click()
+    const colorPatchPromise = page.waitForResponse(
+      (res) => res.url().includes('/api/cards/') && res.request().method() === 'PATCH',
+    )
     await page.getByTestId('card-color-option-emerald').click()
 
     await expect(card).toHaveClass(/bg-emerald-50/)
+    const patchRes = await colorPatchPromise
+    expect(patchRes.ok()).toBe(true)
 
-    // Verify persisted in backend API
-    const boardRes = await request.get(`http://localhost:8000/api/boards/${board.id}`, {
-      headers: { 'X-Workspace-Token': wsData.token },
-    })
-    const boardData = await boardRes.json()
-    const savedCol = boardData.columns.find((c: { id: string }) => c.id === col.id)
-    expect(savedCol.cards[0].color).toBe('#E8F5E9')
+    // Verify persisted in backend API after PATCH settles
+    await expect
+      .poll(async () => {
+        const boardRes = await request.get(`http://localhost:8000/api/boards/${board.id}`, {
+          headers: { 'X-Workspace-Token': wsData.token },
+        })
+        const boardData = await boardRes.json()
+        const savedCol = boardData.columns.find((c: { id: string }) => c.id === col.id)
+        return savedCol?.cards?.[0]?.color
+      })
+      .toBe('#E8F5E9')
   })
 })

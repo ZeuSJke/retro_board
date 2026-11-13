@@ -1,8 +1,9 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { AnimatePresence, motion } from 'motion/react'
 import { Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { autoClusterColumn, createCard, deleteColumn, updateColumn } from '../api'
 import { CARD_COLOR_PRESETS, COLUMN_COLOR_PALETTE } from '@/lib/board-themes'
@@ -56,6 +57,8 @@ interface ColumnProps {
   onlyMine?: boolean
   sortBy?: 'order' | 'votes'
   spotlightCardId?: string | null
+  index?: number
+  className?: string
   onSpotlight?: (cardId: string) => void
   onCreateActionItem?: (card: Card) => void
 }
@@ -86,6 +89,8 @@ export default function Column({
   onlyMine = false,
   sortBy = 'order',
   spotlightCardId = null,
+  index = 0,
+  className,
   onSpotlight,
   onCreateActionItem,
 }: ColumnProps) {
@@ -104,6 +109,82 @@ export default function Column({
   const [draftColor, setDraftColor] = useState<string>('#FFFFFF')
   const [creating, setCreating] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Отслеживаем свежесозданные/прилетевшие по WS карточки и эффект проявки при Reveal
+  const initializedCardsRef = useRef(false)
+  const prevCardIdsRef = useRef<Set<string>>(new Set())
+  const prevHiddenIdsRef = useRef<Set<string>>(new Set())
+  const [recentNewIds, setRecentNewIds] = useState<Set<string>>(() => new Set())
+  const [revealedCardIds, setRevealedCardIds] = useState<Set<string>>(() => new Set())
+  const [revealDelayMap, setRevealDelayMap] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    const cards = column.cards || []
+    const currentIds = new Set(cards.map((c) => c.id))
+    const currentHiddenIds = new Set(
+      cards.filter((c) => effectiveHide && c.author !== resolvedUser).map((c) => c.id),
+    )
+
+    if (!initializedCardsRef.current) {
+      initializedCardsRef.current = true
+      prevCardIdsRef.current = currentIds
+      prevHiddenIdsRef.current = currentHiddenIds
+      return
+    }
+
+    const added = cards.filter((c) => !prevCardIdsRef.current.has(c.id)).map((c) => c.id)
+    const revealed = cards
+      .filter((c) => prevHiddenIdsRef.current.has(c.id) && !currentHiddenIds.has(c.id))
+      .map((c) => c.id)
+
+    prevCardIdsRef.current = currentIds
+    prevHiddenIdsRef.current = currentHiddenIds
+
+    const timers: ReturnType<typeof setTimeout>[] = []
+
+    if (added.length > 0) {
+      setRecentNewIds((prev) => {
+        const next = new Set(prev)
+        added.forEach((id) => next.add(id))
+        return next
+      })
+      timers.push(
+        setTimeout(() => {
+          setRecentNewIds((prev) => {
+            const next = new Set(prev)
+            added.forEach((id) => next.delete(id))
+            return next
+          })
+        }, 1450),
+      )
+    }
+
+    if (revealed.length > 0) {
+      const delays: Record<string, number> = {}
+      revealed.forEach((id, idx) => {
+        delays[id] = Math.min(idx * 35, 280)
+      })
+      setRevealDelayMap((prev) => ({ ...prev, ...delays }))
+      setRevealedCardIds((prev) => {
+        const next = new Set(prev)
+        revealed.forEach((id) => next.add(id))
+        return next
+      })
+      timers.push(
+        setTimeout(() => {
+          setRevealedCardIds((prev) => {
+            const next = new Set(prev)
+            revealed.forEach((id) => next.delete(id))
+            return next
+          })
+        }, 850),
+      )
+    }
+
+    return () => {
+      timers.forEach(clearTimeout)
+    }
+  }, [column.cards, effectiveHide, resolvedUser])
 
   const { setNodeRef, isOver } = useDroppable({
     id: `col-${column.id}`,
@@ -231,12 +312,20 @@ export default function Column({
 
   return (
     <>
-      <section
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{
+          duration: 0.24,
+          delay: Math.min(index * 0.04, 0.2),
+          ease: [0.22, 1, 0.36, 1],
+        }}
         data-testid="board-column"
         data-column-id={column.id}
         className={cn(
-          'flex max-h-full w-[336px] shrink-0 flex-col overflow-hidden rounded-2xl border bg-card/85 shadow-sm backdrop-blur-sm transition-colors',
-          isOver && 'border-primary/70 ring-2 ring-primary/20',
+          'flex max-h-full w-[86vw] max-w-[380px] shrink-0 snap-center flex-col overflow-hidden rounded-2xl border bg-card/85 shadow-sm backdrop-blur-sm transition-[border-color,box-shadow] md:w-auto md:min-w-[280px] md:max-w-[580px] md:flex-1 md:shrink-0 md:snap-none',
+          isOver && 'border-primary/70 ring-2 ring-primary/20 shadow-md',
+          className,
         )}
       >
         {/* Top accent strip */}
@@ -392,6 +481,9 @@ export default function Column({
                   anonymous={anonymous}
                   readOnly={readOnly}
                   spotlightCardId={spotlightCardId}
+                  newCardIds={recentNewIds}
+                  revealedCardIds={revealedCardIds}
+                  revealDelayMap={revealDelayMap}
                   onSpotlight={onSpotlight}
                   onCreateActionItem={onCreateActionItem}
                 />
@@ -413,6 +505,9 @@ export default function Column({
                 anonymous={anonymous}
                 readOnly={readOnly}
                 isSpotlighted={spotlightCardId === card.id}
+                isNew={recentNewIds.has(card.id)}
+                justRevealed={revealedCardIds.has(card.id)}
+                revealDelayMs={revealDelayMap[card.id] ?? 0}
                 onSpotlight={onSpotlight}
                 onCreateActionItem={onCreateActionItem}
               />
@@ -428,87 +523,97 @@ export default function Column({
 
         {/* Inline card composer */}
         <div className="shrink-0 border-t px-3 py-2.5">
-          {composerOpen && canCreateCard ? (
-            <div className="space-y-2 rounded-xl border bg-background p-2.5 shadow-sm">
-              <Textarea
-                ref={textareaRef}
-                value={draftText}
-                onChange={(e) => setDraftText(e.target.value)}
-                rows={2}
-                autoFocus
-                placeholder="Опишите мысль... (Enter — добавить)"
-                className="min-h-[60px] resize-none border-0 bg-transparent p-1 text-sm focus-visible:ring-0"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleAddCard()
-                  } else if (e.key === 'Escape') {
-                    setComposerOpen(false)
-                  }
-                }}
-              />
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <div className="flex items-center gap-1">
-                  {CARD_COLOR_PRESETS.map((c) => (
-                    <button
-                      key={c.id}
+          <AnimatePresence initial={false}>
+            {composerOpen && canCreateCard ? (
+              <motion.div
+                key="composer-form"
+                initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 4, scale: 0.98 }}
+                transition={{ duration: 0.16, ease: 'easeOut' }}
+                className="space-y-2 rounded-xl border bg-background p-2.5 shadow-sm"
+              >
+                <Textarea
+                  ref={textareaRef}
+                  value={draftText}
+                  onChange={(e) => setDraftText(e.target.value)}
+                  rows={2}
+                  autoFocus
+                  placeholder="Опишите мысль... (Enter — добавить)"
+                  className="min-h-[60px] resize-none border-0 bg-transparent p-1 text-sm focus-visible:ring-0"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleAddCard()
+                    } else if (e.key === 'Escape') {
+                      setComposerOpen(false)
+                    }
+                  }}
+                />
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <div className="flex items-center gap-1">
+                    {CARD_COLOR_PRESETS.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setDraftColor(c.hex)}
+                        title={c.name}
+                        className={cn(
+                          'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110',
+                          c.swatchClass,
+                          draftColor.toLowerCase() === c.hex.toLowerCase() &&
+                            'ring-2 ring-primary ring-offset-1 ring-offset-background',
+                        )}
+                      >
+                        {c.id !== 'default' && (
+                          <span
+                            className="h-2 w-2 rounded-full"
+                            style={{ backgroundColor: c.accentDot }}
+                          />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
                       type="button"
-                      onClick={() => setDraftColor(c.hex)}
-                      title={c.name}
-                      className={cn(
-                        'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110',
-                        c.swatchClass,
-                        draftColor.toLowerCase() === c.hex.toLowerCase() &&
-                          'ring-2 ring-primary ring-offset-1 ring-offset-background',
-                      )}
+                      variant="ghost"
+                      size="icon-sm"
+                      className="h-7 w-7"
+                      onClick={() => setComposerOpen(false)}
+                      aria-label="Отменить"
                     >
-                      {c.id !== 'default' && (
-                        <span
-                          className="h-2 w-2 rounded-full"
-                          style={{ backgroundColor: c.accentDot }}
-                        />
-                      )}
-                    </button>
-                  ))}
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-7 px-3 text-xs"
+                      disabled={!draftText.trim() || creating}
+                      onClick={handleAddCard}
+                    >
+                      {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      Добавить
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-7 w-7"
-                    onClick={() => setComposerOpen(false)}
-                    aria-label="Отменить"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-7 px-3 text-xs"
-                    disabled={!draftText.trim() || creating}
-                    onClick={handleAddCard}
-                  >
-                    {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    Добавить
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={!canCreateCard}
-              onClick={() => setComposerOpen(true)}
-              className="w-full justify-start gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
-            >
-              <Plus className="h-4 w-4" />
-              Добавить карточку
-            </Button>
-          )}
+              </motion.div>
+            ) : (
+              <Button
+                key="composer-btn"
+                type="button"
+                variant="ghost"
+                disabled={!canCreateCard}
+                onClick={() => setComposerOpen(true)}
+                className="w-full justify-start gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                <Plus className="h-4 w-4" />
+                Добавить карточку
+              </Button>
+            )}
+          </AnimatePresence>
         </div>
-      </section>
+      </motion.section>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

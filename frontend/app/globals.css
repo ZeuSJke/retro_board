@@ -178,6 +178,16 @@
   background: hsl(var(--foreground) / 0.28);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .animate-card-enter,
+  .animate-card-glow,
+  .animate-card-reveal,
+  .animate-vote-pop,
+  .animate-float-up {
+    animation-duration: 0.01ms !important;
+  }
+}
+
 @media print {
   .no-print {
     display: none !important;

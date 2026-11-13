@@ -5,9 +5,12 @@ import { useRouter } from 'next/navigation'
 import {
   DndContext,
   DragOverlay,
+  defaultDropAnimationSideEffects,
   type DragEndEvent,
+  type DropAnimation,
 } from '@dnd-kit/core'
-import { Layers, Sparkles } from 'lucide-react'
+import { AnimatePresence } from 'motion/react'
+import { ChevronLeft, ChevronRight, Layers, Sparkles } from 'lucide-react'
 import {
   createActionItem,
   createColumn,
@@ -66,6 +69,22 @@ interface BoardPageProps {
   onBoardsListDeleted: (boardId: string) => void
 }
 
+const MASTER_WIDTH_STORAGE_KEY = 'retro_master_width'
+const MIN_MASTER_WIDTH = 280
+const MAX_MASTER_WIDTH = 560
+
+const BOARD_DROP_ANIMATION: DropAnimation = {
+  duration: 220,
+  easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+  sideEffects: defaultDropAnimationSideEffects({
+    styles: {
+      active: {
+        opacity: '0.45',
+      },
+    },
+  }),
+}
+
 function triggerConfetti() {
   if (typeof window === 'undefined') return
   import('canvas-confetti')
@@ -102,7 +121,22 @@ export default function BoardPage({
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
   const [masterOpen, setMasterOpen] = useState(true)
+  const [masterWidth, setMasterWidth] = useState<number | null>(null)
+  const [resizingMaster, setResizingMaster] = useState(false)
   const [mobileMasterOpen, setMobileMasterOpen] = useState(false)
+  const [canScrollLeft, setCanScrollLeft] = useState(false)
+  const [canScrollRight, setCanScrollRight] = useState(false)
+
+  useEffect(() => {
+    try {
+      const saved = Number(window.localStorage.getItem(MASTER_WIDTH_STORAGE_KEY))
+      if (!Number.isNaN(saved) && saved >= MIN_MASTER_WIDTH && saved <= MAX_MASTER_WIDTH) {
+        setMasterWidth(saved)
+      }
+    } catch {
+      // ignore storage restrictions
+    }
+  }, [])
 
   const [searchQuery, setSearchQuery] = useState('')
   const [onlyMine, setOnlyMine] = useState(false)
@@ -116,6 +150,51 @@ export default function BoardPage({
   const canvasRef = useRef<HTMLDivElement>(null)
   const cursorNodeTick = useState(0)
   const forceCursorRender = cursorNodeTick[1]
+
+  const updateCanvasScrollState = useCallback(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const maxScroll = el.scrollWidth - el.clientWidth
+    setCanScrollLeft(el.scrollLeft > 8)
+    setCanScrollRight(maxScroll > 8 && el.scrollLeft < maxScroll - 8)
+  }, [])
+
+  const scrollCanvasBy = (delta: number) => {
+    canvasRef.current?.scrollBy({ left: delta, behavior: 'smooth' })
+  }
+
+  const startMasterResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setResizingMaster(true)
+    const onMove = (moveEvent: PointerEvent) => {
+      const raw = window.innerWidth - moveEvent.clientX
+      const clamped = Math.max(MIN_MASTER_WIDTH, Math.min(MAX_MASTER_WIDTH, raw))
+      setMasterWidth(clamped)
+    }
+    const onUp = (upEvent: PointerEvent) => {
+      setResizingMaster(false)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      const raw = window.innerWidth - upEvent.clientX
+      const clamped = Math.max(MIN_MASTER_WIDTH, Math.min(MAX_MASTER_WIDTH, raw))
+      try {
+        window.localStorage.setItem(MASTER_WIDTH_STORAGE_KEY, String(clamped))
+      } catch {
+        // ignore storage errors
+      }
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const resetMasterWidth = () => {
+    setMasterWidth(null)
+    try {
+      window.localStorage.removeItem(MASTER_WIDTH_STORAGE_KEY)
+    } catch {
+      // ignore storage errors
+    }
+  }
 
   const sendMessageRef = useRef<(msg: WsMessage) => void>(() => {})
   const sendWs = useCallback((msg: WsMessage) => {
@@ -238,6 +317,16 @@ export default function BoardPage({
   useEffect(() => {
     sendMessageRef.current = sendMessage
   }, [sendMessage])
+
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    updateCanvasScrollState()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => updateCanvasScrollState())
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [updateCanvasScrollState, columns.length, masterOpen, masterWidth])
 
   const loadedBoardIdRef = useRef<string | null>(null)
   useEffect(() => {
@@ -637,59 +726,122 @@ export default function BoardPage({
           className={cn(
             'relative flex min-h-0 flex-1 overflow-hidden',
             dotGrid && 'bg-dot-grid',
+            resizingMaster && 'select-none',
           )}
         >
-          {/* Horizontal columns canvas */}
-          <div
-            ref={canvasRef}
-            onMouseMove={(e) => handleMouseMove(e, canvasRef.current)}
-            onMouseLeave={handleMouseLeave}
-            className="relative flex flex-1 gap-4 overflow-x-auto overflow-y-hidden p-4 md:p-5"
-          >
-            {columns.map((col) => (
-              <Column
-                key={col.id}
-                column={col}
-                maxVotes={board.max_votes}
-                userTotalVotes={userTotalVotes}
-                currentUser={username}
-                onUpdate={handleColumnUpdate}
-                onDelete={handleColumnDelete}
-                onCardCreated={(card) => handleCardCreated(col.id, card)}
-                onCardUpdated={(card) => handleCardUpdated(col.id, card)}
-                onCardDeleted={(cardId) => handleCardDeleted(col.id, cardId)}
-                onGroupCreated={(group, ids) =>
-                  handleGroupCreated(col.id, group, ids)
-                }
-                onGroupUpdated={(group) => handleGroupUpdated(col.id, group)}
-                onGroupDeleted={(gid) => handleGroupDeleted(col.id, gid)}
-                groupTargetId={groupTargetId}
-                collapsedGroups={collapsedGroups}
-                onToggleCollapse={handleToggleCollapse}
-                hideOtherCards={hideOtherCards}
-                anonymous={anonymousMode}
-                readOnly={readOnly}
-                cardCreationDisabled={readOnly}
-                searchQuery={searchQuery}
-                onlyMine={onlyMine}
-                sortBy={sortBy}
-                spotlightCardId={spotlightCardId}
-                onSpotlight={handleSpotlight}
-                onCreateActionItem={(card) =>
-                  createActionItemFromCards(card.text, [card.id], card.author)
-                }
-              />
-            ))}
+          {/* Canvas viewport wrapper so scroll buttons align with visible columns edge */}
+          <div className="relative flex min-w-0 flex-1 overflow-hidden">
+            {/* Left scroll hint */}
+            {canScrollLeft && (
+              <button
+                type="button"
+                onClick={() => scrollCanvasBy(-340)}
+                aria-label="Прокрутить колонки влево"
+                className="no-print absolute left-2 top-1/2 z-20 hidden -translate-y-1/2 sm:flex h-9 w-9 items-center justify-center rounded-full border bg-background/90 text-foreground shadow-md backdrop-blur-sm transition-all hover:scale-105 hover:bg-background"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            )}
 
-            {/* Multiplayer cursors layer */}
-            {remoteCursors.map((name) => (
-              <CursorMarker key={name} username={name} posRef={cursorsRef} />
-            ))}
+            {/* Right scroll hint */}
+            {canScrollRight && (
+              <button
+                type="button"
+                onClick={() => scrollCanvasBy(340)}
+                aria-label="Прокрутить колонки вправо"
+                className="no-print absolute right-2 top-1/2 z-20 hidden -translate-y-1/2 sm:flex h-9 w-9 items-center justify-center rounded-full border bg-background/90 text-foreground shadow-md backdrop-blur-sm transition-all hover:scale-105 hover:bg-background"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            )}
+
+            {/* Horizontal columns canvas */}
+            <div
+              ref={canvasRef}
+              onScroll={updateCanvasScrollState}
+              onMouseMove={(e) => handleMouseMove(e, canvasRef.current)}
+              onMouseLeave={handleMouseLeave}
+              className="relative flex flex-1 items-stretch gap-3 sm:gap-4 overflow-x-auto overflow-y-hidden p-3 sm:p-4 snap-x snap-mandatory md:snap-none"
+            >
+              {columns.map((col, idx) => (
+                <Column
+                  key={col.id}
+                  index={idx}
+                  className={cn(
+                    idx === 0 && 'md:ml-auto',
+                    idx === columns.length - 1 && 'md:mr-auto',
+                  )}
+                  column={col}
+                  maxVotes={board.max_votes}
+                  userTotalVotes={userTotalVotes}
+                  currentUser={username}
+                  onUpdate={handleColumnUpdate}
+                  onDelete={handleColumnDelete}
+                  onCardCreated={(card) => handleCardCreated(col.id, card)}
+                  onCardUpdated={(card) => handleCardUpdated(col.id, card)}
+                  onCardDeleted={(cardId) => handleCardDeleted(col.id, cardId)}
+                  onGroupCreated={(group, ids) =>
+                    handleGroupCreated(col.id, group, ids)
+                  }
+                  onGroupUpdated={(group) => handleGroupUpdated(col.id, group)}
+                  onGroupDeleted={(gid) => handleGroupDeleted(col.id, gid)}
+                  groupTargetId={groupTargetId}
+                  collapsedGroups={collapsedGroups}
+                  onToggleCollapse={handleToggleCollapse}
+                  hideOtherCards={hideOtherCards}
+                  anonymous={anonymousMode}
+                  readOnly={readOnly}
+                  cardCreationDisabled={readOnly}
+                  searchQuery={searchQuery}
+                  onlyMine={onlyMine}
+                  sortBy={sortBy}
+                  spotlightCardId={spotlightCardId}
+                  onSpotlight={handleSpotlight}
+                  onCreateActionItem={(card) =>
+                    createActionItemFromCards(card.text, [card.id], card.author)
+                  }
+                />
+              ))}
+
+              {/* Multiplayer cursors layer */}
+              <AnimatePresence>
+                {remoteCursors.map((name) => (
+                  <CursorMarker key={name} username={name} posRef={cursorsRef} />
+                ))}
+              </AnimatePresence>
+            </div>
           </div>
 
-          {/* Desktop Action Items Sidebar */}
-          {masterOpen && (
-            <aside className="hidden w-[340px] shrink-0 flex-col border-l bg-background/90 backdrop-blur-sm lg:flex">
+          {/* Desktop Action Items Sidebar (adaptive + resizable + smooth slide) */}
+          <aside
+            aria-hidden={!masterOpen}
+            style={{
+              width: masterOpen
+                ? masterWidth
+                  ? `${masterWidth}px`
+                  : 'clamp(300px, 23vw, 420px)'
+                : '0px',
+            }}
+            className={cn(
+              'relative hidden shrink-0 overflow-hidden bg-background/90 backdrop-blur-sm lg:flex',
+              !resizingMaster && 'transition-[width,opacity,border-width] duration-200 ease-out',
+              masterOpen ? 'border-l opacity-100' : 'pointer-events-none invisible border-l-0 opacity-0',
+            )}
+          >
+            {masterOpen && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Изменить ширину панели Итоги"
+                title="Потяните для изменения ширины (двойной клик — сброс)"
+                onPointerDown={startMasterResize}
+                onDoubleClick={resetMasterWidth}
+                className="group/resize absolute inset-y-0 left-0 z-20 flex w-2 -translate-x-1/2 cursor-col-resize items-center justify-center"
+              >
+                <span className="h-10 w-0.5 rounded-full bg-transparent transition-colors group-hover/resize:bg-primary/60" />
+              </div>
+            )}
+            <div className="h-full w-full min-w-[280px]">
               <MasterColumn
                 boardId={board.id}
                 actionItems={actionItems}
@@ -710,15 +862,15 @@ export default function BoardPage({
                 dropDisabled={readOnly}
                 readOnly={readOnly}
               />
-            </aside>
-          )}
+            </div>
+          </aside>
         </main>
 
-        <DragOverlay>
+        <DragOverlay dropAnimation={BOARD_DROP_ANIMATION}>
           {activeCard ? (
             <div
               className={cn(
-                'w-[300px] rotate-1 rounded-xl border p-3.5 shadow-xl opacity-95',
+                'w-[300px] rotate-2 scale-[1.02] rounded-xl border p-3.5 shadow-2xl opacity-95',
                 getCardColorPreset(activeCard.color).cardClass,
               )}
             >
@@ -727,7 +879,7 @@ export default function BoardPage({
               </p>
             </div>
           ) : activeGroup ? (
-            <div className="flex w-[300px] items-center gap-2 rounded-xl border border-primary/40 bg-card p-3 shadow-xl">
+            <div className="flex w-[300px] rotate-1 scale-[1.02] items-center gap-2 rounded-xl border border-primary/40 bg-card p-3 shadow-2xl">
               <Layers className="h-4 w-4 text-primary" />
               <span className="text-xs font-semibold">{activeGroup.title}</span>
             </div>

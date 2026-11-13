@@ -2,10 +2,10 @@
 
 import { useState } from 'react'
 import { useDraggable } from '@dnd-kit/core'
+import { AnimatePresence, motion } from 'motion/react'
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   Layers,
   Pencil,
   ThumbsUp,
@@ -50,6 +50,9 @@ interface CardGroupWidgetProps {
   anonymous?: boolean
   readOnly?: boolean
   spotlightCardId?: string | null
+  newCardIds?: Set<string>
+  revealedCardIds?: Set<string>
+  revealDelayMap?: Record<string, number>
   onSpotlight?: (cardId: string) => void
   onCreateActionItem?: (card: Card) => void
 }
@@ -72,6 +75,9 @@ export default function CardGroupWidget({
   anonymous = false,
   readOnly = false,
   spotlightCardId = null,
+  newCardIds,
+  revealedCardIds,
+  revealDelayMap,
   onSpotlight,
   onCreateActionItem,
 }: CardGroupWidgetProps) {
@@ -145,14 +151,15 @@ export default function CardGroupWidget({
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={onToggleCollapse}
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
             title={collapsed ? 'Развернуть группу' : 'Свернуть группу'}
           >
-            {collapsed ? (
-              <ChevronRight className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
-            )}
+            <ChevronDown
+              className={cn(
+                'h-3.5 w-3.5 transition-transform duration-200',
+                collapsed && '-rotate-90',
+              )}
+            />
           </button>
 
           <Layers className="h-3.5 w-3.5 shrink-0 text-primary" />
@@ -254,30 +261,50 @@ export default function CardGroupWidget({
           </Badge>
         </div>
 
-        {!collapsed && cards.length > 0 && (
-          <div className="mt-1.5 space-y-2">
-            {cards.map((card) => (
-              <CardWidget
-                key={card.id}
-                card={card}
-                currentUser={currentUser}
-                maxVotes={maxVotes}
-                userTotalVotes={userTotalVotes}
-                onUpdated={onCardUpdated}
-                onDeleted={onCardDeleted}
-                inGroup
-                isGroupTarget={groupTargetId === card.id}
-                dragDisabled={dragDisabled}
-                hidden={hideOtherCards && card.author !== currentUser}
-                anonymous={anonymous}
-                readOnly={readOnly}
-                isSpotlighted={spotlightCardId === card.id}
-                onSpotlight={onSpotlight}
-                onCreateActionItem={onCreateActionItem}
-                onRemoveFromGroup={() => handleRemoveCard(card)}
-              />
-            ))}
-          </div>
+        <AnimatePresence initial={false}>
+          {!collapsed && cards.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="overflow-hidden"
+            >
+              <div className="mt-1.5 space-y-2">
+                {cards.map((card) => (
+                  <CardWidget
+                    key={card.id}
+                    card={card}
+                    currentUser={currentUser}
+                    maxVotes={maxVotes}
+                    userTotalVotes={userTotalVotes}
+                    onUpdated={onCardUpdated}
+                    onDeleted={onCardDeleted}
+                    inGroup
+                    isGroupTarget={groupTargetId === card.id}
+                    dragDisabled={dragDisabled}
+                    hidden={hideOtherCards && card.author !== currentUser}
+                    anonymous={anonymous}
+                    readOnly={readOnly}
+                    isSpotlighted={spotlightCardId === card.id}
+                    isNew={newCardIds?.has(card.id)}
+                    justRevealed={revealedCardIds?.has(card.id)}
+                    revealDelayMs={revealDelayMap?.[card.id] ?? 0}
+                    onSpotlight={onSpotlight}
+                    onCreateActionItem={onCreateActionItem}
+                    onRemoveFromGroup={() => handleRemoveCard(card)}
+                  />
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {collapsed && cards.length > 1 && (
+          <div
+            aria-hidden="true"
+            className="mx-2 mt-1.5 h-1.5 rounded-b-lg border-x border-b border-primary/20 bg-primary/[0.03] transition-all"
+          />
         )}
       </div>
 

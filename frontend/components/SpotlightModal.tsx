@@ -1,5 +1,6 @@
 'use client'
 
+import { motion } from 'motion/react'
 import { ListTodo, Sparkles, ThumbsUp, User } from 'lucide-react'
 import { getCardColorPreset } from '@/lib/board-themes'
 import type { Card, Column } from '@/types'
@@ -65,7 +66,13 @@ export default function SpotlightModal({
           </DialogTitle>
         </DialogHeader>
 
-        <div className={`rounded-2xl border p-5 shadow-sm ${preset.cardClass}`}>
+        <motion.div
+          key={card.id}
+          initial={{ opacity: 0, scale: 0.94, y: 10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          className={`rounded-2xl border p-5 shadow-sm ${preset.cardClass}`}
+        >
           <p className="text-lg font-medium leading-relaxed text-foreground whitespace-pre-wrap">
             {card.text}
           </p>
@@ -94,13 +101,21 @@ export default function SpotlightModal({
                       : 'Лайк'
               }
               onClick={() => onLike(card.id)}
-              className="gap-1.5 font-mono"
+              className="gap-1.5 font-mono transition-transform active:scale-95"
             >
-              <ThumbsUp className="h-3.5 w-3.5" />
+              <motion.span
+                key={liked ? 'liked' : 'idle'}
+                initial={liked ? { scale: 1.3, rotate: -12 } : false}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 18 }}
+                className="inline-flex"
+              >
+                <ThumbsUp className="h-3.5 w-3.5" />
+              </motion.span>
               {card.likes.length}
             </Button>
           </div>
-        </div>
+        </motion.div>
 
         <DialogFooter className="gap-2 sm:justify-between">
           <Button

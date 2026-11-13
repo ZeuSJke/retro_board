@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { motion } from 'motion/react'
 import {
   Check,
   Copy,
@@ -147,7 +148,12 @@ export default function SummaryModal({
             )}
 
             {!loading && !regenerating && summary && (
-              <div className="space-y-4">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-4"
+              >
                 <div className="rounded-xl border bg-muted/40 p-4">
                   <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Общий вывод
@@ -163,8 +169,11 @@ export default function SummaryModal({
                     </div>
                     <ul className="rounded-xl border bg-card/60 divide-y divide-border/60">
                       {summary.key_themes.map((theme, idx) => (
-                        <li
+                        <motion.li
                           key={idx}
+                          initial={{ opacity: 0, x: -6 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.2, delay: Math.min(idx * 0.04, 0.24) }}
                           className="flex items-start gap-2.5 px-3.5 py-2.5 text-sm leading-relaxed text-foreground"
                         >
                           <span
@@ -172,7 +181,7 @@ export default function SummaryModal({
                             aria-hidden="true"
                           />
                           <span>{theme}</span>
-                        </li>
+                        </motion.li>
                       ))}
                     </ul>
                   </div>
@@ -186,20 +195,23 @@ export default function SummaryModal({
                     </div>
                     <ol className="rounded-xl border bg-card/60 divide-y divide-border/60">
                       {summary.recommendations.map((rec, idx) => (
-                        <li
+                        <motion.li
                           key={idx}
+                          initial={{ opacity: 0, x: -6 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.2, delay: Math.min(idx * 0.04, 0.24) }}
                           className="flex items-start gap-3 px-3.5 py-2.5 text-sm leading-relaxed text-foreground"
                         >
                           <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
                             {idx + 1}
                           </span>
                           <span>{rec}</span>
-                        </li>
+                        </motion.li>
                       ))}
                     </ol>
                   </div>
                 )}
-              </div>
+              </motion.div>
             )}
           </TabsContent>
 

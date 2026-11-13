@@ -3,6 +3,8 @@ import json
 import logging
 import time
 
+import anyio
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException
 
 from app.config import settings
@@ -660,17 +662,23 @@ async def websocket_endpoint(
         if username and not still_present:
             ready_changed = manager.remove_ready_user(board_id, username)
             try:
-                await manager.broadcast(board_id, "cursor_leave", {"username": username})
-                await manager.broadcast(
-                    board_id,
-                    "presence_update",
-                    {"users": manager.get_users(board_id)},
-                )
-                if ready_changed:
-                    await manager.broadcast(
-                        board_id,
-                        "ready_update",
-                        {"ready_users": manager.get_ready_users(board_id)},
-                    )
+                # Защищаем рассылку о выходе от CancelledError при закрытии сокета (Starlette TestClient / cancel),
+                # иначе cursor_leave / presence_update обрываются на await и клиенты не получают обновление.
+                with anyio.CancelScope(shield=True):
+                    with anyio.move_on_after(2.0):
+                        await manager.broadcast(
+                            board_id, "cursor_leave", {"username": username}
+                        )
+                        await manager.broadcast(
+                            board_id,
+                            "presence_update",
+                            {"users": manager.get_users(board_id)},
+                        )
+                        if ready_changed:
+                            await manager.broadcast(
+                                board_id,
+                                "ready_update",
+                                {"ready_users": manager.get_ready_users(board_id)},
+                            )
             except Exception:
                 pass

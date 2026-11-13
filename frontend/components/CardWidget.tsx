@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { motion } from 'motion/react'
 import {
   Check,
   EyeOff,
@@ -67,6 +68,9 @@ interface CardWidgetProps {
   anonymous?: boolean
   readOnly?: boolean
   isSpotlighted?: boolean
+  isNew?: boolean
+  justRevealed?: boolean
+  revealDelayMs?: number
   onSpotlight?: (cardId: string) => void
   onCreateActionItem?: (card: Card) => void
   onRemoveFromGroup?: () => void
@@ -89,6 +93,9 @@ export default function CardWidget({
   anonymous = false,
   readOnly = false,
   isSpotlighted = false,
+  isNew = false,
+  justRevealed = false,
+  revealDelayMs = 0,
   onSpotlight,
   onCreateActionItem,
   onRemoveFromGroup,
@@ -103,6 +110,7 @@ export default function CardWidget({
   const [editColor, setEditColor] = useState(card.color || '#FFFFFF')
   const [saving, setSaving] = useState(false)
   const [liking, setLiking] = useState(false)
+  const [voteBurstKey, setVoteBurstKey] = useState(0)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -115,6 +123,7 @@ export default function CardWidget({
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
+    ...(justRevealed && revealDelayMs > 0 ? { animationDelay: `${revealDelayMs}ms` } : {}),
   }
 
   if (hidden) {
@@ -202,6 +211,9 @@ export default function CardWidget({
     e.stopPropagation()
     if (voteDisabled) return
     setLiking(true)
+    if (!liked) {
+      setVoteBurstKey((k) => k + 1)
+    }
     const optimisticLikes = liked
       ? likes.filter((u) => u !== resolvedUser)
       : [...likes, resolvedUser]
@@ -242,6 +254,8 @@ export default function CardWidget({
           isDragging && 'z-30 opacity-45 scale-[0.98]',
           isGroupTarget && 'ring-2 ring-primary bg-primary/5',
           isSpotlighted && 'ring-2 ring-primary shadow-md shadow-primary/15',
+          isNew && '[animation:card-enter_0.32s_cubic-bezier(0.22,1,0.36,1)_both,card-glow_1.3s_ease-out_forwards]',
+          !isNew && justRevealed && 'animate-card-reveal',
         )}
       >
         {showAccentBar && (
@@ -506,7 +520,7 @@ export default function CardWidget({
                   disabled={voteDisabled}
                   onClick={handleToggleLike}
                   className={cn(
-                    'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-medium transition-colors',
+                    'relative inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-medium transition-all active:scale-95',
                     liked
                       ? 'border-primary/40 bg-primary/15 text-primary'
                       : 'border-border/80 bg-background/70 text-muted-foreground hover:border-primary/40 hover:text-foreground',
@@ -514,8 +528,25 @@ export default function CardWidget({
                     voteDisabled && !liked && 'opacity-50',
                   )}
                 >
-                  <ThumbsUp className={cn('h-3 w-3', liked && 'fill-current')} />
-                  <span>{likes.length}</span>
+                  {voteBurstKey > 0 && (
+                    <span
+                      key={voteBurstKey}
+                      aria-hidden="true"
+                      className="animate-vote-pop pointer-events-none absolute -top-2 left-1/2 font-mono text-[11px] font-bold text-primary"
+                    >
+                      +1
+                    </span>
+                  )}
+                  <motion.span
+                    key={liked ? 'liked' : 'idle'}
+                    initial={liked ? { scale: 1.35, rotate: -14 } : false}
+                    animate={{ scale: 1, rotate: 0 }}
+                    transition={{ type: 'spring', stiffness: 520, damping: 18 }}
+                    className="inline-flex"
+                  >
+                    <ThumbsUp className={cn('h-3 w-3', liked && 'fill-current')} />
+                  </motion.span>
+                  <span className="tabular-nums">{likes.length}</span>
                 </button>
               )
 

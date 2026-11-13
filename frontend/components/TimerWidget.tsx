@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { motion } from 'motion/react'
 import { Pause, Play, Plus, RotateCcw, Volume2, VolumeX } from 'lucide-react'
 import type { TimerState } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -48,6 +49,19 @@ export default function TimerWidget({
   onAddTime,
 }: TimerWidgetProps) {
   const [open, setOpen] = useState(false)
+  const [justExpired, setJustExpired] = useState(false)
+  const prevRemainingRef = useRef(timer.remaining)
+
+  useEffect(() => {
+    const prev = prevRemainingRef.current
+    prevRemainingRef.current = timer.remaining
+    if (prev > 0 && timer.remaining === 0) {
+      setJustExpired(true)
+      const t = setTimeout(() => setJustExpired(false), 2600)
+      return () => clearTimeout(t)
+    }
+  }, [timer.remaining])
+
   const ratio = timer.duration > 0 ? Math.max(0, Math.min(1, timer.remaining / timer.duration)) : 0
   const urgent = timer.running && timer.remaining <= 30 && timer.remaining > 0
   const circumference = 2 * Math.PI * 10
@@ -57,15 +71,19 @@ export default function TimerWidget({
     <div className="flex items-center gap-1.5">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <button
+          <motion.button
             type="button"
+            animate={justExpired ? { scale: [1, 1.08, 0.97, 1.04, 1] } : { scale: 1 }}
+            transition={{ duration: 0.55 }}
             className={cn(
               'inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium transition-all',
-              timer.running
-                ? urgent
-                  ? 'border-destructive/40 bg-destructive/10 text-destructive animate-pulse'
-                  : 'border-primary/40 bg-primary/10 text-primary'
-                : 'border-border bg-background hover:bg-muted/70 text-foreground',
+              justExpired
+                ? 'border-amber-500/70 bg-amber-500/15 text-amber-600 ring-2 ring-amber-500/35 dark:text-amber-400'
+                : timer.running
+                  ? urgent
+                    ? 'border-destructive/50 bg-destructive/10 text-destructive animate-pulse ring-2 ring-destructive/20'
+                    : 'border-primary/40 bg-primary/10 text-primary'
+                  : 'border-border bg-background hover:bg-muted/70 text-foreground',
             )}
           >
             <svg className="h-5 w-5 -rotate-90" viewBox="0 0 24 24" aria-hidden="true">
@@ -88,12 +106,13 @@ export default function TimerWidget({
                 strokeDasharray={circumference}
                 strokeDashoffset={strokeDashoffset}
                 strokeLinecap="round"
+                className="transition-[stroke-dashoffset] duration-1000 ease-linear"
               />
             </svg>
             <span className="font-mono text-xs font-bold tabular-nums">
               {formatTime(timer.remaining)}
             </span>
-          </button>
+          </motion.button>
         </PopoverTrigger>
 
         <PopoverContent align="end" className="w-72 space-y-3 p-3.5">
