@@ -169,7 +169,7 @@ export default function BulkActionsBar({
               variant="outline"
               disabled={busy}
               onClick={onBulkCreateActionItem}
-              title="Создать общий Action Item по выбранным карточкам"
+              title="Создать общую задачу по выбранным карточкам"
               className="h-8 gap-1.5 text-xs"
             >
               <ListTodo className="h-3.5 w-3.5 text-primary" />

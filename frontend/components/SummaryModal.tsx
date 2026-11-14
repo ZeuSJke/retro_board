@@ -1,7 +1,6 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { motion } from 'motion/react'
 import {
   Check,
   Copy,
@@ -17,10 +16,10 @@ import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown
 import { showToast } from '@/store/toastStore'
 import { getApiErrorMessage } from '@/utils/apiError'
 import type { ActionItem, Board, BoardSummary } from '@/types'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -69,7 +68,7 @@ export default function SummaryModal({
       summary.key_themes.forEach((t) => lines.push(`• ${t}`))
     }
     if (actionItems.length > 0) {
-      lines.push('', `*Action Items (${actionItems.length}):*`)
+      lines.push('', `*Задачи по итогам (${actionItems.length}):*`)
       actionItems.forEach((a) => {
         const who = a.assignee ? ` — @${a.assignee}` : ''
         lines.push(`• ${a.title || a.text}${who}`)
@@ -105,7 +104,7 @@ export default function SummaryModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent layout="structured" className="max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-primary" />
@@ -114,144 +113,146 @@ export default function SummaryModal({
           <DialogDescription>{board.name}</DialogDescription>
         </DialogHeader>
 
-        <Tabs value={exportTab} onValueChange={(v) => setExportTab(v as 'summary' | 'markdown')}>
-          <TabsList className="w-full justify-start">
-            <TabsTrigger value="summary">AI-резюме и темы</TabsTrigger>
-            <TabsTrigger value="markdown">Markdown и Slack</TabsTrigger>
-          </TabsList>
+        <Tabs
+          value={exportTab}
+          onValueChange={(v) => setExportTab(v as 'summary' | 'markdown')}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <div className="shrink-0 border-b border-border/60 bg-muted/20 px-6 py-2.5">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="summary">AI-резюме и темы</TabsTrigger>
+              <TabsTrigger value="markdown">Markdown и Slack</TabsTrigger>
+            </TabsList>
+          </div>
 
-          <TabsContent value="summary" className="space-y-4 pt-1">
-            {(loading || regenerating) && (
-              <div className="flex flex-col items-center justify-center gap-3 py-10 text-muted-foreground">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="text-sm">Анализируем карточки и формируем выводы...</p>
-              </div>
-            )}
+          {/* Фиксированная высота тела исключает скачки модалки и кнопок футера при смене вкладки */}
+          <DialogBody className="h-[420px] flex-none">
+            <TabsContent value="summary" className="mt-0 space-y-4">
+              {(loading || regenerating) && (
+                <div className="flex h-[340px] flex-col items-center justify-center gap-3 text-muted-foreground">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p className="text-sm">Анализируем карточки и формируем выводы...</p>
+                </div>
+              )}
 
-            {!loading && !regenerating && error && (
-              <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
-                {error}
-              </div>
-            )}
+              {!loading && !regenerating && error && (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
 
-            {!loading && !regenerating && !error && !summary && (
-              <div className="rounded-xl border border-dashed p-8 text-center space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  AI-резюме для этой доски ещё не создано. Переведите сессию на этап «Итоги» или
-                  сгенерируйте его вручную.
-                </p>
-                <Button variant="outline" size="sm" onClick={handleRegenerate}>
-                  <Sparkles className="h-4 w-4 text-primary" />
-                  Сгенерировать AI-резюме
+              {!loading && !regenerating && !error && !summary && (
+                <div className="flex h-[340px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 text-center">
+                  <p className="max-w-md text-sm text-muted-foreground">
+                    AI-резюме для этой доски ещё не создано. Переведите сессию на этап «Итоги» или
+                    сгенерируйте его вручную.
+                  </p>
+                  <Button variant="outline" size="sm" onClick={handleRegenerate}>
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    Сгенерировать AI-резюме
+                  </Button>
+                </div>
+              )}
+
+              {!loading && !regenerating && summary && (
+                <div className="space-y-4">
+                  <div className="rounded-xl border bg-muted/40 p-4">
+                    <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Общий вывод
+                    </div>
+                    <p className="text-sm leading-relaxed text-foreground">{summary.summary_text}</p>
+                  </div>
+
+                  {summary.key_themes.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <Tag className="h-3.5 w-3.5 text-primary" />
+                        Ключевые темы
+                      </div>
+                      <ul className="divide-y divide-border/60 rounded-xl border bg-card/60">
+                        {summary.key_themes.map((theme, idx) => (
+                          <li
+                            key={idx}
+                            className="flex items-start gap-2.5 px-3.5 py-2.5 text-sm leading-relaxed text-foreground"
+                          >
+                            <span
+                              className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                              aria-hidden="true"
+                            />
+                            <span>{theme}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {summary.recommendations.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <Lightbulb className="h-3.5 w-3.5 text-amber-500" />
+                        Рекомендации
+                      </div>
+                      <ol className="divide-y divide-border/60 rounded-xl border bg-card/60">
+                        {summary.recommendations.map((rec, idx) => (
+                          <li
+                            key={idx}
+                            className="flex items-start gap-3 px-3.5 py-2.5 text-sm leading-relaxed text-foreground"
+                          >
+                            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                              {idx + 1}
+                            </span>
+                            <span>{rec}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="markdown" className="mt-0 flex h-full flex-col gap-3">
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCopy(slackText, 'Краткая сводка для Slack/Telegram скопирована')}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Скопировать пост для Slack
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCopy(fullMarkdown, 'Полный Markdown скопирован')}
+                >
+                  {copied ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                  Скопировать Markdown
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => downloadMarkdownFile(`${board.slug || board.id}.md`, fullMarkdown)}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Скачать .md
                 </Button>
               </div>
-            )}
 
-            {!loading && !regenerating && summary && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-                className="space-y-4"
-              >
-                <div className="rounded-xl border bg-muted/40 p-4">
-                  <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Общий вывод
-                  </div>
-                  <p className="text-sm leading-relaxed text-foreground">{summary.summary_text}</p>
-                </div>
-
-                {summary.key_themes.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      <Tag className="h-3.5 w-3.5 text-primary" />
-                      Ключевые темы
-                    </div>
-                    <ul className="rounded-xl border bg-card/60 divide-y divide-border/60">
-                      {summary.key_themes.map((theme, idx) => (
-                        <motion.li
-                          key={idx}
-                          initial={{ opacity: 0, x: -6 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ duration: 0.2, delay: Math.min(idx * 0.04, 0.24) }}
-                          className="flex items-start gap-2.5 px-3.5 py-2.5 text-sm leading-relaxed text-foreground"
-                        >
-                          <span
-                            className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
-                            aria-hidden="true"
-                          />
-                          <span>{theme}</span>
-                        </motion.li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {summary.recommendations.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      <Lightbulb className="h-3.5 w-3.5 text-amber-500" />
-                      Рекомендации
-                    </div>
-                    <ol className="rounded-xl border bg-card/60 divide-y divide-border/60">
-                      {summary.recommendations.map((rec, idx) => (
-                        <motion.li
-                          key={idx}
-                          initial={{ opacity: 0, x: -6 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ duration: 0.2, delay: Math.min(idx * 0.04, 0.24) }}
-                          className="flex items-start gap-3 px-3.5 py-2.5 text-sm leading-relaxed text-foreground"
-                        >
-                          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                            {idx + 1}
-                          </span>
-                          <span>{rec}</span>
-                        </motion.li>
-                      ))}
-                    </ol>
-                  </div>
-                )}
-              </motion.div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="markdown" className="space-y-3 pt-1">
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => handleCopy(slackText, 'Краткая сводка для Slack/Telegram скопирована')}
-              >
-                <Copy className="h-3.5 w-3.5" />
-                Скопировать пост для Slack
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => handleCopy(fullMarkdown, 'Полный Markdown скопирован')}
-              >
-                {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-                Скопировать Markdown
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => downloadMarkdownFile(`${board.slug || board.id}.md`, fullMarkdown)}
-              >
-                <Download className="h-3.5 w-3.5" />
-                Скачать .md
-              </Button>
-            </div>
-
-            <pre className="max-h-72 overflow-auto rounded-xl border bg-muted/50 p-3.5 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap">
-              {fullMarkdown}
-            </pre>
-          </TabsContent>
+              <pre className="min-h-0 flex-1 overflow-auto scrollbar-subtle whitespace-pre-wrap rounded-xl border bg-muted/45 p-3.5 font-mono text-xs leading-relaxed text-foreground">
+                {fullMarkdown}
+              </pre>
+            </TabsContent>
+          </DialogBody>
         </Tabs>
 
-        <DialogFooter className="gap-2 sm:justify-between">
+        <DialogFooter className="sm:justify-between">
           <Button
             type="button"
             variant="outline"

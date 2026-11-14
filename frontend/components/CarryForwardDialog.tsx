@@ -83,7 +83,7 @@ export default function CarryForwardDialog({
             Перенести незакрытые задачи
           </DialogTitle>
           <DialogDescription>
-            Все Action Items со статусом «Открыто» или «В работе» будут скопированы на выбранную доску.
+            Все задачи со статусом «Открыто» или «В работе» будут скопированы на выбранную доску.
           </DialogDescription>
         </DialogHeader>
 

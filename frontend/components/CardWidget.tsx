@@ -331,30 +331,9 @@ export default function CardWidget({
           />
         )}
 
-        {/* Header: author + quick hover actions */}
+        {/* Header: drag handle + avatar (swaps to selection checkbox on hover/selected without layout shift) + author + quick hover actions */}
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            {onToggleSelect && !readOnly && (
-              <button
-                type="button"
-                data-testid={`card-select-${card.id}`}
-                aria-label={selected ? 'Снять выделение' : 'Выбрать карточку'}
-                aria-pressed={selected}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onToggleSelect(card.id, e.shiftKey)
-                }}
-                className={cn(
-                  'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all',
-                  selected
-                    ? 'border-primary bg-primary text-primary-foreground opacity-100'
-                    : 'border-muted-foreground/45 bg-background/80 text-transparent opacity-0 group-hover/card:opacity-100 focus:opacity-100 hover:border-primary',
-                )}
-              >
-                <Check className="h-2.5 w-2.5 stroke-[3]" />
-              </button>
-            )}
             {!editing && !readOnly && !dragDisabled && (
               <span
                 data-testid="card-drag-handle"
@@ -365,27 +344,62 @@ export default function CardWidget({
                 <GripVertical className="h-3.5 w-3.5" />
               </span>
             )}
-            {anonymous ? (
-              <>
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+
+            <div className="group/select relative flex h-5 w-5 shrink-0 items-center justify-center">
+              {anonymous ? (
+                <span
+                  className={cn(
+                    'flex h-5 w-5 items-center justify-center rounded-full bg-muted text-muted-foreground transition-opacity duration-150',
+                    onToggleSelect &&
+                      !readOnly &&
+                      (selected
+                        ? 'opacity-0'
+                        : 'group-hover/card:opacity-0 group-focus-within/select:opacity-0'),
+                  )}
+                >
                   <User className="h-3 w-3" />
                 </span>
-                <span className="truncate text-[11px] font-medium text-muted-foreground">
-                  Участник
-                </span>
-              </>
-            ) : (
-              <>
+              ) : (
                 <span
-                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-[9px] font-bold text-white ${getUserAvatarGradient(card.author)}`}
+                  className={cn(
+                    `flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br text-[9px] font-bold text-white transition-opacity duration-150 ${getUserAvatarGradient(card.author)}`,
+                    onToggleSelect &&
+                      !readOnly &&
+                      (selected
+                        ? 'opacity-0'
+                        : 'group-hover/card:opacity-0 group-focus-within/select:opacity-0'),
+                  )}
                 >
                   {getUserInitials(card.author)}
                 </span>
-                <span className="truncate text-[11px] font-medium text-muted-foreground">
-                  {card.author}
-                </span>
-              </>
-            )}
+              )}
+
+              {onToggleSelect && !readOnly && (
+                <button
+                  type="button"
+                  data-testid={`card-select-${card.id}`}
+                  aria-label={selected ? 'Снять выделение' : 'Выбрать карточку'}
+                  aria-pressed={selected}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleSelect(card.id, e.shiftKey)
+                  }}
+                  className={cn(
+                    'absolute inset-0 flex h-5 w-5 items-center justify-center rounded-full border transition-all duration-150',
+                    selected
+                      ? 'border-primary bg-primary text-primary-foreground opacity-100 shadow-xs'
+                      : 'border-muted-foreground/50 bg-background/90 text-transparent opacity-0 group-hover/card:opacity-100 focus:opacity-100 hover:border-primary',
+                  )}
+                >
+                  <Check className="h-2.5 w-2.5 stroke-[3]" />
+                </button>
+              )}
+            </div>
+
+            <span className="truncate text-[11px] font-medium text-muted-foreground">
+              {anonymous ? 'Участник' : card.author}
+            </span>
           </div>
 
           {!editing && (
@@ -429,12 +443,12 @@ export default function CardWidget({
                         e.stopPropagation()
                         onCreateActionItem(card)
                       }}
-                      title="В Action Item"
+                      title="В задачу"
                     >
                       <ListTodo className="h-3.5 w-3.5" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Создать Action Item</TooltipContent>
+                  <TooltipContent>Создать задачу</TooltipContent>
                 </Tooltip>
               )}
 

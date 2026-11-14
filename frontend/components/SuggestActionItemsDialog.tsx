@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -14,7 +15,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
@@ -29,7 +29,9 @@ interface SuggestActionItemsDialogProps {
   loading: boolean
   suggestions: ActionItemSuggestion[]
   submitting?: boolean
-  onCreateSelected: (items: { title: string; text: string; assignee: string | null; source_card_ids: string[] }[]) => Promise<void>
+  onCreateSelected: (
+    items: { title: string; text: string; assignee: string | null; source_card_ids: string[] }[],
+  ) => Promise<void>
 }
 
 export default function SuggestActionItemsDialog({
@@ -65,40 +67,64 @@ export default function SuggestActionItemsDialog({
     [items],
   )
 
+  const allSelected = items.length > 0 && items.every((i) => i.checked)
+
+  const handleToggleAll = () => {
+    const next = !allSelected
+    setItems((prev) => prev.map((x) => ({ ...x, checked: next })))
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent layout="structured" className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
-            AI-подбор Action Items
+            AI-подбор задач
           </DialogTitle>
           <DialogDescription>
-            AI проанализировал карточки и голоса команды. Выберите подходящие задачи и при необходимости подправьте формулировки.
+            AI проанализировал карточки и голоса команды. Выберите подходящие задачи и при
+            необходимости скорректируйте формулировки.
           </DialogDescription>
         </DialogHeader>
 
-        {loading ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-12 text-sm text-muted-foreground">
-            <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            <span>Анализируем карточки доски и формулируем задачи...</span>
-          </div>
-        ) : items.length === 0 ? (
-          <div className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">
-            AI не нашёл достаточно данных для предложений. Добавьте больше карточек обсуждения.
-          </div>
-        ) : (
-          <ScrollArea className="max-h-[56vh] pr-2">
-            <div className="space-y-3">
-              {items.map((item, idx) => (
-                <div
-                  key={idx}
-                  className={cn(
-                    'rounded-xl border p-3 transition-colors',
-                    item.checked ? 'border-primary/30 bg-primary/[0.03]' : 'bg-muted/30 opacity-70',
-                  )}
+        <DialogBody className="max-h-[58vh] space-y-3 bg-muted/15">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-14 text-sm text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <span>Анализируем карточки доски и формулируем задачи...</span>
+            </div>
+          ) : items.length === 0 ? (
+            <div className="rounded-xl border border-dashed bg-background/60 py-10 text-center text-sm text-muted-foreground">
+              AI не нашёл достаточно данных для предложений. Добавьте больше карточек обсуждения.
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between px-0.5 text-xs text-muted-foreground">
+                <button
+                  type="button"
+                  onClick={handleToggleAll}
+                  className="inline-flex items-center gap-2 font-medium text-foreground/85 transition-colors hover:text-primary"
                 >
-                  <div className="mb-2 flex items-center gap-2">
+                  <Checkbox checked={allSelected} tabIndex={-1} aria-hidden="true" />
+                  <span>{allSelected ? 'Снять все' : 'Выбрать все'}</span>
+                </button>
+                <span className="tabular-nums">
+                  Выбрано: {selectedItems.length} из {items.length}
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {items.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className={cn(
+                      'flex items-start gap-3 rounded-xl border bg-card p-3.5 shadow-xs transition-all',
+                      item.checked
+                        ? 'border-primary/35 ring-1 ring-primary/10'
+                        : 'border-border/70 bg-muted/40 opacity-65',
+                    )}
+                  >
                     <Checkbox
                       checked={item.checked}
                       onCheckedChange={(v) =>
@@ -107,53 +133,56 @@ export default function SuggestActionItemsDialog({
                         )
                       }
                       aria-label={`Выбрать задачу ${item.title}`}
+                      className="mt-2 shrink-0"
                     />
-                    <Input
-                      value={item.title}
-                      onChange={(e) =>
-                        setItems((prev) =>
-                          prev.map((x, i) => (i === idx ? { ...x, title: e.target.value } : x)),
-                        )
-                      }
-                      placeholder="Заголовок задачи"
-                      className="h-8 flex-1 text-sm font-medium"
-                      maxLength={100}
-                    />
-                  </div>
-                  <div className="space-y-2 pl-6">
-                    <Textarea
-                      value={item.text}
-                      onChange={(e) =>
-                        setItems((prev) =>
-                          prev.map((x, i) => (i === idx ? { ...x, text: e.target.value } : x)),
-                        )
-                      }
-                      rows={2}
-                      placeholder="Описание задачи"
-                      className="resize-none text-xs"
-                    />
-                    <div className="flex items-center gap-2">
-                      <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <div className="min-w-0 flex-1 space-y-2.5">
                       <Input
-                        value={item.assignee}
+                        value={item.title}
                         onChange={(e) =>
                           setItems((prev) =>
-                            prev.map((x, i) => (i === idx ? { ...x, assignee: e.target.value } : x)),
+                            prev.map((x, i) => (i === idx ? { ...x, title: e.target.value } : x)),
                           )
                         }
-                        placeholder="Ответственный (опционально)"
-                        className="h-7 text-xs"
-                        maxLength={60}
+                        placeholder="Заголовок задачи"
+                        className="h-8 bg-background/80 text-sm font-medium"
+                        maxLength={100}
                       />
+                      <Textarea
+                        value={item.text}
+                        onChange={(e) =>
+                          setItems((prev) =>
+                            prev.map((x, i) => (i === idx ? { ...x, text: e.target.value } : x)),
+                          )
+                        }
+                        rows={2}
+                        placeholder="Описание задачи и ожидаемый результат"
+                        className="min-h-[60px] resize-none bg-background/80 text-xs leading-relaxed"
+                      />
+                      <div className="flex items-center gap-2">
+                        <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <Input
+                          value={item.assignee}
+                          onChange={(e) =>
+                            setItems((prev) =>
+                              prev.map((x, i) =>
+                                i === idx ? { ...x, assignee: e.target.value } : x,
+                              ),
+                            )
+                          }
+                          placeholder="Ответственный (опционально)"
+                          className="h-7 bg-background/80 text-xs sm:max-w-xs"
+                          maxLength={60}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </ScrollArea>
-        )}
+                ))}
+              </div>
+            </>
+          )}
+        </DialogBody>
 
-        <DialogFooter className="gap-2 sm:gap-0">
+        <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             Отмена
           </Button>

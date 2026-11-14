@@ -110,7 +110,7 @@ def _build_fallback_insights(boards_snapshot: list[dict[str, Any]]) -> dict[str,
     recommendations: list[str] = []
     if total_open > total_done and total_open > 0:
         recommendations.append(
-            f"Перенести и пересмотреть {total_open} открытых Action Items на следующем ретро."
+            f"Перенести и пересмотреть {total_open} открытых задач на следующем ретро."
         )
     if mood_values and (sum(mood_values) / len(mood_values)) < 3.5:
         recommendations.append(
@@ -118,7 +118,7 @@ def _build_fallback_insights(boards_snapshot: list[dict[str, Any]]) -> dict[str,
         )
     if not recommendations:
         recommendations.append(
-            "Продолжайте фиксировать измеримые Action Items с ответственными по итогам каждого ретро."
+            "Продолжайте фиксировать измеримые задачи с ответственными по итогам каждого ретро."
         )
 
     return {

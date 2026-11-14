@@ -4,14 +4,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { motion } from 'motion/react'
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
 import { BrandMark } from '@/components/BrandLogo'
 import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Circle,
   Clock,
   ExternalLink,
+  GripVertical,
   HeartPulse,
   Kanban,
   Layers,
@@ -87,6 +102,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { RichCardText } from './RichCardText'
+
+const KANBAN_VISIBLE_LIMIT = 6
 
 const NEXT_STATUS: Record<ActionItemStatus, ActionItemStatus> = {
   open: 'in_progress',
@@ -116,6 +134,94 @@ const STATUS_META: Record<
     badgeVariant: 'success',
     Icon: CheckCircle2,
   },
+}
+
+interface DragBindings {
+  setNodeRef: (el: HTMLElement | null) => void
+  attributes: ReturnType<typeof useDraggable>['attributes']
+  listeners: ReturnType<typeof useDraggable>['listeners']
+  isDragging: boolean
+}
+
+function KanbanColumnDropzone({
+  status,
+  count,
+  meta,
+  collapsed,
+  onToggleCollapse,
+  children,
+}: {
+  status: ActionItemStatus
+  count: number
+  meta: (typeof STATUS_META)[ActionItemStatus]
+  collapsed: boolean
+  onToggleCollapse: () => void
+  children: React.ReactNode
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: status })
+  const Icon = meta.Icon
+
+  return (
+    <div
+      ref={setNodeRef}
+      data-testid={`kanban-column-${status}`}
+      className={cn(
+        'flex flex-col rounded-2xl border bg-muted/30 p-3 transition-colors',
+        isOver && 'border-primary/70 bg-primary/[0.05] ring-2 ring-primary/15',
+      )}
+    >
+      <div className="mb-3 flex items-center justify-between gap-2 px-1">
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? `Развернуть колонку ${meta.label}` : `Свернуть колонку ${meta.label}`}
+          className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground transition-colors hover:text-primary"
+        >
+          {collapsed ? (
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
+          <Icon className={cn('h-4 w-4 shrink-0', meta.colorClass)} />
+          <span className="truncate">{meta.label}</span>
+        </button>
+        <Badge variant="secondary" className="tabular-nums">
+          {count}
+        </Badge>
+      </div>
+
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          className="rounded-xl border border-dashed border-border/80 bg-background/50 px-3 py-4 text-center text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+        >
+          Колонка свёрнута ({count}) — нажмите, чтобы развернуть
+        </button>
+      ) : (
+        children
+      )}
+    </div>
+  )
+}
+
+function KanbanDraggableCard({
+  item,
+  dragDisabled,
+  renderCard,
+}: {
+  item: DashboardActionItem
+  dragDisabled: boolean
+  renderCard: (item: DashboardActionItem, kanbanMode: boolean, drag?: DragBindings) => React.ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: item.id,
+    data: { status: item.status },
+    disabled: dragDisabled,
+  })
+
+  return <>{renderCard(item, true, { setNodeRef, attributes, listeners, isDragging })}</>
 }
 
 export default function Dashboard() {
@@ -150,6 +256,22 @@ export default function Dashboard() {
   const [boardFilter, setBoardFilter] = useState<string>('all')
   const [assigneeFilter, setAssigneeFilter] = useState<string>('')
   const [doneCollapsed, setDoneCollapsed] = useState(true)
+  const [collapsedKanbanCols, setCollapsedKanbanCols] = useState<Record<ActionItemStatus, boolean>>({
+    open: false,
+    in_progress: false,
+    done: false,
+  })
+  const [expandedKanbanCols, setExpandedKanbanCols] = useState<Record<ActionItemStatus, boolean>>({
+    open: false,
+    in_progress: false,
+    done: false,
+  })
+  const [activeDragId, setActiveDragId] = useState<string | null>(null)
+
+  const kanbanSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor),
+  )
 
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -393,21 +515,67 @@ export default function Dashboard() {
     router.push(`/board/${b.slug || b.id}`)
   }
 
-  const renderTaskCard = (item: DashboardActionItem, kanbanMode = false) => {
+  const activeDragItem = useMemo(
+    () => (activeDragId ? items.find((i) => i.id === activeDragId) ?? null : null),
+    [activeDragId, items],
+  )
+
+  const handleKanbanDragStart = (event: DragStartEvent) => {
+    setActiveDragId(String(event.active.id))
+  }
+
+  const handleKanbanDragEnd = (event: DragEndEvent) => {
+    setActiveDragId(null)
+    if (!event.over) return
+    const targetStatus = String(event.over.id) as ActionItemStatus
+    if (targetStatus !== 'open' && targetStatus !== 'in_progress' && targetStatus !== 'done') {
+      return
+    }
+    const dragged = items.find((i) => i.id === String(event.active.id))
+    if (dragged && dragged.status !== targetStatus) {
+      void toggleStatus(dragged, targetStatus)
+    }
+  }
+
+  const renderTaskCard = (
+    item: DashboardActionItem,
+    kanbanMode = false,
+    drag?: DragBindings,
+    isOverlay = false,
+  ) => {
     const meta = STATUS_META[item.status]
     const StatusIcon = meta.Icon
     const isDone = item.status === 'done'
+    const isEditing =
+      editingTitleId === item.id || editingDescId === item.id || editAssigneeId === item.id
     return (
       <div
         key={item.id}
+        ref={drag?.setNodeRef}
+        {...(drag && !isEditing ? drag.attributes : {})}
+        {...(drag && !isEditing ? drag.listeners : {})}
         className={cn(
           'group rounded-xl border bg-card p-3.5 shadow-sm transition-all hover:shadow-md',
           isDone && 'opacity-75',
+          drag?.isDragging && 'opacity-35 ring-1 ring-primary/40',
+          isOverlay && 'rotate-1 scale-[1.02] shadow-2xl opacity-95 border-primary/40',
         )}
       >
-        <div className="flex items-start gap-2.5">
+        <div className="flex items-start gap-2">
+          {kanbanMode && (
+            <span
+              data-testid={`kanban-drag-handle-${item.id}`}
+              title="Перетащить задачу в другую колонку"
+              aria-hidden="true"
+              className="mt-0.5 flex h-4 w-4 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/45 transition-colors group-hover:text-muted-foreground active:cursor-grabbing"
+            >
+              <GripVertical className="h-3.5 w-3.5" />
+            </span>
+          )}
+
           <button
             type="button"
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={() => toggleStatus(item)}
             title={`${meta.label} → ${STATUS_META[NEXT_STATUS[item.status]].label}`}
             className={cn('mt-0.5 shrink-0 transition-transform hover:scale-110', meta.colorClass)}
@@ -437,7 +605,7 @@ export default function Dashboard() {
                 title="Двойной клик — редактировать"
                 className={cn('cursor-text text-sm font-semibold leading-snug', isDone && 'line-through')}
               >
-                {item.title || item.text}
+                <RichCardText text={item.title || item.text} />
               </div>
             )}
 
@@ -463,7 +631,7 @@ export default function Dashboard() {
                 title="Двойной клик — редактировать описание"
                 className="cursor-text whitespace-pre-wrap break-words text-xs text-muted-foreground"
               >
-                {item.text}
+                <RichCardText text={item.text} />
               </p>
             )}
           </div>
@@ -472,6 +640,7 @@ export default function Dashboard() {
             type="button"
             variant="ghost"
             size="icon-sm"
+            onPointerDown={(e) => e.stopPropagation()}
             className="h-7 w-7 opacity-80 sm:opacity-0 transition-opacity sm:group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
             onClick={() => setDeleteTarget(item)}
             title="Удалить"
@@ -498,6 +667,7 @@ export default function Dashboard() {
             ) : (
               <button
                 type="button"
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => {
                   setEditAssigneeId(item.id)
                   setEditAssignee(item.assignee || '')
@@ -521,6 +691,7 @@ export default function Dashboard() {
 
             <button
               type="button"
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={() => {
                 const boardObj = boards.find((b) => b.id === item.board_id)
                 navigateToBoard({ id: item.board_id, slug: boardObj?.slug })
@@ -533,7 +704,7 @@ export default function Dashboard() {
           </div>
 
           {kanbanMode && (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
               {item.status !== 'open' && (
                 <Button
                   type="button"
@@ -750,7 +921,7 @@ export default function Dashboard() {
                 {computedTrends.length > 0 && (
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-semibold">Динамика Action Items</CardTitle>
+                      <CardTitle className="text-sm font-semibold">Динамика задач</CardTitle>
                       <CardDescription className="text-xs">
                         Соотношение открытых, активных и завершённых задач по спринтам
                       </CardDescription>
@@ -777,13 +948,13 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Tabs: Action Items vs Boards */}
+            {/* Tabs: Задачи vs Доски */}
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'tasks' | 'boards')}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <TabsList>
                   <TabsTrigger value="tasks" className="gap-1.5">
                     <ListTodo className="h-4 w-4" />
-                    Action Items ({items.length})
+                    Задачи ({items.length})
                   </TabsTrigger>
                   <TabsTrigger value="boards" className="gap-1.5">
                     <Layers className="h-4 w-4" />
@@ -898,36 +1069,83 @@ export default function Dashboard() {
                 </div>
 
                 {viewMode === 'kanban' ? (
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                    {(['open', 'in_progress', 'done'] as ActionItemStatus[]).map((st) => {
-                      const colItems = filteredItems.filter((i) => i.status === st)
-                      const meta = STATUS_META[st]
-                      const Icon = meta.Icon
-                      return (
-                        <div
-                          key={st}
-                          className="flex flex-col rounded-2xl border bg-muted/30 p-3"
-                        >
-                          <div className="mb-3 flex items-center justify-between px-1">
-                            <div className="flex items-center gap-2 text-sm font-semibold">
-                              <Icon className={cn('h-4 w-4', meta.colorClass)} />
-                              <span>{meta.label}</span>
+                  <DndContext
+                    sensors={kanbanSensors}
+                    onDragStart={handleKanbanDragStart}
+                    onDragEnd={handleKanbanDragEnd}
+                  >
+                    <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
+                      {(['open', 'in_progress', 'done'] as ActionItemStatus[]).map((st) => {
+                        const colItems = filteredItems.filter((i) => i.status === st)
+                        const meta = STATUS_META[st]
+                        const isCollapsed = collapsedKanbanCols[st]
+                        const isExpanded = expandedKanbanCols[st]
+                        const visibleItems = isExpanded
+                          ? colItems
+                          : colItems.slice(0, KANBAN_VISIBLE_LIMIT)
+                        const hiddenCount = colItems.length - visibleItems.length
+
+                        return (
+                          <KanbanColumnDropzone
+                            key={st}
+                            status={st}
+                            count={colItems.length}
+                            meta={meta}
+                            collapsed={isCollapsed}
+                            onToggleCollapse={() =>
+                              setCollapsedKanbanCols((prev) => ({ ...prev, [st]: !prev[st] }))
+                            }
+                          >
+                            <div className="space-y-2.5">
+                              {colItems.length === 0 ? (
+                                <div className="rounded-xl border border-dashed py-8 text-center text-xs text-muted-foreground">
+                                  Перетащите задачу сюда
+                                </div>
+                              ) : (
+                                <>
+                                  {visibleItems.map((it) => (
+                                    <KanbanDraggableCard
+                                      key={it.id}
+                                      item={it}
+                                      dragDisabled={
+                                        editingTitleId === it.id ||
+                                        editingDescId === it.id ||
+                                        editAssigneeId === it.id
+                                      }
+                                      renderCard={renderTaskCard}
+                                    />
+                                  ))}
+                                  {(hiddenCount > 0 ||
+                                    (isExpanded && colItems.length > KANBAN_VISIBLE_LIMIT)) && (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 w-full text-xs text-muted-foreground hover:text-foreground"
+                                      onClick={() =>
+                                        setExpandedKanbanCols((prev) => ({
+                                          ...prev,
+                                          [st]: !prev[st],
+                                        }))
+                                      }
+                                    >
+                                      {isExpanded
+                                        ? 'Свернуть список'
+                                        : `Показать ещё ${hiddenCount}`}
+                                    </Button>
+                                  )}
+                                </>
+                              )}
                             </div>
-                            <Badge variant="secondary">{colItems.length}</Badge>
-                          </div>
-                          <div className="space-y-2.5">
-                            {colItems.length === 0 ? (
-                              <div className="rounded-xl border border-dashed py-8 text-center text-xs text-muted-foreground">
-                                Пусто
-                              </div>
-                            ) : (
-                              colItems.map((it) => renderTaskCard(it, true))
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
+                          </KanbanColumnDropzone>
+                        )
+                      })}
+                    </div>
+
+                    <DragOverlay>
+                      {activeDragItem ? renderTaskCard(activeDragItem, true, undefined, true) : null}
+                    </DragOverlay>
+                  </DndContext>
                 ) : (
                   <div className="space-y-4">
                     {activeItems.length === 0 && doneItems.length === 0 ? (
@@ -1088,7 +1306,7 @@ export default function Dashboard() {
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить Action Item?</AlertDialogTitle>
+            <AlertDialogTitle>Удалить задачу?</AlertDialogTitle>
             <AlertDialogDescription>
               Задача «{deleteTarget?.title || deleteTarget?.text}» будет удалена безвозвратно.
             </AlertDialogDescription>

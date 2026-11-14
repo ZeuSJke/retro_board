@@ -3,10 +3,15 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RichCardText } from '../../components/RichCardText'
 import CardWidget from '../../components/CardWidget'
+import CardGroupWidget from '../../components/CardGroupWidget'
 import SpotlightModal from '../../components/SpotlightModal'
+import SuggestActionItemsDialog from '../../components/SuggestActionItemsDialog'
+import AutoClusterPreviewDialog from '../../components/AutoClusterPreviewDialog'
+import SummaryModal from '../../components/SummaryModal'
 import BoardToolbar from '../../components/BoardToolbar'
 import CommandPalette from '../../components/CommandPalette'
-import type { Card } from '../../types'
+import { buildBoardPDFHtml } from '../../utils/exportPDF'
+import type { Board, Card, CardGroup } from '../../types'
 
 vi.mock('@dnd-kit/sortable', () => ({
   useSortable: () => ({
@@ -112,6 +117,197 @@ describe('RichCardText', () => {
 
     fireEvent.click(link)
     expect(parentClick).not.toHaveBeenCalled()
+  })
+
+  it('renders markdown links, www URLs without trailing punctuation, and blocks javascript URIs', () => {
+    render(
+      <RichCardText text="См. [док](https://docs.example.com/guide) и www.example.org/wiki. Плохо: [xss](javascript:alert(1))" />,
+    )
+
+    const mdLink = screen.getByRole('link', { name: 'док' })
+    expect(mdLink).toHaveAttribute('href', 'https://docs.example.com/guide')
+
+    const wwwLink = screen.getByRole('link', { name: 'www.example.org/wiki' })
+    expect(wwwLink).toHaveAttribute('href', 'https://www.example.org/wiki')
+
+    expect(screen.queryByRole('link', { name: 'xss' })).toBeNull()
+  })
+})
+
+describe('Polished dialogs, collapsed group & PDF export', () => {
+  it('collapsed group does not render bottom arc stub and AI dialogs keep footer spacing without sm:gap-0', () => {
+    const group: CardGroup = {
+      id: 'g1',
+      column_id: 'col1',
+      title: 'База знаний',
+      position: 0,
+    }
+    const cards = [
+      { ...baseCard, id: 'c1', group_id: 'g1' },
+      { ...baseCard, id: 'c2', group_id: 'g1', text: 'Вторая' },
+    ]
+
+    const { container, unmount } = render(
+      <CardGroupWidget
+        group={group}
+        cards={cards}
+        collapsed
+        onToggleCollapse={vi.fn()}
+        onUpdated={vi.fn()}
+        onDeleted={vi.fn()}
+        onCardUpdated={vi.fn()}
+        onCardDeleted={vi.fn()}
+        groupTargetId={null}
+      />,
+    )
+    expect(container.querySelector('.rounded-b-lg')).toBeNull()
+    unmount()
+
+    const suggestView = render(
+      <SuggestActionItemsDialog
+        open
+        onOpenChange={vi.fn()}
+        loading={false}
+        suggestions={[
+          { title: 'Задача 1', text: 'Сделать документацию', assignee_hint: 'Alice', source_card_ids: ['c1'] },
+        ]}
+        onCreateSelected={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+    expect(screen.getByText('AI-подбор задач')).toBeInTheDocument()
+    const suggestCancel = screen.getByRole('button', { name: 'Отмена' })
+    expect(suggestCancel.parentElement?.className).not.toContain('sm:gap-0')
+    suggestView.unmount()
+
+    const clusterView = render(
+      <AutoClusterPreviewDialog
+        open
+        onOpenChange={vi.fn()}
+        columnTitle="Идеи"
+        preview={{ groups: [{ title: 'Инфра', card_ids: ['c1', 'c2'] }] }}
+        cards={cards}
+        onApply={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+    const clusterCancel = screen.getByRole('button', { name: 'Отмена' })
+    expect(clusterCancel.parentElement?.className).not.toContain('sm:gap-0')
+    clusterView.unmount()
+  })
+
+  it('SummaryModal and SpotlightModal keep fixed stage heights and Russian task labels', () => {
+    const board: Board = {
+      id: 'b1',
+      name: 'Спринт 42',
+      slug: 'sprint-42',
+      created_at: '2026-03-01T10:00:00Z',
+      max_votes: 5,
+      anonymous_votes: false,
+      columns: [],
+    }
+    const summaryView = render(
+      <SummaryModal
+        open
+        onOpenChange={vi.fn()}
+        board={board}
+        actionItems={[]}
+        summary={{
+          id: 'sum1',
+          board_id: 'b1',
+          summary_text: 'Команда ускорила релизы.',
+          key_themes: ['Релизы'],
+          recommendations: ['Продолжать автоматизацию'],
+          created_at: '2026-03-01T12:00:00Z',
+        }}
+        loading={false}
+        error={null}
+        onSummaryUpdated={vi.fn()}
+      />,
+    )
+    const tablist = screen.getByRole('tablist')
+    expect(tablist.className).toContain('grid-cols-2')
+    expect(screen.getByText('AI-резюме и темы')).toBeInTheDocument()
+    expect(screen.getByText('Markdown и Slack')).toBeInTheDocument()
+    const summaryText = screen.getByText('Команда ускорила релизы.')
+    expect(summaryText.closest('.h-\\[420px\\]')).not.toBeNull()
+    summaryView.unmount()
+
+    const spotlightView = render(
+      <SpotlightModal
+        card={baseCard}
+        anonymous={false}
+        isFacilitator
+        currentUser="Alice"
+        queueCards={[
+          { card: baseCard, columnTitle: 'Идеи' },
+          { card: { ...baseCard, id: 'c2', text: 'Вторая карточка' }, columnTitle: 'Идеи' },
+        ]}
+        onClose={vi.fn()}
+        onCreateActionItem={vi.fn()}
+        onLike={vi.fn()}
+        onSelectCard={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /Создать задачу/i })).toBeInTheDocument()
+    expect(screen.queryByText(/Action Item/i)).toBeNull()
+    expect(screen.getByText('RETRO-12').closest('.h-\\[280px\\]')).not.toBeNull()
+    spotlightView.unmount()
+  })
+
+  it('builds modern RetroBoard PDF HTML with links, statuses, summary and respects anonymous mode', () => {
+    const board: Board = {
+      id: 'b1',
+      name: 'Ретро Спринт 42',
+      slug: 'retro-42',
+      created_at: '2026-03-01T10:00:00Z',
+      max_votes: 5,
+      anonymous_votes: true,
+      columns: [],
+    }
+    const html = buildBoardPDFHtml(
+      board,
+      [
+        {
+          id: 'col1',
+          board_id: 'b1',
+          title: 'Идеи',
+          color: '#0EA5E9',
+          position: 0,
+          cards: [
+            { ...baseCard, text: 'Проверить [трекер](https://tracker.local/1)' },
+          ],
+          groups: [],
+        },
+      ],
+      [
+        {
+          id: 'ai1',
+          board_id: 'b1',
+          title: 'Починить CI',
+          text: 'Ссылка https://ci.local/job/1',
+          assignee: 'Alice',
+          status: 'in_progress',
+          source_card_ids: ['c1'],
+          created_at: '2026-03-01T11:00:00Z',
+        },
+      ],
+      {
+        id: 'sum1',
+        board_id: 'b1',
+        summary_text: 'Хороший спринт с фокусом на стабильность.',
+        key_themes: ['Автоматизация CI'],
+        recommendations: ['Сократить время ревью'],
+        created_at: '2026-03-01T12:00:00Z',
+      },
+    )
+
+    expect(html).not.toContain('#6750A4')
+    expect(html).toContain('Отчёт командной ретроспективы')
+    expect(html).toContain('Итоги и AI-анализ')
+    expect(html).toContain('Автоматизация CI')
+    expect(html).toContain('href="https://tracker.local/1"')
+    expect(html).toContain('В работе')
+    expect(html).not.toContain('>Alice<')
+    expect(html).toContain('Участник')
   })
 })
 
