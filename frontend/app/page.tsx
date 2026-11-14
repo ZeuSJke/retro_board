@@ -10,14 +10,15 @@ import { boardToBoardListItem } from '../utils/boardMapper'
 export default function HomePage() {
   const router = useRouter()
   const currentBoardId = useAppStore((s) => s.currentBoardId)
-  const workspace = useAppStore((s) => s.workspace)
+  // Сессия — это команда и участник: без участника запросы всё равно вернут 401
+  const hasSession = useAppStore((s) => Boolean(s.workspace && s.participant))
   const hasHydrated = useAppStore((s) => s._hasHydrated ?? true)
 
   useEffect(() => {
     if (!hasHydrated) return
     let cancelled = false
     void (async () => {
-      if (!workspace) {
+      if (!hasSession) {
         router.replace(currentBoardId ? `/board/${currentBoardId}` : '/board/start')
         return
       }
@@ -37,7 +38,7 @@ export default function HomePage() {
       } catch (err: unknown) {
         if (cancelled) return
         const status = (err as { response?: { status?: number } })?.response?.status
-        if (status === 401 || !useAppStore.getState().workspace) {
+        if (status === 401 || !useAppStore.getState().participant) {
           router.replace(currentBoardId ? `/board/${currentBoardId}` : '/board/start')
         }
       }
@@ -45,7 +46,7 @@ export default function HomePage() {
     return () => {
       cancelled = true
     }
-  }, [hasHydrated, router, workspace, currentBoardId])
+  }, [hasHydrated, router, hasSession, currentBoardId])
 
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-3 bg-background text-muted-foreground">

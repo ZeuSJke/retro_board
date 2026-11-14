@@ -8,6 +8,7 @@ import {
   getCsrfHeaders,
   loginWorkspace,
   setUsername,
+  API,
 } from './helpers'
 
 test.describe('v3 фичи — шаблоны, настроение, фокус, блокировка, канбан и тема', () => {
@@ -64,7 +65,7 @@ test.describe('v3 фичи — шаблоны, настроение, фокус,
     const wsData = await ensureE2EWorkspace(request)
     const board = await createBoardViaAPI(request, 'Блокируемая доска', wsData.token)
     const csrf = await getCsrfHeaders(request)
-    const colRes = await request.post('http://localhost:8000/api/columns/', {
+    const colRes = await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Заметки' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
@@ -83,7 +84,7 @@ test.describe('v3 фичи — шаблоны, настроение, фокус,
     await expect(page.getByRole('button', { name: 'Добавить карточку' }).first()).toBeDisabled()
 
     // Backend 423 check
-    const apiRes = await request.post('http://localhost:8000/api/cards/', {
+    const apiRes = await request.post(`${API}/cards/`, {
       data: { column_id: col.id, text: 'Попытка в архив', author: 'Тестер' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
@@ -97,12 +98,12 @@ test.describe('v3 фичи — шаблоны, настроение, фокус,
     const wsData = await ensureE2EWorkspace(request)
     const board = await createBoardViaAPI(request, 'Сессия с фокусом', wsData.token)
     const csrf = await getCsrfHeaders(request)
-    const colRes = await request.post('http://localhost:8000/api/columns/', {
+    const colRes = await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Обсуждаем' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
     const col = await colRes.json()
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: col.id, text: 'Важная карточка для обсуждения', author: 'Ведущий' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })

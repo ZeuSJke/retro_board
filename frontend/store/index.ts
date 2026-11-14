@@ -2,25 +2,30 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { AppStore, Theme, WorkspaceSession } from '../types'
+import type { AppStore, Participant, Theme, WorkspaceSession } from '../types'
 
 /** Часть состояния, которая сохраняется в localStorage под ключом `retroboard-app`. */
 export type PersistedAppState = Pick<
   AppStore,
-  'username' | 'currentBoardId' | 'theme' | 'dotGrid' | 'workspace'
+  'username' | 'currentBoardId' | 'theme' | 'dotGrid' | 'workspace' | 'participant'
 >
 
 /**
  * Версия схемы сохранённого состояния.
  *
- * 0 — текущая и единственная: до появления явной версии persist писал `version: 0` по умолчанию,
- * поэтому всё, что уже лежит у пользователей в localStorage, читается как есть, без миграции.
- * Повышать версию без изменения формы состояния нельзя: сборка без `migrate` (откат) отбросит
- * данные с незнакомой версией, и людям придётся заново входить в пространство.
+ * 0 — до серверного участника: в `workspace` лежал токен сессии, личностью было имя (`username`).
+ * 1 — токен живёт только в httpOnly-cookie, в сторе его нет; появился `participant` (`{ id, name }`).
+ *     Шаг 0 → 1 физически убирает токен из localStorage. Сессии, выданные до обновления, сервер
+ *     не принимает, поэтому участника у перенесённого состояния нет: человек входит заново,
+ *     а имя и код команды подставляются в форму входа. Тема, сетка и текущая доска сохраняются.
  *
- * При изменении формы: увеличить версию и добавить шаг в `migratePersistedState`.
+ * Повышать версию без изменения формы состояния нельзя: сборка без `migrate` (откат) отбросит
+ * данные с незнакомой версией. Предыдущая сборка (версия 0 с `migrate`) данные версии 1 читает:
+ * забирает имя, тему, сетку и доску, а сессию без токена отбрасывает — после отката нужен вход.
+ *
+ * При изменении формы: увеличить версию и добавить шаг в `MIGRATION_STEPS`.
  */
-export const APP_STORE_VERSION = 0
+export const APP_STORE_VERSION = 1
 
 const DEFAULT_PERSISTED: PersistedAppState = {
   username: 'Аноним',
@@ -28,6 +33,7 @@ const DEFAULT_PERSISTED: PersistedAppState = {
   theme: { primary: 'violet', dark: false },
   dotGrid: true,
   workspace: null,
+  participant: null,
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -38,24 +44,44 @@ function isTheme(value: unknown): value is Theme {
   return isRecord(value) && typeof value.primary === 'string' && typeof value.dark === 'boolean'
 }
 
-function isWorkspaceSession(value: unknown): value is WorkspaceSession {
-  return (
-    isRecord(value) &&
-    typeof value.token === 'string' &&
-    typeof value.workspaceId === 'string' &&
-    typeof value.workspaceSlug === 'string' &&
-    typeof value.workspaceName === 'string'
-  )
+/** Сведения о команде без лишних полей (в частности, без токена из версии 0). */
+function toWorkspaceSession(value: unknown): WorkspaceSession | null {
+  if (
+    !isRecord(value) ||
+    typeof value.workspaceId !== 'string' ||
+    typeof value.workspaceSlug !== 'string' ||
+    typeof value.workspaceName !== 'string'
+  ) {
+    return null
+  }
+  return {
+    workspaceId: value.workspaceId,
+    workspaceSlug: value.workspaceSlug,
+    workspaceName: value.workspaceName,
+  }
+}
+
+function toParticipant(value: unknown): Participant | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || !value.id || typeof value.name !== 'string') {
+    return null
+  }
+  return { id: value.id, name: value.name }
 }
 
 /**
  * Шаги миграции: ключ — версия, с которой шаг переводит состояние на следующую.
- * Пример для будущей версии 1: `0: (state) => ({ ...state, новоеПоле: значение })`.
  */
 const MIGRATION_STEPS: Record<
   number,
   (state: Record<string, unknown>) => Record<string, unknown>
-> = {}
+> = {
+  // 0 → 1: токен уходит из стора, участника ещё нет (его выдаст сервер при входе)
+  0: (state) => ({
+    ...state,
+    workspace: toWorkspaceSession(state.workspace),
+    participant: null,
+  }),
+}
 
 /**
  * Приводит сохранённое состояние версии `fromVersion` к текущей схеме.
@@ -71,27 +97,61 @@ export function migratePersistedState(persisted: unknown, fromVersion: number): 
     stored = MIGRATION_STEPS[version]?.(stored) ?? stored
   }
 
+  const workspace = toWorkspaceSession(stored.workspace)
   return {
     username: typeof stored.username === 'string' ? stored.username : DEFAULT_PERSISTED.username,
     currentBoardId:
       typeof stored.currentBoardId === 'string' ? stored.currentBoardId : DEFAULT_PERSISTED.currentBoardId,
     theme: isTheme(stored.theme) ? stored.theme : DEFAULT_PERSISTED.theme,
     dotGrid: typeof stored.dotGrid === 'boolean' ? stored.dotGrid : DEFAULT_PERSISTED.dotGrid,
-    workspace: isWorkspaceSession(stored.workspace) ? stored.workspace : DEFAULT_PERSISTED.workspace,
+    workspace,
+    // Участник без команды — не сессия
+    participant: workspace ? toParticipant(stored.participant) : null,
   }
+}
+
+function sameWorkspace(a: WorkspaceSession | null, b: WorkspaceSession): boolean {
+  return (
+    a !== null &&
+    a.workspaceId === b.workspaceId &&
+    a.workspaceSlug === b.workspaceSlug &&
+    a.workspaceName === b.workspaceName
+  )
+}
+
+function sameParticipant(a: Participant | null, b: Participant): boolean {
+  return a !== null && a.id === b.id && a.name === b.name
 }
 
 export const useAppStore = create<AppStore>()(
   persist(
     (set) => ({
       ...DEFAULT_PERSISTED,
+      aiEnabled: null,
       _hasHydrated: false,
 
       setUsername: (name: string) => set({ username: name }),
       setCurrentBoard: (id: string) => set({ currentBoardId: id }),
       setTheme: (theme) => set({ theme }),
       setDotGrid: (enabled: boolean) => set({ dotGrid: enabled }),
-      setWorkspace: (ws: WorkspaceSession | null) => set({ workspace: ws }),
+      // Объекты не пересоздаются, если данные те же: на них завязаны эффекты и селекторы
+      setSession: ({ workspace, participant }) =>
+        set((state) => ({
+          workspace: sameWorkspace(state.workspace, workspace) ? state.workspace : workspace,
+          participant: sameParticipant(state.participant, participant)
+            ? state.participant
+            : participant,
+          username: participant.name,
+        })),
+      setParticipant: (participant) =>
+        set((state) => ({
+          participant: sameParticipant(state.participant, participant)
+            ? state.participant
+            : participant,
+          username: participant.name,
+        })),
+      setAiEnabled: (enabled) => set({ aiEnabled: enabled }),
+      clearSession: () => set({ workspace: null, participant: null }),
       setHasHydrated: (hydrated: boolean) => set({ _hasHydrated: hydrated }),
     }),
     {
@@ -104,6 +164,7 @@ export const useAppStore = create<AppStore>()(
         theme: state.theme,
         dotGrid: state.dotGrid,
         workspace: state.workspace,
+        participant: state.participant,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated?.(true)

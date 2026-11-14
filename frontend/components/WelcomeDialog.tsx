@@ -3,27 +3,36 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { motion } from 'motion/react'
-import { ArrowRight, Eye, EyeOff, KeyRound, Layers, Loader2, Users } from 'lucide-react'
+import { ArrowRight, Eye, EyeOff, KeyRound, Loader2, Users } from 'lucide-react'
 import { BrandMark } from '@/components/BrandLogo'
 import { useAppStore } from '@/store'
 import { loginToWorkspace } from '@/api'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import { getApiErrorStatus, markApiErrorReported, RATE_LIMIT_MESSAGE } from '@/utils/apiError'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 interface WelcomeDialogProps {
+  /** Вход выполнен: сессия уже записана в стор, аргумент — имя участника от сервера. */
   onConfirm: (name: string) => void
 }
 
+/**
+ * Экран входа: имя, код команды и ключ доступа. Вход создаёт на сервере участника,
+ * токен сессии сервер кладёт в httpOnly-cookie. Имя необязательно — без него
+ * сервер назовёт участника «Участник», сменить имя можно в профиле.
+ */
 export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
   const savedName = useAppStore((s) => s.username)
-  const workspace = useAppStore((s) => s.workspace)
-  const setWorkspace = useAppStore((s) => s.setWorkspace)
+  // Сведения о команде без участника остаются после обновления со старой версии:
+  // сессию сервер уже не принимает, но код команды можно подставить в форму
+  const knownWorkspaceSlug = useAppStore((s) => s.workspace?.workspaceSlug ?? '')
+  const setSession = useAppStore((s) => s.setSession)
 
   const [name, setName] = useState(savedName === 'Аноним' ? '' : savedName)
-  const [workspaceSlug, setWorkspaceSlug] = useState('')
+  const [workspaceSlug, setWorkspaceSlug] = useState(knownWorkspaceSlug)
   const [accessKey, setAccessKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -36,47 +45,38 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
   }, [savedName])
 
   const trimmedName = name.trim()
-  const canSubmit = workspace
-    ? trimmedName.length > 0
-    : trimmedName.length > 0 && workspaceSlug.trim().length > 0 && accessKey.length > 0
+  const canSubmit = workspaceSlug.trim().length > 0 && accessKey.length > 0
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!canSubmit || loading) return
 
-    if (!workspace) {
-      setLoading(true)
-      setError(null)
-      try {
-        const session = await loginToWorkspace({
-          workspace_slug: workspaceSlug.trim(),
-          access_key: accessKey,
-        })
-        setWorkspace(session)
-        onConfirm(trimmedName)
-      } catch (err: unknown) {
-        const status =
-          err instanceof Error && 'response' in err
-            ? (err as { response?: { status?: number } }).response?.status
-            : undefined
-        setError(
-          status === 401
-            ? 'Неверный код команды или ключ доступа'
-            : 'Ошибка при подключении к команде',
-        )
-      } finally {
-        setLoading(false)
-      }
-    } else {
-      onConfirm(trimmedName)
-    }
-  }
-
-  const handleChangeWorkspace = () => {
-    setWorkspace(null)
+    setLoading(true)
     setError(null)
-    setWorkspaceSlug('')
-    setAccessKey('')
+    try {
+      const session = await loginToWorkspace({
+        workspace_slug: workspaceSlug.trim(),
+        access_key: accessKey,
+        ...(trimmedName ? { name: trimmedName } : {}),
+      })
+      setSession(session)
+      onConfirm(session.participant.name)
+    } catch (err: unknown) {
+      // Ошибка показана в форме — общий тост не нужен
+      markApiErrorReported(err)
+      const status = getApiErrorStatus(err)
+      setError(
+        status === 401
+          ? 'Неверный код команды или ключ доступа'
+          : status === 422
+            ? 'Проверьте имя и код команды: в имени не должно быть HTML-тегов'
+            : status === 429
+              ? RATE_LIMIT_MESSAGE
+              : 'Ошибка при подключении к команде',
+      )
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -112,9 +112,7 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
           <div className="space-y-1">
             <CardTitle className="text-2xl font-bold">Добро пожаловать!</CardTitle>
             <CardDescription>
-              {workspace
-                ? `Команда «${workspace.workspaceName}». Представьтесь для входа на доску.`
-                : 'Подключитесь к командному пространству, чтобы начать ретроспективу.'}
+              Подключитесь к командному пространству, чтобы начать ретроспективу.
             </CardDescription>
           </div>
         </CardHeader>
@@ -122,7 +120,10 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="welcome-name">Ваше имя</Label>
+              <Label htmlFor="welcome-name">
+                Ваше имя{' '}
+                <span className="font-normal text-muted-foreground">(необязательно)</span>
+              </Label>
               <Input
                 id="welcome-name"
                 placeholder="Ваше имя"
@@ -134,67 +135,40 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
               />
             </div>
 
-            {workspace ? (
-              <div className="flex items-center justify-between rounded-xl border bg-muted/50 px-3.5 py-2.5 text-sm">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Layers className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{workspace.workspaceName}</div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      /{workspace.workspaceSlug}
-                    </div>
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleChangeWorkspace}
-                  className="shrink-0 text-xs"
-                >
-                  Сменить команду
-                </Button>
-              </div>
-            ) : (
-              <>
-                <div className="space-y-1.5">
-                  <Label htmlFor="welcome-slug">Код команды</Label>
-                  <Input
-                    id="welcome-slug"
-                    placeholder="Например: fmrm-core"
-                    value={workspaceSlug}
-                    onChange={(e) => setWorkspaceSlug(e.target.value)}
-                    data-testid="workspace-slug-input"
-                  />
-                </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="welcome-slug">Код команды</Label>
+              <Input
+                id="welcome-slug"
+                placeholder="Например: fmrm-core"
+                value={workspaceSlug}
+                onChange={(e) => setWorkspaceSlug(e.target.value)}
+                data-testid="workspace-slug-input"
+              />
+            </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="welcome-key">Ключ доступа</Label>
-                  <div className="relative">
-                    <KeyRound className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      id="welcome-key"
-                      type={showKey ? 'text' : 'password'}
-                      placeholder="Ключ доступа команды"
-                      value={accessKey}
-                      onChange={(e) => setAccessKey(e.target.value)}
-                      className="pl-9 pr-9"
-                      data-testid="workspace-key-input"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowKey((prev) => !prev)}
-                      aria-label={showKey ? 'Скрыть ключ' : 'Показать ключ'}
-                      className="absolute right-2.5 top-2 rounded p-0.5 text-muted-foreground hover:text-foreground"
-                    >
-                      {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
+            <div className="space-y-1.5">
+              <Label htmlFor="welcome-key">Ключ доступа</Label>
+              <div className="relative">
+                <KeyRound className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="welcome-key"
+                  type={showKey ? 'text' : 'password'}
+                  placeholder="Ключ доступа команды"
+                  value={accessKey}
+                  onChange={(e) => setAccessKey(e.target.value)}
+                  className="pl-9 pr-9"
+                  data-testid="workspace-key-input"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey((prev) => !prev)}
+                  aria-label={showKey ? 'Скрыть ключ' : 'Показать ключ'}
+                  className="absolute right-2.5 top-2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
 
             {error && (
               <div

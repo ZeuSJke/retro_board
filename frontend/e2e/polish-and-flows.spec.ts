@@ -7,9 +7,9 @@ import {
   getCsrfHeaders,
   loginWorkspace,
   setUsername,
+  API,
+  BASE_URL,
 } from './helpers'
-
-const API = 'http://localhost:8000/api'
 
 async function apiHeaders(request: APIRequestContext, token: string) {
   const csrf = await getCsrfHeaders(request)
@@ -32,7 +32,7 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     request,
   }) => {
     // 1. Verify /icon.svg responds cleanly with vector SVG
-    const iconRes = await request.get('http://localhost:3080/icon.svg')
+    const iconRes = await request.get(`${BASE_URL}/icon.svg`)
     expect(iconRes.status()).toBe(200)
     const iconBody = await iconRes.text()
     expect(iconBody).toContain('<svg')

@@ -13,6 +13,7 @@ npm run lint         # eslint . — flat config eslint.config.mjs (в Next 16 к
 npm test             # Vitest (tests/), конфиг vitest.config.mts
 npx vitest run tests/store/index.test.ts
 npx playwright test  # E2E против поднятого стека http://localhost:3080 + :8000 (читает ../.env)
+# Стенд на других портах: E2E_BASE_URL=http://localhost:<прокси> E2E_API_URL=http://localhost:<бэкенд> npx playwright test
 ```
 
 - **TypeScript остаётся на 6.x**: typescript-eslint не поддерживает TypeScript 7 (нативный компилятор без JS API). Обновлять мажор только вместе с ним.
@@ -24,12 +25,22 @@ npx playwright test  # E2E против поднятого стека http://loc
 - **UI-примитивы (`components/ui/`)**: переиспользуйте shadcn/ui + Radix UI (`dialog.tsx`, `alert-dialog.tsx`, `sheet.tsx`, `select.tsx`, `dropdown-menu.tsx`, `popover.tsx`, `tooltip.tsx`, `tabs.tsx`, `scroll-area.tsx`, `button.tsx`).
 - **Провайдеры**: корневые провайдеры настроены в `components/Providers.tsx` (`MotionConfig`, `ThemeProvider`, `<TooltipProvider delayDuration={250}>`, `sonner` `<Toaster />`).
 - **API и состояние**:
-  - `api/index.ts` (Axios `baseURL: '/api'`) подставляет `X-Workspace-Token` и `X-CSRF-Token`, обрабатывает `401/403/423/429/5xx`; админ-клиент — `api/admin.ts`. Ответы типизируйте дженериком (`api.get<Board>(…)`), иначе сработает `no-unsafe-return`.
-  - Глобальный стор: `store/index.ts` (`useAppStore`, ключ localStorage `retroboard-app`). У persist есть `version` (`APP_STORE_VERSION`) и `migrate`: при изменении формы сохраняемого состояния поднимите версию и добавьте шаг в `MIGRATION_STEPS`. Без изменения формы версию не трогайте — после отката старая сборка отбросит данные с незнакомой версией.
-  - WebSocket: `hooks/useWebSocket.ts` подключается к `/ws/${boardId}` (или `'workspace'`) без токена в URL (через `httpOnly` cookie); события доски маршрутизируются в `hooks/useBoardWebSocket.ts` — новые серверные события добавляйте туда и в `types/index.ts`.
+  - `api/index.ts` (Axios `baseURL: '/api'`) подставляет `X-CSRF-Token` и обрабатывает `401/403/423/429/5xx`; админ-клиент — `api/admin.ts`. Ответы типизируйте дженериком (`api.get<Board>(…)`), иначе сработает `no-unsafe-return`.
+  - **Сессия**: токен живёт только в `httpOnly`-cookie `workspace_token` — в сторе, заголовках и адресе WebSocket его нет. Вход — `loginToWorkspace` (возвращает `SessionInfo`: `{ workspace, participant }`), сверка с сервером — `refreshWorkspaceSession` (`GET /workspaces/me`: участник, команда, `ai_enabled` → стор), выход — `logoutWorkspace`, затем `clearSession()`. Ответ `401` сам сбрасывает сессию в сторе, и приложение показывает `WelcomeDialog`.
+  - **Участник**: «я» на доске — это `participant.id` из стора (`{ id, name }`), а не имя: тёзки — разные участники. `username` в сторе — только имя для формы входа.
+  - **Ошибки API**: текст для пользователя берите через `getApiErrorMessage(err, fallback)` из `utils/apiError.ts` — вызов помечает ошибку показанной, и общий тост перехватчика (`403/423/429/5xx`) не дублирует ваш. Если показываете ошибку иначе (в форме), вызовите `markApiErrorReported(err)`.
+  - Глобальный стор: `store/index.ts` (`useAppStore`, ключ localStorage `retroboard-app`): `workspace`, `participant`, `username`, тема, сетка, текущая доска; `aiEnabled` не сохраняется. У persist есть `version` (`APP_STORE_VERSION`, сейчас 1) и `migrate`: при изменении формы сохраняемого состояния поднимите версию и добавьте шаг в `MIGRATION_STEPS`. Без изменения формы версию не трогайте — после отката старая сборка отбросит данные с незнакомой версией.
+  - WebSocket: `hooks/useWebSocket.ts` подключается к `/ws/${boardId}` (или `'workspace'`) без токена в URL (через `httpOnly` cookie), только когда в сторе есть участник; события доски маршрутизируются в `hooks/useBoardWebSocket.ts` — новые серверные события добавляйте туда и в `types/index.ts`.
   - Уведомления: вызывайте `showToast(message, type?: 'error' | 'info' | 'success')` из `store/toastStore.ts` (`sonner`).
 - **Шрифты**: `Inter` и `JetBrains Mono` зашиты локально через `@fontsource/*` в `app/layout.tsx` — внешние font-домены запрещены строгим CSP `font-src 'self'` (`next.config.mjs` и Traefik Middleware).
 - **Ленивая загрузка тяжёлого**: графики дашборда (`TrendChart`, `MoodTrendChart` → recharts) подключаются через `next/dynamic` в `Dashboard.tsx`; палитра команд — через обёртку `CommandPaletteLazy.tsx` (она же держит Ctrl/Cmd+K, пока чанк не загружен); генератор PDF-отчёта `utils/exportPDF.ts` — динамическим `import()` по клику. Не импортируйте их статически из `BoardPage`/`Dashboard`.
+
+## E2E (Playwright)
+
+- `e2e/global-setup.ts` на каждый прогон пересоздаёт команду `e2e-team` через админку и входит общим участником «E2E Тестер»; его сессия передаётся воркерам в `E2E_SHARED_SESSION`. Нужны `ADMIN_LOGIN` / `ADMIN_PASSWORD` стенда.
+- Сервер отдаёт токен только в cookie: `ensureE2EWorkspace(request)` возвращает сессию общего участника с полем `token` (значение cookie) — его спеки шлют в `X-Workspace-Token` при вызовах API.
+- `setUsername(page, name)` + `loginWorkspace(page, request)` открывают сессию для страницы без формы входа. Имя по умолчанию — тот же общий участник (создатель досок и автор карточек, созданных через API); другое имя — отдельный участник (`loginViaAPI`).
+- Удалить доску может только её создатель: доски в спеках создавайте общим участником (через API его токеном или со страницы с именем по умолчанию), иначе `cleanupBoards` упадёт.
 
 ## Tailwind CSS 4
 
