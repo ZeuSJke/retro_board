@@ -434,7 +434,7 @@ export default function Column({
         />
 
         {/* Header */}
-        <div className="flex items-center gap-2 px-3.5 py-3">
+        <div className="flex items-center gap-2 px-3.5 pt-3 pb-2">
           {readOnly ? (
             <span
               className="h-3 w-3 shrink-0 rounded-full"
@@ -554,7 +554,7 @@ export default function Column({
             ref={setCardsAreaRef}
             onScroll={handleCardsScroll}
             data-scrolling={isScrolling ? 'true' : undefined}
-            className="scrollbar-subtle flex-1 space-y-2.5 overflow-y-auto px-3 pb-3 min-h-[72px]"
+            className="scrollbar-subtle flex-1 space-y-2.5 overflow-y-auto px-3 pt-1.5 pb-3 min-h-[72px]"
           >
           <SortableContext
             items={filteredAndSortedCards.map((c) => c.id)}
