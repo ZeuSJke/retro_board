@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { motion } from 'motion/react'
@@ -73,9 +74,7 @@ import type {
 } from '../types'
 import CarryForwardDialog from './CarryForwardDialog'
 import CreateBoardDialog from './CreateBoardDialog'
-import MoodTrendChart from './MoodTrendChart'
 import SummaryModal from './SummaryModal'
-import TrendChart from './TrendChart'
 import WelcomeDialog from './WelcomeDialog'
 import WorkspaceInsightsCard from './WorkspaceInsightsCard'
 import {
@@ -103,6 +102,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { RichCardText } from './RichCardText'
+
+// Графики тянут recharts — самую тяжёлую зависимость дашборда. Грузим их отдельным чанком
+// и только когда есть что рисовать; заглушка держит высоту, чтобы карточка не прыгала.
+function ChartPlaceholder() {
+  return <div className="h-[260px] w-full" aria-hidden="true" />
+}
+const TrendChart = dynamic(() => import('./TrendChart'), { ssr: false, loading: ChartPlaceholder })
+const MoodTrendChart = dynamic(() => import('./MoodTrendChart'), {
+  ssr: false,
+  loading: ChartPlaceholder,
+})
 
 const KANBAN_VISIBLE_LIMIT = 6
 

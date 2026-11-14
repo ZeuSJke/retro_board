@@ -33,7 +33,6 @@ import { useFacilitator } from '../hooks/useFacilitator'
 import { useTimer } from '../hooks/useTimer'
 import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown'
 import { getCardColorPreset } from '@/lib/board-themes'
-import { exportBoardToPDF } from '../utils/exportPDF'
 import { getApiErrorMessage } from '../utils/apiError'
 import type {
   AutoClusterPreviewResult,
@@ -54,10 +53,8 @@ import BoardsPanel from './BoardsPanel'
 import BulkActionsBar from './BulkActionsBar'
 import Column from './Column'
 import { RichCardText } from './RichCardText'
-import CommandPalette, {
-  type CommandBoardAction,
-  type CommandSearchCard,
-} from './CommandPalette'
+import type { CommandBoardAction, CommandSearchCard } from './CommandPalette'
+import CommandPalette from './CommandPaletteLazy'
 import CursorMarker from './CursorMarker'
 import MasterColumn from './MasterColumn'
 import MoodDialog from './MoodDialog'
@@ -1279,7 +1276,10 @@ export default function BoardPage({
   }
 
   const handleExportPDF = () => {
-    exportBoardToPDF(board, columns, actionItems, summary)
+    // Генератор отчёта (~700 строк шаблона) грузится отдельным чанком по первому клику.
+    import('../utils/exportPDF')
+      .then(({ exportBoardToPDF }) => exportBoardToPDF(board, columns, actionItems, summary))
+      .catch(() => showToast('Не удалось подготовить отчёт для печати', 'error'))
   }
 
   const remoteCursors = Object.keys(cursorsRef.current).filter(
