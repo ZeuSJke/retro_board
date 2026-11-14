@@ -11,7 +11,7 @@ from app.workspace_auth import (
     get_current_workspace,
 )
 from app.config import settings
-from app.limiter import limiter
+from app.limiter import TEAM_READ_LIMIT, limiter
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def workspace_login(
 
 
 @router.get("/me", response_model=schemas.WorkspaceOut)
-@limiter.limit("60/minute")
+@limiter.limit(TEAM_READ_LIMIT)
 def get_current_workspace_info(
     request: Request,
     workspace: models.Workspace = Depends(get_current_workspace),

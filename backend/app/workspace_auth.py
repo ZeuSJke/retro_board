@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 
 ALGORITHM = "HS256"
 
+# bcrypt учитывает только первые 72 байта пароля, а начиная с 5-й версии
+# отказывается принимать более длинный ввод. Новые ключи длиннее лимита
+# отклоняет схема, а при проверке ввод обрезается — как это молча делали
+# прежние версии библиотеки, чтобы уже выданные длинные ключи продолжали работать.
+BCRYPT_MAX_BYTES = 72
+
 
 def hash_access_key(key: str) -> str:
     """Хэшировать ключ доступа using bcrypt."""
@@ -27,7 +33,12 @@ def hash_access_key(key: str) -> str:
 
 def verify_access_key(key: str, key_hash: str) -> bool:
     """Проверить ключ доступа against hash."""
-    return bcrypt.checkpw(key.encode(), key_hash.encode())
+    try:
+        return bcrypt.checkpw(key.encode()[:BCRYPT_MAX_BYTES], key_hash.encode())
+    except ValueError:
+        # Повреждённый хеш в БД — это отказ во входе, а не ошибка сервера.
+        logger.warning("bcrypt rejected stored access key hash")
+        return False
 
 
 def create_workspace_token(

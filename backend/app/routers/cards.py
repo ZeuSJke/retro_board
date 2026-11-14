@@ -7,7 +7,7 @@ from app.database import get_db
 from app import models, schemas
 from app.utils import get_or_404, require_unlocked_board
 from app.ws_manager import manager
-from app.limiter import limiter
+from app.limiter import TEAM_WRITE_LIMIT, limiter
 from app.workspace_auth import get_current_workspace
 
 router = APIRouter()
@@ -25,7 +25,7 @@ def _count_user_votes(db: Session, board_id: str, username: str) -> int:
 
 
 @router.post("/", response_model=schemas.CardOut, status_code=201)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def create_card(
     request: Request,
     body: schemas.CardCreate,
@@ -53,7 +53,7 @@ async def create_card(
 
 
 @router.patch("/{card_id}", response_model=schemas.CardOut)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def update_card(
     request: Request,
     card_id: str,
@@ -82,7 +82,7 @@ async def update_card(
 
 
 @router.post("/{card_id}/move", response_model=schemas.CardOut)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def move_card(
     request: Request,
     card_id: str,
@@ -139,7 +139,7 @@ async def move_card(
 
 
 @router.post("/{card_id}/like", response_model=schemas.CardOut)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def toggle_like(
     request: Request,
     card_id: str,
@@ -228,7 +228,7 @@ def _prune_empty_groups(db: Session, group_ids: set[str]) -> list[dict]:
 
 
 @router.post("/bulk-update", response_model=list[schemas.CardOut])
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def bulk_update_cards(
     request: Request,
     payload: schemas.BulkCardsUpdateRequest,
@@ -320,7 +320,7 @@ async def bulk_update_cards(
 
 
 @router.post("/bulk-delete", status_code=200)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def bulk_delete_cards(
     request: Request,
     payload: schemas.BulkCardsDeleteRequest,
@@ -346,7 +346,7 @@ async def bulk_delete_cards(
 
 
 @router.post("/merge", response_model=schemas.CardOut)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def merge_cards(
     request: Request,
     payload: schemas.MergeCardsRequest,
@@ -401,7 +401,7 @@ async def merge_cards(
 
 
 @router.delete("/{card_id}", status_code=204)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def delete_card(
     request: Request,
     card_id: str,

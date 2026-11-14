@@ -55,6 +55,19 @@ def format_board_data(board_data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+MAX_SUMMARY_CHARS = 4000
+MAX_LIST_ITEMS = 10
+MAX_LIST_ITEM_CHARS = 300
+
+
+def _clean_str_list(value: Any) -> list[str]:
+    """Оставить только непустые строки, обрезав длину и количество."""
+    if not isinstance(value, list):
+        return []
+    items = [v.strip()[:MAX_LIST_ITEM_CHARS] for v in value if isinstance(v, str) and v.strip()]
+    return items[:MAX_LIST_ITEMS]
+
+
 def generate_summary(board_data: dict[str, Any]) -> dict[str, Any]:
     """Generate summary using AI.
 
@@ -82,12 +95,17 @@ def generate_summary(board_data: dict[str, Any]) -> dict[str, Any]:
         cleaned = cleaned.strip()
 
         result = json.loads(cleaned)
+        if not isinstance(result, dict):
+            raise json.JSONDecodeError("not an object", cleaned, 0)
 
-        # Validate required fields
+        # Ответ модели — недоверенный ввод: приводим поля к ожидаемым типам
+        summary_text = result.get("summary_text")
         return {
-            "summary_text": result.get("summary_text", ""),
-            "key_themes": result.get("key_themes", []),
-            "recommendations": result.get("recommendations", []),
+            "summary_text": summary_text.strip()[:MAX_SUMMARY_CHARS]
+            if isinstance(summary_text, str)
+            else "",
+            "key_themes": _clean_str_list(result.get("key_themes")),
+            "recommendations": _clean_str_list(result.get("recommendations")),
         }
     except json.JSONDecodeError:
         # Fallback if AI returns non-JSON

@@ -20,8 +20,13 @@ router = APIRouter()
 @limiter.limit("10/minute")
 def admin_login(request: Request, body: schemas.AdminLoginRequest, response: Response):
     """Администраторский вход."""
-    login_ok = secrets.compare_digest(body.login, settings.admin_login)
-    password_ok = secrets.compare_digest(body.password, settings.admin_password)
+    # compare_digest принимает str только из ASCII, поэтому сравниваем байты
+    login_ok = secrets.compare_digest(
+        body.login.encode(), settings.admin_login.encode()
+    )
+    password_ok = secrets.compare_digest(
+        body.password.encode(), settings.admin_password.encode()
+    )
     if not (login_ok and password_ok):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
     token = create_admin_token()

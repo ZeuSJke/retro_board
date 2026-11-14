@@ -4,6 +4,7 @@ import traceback
 from contextlib import asynccontextmanager
 
 
+from app.body_limit import BodySizeLimitMiddleware
 from app.config import settings
 from app.routers import (
     action_items,
@@ -112,6 +113,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 app.add_middleware(GlobalErrorMiddleware)
 
 app.add_middleware(CSRFMiddleware)
+
+# Снаружи CSRF: слишком большое тело отклоняется до любых проверок и разбора
+app.add_middleware(
+    BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes
+)
 
 app.add_middleware(
     CORSMiddleware,

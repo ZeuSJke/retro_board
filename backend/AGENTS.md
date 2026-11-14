@@ -31,15 +31,19 @@ TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::te
 
 - **Auth**: workspace JWT (`app/workspace_auth.py`) принимается из `X-Workspace-Token` или `httpOnly` cookie `workspace_token`; `/api/admin/*` использует отдельную cookie `admin_token`.
 - **CSRF** (`CSRFMiddleware` в `main.py`): небезопасные методы (кроме `/ws/*`, `/api/admin/login`, `/api/workspaces/login`, `/health`, `/api/health`) проверяют совпадение cookie `csrf_token` и `X-CSRF-Token`. Отключается только при `CSRF_ENABLED=false`; для HTTP используйте `SECURE_COOKIES=false`.
-- **Rate Limiting** (`app/limiter.py`): `slowapi` включён всегда, кроме `TESTING=true` (логика лимитов тестируется в `tests/test_rate_limiting.py`).
+- **Rate Limiting** (`app/limiter.py`): `slowapi` включён всегда, кроме `TESTING=true` (логика лимитов тестируется в `tests/test_rate_limiting.py`). Квоты считаются по IP, а команда обычно сидит за одним адресом, поэтому для совместной работы с доской используйте `TEAM_WRITE_LIMIT` / `TEAM_READ_LIMIT`; строгие собственные лимиты — только для редких действий, входа и запросов к AI.
+- **Размер запросов**: `BodySizeLimitMiddleware` (`app/body_limit.py`) отвечает `413` на тело больше `MAX_REQUEST_BODY_BYTES` до CSRF и разбора; размер WebSocket-кадра ограничивает `--ws-max-size` в `entrypoint.sh`.
 - **WebSocket** (`app/routers/websocket.py`, `app/ws_manager.py`):
   - эндпоинты `/ws/{board_id}` и `/ws/workspace`;
   - `_authenticate_ws` проверяет `Origin` по `CORS_ORIGINS` и JWT (`workspace_token` cookie в приоритете, query-параметр только для совместимости);
   - `assert_single_worker()` вызывается только в `lifespan` (не на уровне импорта);
-  - рассылка событий — `await manager.broadcast(board_id, "event_name", data_dict)`. В `finally` grace-таймер фасилитатора планируется синхронно до любых `await`.
+  - рассылка событий — `await manager.broadcast(board_id, "event_name", data_dict)`. В `finally` grace-таймер фасилитатора планируется синхронно до любых `await`;
+  - всё, что прислал клиент, недоверенное: новые входящие события очищайте функцией из `app/ws_payloads.py` и рассылайте/сохраняйте в `ConnectionManager` только очищенный словарь с известными полями, а не исходный `data`.
 
 ## AI-интеграция (`app/ai/`)
 
 - `ai_client.py` использует **синхронный** `httpx.Client` к OpenAI-совместимому `/v1` шлюзу (`AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`, `AI_DISABLE_THINKING`). **Все вызовы из async-эндпоинтов/WS обязаны быть обёрнуты в `asyncio.to_thread()`**. При сбое выбрасывается `RuntimeError` — обрабатывайте или используйте детерминистический fallback (`workspace_insights.py`).
+- **Соединение с БД на время вызова модели не держим**: запрос идёт до трёх минут, а пул — 15 соединений. Прочитайте всё нужное, вызовите `release_connection(db)` из `app/database.py` и только потом обращайтесь к модели; после вызова объекты сессии отсоединены — перечитывайте их заново (`tests/test_hardening.py::TestConnectionReleasedDuringAI`).
+- Одновременных запросов к шлюзу — не больше `AI_MAX_CONCURRENCY`; ответ модели — недоверенный ввод, приводите его к ожидаемым типам.
 - **Qwen3 reasoning**: при `AI_DISABLE_THINKING=true` передаётся `chat_template_kwargs: {"enable_thinking": False}`; без этого `max_tokens` уходит в `reasoning_content` и `content` пустой.
 - **Prompt injection**: входной текст карточек/досок санитизируется и обрезается (`_sanitize_card_text`, `_sanitize_text`), а ответы валидируются по whitelist ID (в `clustering.py` группы из `< 2` карточек расформировываются).

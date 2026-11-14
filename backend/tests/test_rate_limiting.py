@@ -1,6 +1,6 @@
 """Tests for rate limiting."""
 
-from app.limiter import limiter
+from app.limiter import TEAM_READ_LIMIT, limiter
 
 
 class TestRateLimiting:
@@ -18,8 +18,9 @@ class TestRateLimiting:
             resp = client.get("/api/boards/", headers=workspace_headers)
             assert resp.status_code == 200
 
-            # Exceed the 100/minute limit rapidly
-            for _ in range(101):
+            # Exceed the per-minute limit rapidly
+            limit = int(TEAM_READ_LIMIT.split("/")[0])
+            for _ in range(limit + 1):
                 resp = client.get("/api/boards/", headers=workspace_headers)
 
             # At some point we should get 429

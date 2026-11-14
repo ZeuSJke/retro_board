@@ -19,6 +19,19 @@ def _strip_non_empty(v: str | None, field_name: str = "Поле") -> str | None:
     return stripped
 
 
+# bcrypt учитывает только первые 72 байта; кириллица в UTF-8 — по два байта на букву
+_BCRYPT_MAX_BYTES = 72
+
+
+def _access_key_within_bcrypt_limit(v: str | None) -> str | None:
+    if v is not None and len(v.encode()) > _BCRYPT_MAX_BYTES:
+        raise ValueError(
+            "Ключ доступа слишком длинный: не больше 72 байт "
+            "(72 латинских символа или 36 кириллических)"
+        )
+    return v
+
+
 # ── Workspace ─────────────────────────────────────────────────────────────────
 
 
@@ -44,6 +57,11 @@ class WorkspaceCreate(BaseModel):
     def validate_name(cls, v: str) -> str:
         return _strip_non_empty(v, "Название команды") or ""
 
+    @field_validator("access_key")
+    @classmethod
+    def validate_access_key(cls, v: str) -> str:
+        return _access_key_within_bcrypt_limit(v) or ""
+
 
 class WorkspaceUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
@@ -53,6 +71,11 @@ class WorkspaceUpdate(BaseModel):
     @classmethod
     def validate_name(cls, v: str | None) -> str | None:
         return _strip_non_empty(v, "Название команды")
+
+    @field_validator("access_key")
+    @classmethod
+    def validate_access_key(cls, v: str | None) -> str | None:
+        return _access_key_within_bcrypt_limit(v)
 
 
 class WorkspaceOut(BaseModel):
@@ -71,8 +94,8 @@ class WorkspaceListItem(WorkspaceOut):
 
 
 class AdminLoginRequest(BaseModel):
-    login: str
-    password: str
+    login: str = Field(..., min_length=1, max_length=200)
+    password: str = Field(..., min_length=1, max_length=200)
 
 
 # ── Card ──────────────────────────────────────────────────────────────────────
@@ -223,7 +246,8 @@ class BoardBase(BaseModel):
 
 
 class ColumnSeed(BaseModel):
-    title: str = Field(..., min_length=1, max_length=120)
+    # Длина совпадает с Column.title в БД (String(80))
+    title: str = Field(..., min_length=1, max_length=80)
     color: str = Field(default="#6750A4", pattern=_HEX_COLOR_RE.pattern)
 
     @field_validator("title")
@@ -507,7 +531,8 @@ class BulkCardsUpdateRequest(BaseModel):
     card_ids: list[str] = Field(..., min_length=1, max_length=100)
     column_id: Optional[str] = None
     group_id: Optional[str] = None
-    group_title: Optional[str] = Field(default=None, max_length=200)
+    # Длина совпадает с CardGroup.title в БД (String(120))
+    group_title: Optional[str] = Field(default=None, max_length=120)
     color: Optional[str] = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
 
 
@@ -548,7 +573,8 @@ class ClusterPreviewResult(BaseModel):
 
 
 class ApplyClusterGroup(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200)
+    # Длина совпадает с CardGroup.title в БД (String(120))
+    title: str = Field(..., min_length=1, max_length=120)
     card_ids: list[str] = Field(..., min_length=2, max_length=100)
 
 

@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session, selectinload
 from app.ai.prompts.summary_generation import generate_summary
 from app.ai.prompts.workspace_insights import generate_workspace_insights
 from app.config import settings
-from app.database import get_db
+from app.database import get_db, release_connection
 from app import models, schemas
-from app.limiter import limiter
+from app.limiter import TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.models import now_utc
 from app.routers.action_items import copy_unresolved_action_items
 from app.utils import get_or_404, require_live_board, require_unlocked_board
@@ -170,7 +170,7 @@ def _find_live_board(
 
 
 @router.get("/templates", response_model=list[schemas.BoardTemplateInfo])
-@limiter.limit("100/minute")
+@limiter.limit(TEAM_READ_LIMIT)
 def list_templates(
     request: Request,
     workspace: models.Workspace = Depends(get_current_workspace),
@@ -188,7 +188,7 @@ def list_templates(
 
 
 @router.get("/mood-trends", response_model=list[schemas.MoodTrendPoint])
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_READ_LIMIT)
 def get_mood_trends(
     request: Request,
     db: Session = Depends(get_db),
@@ -291,12 +291,14 @@ async def get_workspace_insights(
             }
         )
 
+    # Снимок собран — соединение на время вызова модели не держим
+    release_connection(db)
     result = await asyncio.to_thread(generate_workspace_insights, snapshot)
     return schemas.WorkspaceInsightsOut(**result)
 
 
 @router.get("/", response_model=list[schemas.BoardListItem])
-@limiter.limit("100/minute")
+@limiter.limit(TEAM_READ_LIMIT)
 def list_boards(
     request: Request,
     db: Session = Depends(get_db),
@@ -476,7 +478,7 @@ def _board_query(db: Session):
 
 
 @router.get("/by-slug/{slug}", response_model=schemas.BoardOut)
-@limiter.limit("100/minute")
+@limiter.limit(TEAM_READ_LIMIT)
 def get_board_by_slug(
     request: Request,
     slug: str,
@@ -498,7 +500,7 @@ def get_board_by_slug(
 
 
 @router.get("/{board_id}", response_model=schemas.BoardOut)
-@limiter.limit("100/minute")
+@limiter.limit(TEAM_READ_LIMIT)
 def get_board(
     request: Request,
     board_id: str,
@@ -717,6 +719,9 @@ def _generate_summary_internal(
             logger.warning("No board data for %s", board_id)
             return None
 
+        # Данные прочитаны — соединение на время вызова модели не держим.
+        # Сессия та же: следующий запрос возьмёт соединение из пула заново.
+        db.close()
         try:
             ai_result = generate_summary(board_data)
             logger.info("AI summary generated for board %s", board_id)
@@ -766,7 +771,7 @@ def _generate_summary_internal(
 
 
 @router.post("/{board_id}/mood", response_model=schemas.BoardMoodOut)
-@limiter.limit("60/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def upsert_mood(
     request: Request,
     board_id: str,
@@ -805,8 +810,8 @@ async def upsert_mood(
 
 
 @router.get("/{board_id}/summary", response_model=schemas.BoardSummaryOut)
-@limiter.limit("30/minute")
-async def get_summary(
+@limiter.limit(TEAM_READ_LIMIT)
+def get_summary(
     request: Request,
     board_id: str,
     db: Session = Depends(get_db),
@@ -861,12 +866,19 @@ async def regenerate_summary(
     if not board_data:
         raise HTTPException(404, "Board not found")
 
+    board_pk = board.id
+    workspace_pk = workspace.id
+    # Данные прочитаны — соединение на время вызова модели не держим
+    release_connection(db)
+
     try:
         ai_result = await asyncio.to_thread(generate_summary, board_data)
     except Exception as exc:
-        logger.exception("Manual summary regeneration failed for board %s: %s", board.id, exc)
+        logger.exception("Manual summary regeneration failed for board %s: %s", board_pk, exc)
         raise HTTPException(502, "Не удалось сгенерировать AI-резюме") from exc
 
+    # Пока модель думала, доску могли удалить — перечитываем
+    board = _find_live_board(db, board_pk, workspace_pk)
     session_id = (
         manager.get_session_id(board.id)
         or board.active_session_id
@@ -909,7 +921,7 @@ async def regenerate_summary(
 
 
 @router.post("/{board_id}/reset-votes", response_model=schemas.BoardVotesResetOut)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def reset_user_votes(
     request: Request,
     board_id: str,

@@ -11,5 +11,6 @@ exec uvicorn main:app \
   --host 0.0.0.0 \
   --port 8000 \
   --ws websockets-sansio \
+  --ws-max-size "${WS_MAX_SIZE:-65536}" \
   --proxy-headers \
   --forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-*}"

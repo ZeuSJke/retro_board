@@ -6,11 +6,11 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import get_db
+from app.database import get_db, release_connection
 from app import models, schemas
 from app.utils import get_or_404, require_unlocked_board
 from app.ws_manager import manager
-from app.limiter import limiter
+from app.limiter import TEAM_WRITE_LIMIT, limiter
 from app.workspace_auth import get_current_workspace
 from app.ai.clustering import cluster_cards, MAX_CARDS_FOR_CLUSTERING
 
@@ -20,7 +20,7 @@ router = APIRouter()
 
 
 @router.post("/", response_model=schemas.CardGroupOut, status_code=201)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def create_group(
     request: Request,
     body: schemas.CardGroupCreate,
@@ -45,7 +45,7 @@ async def create_group(
 
 
 @router.patch("/{group_id}", response_model=schemas.CardGroupOut)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def update_group(
     request: Request,
     group_id: str,
@@ -66,7 +66,7 @@ async def update_group(
 
 
 @router.delete("/{group_id}", status_code=204)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def delete_group(
     request: Request,
     group_id: str,
@@ -95,7 +95,7 @@ async def delete_group(
 
 
 @router.post("/{group_id}/set_card/{card_id}", response_model=schemas.CardOut)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def set_card_group(
     request: Request,
     group_id: str,
@@ -119,7 +119,7 @@ async def set_card_group(
 
 
 @router.patch("/{group_id}/move", response_model=schemas.CardGroupOut)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def move_group(
     request: Request,
     group_id: str,
@@ -160,7 +160,7 @@ async def move_group(
 
 
 @router.delete("/{group_id}/remove_card/{card_id}", response_model=schemas.CardOut)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def remove_card_from_group(
     request: Request,
     group_id: str,
@@ -193,17 +193,26 @@ async def remove_card_from_group(
     return out
 
 
+def _unlocked_column(db: Session, column_id: str, workspace_id: str) -> models.Column:
+    col = get_or_404(db, models.Column, column_id, "Колонка не найдена")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace_id, "Колонка не найдена")
+    return col
+
+
 async def _compute_column_clusters(
     column_id: str,
     db: Session,
     workspace_id: str,
-) -> tuple[models.Column, dict]:
-    """Validate column, check AI config, and compute clustering suggestions without persisting."""
+) -> dict:
+    """Validate column, check AI config, and compute clustering suggestions without persisting.
+
+    Соединение с БД на время вызова модели возвращается в пул: объекты сессии
+    после этого отсоединены, поэтому вызывающий код перечитывает колонку сам.
+    """
     if not settings.ai_configured:
         raise HTTPException(503, "AI-сервис не настроен")
 
-    col = get_or_404(db, models.Column, column_id, "Колонка не найдена")
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace_id, "Колонка не найдена")
+    _unlocked_column(db, column_id, workspace_id)
 
     ungrouped_cards = (
         db.query(models.Card)
@@ -225,12 +234,13 @@ async def _compute_column_clusters(
         )
 
     cards_data = [{"id": c.id, "text": c.text} for c in ungrouped_cards]
+    release_connection(db)
     try:
         result = await asyncio.to_thread(cluster_cards, cards_data)
     except Exception as e:
         logger.error("AI clustering failed for column %s: %s", column_id, type(e).__name__)
         raise HTTPException(503, "AI-сервис временно недоступен") from e
-    return col, result
+    return result
 
 
 async def _apply_groups_to_column(
@@ -325,7 +335,10 @@ async def auto_cluster(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """AI-кластеризация негруппированных карточек в колонке."""
-    col, result = await _compute_column_clusters(body.column_id, db, workspace.id)
+    workspace_id = workspace.id
+    result = await _compute_column_clusters(body.column_id, db, workspace_id)
+    # Пока модель думала, колонку могли удалить, а доску — заблокировать
+    col = _unlocked_column(db, body.column_id, workspace_id)
     return await _apply_groups_to_column(
         col=col,
         groups_spec=result["groups"],
@@ -344,9 +357,9 @@ async def auto_cluster_preview(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Preview AI clustering groups for a column without writing to DB."""
-    col, result = await _compute_column_clusters(body.column_id, db, workspace.id)
+    result = await _compute_column_clusters(body.column_id, db, workspace.id)
     return schemas.ClusterPreviewResult(
-        column_id=col.id,
+        column_id=body.column_id,
         groups=[
             schemas.ClusterPreviewGroup(title=g["title"], card_ids=g["card_ids"])
             for g in result["groups"]

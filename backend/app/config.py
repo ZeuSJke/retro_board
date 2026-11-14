@@ -27,6 +27,20 @@ class Settings(BaseSettings):
     ai_api_key: str = ""  # env AI_API_KEY (может быть пустым, если гейт без авторизации)
     ai_model: str = "qwen3.6-35b-a3b-mtp-ud-q8_k_xl"  # env AI_MODEL
     ai_disable_thinking: bool = True  # env AI_DISABLE_THINKING
+    # Сколько запросов к модели идёт одновременно; остальные ждут ai_queue_timeout_s
+    ai_max_concurrency: int = 4  # env AI_MAX_CONCURRENCY
+    ai_queue_timeout_s: float = 15.0  # env AI_QUEUE_TIMEOUT_S
+    ai_connect_timeout_s: float = 5.0  # env AI_CONNECT_TIMEOUT_S
+
+    # Таймауты PostgreSQL: один зависший запрос не должен останавливать
+    # единственный воркер. Для других СУБД (SQLite в тестах) не применяются.
+    db_connect_timeout_s: int = 5  # env DB_CONNECT_TIMEOUT_S
+    db_statement_timeout_ms: int = 30000  # env DB_STATEMENT_TIMEOUT_MS
+    db_lock_timeout_ms: int = 10000  # env DB_LOCK_TIMEOUT_MS
+    db_pool_timeout_s: int = 10  # env DB_POOL_TIMEOUT_S
+
+    # Максимальный размер тела HTTP-запроса в байтах
+    max_request_body_bytes: int = 1_048_576  # env MAX_REQUEST_BODY_BYTES
 
     # Workspace JWT secrets and admin credentials
     workspace_jwt_secret: str = "change-me-workspace-secret"

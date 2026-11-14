@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_db, release_connection
 from app import models, schemas
 from app.models import now_utc
 from app.utils import get_or_404, require_live_board
@@ -17,7 +17,7 @@ from app.ai.prompts.title_generation import (
     TITLE_GENERATION_CONFIG,
 )
 from app.ws_manager import manager
-from app.limiter import limiter
+from app.limiter import TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.workspace_auth import get_current_workspace
 
 logger = logging.getLogger(__name__)
@@ -26,8 +26,8 @@ router = APIRouter()
 
 
 @router.get("/trends", response_model=list[schemas.TrendPoint])
-@limiter.limit("30/minute")
-async def get_trends(
+@limiter.limit(TEAM_READ_LIMIT)
+def get_trends(
     request: Request,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
@@ -69,8 +69,8 @@ async def get_trends(
 
 
 @router.get("/all", response_model=list[schemas.DashboardActionItem])
-@limiter.limit("30/minute")
-async def list_all_action_items(
+@limiter.limit(TEAM_READ_LIMIT)
+def list_all_action_items(
     request: Request,
     status: Optional[str] = None,
     board_id: Optional[str] = None,
@@ -168,8 +168,8 @@ async def carry_forward(
 
 
 @router.get("/", response_model=list[schemas.ActionItemOut])
-@limiter.limit("30/minute")
-async def list_action_items(
+@limiter.limit(TEAM_READ_LIMIT)
+def list_action_items(
     request: Request,
     board_id: str,
     db: Session = Depends(get_db),
@@ -191,9 +191,12 @@ async def list_action_items(
 async def generate_action_item_title(
     request: Request,
     body: schemas.GenerateTitleRequest,
+    db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Generate action item title from card text using AI."""
+    # Проверка токена уже открыла сессию — на время вызова модели она не нужна
+    release_connection(db)
     prompt = TITLE_GENERATION_PROMPT.format(card_text=body.text)
     try:
         title = await asyncio.to_thread(
@@ -241,6 +244,8 @@ async def suggest_action_items(
         }
         for card, col_title in rows
     ]
+    board_pk = board.id
+    release_connection(db)
     try:
         raw_suggestions = await asyncio.to_thread(suggest_action_items_from_cards, cards_snapshot)
     except RuntimeError as exc:
@@ -248,13 +253,13 @@ async def suggest_action_items(
         raise HTTPException(503, "Не удалось получить предложения от AI") from exc
 
     return schemas.ActionItemSuggestResponse(
-        board_id=board.id,
+        board_id=board_pk,
         suggestions=[schemas.ActionItemSuggestion(**item) for item in raw_suggestions],
     )
 
 
 @router.post("/", response_model=schemas.ActionItemOut, status_code=201)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def create_action_item(
     request: Request,
     body: schemas.ActionItemCreate,
@@ -300,7 +305,7 @@ async def create_action_item(
 
 
 @router.patch("/{item_id}", response_model=schemas.ActionItemOut)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def update_action_item(
     request: Request,
     item_id: str,
@@ -334,7 +339,7 @@ async def update_action_item(
 
 
 @router.delete("/{item_id}", status_code=204)
-@limiter.limit("30/minute")
+@limiter.limit(TEAM_WRITE_LIMIT)
 async def delete_action_item(
     request: Request,
     item_id: str,

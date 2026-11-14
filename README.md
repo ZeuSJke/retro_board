@@ -316,6 +316,7 @@ retro_board/
 - `/ws/{board_id}` — события конкретной доски; аутентификация по `Origin` (`CORS_ORIGINS`) и JWT (`httpOnly` cookie `workspace_token` в приоритете, query `?workspace_token=...` — fallback для совместимости).
 - `/ws/workspace` — live-события списка досок workspace для `/dashboard` (`board_created`, `board_updated`, `board_deleted`).
 - Лимиты входящих сообщений на соединение: `20` управляющих сообщений/сек и `30` `cursor_move`/сек. Формат JSON: `{ "event": "<name>", "data": { ... } }` (плюс текстовый heartbeat `"ping"`).
+- Входящие сообщения проверяются (`backend/app/ws_payloads.py`): `data` обязан быть объектом, числа — конечными и в допустимом диапазоне, сообщение — не длиннее 4096 символов. Некорректное сообщение молча отбрасывается, а другим участникам рассылаются только известные поля.
 
 ### События от клиента к серверу
 
@@ -375,6 +376,14 @@ retro_board/
 | `AI_API_KEY` | Нет | API-ключ AI-шлюза |
 | `AI_MODEL` | При `AI_BASE_URL` | Имя модели в OpenAI-совместимом шлюзе (задайте явно под вашего провайдера) |
 | `AI_DISABLE_THINKING` | Нет | Передавать `chat_template_kwargs: {"enable_thinking": false}` для reasoning-моделей (по умолчанию: `true`; для стандартного OpenAI API выставьте `false`) |
+| `AI_MAX_CONCURRENCY` | Нет | Сколько запросов к модели выполняется одновременно (по умолчанию: `4`); остальные ждут `AI_QUEUE_TIMEOUT_S` секунд (по умолчанию: `15`) и получают отказ |
+| `AI_CONNECT_TIMEOUT_S` | Нет | Таймаут установки соединения с AI-шлюзом в секундах (по умолчанию: `5`) |
+| `DB_CONNECT_TIMEOUT_S` | Нет | Таймаут подключения к PostgreSQL в секундах (по умолчанию: `5`) |
+| `DB_STATEMENT_TIMEOUT_MS` | Нет | Серверный таймаут одного запроса PostgreSQL (по умолчанию: `30000`) |
+| `DB_LOCK_TIMEOUT_MS` | Нет | Серверный таймаут ожидания блокировки PostgreSQL (по умолчанию: `10000`) |
+| `DB_POOL_TIMEOUT_S` | Нет | Сколько секунд запрос ждёт свободное соединение из пула (по умолчанию: `10`) |
+| `MAX_REQUEST_BODY_BYTES` | Нет | Максимальный размер тела HTTP-запроса; больше — ответ `413` (по умолчанию: `1048576`) |
+| `WS_MAX_SIZE` | Нет | Максимальный размер WebSocket-кадра в байтах для `--ws-max-size` в `uvicorn` (по умолчанию: `65536`) |
 | `SKIP_MIGRATIONS` | Нет | Пропуск `alembic upgrade head` в `entrypoint.sh` (`true` при вынесении миграций в initContainer) |
 | `FORWARDED_ALLOW_IPS` | Нет | Доверенные прокси для `--forwarded-allow-ips` в `uvicorn` (по умолчанию: `*`) |
 | `TESTING` | Нет | Режим тестов (`true` отключает `slowapi` и прод-валидаторы `Settings`) |

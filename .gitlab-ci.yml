@@ -149,7 +149,7 @@ e2e-tests:
     # Миграции — то же, что делает entrypoint.sh в Docker-образе бэкенда.
     - alembic upgrade head
     # Бэкенд в фоне; те же proxy/ws флаги, что в backend/entrypoint.sh.
-    - uvicorn main:app --host 0.0.0.0 --port 8000 --ws websockets-sansio --proxy-headers --forwarded-allow-ips "*" > /tmp/backend.log 2>&1 &
+    - uvicorn main:app --host 0.0.0.0 --port 8000 --ws websockets-sansio --ws-max-size 65536 --proxy-headers --forwarded-allow-ips "*" > /tmp/backend.log 2>&1 &
     - cd ../frontend
     - npm ci
     - npm run build

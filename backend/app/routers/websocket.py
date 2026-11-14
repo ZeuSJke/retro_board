@@ -9,6 +9,15 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPExcept
 
 from app.config import settings
 from app.ws_manager import manager
+from app.ws_payloads import (
+    MAX_USERNAME_LENGTH,
+    MAX_WS_MESSAGE_CHARS,
+    clean_cursor_move,
+    clean_group_collapse,
+    clean_timer,
+    number_in_range,
+    short_str,
+)
 from app.workspace_auth import decode_workspace_token
 from app.database import get_db
 from app import models
@@ -109,8 +118,9 @@ def _clear_board_session_on_grace(board_id: str) -> None:
 
 manager.on_session_cleared = _clear_board_session_on_grace
 
-MAX_USERNAME_LENGTH = 100
-MAX_COORD_VALUE = 10000
+# Идущие генерации итогов по доскам: повторный переход в фазу «Итоги»
+# не должен запускать вторую генерацию, пока не закончилась первая.
+_summary_tasks: dict[str, asyncio.Task] = {}
 
 
 def _origin_allowed(websocket: WebSocket) -> bool:
@@ -155,6 +165,15 @@ async def _trigger_summary_generation(
     """
     from app.routers.boards import _generate_summary_internal
 
+    if not settings.ai_configured:
+        # Без шлюза не занимаем ни поток, ни соединение с БД.
+        await manager.broadcast(
+            board_id,
+            "summary_failed",
+            {"message": "AI не настроен: итоги не сгенерированы"},
+        )
+        return
+
     logger.info("Starting summary generation for board %s by %s", board_id, username)
 
     try:
@@ -184,6 +203,52 @@ async def _trigger_summary_generation(
         )
     finally:
         logger.info("Summary generation task completed for board %s", board_id)
+
+
+def _start_summary_generation(board_id: str, username: str, workspace_id: str) -> bool:
+    """Запустить генерацию итогов, если она для этой доски ещё не идёт."""
+    loop = asyncio.get_running_loop()
+    running = _summary_tasks.get(board_id)
+    if running is not None and not running.done() and running.get_loop() is loop:
+        logger.info("Summary generation already running for board %s, skipping", board_id)
+        return False
+
+    task = loop.create_task(_trigger_summary_generation(board_id, username, workspace_id))
+    _summary_tasks[board_id] = task
+
+    def _forget(done: asyncio.Task, key: str = board_id) -> None:
+        if _summary_tasks.get(key) is done:
+            _summary_tasks.pop(key, None)
+
+    task.add_done_callback(_forget)
+    return True
+
+
+def _timer_snapshot_message(timer: dict) -> dict | None:
+    """Сообщение о текущем таймере для только что подключившегося клиента.
+
+    Состояние перепроверяется: повреждённый таймер не должен обрывать подключение.
+    """
+    duration = number_in_range(timer.get("duration"), 0, float("inf"))
+    remaining = number_in_range(timer.get("remaining"), 0, float("inf"))
+    if duration is None or remaining is None:
+        return None
+    if timer.get("running"):
+        started_ms = number_in_range(timer.get("ts"), 0, float("inf"))
+        if started_ms is None:
+            return None
+        now_ms = time.time() * 1000
+        left = max(0, remaining - (now_ms - started_ms) / 1000)
+        return {
+            "event": "timer_start",
+            "data": {"duration": duration, "remaining": left, "ts": now_ms},
+        }
+    if remaining > 0:
+        return {
+            "event": "timer_pause",
+            "data": {"remaining": remaining, "duration": duration},
+        }
+    return None
 
 
 @router.websocket("/ws/workspace")
@@ -308,45 +373,27 @@ async def websocket_endpoint(
             )
         # Send current timer state to new client
         timer = manager.get_timer(board_id)
-        if timer:
-            if timer["running"]:
-                # Recalculate remaining based on elapsed time since start
-                elapsed_ms = time.time() * 1000 - timer["ts"]
-                remaining = max(0, timer["remaining"] - elapsed_ms / 1000)
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "event": "timer_start",
-                            "data": {
-                                "duration": timer["duration"],
-                                "remaining": remaining,
-                                "ts": time.time() * 1000,
-                            },
-                        }
-                    )
-                )
-            elif timer["remaining"] > 0:
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "event": "timer_pause",
-                            "data": {
-                                "remaining": timer["remaining"],
-                                "duration": timer["duration"],
-                            },
-                        }
-                    )
-                )
+        timer_message = _timer_snapshot_message(timer) if timer else None
+        if timer_message:
+            await websocket.send_text(json.dumps(timer_message))
         while True:
             data = await websocket.receive_text()
 
             if data == "ping":
                 continue
+            if len(data) > MAX_WS_MESSAGE_CHARS:
+                continue
 
             try:
                 msg = json.loads(data)
+                if not isinstance(msg, dict):
+                    continue
                 event = msg.get("event")
-                payload = msg.get("data", {})
+                payload = msg.get("data")
+                if payload is None:
+                    payload = {}
+                if not isinstance(payload, dict):
+                    continue
 
                 # Validate event type
                 if not isinstance(event, str) or event not in KNOWN_EVENTS:
@@ -366,14 +413,10 @@ async def websocket_endpoint(
                     msg_timestamps.append(now)
 
                 # Validate cursor_move coordinates
+                cursor: dict | None = None
                 if event == "cursor_move":
-                    x, y = payload.get("x"), payload.get("y")
-                    if (
-                        not isinstance(x, (int, float))
-                        or not isinstance(y, (int, float))
-                        or not (0 <= x <= MAX_COORD_VALUE)
-                        or not (0 <= y <= MAX_COORD_VALUE)
-                    ):
+                    cursor = clean_cursor_move(payload)
+                    if cursor is None:
                         continue
 
                 # Validate username length for identify / cursor_move
@@ -466,18 +509,34 @@ async def websocket_endpoint(
                                         }
                                     )
                                 )
-                    await manager.broadcast(
-                        board_id, "cursor_move", payload, exclude=websocket
-                    )
+                    # Рассылаем только известные поля, а не всё, что прислал клиент
+                    sender = manager.get_username(websocket)
+                    if sender and cursor is not None:
+                        await manager.broadcast(
+                            board_id,
+                            "cursor_move",
+                            {"username": sender, **cursor},
+                            exclude=websocket,
+                        )
 
                 elif event == "cursor_leave":
-                    await manager.broadcast(
-                        board_id, "cursor_leave", payload, exclude=websocket
+                    sender = manager.get_username(websocket) or short_str(
+                        payload.get("username"), MAX_USERNAME_LENGTH
                     )
+                    if sender:
+                        await manager.broadcast(
+                            board_id,
+                            "cursor_leave",
+                            {"username": sender},
+                            exclude=websocket,
+                        )
 
                 elif event == "group_collapse":
+                    collapse = clean_group_collapse(payload)
+                    if collapse is None:
+                        continue
                     # Broadcast to ALL (including sender) for sync
-                    await manager.broadcast(board_id, "group_collapse", payload)
+                    await manager.broadcast(board_id, "group_collapse", collapse)
 
                 elif event in ("timer_start", "timer_pause", "timer_reset"):
                     ws_user = manager.get_username(websocket)
@@ -485,8 +544,11 @@ async def websocket_endpoint(
                     # Only facilitator can control timer when session is active
                     if fac_user and ws_user != fac_user:
                         continue
-                    manager.set_timer(board_id, event, payload)
-                    await manager.broadcast(board_id, event, payload)
+                    timer_data = clean_timer(event, payload)
+                    if timer_data is None:
+                        continue
+                    manager.set_timer(board_id, event, timer_data)
+                    await manager.broadcast(board_id, event, timer_data)
 
                 elif event == "facilitator_start":
                     username = manager.get_username(websocket)
@@ -588,14 +650,10 @@ async def websocket_endpoint(
                             )
                         if phase == "summary":
                             logger.info(
-                                "Creating summary task for board %s, user %s",
+                                "Summary phase entered on board %s by %s",
                                 board_id, username,
                             )
-                            asyncio.create_task(
-                                _trigger_summary_generation(
-                                    board_id, username, workspace_id
-                                )
-                            )
+                            _start_summary_generation(board_id, username, workspace_id)
 
                 elif event == "ready_toggle":
                     username = manager.get_username(websocket)
@@ -685,6 +743,14 @@ async def websocket_endpoint(
 
             except (json.JSONDecodeError, KeyError):
                 pass
+            except WebSocketDisconnect:
+                raise
+            except Exception:
+                # Сбой обработки одного сообщения не должен рвать соединение:
+                # фиксируем его в журнале и ждём следующее сообщение.
+                logger.exception(
+                    "Unhandled error while handling WS message on board %s", board_id
+                )
 
     except WebSocketDisconnect:
         pass
