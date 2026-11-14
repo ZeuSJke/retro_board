@@ -1,0 +1,19 @@
+{{- include "retro-board.assertGuards" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "retro-board.fullname" . }}-config
+  labels:
+    {{- include "retro-board.labels" . | nindent 4 }}
+data:
+  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  SECURE_COOKIES: {{ .Values.config.secureCookies | quote }}
+  CSRF_ENABLED: {{ .Values.config.csrfEnabled | quote }}
+  WORKSPACE_JWT_EXPIRE_HOURS: {{ .Values.config.workspaceJwtExpireHours | quote }}
+  AI_DISABLE_THINKING: {{ .Values.config.aiDisableThinking | quote }}
+  {{- if .Values.config.aiBaseUrl }}
+  AI_BASE_URL: {{ .Values.config.aiBaseUrl | quote }}
+  {{- end }}
+  {{- if .Values.config.aiModel }}
+  AI_MODEL: {{ .Values.config.aiModel | quote }}
+  {{- end }}

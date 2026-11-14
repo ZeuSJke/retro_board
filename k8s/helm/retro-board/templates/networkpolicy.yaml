@@ -1,0 +1,129 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $fullName := include "retro-board.fullname" . -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-postgres
+  labels:
+    {{- include "retro-board.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "retro-board.selectorLabels" (dict "root" . "component" "postgres") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "retro-board.selectorLabels" (dict "root" . "component" "api") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "retro-board.selectorLabels" (dict "root" . "component" "backup") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 5432
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-api
+  labels:
+    {{- include "retro-board.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "retro-board.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "retro-board.selectorLabels" (dict "root" . "component" "postgres") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.42.0.0/16
+              - 10.43.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- with .Values.networkPolicy.extraApiEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-web
+  labels:
+    {{- include "retro-board.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "retro-board.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress: []
+{{- if .Values.backup.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-backup
+  labels:
+    {{- include "retro-board.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "retro-board.selectorLabels" (dict "root" . "component" "backup") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "retro-board.selectorLabels" (dict "root" . "component" "postgres") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}
+{{- end }}

@@ -1,0 +1,94 @@
+{{- if .Values.backup.enabled }}
+{{- $fullName := include "retro-board.fullname" . -}}
+{{- $secretName := include "retro-board.secretName" . -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullName }}-pg-backup
+  labels:
+    {{- include "retro-board.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  timeZone: {{ .Values.backup.timeZone | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "retro-board.labels" . | nindent 8 }}
+        app.kubernetes.io/component: backup
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "retro-board.labels" . | nindent 12 }}
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: pg-backup
+              image: {{ .Values.backup.image | quote }}
+              imagePullPolicy: {{ .Values.postgres.pullPolicy }}
+              env:
+                - name: PGHOST
+                  value: {{ $fullName }}-postgres
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  value: {{ .Values.postgres.user | quote }}
+                - name: PGDATABASE
+                  value: {{ .Values.postgres.database | quote }}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $secretName }}
+                      key: POSTGRES_PASSWORD
+                - name: BACKUP_DIR
+                  value: {{ printf "/backup/%s" .Values.backup.subDir | quote }}
+                - name: RETENTION_DAYS
+                  value: {{ .Values.backup.retentionDays | quote }}
+              command:
+                - sh
+                - -ec
+                - |
+                  [ -d "$BACKUP_DIR" ] || mkdir -p "$BACKUP_DIR"
+                  ts="$(date +%Y%m%d-%H%M%S)"
+                  final="$BACKUP_DIR/${PGDATABASE}-${ts}.dump"
+                  tmp="${final}.tmp"
+                  rm -f "$tmp"
+                  pg_dump --no-password --format=custom -f "$tmp"
+                  mv "$tmp" "$final"
+                  find "$BACKUP_DIR" -maxdepth 1 -name '*.dump' -type f -mtime +"$RETENTION_DAYS" -exec rm -f {} +
+                  echo "Backup complete: $final"
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                runAsUser: 1000
+                runAsGroup: 1000
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              {{- with .Values.backup.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              volumeMounts:
+                - name: backup-nfs
+                  mountPath: /backup
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: backup-nfs
+              nfs:
+                server: {{ .Values.backup.nfs.server | quote }}
+                path: {{ .Values.backup.nfs.path | quote }}
+            - name: tmp
+              emptyDir: {}
+{{- end }}

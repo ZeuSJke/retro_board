@@ -6,28 +6,40 @@
 # сам клонирует репозиторий; all uses: actions/* → обычные shell-команды.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Имя базового образа вынесено в одну переменную вверху файла — тег меняется
-# в одном месте. Образ уже содержит node 24, uv+Python 3.12, pandoc,
-# helm, kubeconform, buildctl, git, jq, curl — ничего в джобах не ставим.
+# Базовый образ CI_BASE_IMAGE задаётся на уровне инстанса GitLab (см. homelab/infrastructure).
+# Образ уже содержит node 24, uv+Python 3.12, pandoc, helm, kubeconform (+ /opt/schemas),
+# buildctl, kubectl, git, jq, curl — ничего в джобах не ставим.
 variables:
-  CI_BASE_IMAGE: registry.kirillbessonov.ru/homelab/infrastructure/ci-base:2026-08-20-1809
+  BUILDKIT_HOST: "unix:///run/buildkit/buildkitd.sock"
+  STAGING_TAG: "staging-$CI_COMMIT_SHORT_SHA"
+  STAGING_KUBE_CONTEXT: "fmrm/cluster-admins:k3s-stage"
+  STAGING_NAMESPACE: "retro-board"
 
 # Общие настройки всех джоб. Раннер на стенде один (инстанс), тег homelab.
 default:
   image: $CI_BASE_IMAGE
   tags:
     - homelab
+  before_script:
+    - set -e
+    - |
+      [ -n "${CI_BASE_IMAGE:-}" ] || { echo "ERROR CI_BASE_IMAGE is not set (instance CI variable expected)" >&2; exit 1; }
 
-# Триггеры пайплайна повторяют GitHub Actions один в один:
-#   on.push.branches: [main]        → push в main
-#   on.pull_request.branches: [main] → merge request, нацеленный в main
+# Триггеры пайплайна:
+#   * schedule не запускает пайплайн;
+#   * push в main прогоняет тесты, собирает образы и катит k3s-stage;
+#   * merge request в main прогоняет тесты, helm-гейты и (при правках сборки) smoke-билд образов.
 workflow:
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
 
 stages:
   - test
+  - build
+  - deploy
 
 # ── Бэкенд: pytest на SQLite ─────────────────────────────────────────────────
 backend-tests:
@@ -76,8 +88,8 @@ frontend-tests:
 # ── E2E: Playwright против полного стека ─────────────────────────────────────
 # В GitHub Actions E2E поднимал стек через docker compose up --build, но на этом
 # стенде Docker-демона нет и не будет (docker build/run/compose/dind запрещены).
-# Поэтому стек разворачиваем без Docker, повторяя продакшен-схему из
-# frontend/nginx.conf: standalone Next.js на 3000 + nginx на 3080:
+# Поэтому стек разворачиваем без Docker, повторяя схему проксирования из
+# ci/e2e-nginx.conf: standalone Next.js на 3000 + nginx на 3080:
 #   * PostgreSQL — как GitLab CI service (штатная фича docker executor'а
 #     раннера, а не docker:dind и не docker CLI; образ тянется через зеркало);
 #   * бэкенд (uvicorn), standalone Next.js и nginx — процессами в джобе.
@@ -143,9 +155,8 @@ e2e-tests:
       PY
     # Миграции — то же, что делает entrypoint.sh в Docker-образе бэкенда.
     - alembic upgrade head
-    # Бэкенд в фоне; лог в файл, чтобы показать хвост при падении (аналог
-    # docker compose logs backend в GitHub Actions).
-    - uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/backend.log 2>&1 &
+    # Бэкенд в фоне; те же proxy/ws флаги, что в backend/entrypoint.sh.
+    - uvicorn main:app --host 0.0.0.0 --port 8000 --ws websockets-sansio --proxy-headers --forwarded-allow-ips "*" > /tmp/backend.log 2>&1 &
     - cd ../frontend
     - npm ci
     - npm run build
@@ -197,3 +208,114 @@ e2e-tests:
     expire_in: 7 days
     paths:
       - frontend/test-results/
+
+# ── Helm: lint + kubeconform + render guard gates ────────────────────────────
+helm:
+  stage: test
+  script:
+    - helm lint k8s/helm/retro-board -f k8s/helm/retro-board/values-dev.yaml
+    - helm lint k8s/helm/retro-board -f k8s/helm/retro-board/values-staging.yaml --set image.allowMutableTag=true
+    - bash scripts/helm-render-checks.sh
+
+# ── Общая заготовка для buildctl в CI ────────────────────────────────────────
+.buildctl-login:
+  before_script:
+    - set -e
+    - |
+      [ -n "${CI_BASE_IMAGE:-}" ] || { echo "ERROR CI_BASE_IMAGE is not set" >&2; exit 1; }
+      command -v buildctl >/dev/null || { echo "buildctl missing in CI_BASE_IMAGE" >&2; exit 1; }
+      buildctl debug workers >/dev/null
+      [ -n "${CI_REGISTRY:-}" ] && [ -n "${CI_REGISTRY_PASSWORD:-}" ] || {
+        echo "ERROR: CI_REGISTRY / CI_REGISTRY_PASSWORD empty" >&2
+        exit 1
+      }
+      AUTH=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
+      mkdir -p "$HOME/.docker"
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$AUTH" > "$HOME/.docker/config.json"
+
+# ── MR smoke: сборка образов buildctl без пуша при правках Docker/deps ──────
+image-smoke:
+  stage: test
+  extends: .buildctl-login
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - backend/Dockerfile
+        - backend/entrypoint.sh
+        - backend/requirements.txt
+        - frontend/Dockerfile
+        - frontend/next.config.mjs
+        - frontend/package.json
+        - frontend/package-lock.json
+        - scripts/build-image.sh
+        - .gitlab-ci.yml
+  script:
+    - bash scripts/build-image.sh -t "$CI_REGISTRY_IMAGE/api:cache-ref" -f backend/Dockerfile backend
+    - bash scripts/build-image.sh -t "$CI_REGISTRY_IMAGE/web:cache-ref" -f frontend/Dockerfile frontend
+
+# ── Stage build: публикация образов на push в main ───────────────────────────
+build-app-staging:
+  stage: build
+  extends: .buildctl-login
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+  script:
+    - BUILD_EXPORT_CACHE=1 bash scripts/build-image.sh --push -t "$CI_REGISTRY_IMAGE/api:$STAGING_TAG" -t "$CI_REGISTRY_IMAGE/api:latest" -f backend/Dockerfile backend
+    - BUILD_EXPORT_CACHE=1 bash scripts/build-image.sh --push -t "$CI_REGISTRY_IMAGE/web:$STAGING_TAG" -t "$CI_REGISTRY_IMAGE/web:latest" -f frontend/Dockerfile frontend
+
+# ── Stage deploy: выкат на k3s-stage через shared-агент fmrm/cluster-admins ──
+deploy-staging:
+  stage: deploy
+  resource_group: k3s-stage-retro-board
+  needs:
+    - build-app-staging
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+  script:
+    - kubectl config use-context "$STAGING_KUBE_CONTEXT"
+    - |
+      vers=$(uv run --no-project --python 3.12 python - <<'PY'
+      import json, subprocess
+      data = json.loads(subprocess.check_output(["kubectl", "version", "-o", "json"]))
+      c, s = data["clientVersion"], data["serverVersion"]
+      print(c["major"], c["minor"], s["major"], s["minor"])
+      PY
+      )
+      set -- $vers
+      C_MAJ=${1//[!0-9]/}; C_MIN=${2//[!0-9]/}; S_MAJ=${3//[!0-9]/}; S_MIN=${4//[!0-9]/}
+      SKEW=$(( C_MIN - S_MIN ))
+      [ "$SKEW" -lt 0 ] && SKEW=$(( -SKEW ))
+      if [ "$C_MAJ" != "$S_MAJ" ] || [ "$SKEW" -gt 1 ]; then
+        echo "ERROR: kubectl $C_MAJ.$C_MIN vs cluster $S_MAJ.$S_MIN skew > 1 minor" >&2
+        exit 1
+      fi
+      SCH="${K8S_SCHEMA_VERSION#v}"
+      SCH_MAJ="${SCH%%.*}"
+      SCH_REST="${SCH#*.}"
+      SCH_MIN="${SCH_REST%%.*}"
+      if [ -z "${K8S_SCHEMA_VERSION:-}" ] || [ "$SCH_MAJ" != "$S_MAJ" ] || [ "$SCH_MIN" != "$S_MIN" ]; then
+        echo "ERROR: K8S_SCHEMA_VERSION (${K8S_SCHEMA_VERSION:-empty}) does not match cluster $S_MAJ.$S_MIN" >&2
+        exit 1
+      fi
+    - kubectl create namespace "$STAGING_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+    - |
+      if ! kubectl -n "$STAGING_NAMESPACE" get secret registry-pull >/dev/null 2>&1; then
+        kubectl -n stratum get secret registry-pull -o json \
+          | uv run --no-project --python 3.12 python -c 'import json,sys; s=json.load(sys.stdin); s["metadata"]={"name":"registry-pull","namespace":sys.argv[1]}; json.dump(s,sys.stdout)' "$STAGING_NAMESPACE" \
+          | kubectl apply -f -
+      fi
+    - |
+      kubectl -n "$STAGING_NAMESPACE" get secret retro-board-secrets >/dev/null 2>&1 || {
+        echo "ERROR: Secret retro-board-secrets not found in namespace $STAGING_NAMESPACE. Create it before deploying." >&2
+        exit 1
+      }
+    - |
+      helm upgrade --install retro-board k8s/helm/retro-board \
+        --namespace "$STAGING_NAMESPACE" \
+        -f k8s/helm/retro-board/values-staging.yaml \
+        --set-string image.tag="$STAGING_TAG" \
+        --wait --timeout 10m
+    - kubectl -n "$STAGING_NAMESPACE" rollout status statefulset/retro-board-postgres --timeout=5m
+    - kubectl -n "$STAGING_NAMESPACE" rollout status deploy/retro-board-api --timeout=5m
+    - kubectl -n "$STAGING_NAMESPACE" rollout status deploy/retro-board-web --timeout=5m
+    - kubectl -n "$STAGING_NAMESPACE" get pods,svc,ingress

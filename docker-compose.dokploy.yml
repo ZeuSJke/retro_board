@@ -1,3 +1,5 @@
+# DEPRECATED (legacy Dokploy): основной прод/dev перенесён в Kubernetes (k8s/helm/retro-board).
+# Сборка `frontend/Dockerfile` больше не содержит nginx и слушает порт 3000.
 # Развёртывание в Dokploy: сборка из исходников, доступ только через Traefik.
 # Порты наружу не публикуются, фронтенд подключён к внешней сети dokploy-network.
 # Переменные окружения задаются во вкладке Environment сервиса в Dokploy.
