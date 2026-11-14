@@ -5,12 +5,22 @@ from datetime import datetime, UTC
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slugify import slugify
-from sqlalchemy import case, exists, func, or_
+from sqlalchemy import and_, case, exists, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.ai.prompts.summary_generation import generate_summary
 from app.ai.prompts.workspace_insights import generate_workspace_insights
+from app.board_view import (
+    board_settings_payload,
+    board_view,
+    broadcast_card,
+    broadcast_mood,
+    cards_hidden,
+    mood_view,
+    require_cards_visible,
+    require_moderator,
+)
 from app.config import settings
 from app.database import get_db, release_connection
 from app import models, schemas
@@ -18,7 +28,7 @@ from app.limiter import TEAM_BULK_LIMIT, TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limi
 from app.models import now_utc
 from app.routers.action_items import copy_unresolved_action_items
 from app.utils import get_or_404, require_live_board, require_unlocked_board
-from app.workspace_auth import get_current_workspace
+from app.workspace_auth import get_current_participant, get_current_workspace
 from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -91,8 +101,17 @@ BOARD_TEMPLATES: list[dict] = [
 _TEMPLATE_MAP: dict[str, dict] = {tpl["id"]: tpl for tpl in BOARD_TEMPLATES}
 
 
+# Адрес /board/start фронтенд использует как «открыть первую доску»
+_RESERVED_SLUGS = frozenset({"start"})
+
+
 def _make_slug(name: str) -> str:
-    return slugify(name, max_length=80, word_boundary=True) or f"board-{uuid.uuid4().hex[:8]}"
+    slug = slugify(name, max_length=80, word_boundary=True)
+    if not slug:
+        return f"board-{uuid.uuid4().hex[:8]}"
+    if slug in _RESERVED_SLUGS:
+        return f"{slug}-{uuid.uuid4().hex[:6]}"
+    return slug
 
 
 def _resolve_unique_slug(
@@ -272,8 +291,9 @@ async def get_workspace_insights(
         top_cards = sorted(
             all_cards, key=lambda c: len(c.likes or []), reverse=True
         )[:5]
-        open_count = sum(1 for item in board.action_items if item.status != "done")
-        done_count = sum(1 for item in board.action_items if item.status == "done")
+        live_items = [item for item in board.action_items if item.superseded_by_id is None]
+        open_count = sum(1 for item in live_items if item.status != "done")
+        done_count = sum(1 for item in live_items if item.status == "done")
         mood_scores = [m.score for m in board.moods]
         mood_avg = (
             round(sum(mood_scores) / len(mood_scores), 2) if mood_scores else None
@@ -287,7 +307,8 @@ async def get_workspace_insights(
                 "action_items_open": open_count,
                 "action_items_done": done_count,
                 "summary_themes": latest_summary.key_themes if latest_summary else [],
-                "top_cards": [c.text for c in top_cards],
+                # Пока карточки доски скрыты, их тексты не попадают и в аналитику
+                "top_cards": [] if cards_hidden(board) else [c.text for c in top_cards],
             }
         )
 
@@ -314,7 +335,10 @@ def list_boards(
                 func.distinct(
                     case(
                         (
-                            models.ActionItem.status != "done",
+                            and_(
+                                models.ActionItem.status != "done",
+                                models.ActionItem.superseded_by_id.is_(None),
+                            ),
                             models.ActionItem.id,
                         )
                     )
@@ -360,6 +384,7 @@ async def create_board(
     body: schemas.BoardCreate,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     existing = (
         db.query(models.Board)
@@ -417,6 +442,7 @@ async def create_board(
         anonymous_votes=body.anonymous_votes,
         allow_multiple_votes_per_card=body.allow_multiple_votes_per_card,
         workspace_id=workspace.id,
+        created_by_id=participant.id,
     )
     db.add(board)
     try:
@@ -452,7 +478,7 @@ async def create_board(
             )
             carry_src_id = prev_board[0] if prev_board else None
         if carry_src_id:
-            carried = copy_unresolved_action_items(db, carry_src_id, board.id)
+            carried, _superseded = copy_unresolved_action_items(db, carry_src_id, board.id)
             carried_count = len(carried)
 
     db.commit()
@@ -465,7 +491,7 @@ async def create_board(
         "board_created",
         list_item.model_dump(mode="json"),
     )
-    return board
+    return board_view(board, participant.id)
 
 
 def _board_query(db: Session):
@@ -484,6 +510,7 @@ def get_board_by_slug(
     slug: str,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     board = (
         _board_query(db)
@@ -496,7 +523,7 @@ def get_board_by_slug(
     )
     if not board:
         raise HTTPException(404, "Board not found")
-    return board
+    return board_view(board, participant.id)
 
 
 @router.get("/{board_id}", response_model=schemas.BoardOut)
@@ -506,6 +533,7 @@ def get_board(
     board_id: str,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     board = (
         _board_query(db)
@@ -518,7 +546,7 @@ def get_board(
     )
     if not board:
         raise HTTPException(404, "Board not found")
-    return board
+    return board_view(board, participant.id)
 
 
 @router.patch("/{board_id}", response_model=schemas.BoardOut)
@@ -529,9 +557,11 @@ async def update_board(
     body: schemas.BoardUpdate,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     board = get_or_404(db, models.Board, board_id, "Board not found")
     require_live_board(board, workspace.id)
+    was_hidden = cards_hidden(board)
     if body.name is not None:
         existing = (
             db.query(models.Board)
@@ -545,15 +575,17 @@ async def update_board(
         )
         if existing:
             raise HTTPException(409, "Измени название, такая доска уже есть")
+        # Адрес доски при переименовании не меняется: ссылки, которые уже
+        # разослали команде, должны продолжать работать.
         board.name = body.name
-        board.slug = _resolve_unique_slug(
-            db, body.name, workspace.id, exclude_board_id=board_id
-        )
     if body.max_votes is not None:
         board.max_votes = body.max_votes
     if body.is_locked is not None:
         board.is_locked = body.is_locked
     if body.hide_cards_until_reveal is not None:
+        if body.hide_cards_until_reveal and not board.hide_cards_until_reveal:
+            # Скрытый сбор включили заново — начинается новый сбор
+            board.cards_revealed = False
         board.hide_cards_until_reveal = body.hide_cards_until_reveal
     if body.anonymous_votes is not None:
         board.anonymous_votes = body.anonymous_votes
@@ -565,21 +597,42 @@ async def update_board(
         db.rollback()
         raise HTTPException(409, "Измени название, такая доска уже есть") from err
     board = _board_query(db).filter(models.Board.id == board.id).first() or board
-    payload = {
-        "id": board.id,
-        "name": board.name,
-        "slug": board.slug,
-        "max_votes": board.max_votes,
-        "template": board.template,
-        "is_locked": board.is_locked,
-        "hide_cards_until_reveal": board.hide_cards_until_reveal,
-        "anonymous_votes": board.anonymous_votes,
-        "allow_multiple_votes_per_card": board.allow_multiple_votes_per_card,
-        "workspace_id": board.workspace_id,
-    }
+    payload = board_settings_payload(board)
     await manager.broadcast_workspace(workspace.id, "board_updated", payload)
     await manager.broadcast(board.id, "board_updated", payload)
-    return board
+    if cards_hidden(board) != was_hidden:
+        await manager.broadcast(board.id, "cards_visibility_changed", {})
+    return board_view(board, participant.id)
+
+
+@router.post("/{board_id}/reveal", response_model=schemas.BoardOut)
+@limiter.limit("30/minute")
+async def reveal_cards(
+    request: Request,
+    board_id: str,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
+):
+    """Раскрыть карточки скрытого сбора вне сессии ведущего.
+
+    В сессии карточки раскрывает ведущий переходом из фазы «Штурм».
+    """
+    board = _board_query(db).filter(models.Board.id == board_id).first()
+    require_unlocked_board(board, workspace.id)
+    assert board is not None
+    if board.active_phase is not None:
+        raise HTTPException(409, "Идёт сессия ведущего: карточки раскрывает он")
+    require_moderator(board, participant, "Раскрыть карточки может создатель доски")
+    if not board.cards_revealed:
+        board.cards_revealed = True
+        db.commit()
+        board = _board_query(db).filter(models.Board.id == board_id).first() or board
+        payload = board_settings_payload(board)
+        await manager.broadcast_workspace(workspace.id, "board_updated", payload)
+        await manager.broadcast(board.id, "board_updated", payload)
+        await manager.broadcast(board.id, "cards_visibility_changed", {})
+    return board_view(board, participant.id)
 
 
 @router.delete("/{board_id}", status_code=204)
@@ -589,10 +642,12 @@ async def delete_board(
     board_id: str,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     board = get_or_404(db, models.Board, board_id, "Board not found")
     if board.workspace_id != workspace.id or board.deleted_at is not None:
         raise HTTPException(404, "Board not found")
+    require_moderator(board, participant, "Удалить доску может её создатель или ведущий")
     board.deleted_at = datetime.now(UTC)
     # Clear unique fields so the name/slug can be reused
     board.slug = None
@@ -659,7 +714,7 @@ def _get_board_full_data(
 
 def _generate_summary_internal(
     board_id: str,
-    username: str,
+    facilitator_id: str,
     workspace_id: str,
 ) -> dict | None:
     """Generate and save summary (blocking; run via asyncio.to_thread).
@@ -671,8 +726,8 @@ def _generate_summary_internal(
 
     logger.info("Starting summary generation for board %s", board_id)
 
-    if manager.get_facilitator(board_id) != username:
-        logger.warning("User %s is not facilitator of board %s", username, board_id)
+    if manager.get_facilitator(board_id) != facilitator_id:
+        logger.warning("Participant %s is not facilitator of board %s", facilitator_id, board_id)
         return None
 
     session_id = manager.get_session_id(board_id)
@@ -778,35 +833,37 @@ async def upsert_mood(
     body: schemas.BoardMoodCreate,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
-    """Сохранить или обновить оценку настроения участника для доски."""
+    """Сохранить или обновить оценку настроения участника сессии для доски."""
     board = _find_live_board(db, board_id, workspace.id)
     mood = (
         db.query(models.BoardMood)
         .filter(
             models.BoardMood.board_id == board.id,
-            models.BoardMood.author == body.author,
+            models.BoardMood.participant_id == participant.id,
         )
         .first()
     )
     if mood:
         mood.score = body.score
         mood.note = body.note
+        mood.author = participant.name
         mood.created_at = now_utc()
     else:
         mood = models.BoardMood(
             id=str(uuid.uuid4()),
             board_id=board.id,
-            author=body.author,
+            author=participant.name,
+            participant_id=participant.id,
             score=body.score,
             note=body.note,
         )
         db.add(mood)
     db.commit()
     db.refresh(mood)
-    out = schemas.BoardMoodOut.model_validate(mood)
-    await manager.broadcast(board.id, "mood_updated", out.model_dump(mode="json"))
-    return out
+    await broadcast_mood(board, mood)
+    return mood_view(mood, board, participant.id)
 
 
 @router.get("/{board_id}/summary", response_model=schemas.BoardSummaryOut)
@@ -861,6 +918,7 @@ async def regenerate_summary(
     board = _find_live_board(db, board_id, workspace.id)
     if not settings.ai_configured:
         raise HTTPException(503, "AI сервис не настроен")
+    require_cards_visible(board)
 
     board_data = _get_board_full_data(db, board.id, workspace.id)
     if not board_data:
@@ -925,14 +983,11 @@ async def regenerate_summary(
 async def reset_user_votes(
     request: Request,
     board_id: str,
-    username: str,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
-    """Remove all votes placed by username on the specified board."""
-    clean_user = username.strip()
-    if not clean_user or len(clean_user) > 60:
-        raise HTTPException(400, "Invalid username")
+    """Снять все голоса участника сессии на доске. Чужие голоса сбросить нельзя."""
     board = require_unlocked_board(db.get(models.Board, board_id), workspace.id, "Board not found")
     cards = (
         db.query(models.Card)
@@ -943,17 +998,16 @@ async def reset_user_votes(
     changed_cards: list[models.Card] = []
     for card in cards:
         likes = list(card.likes or [])
-        if clean_user in likes:
-            card.likes = [u for u in likes if u != clean_user]
+        if participant.id in likes:
+            card.likes = [voter for voter in likes if voter != participant.id]
             changed_cards.append(card)
     if changed_cards:
         db.commit()
         for card in changed_cards:
             db.refresh(card)
-            out = schemas.CardOut.model_validate(card)
-            await manager.broadcast(board.id, "card_updated", out.model_dump(mode="json"))
+            await broadcast_card(board, "card_updated", card)
     return schemas.BoardVotesResetOut(
         board_id=board.id,
-        username=clean_user,
+        username=participant.name,
         updated_cards=len(changed_cards),
     )

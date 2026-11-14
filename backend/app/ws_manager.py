@@ -3,6 +3,8 @@ import json
 import os
 import time
 from collections import defaultdict
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from fastapi import WebSocket
 
@@ -23,21 +25,38 @@ def assert_single_worker() -> None:
         )
 
 
+@dataclass(frozen=True)
+class Peer:
+    """Участник за сокетом. Личность — `id` из сессии, `name` — только подпись."""
+
+    id: str
+    name: str
+
+
 class ConnectionManager:
-    FACILITATOR_GRACE_SECONDS: float = 5.0
+    # Сколько ведущий может быть не в сети, прежде чем сессия завершится сама.
+    # Запас на перезагрузку страницы, смену сети и рестарт пода.
+    FACILITATOR_GRACE_SECONDS: float = 90.0
+    # Через сколько секунд отсутствия ведущего роль можно забрать, не дожидаясь
+    # завершения сессии: фазы и таймер при этом сохраняются.
+    FACILITATOR_TAKEOVER_SECONDS: float = 15.0
 
     def __init__(self):
         self.rooms: dict[str, list[WebSocket]] = defaultdict(list)
         self.workspace_rooms: dict[str, list[WebSocket]] = defaultdict(list)
-        self.usernames: dict[int, str] = {}  # id(ws) → username
+        self.peers: dict[int, Peer] = {}  # id(ws) → участник
         self.ws_workspaces: dict[int, str] = {}  # id(ws) → workspace_id
-        self.facilitators: dict[str, str] = {}  # board_id → username
+        self.facilitators: dict[str, str] = {}  # board_id → participant_id
+        self.facilitator_names: dict[str, str] = {}  # board_id → имя ведущего
+        self.facilitator_offline_since: dict[str, float] = {}  # board_id → monotonic
         self.phases: dict[str, str] = {}  # board_id → phase
         self.timers: dict[str, dict] = {}  # board_id → timer state
         self.session_ids: dict[str, int] = {}  # board_id → session_id (timestamp)
-        self.ready_users: dict[str, set[str]] = defaultdict(set)  # board_id → set[username]
+        self.ready_users: dict[str, set[str]] = defaultdict(set)  # board_id → {participant_id}
         self.spotlights: dict[str, str] = {}  # board_id → card_id
-        self.typing_users: dict[str, dict[str, str]] = defaultdict(dict)  # board_id → {username: column_id}
+        # board_id → {participant_id: column_id}
+        self.typing_users: dict[str, dict[str, str]] = defaultdict(dict)
+        self.names: dict[str, str] = {}  # participant_id → последнее известное имя
         self.facilitator_grace_tasks: dict[str, asyncio.Task] = {}
         self.on_session_cleared = None  # Optional callback(board_id)
 
@@ -49,23 +68,42 @@ class ConnectionManager:
         self.facilitator_grace_tasks.clear()
         self.rooms.clear()
         self.workspace_rooms.clear()
-        self.usernames.clear()
+        self.peers.clear()
         self.ws_workspaces.clear()
         self.facilitators.clear()
+        self.facilitator_names.clear()
+        self.facilitator_offline_since.clear()
         self.phases.clear()
         self.timers.clear()
         self.session_ids.clear()
         self.ready_users.clear()
         self.spotlights.clear()
         self.typing_users.clear()
+        self.names.clear()
+
+    # ── Подключения ──────────────────────────────────────────────────────────
 
     async def connect(
-        self, board_id: str, ws: WebSocket, workspace_id: str | None = None
-    ):
+        self,
+        board_id: str,
+        ws: WebSocket,
+        workspace_id: str | None = None,
+        peer: Peer | None = None,
+    ) -> bool:
+        """Принять сокет доски. Возвращает True, если участник появился на доске впервые."""
         await ws.accept()
+        first_socket = bool(peer) and not self.is_online(board_id, peer.id)
         self.rooms[board_id].append(ws)
         if workspace_id:
             self.ws_workspaces[id(ws)] = workspace_id
+        if peer:
+            self.peers[id(ws)] = peer
+            self.names[peer.id] = peer.name
+            if self.facilitators.get(board_id) == peer.id:
+                self.cancel_facilitator_grace(board_id)
+                self.facilitator_offline_since.pop(board_id, None)
+                self.facilitator_names[board_id] = peer.name
+        return first_socket
 
     async def connect_workspace(self, workspace_id: str, ws: WebSocket):
         await ws.accept()
@@ -79,6 +117,77 @@ class ConnectionManager:
             self.workspace_rooms.pop(workspace_id, None)
         self.ws_workspaces.pop(id(ws), None)
 
+    def disconnect(self, board_id: str, ws: WebSocket) -> tuple[Peer | None, bool, bool]:
+        """Отключить сокет доски.
+
+        Возвращает (участник, остался ли он на доске в другой вкладке,
+        ушёл ли со всех вкладок действующий ведущий).
+        """
+        if ws in self.rooms[board_id]:
+            self.rooms[board_id].remove(ws)
+        if not self.rooms[board_id]:
+            self.rooms.pop(board_id, None)
+        self.ws_workspaces.pop(id(ws), None)
+        peer = self.peers.pop(id(ws), None)
+        still_present = bool(peer and self.is_online(board_id, peer.id))
+        fac_disconnected = bool(
+            peer and not still_present and self.facilitators.get(board_id) == peer.id
+        )
+        if fac_disconnected:
+            self.facilitator_offline_since[board_id] = time.monotonic()
+        return peer, still_present, fac_disconnected
+
+    def get_peer(self, ws: WebSocket) -> Peer | None:
+        return self.peers.get(id(ws))
+
+    def is_online(self, board_id: str, participant_id: str) -> bool:
+        return any(
+            (peer := self.peers.get(id(ws))) is not None and peer.id == participant_id
+            for ws in self.rooms.get(board_id, [])
+        )
+
+    def get_users(self, board_id: str) -> list[Peer]:
+        """Участники, подключённые к доске, без повторов, в порядке подключения."""
+        seen: set[str] = set()
+        result: list[Peer] = []
+        for ws in self.rooms.get(board_id, []):
+            peer = self.peers.get(id(ws))
+            if peer and peer.id not in seen:
+                seen.add(peer.id)
+                result.append(peer)
+        return result
+
+    def presence_payload(self, board_id: str) -> dict:
+        users = self.get_users(board_id)
+        return {
+            # `users` — имена для простых клиентов; тёзки различаются по `participants`
+            "users": [peer.name for peer in users],
+            "participants": [{"id": peer.id, "name": peer.name} for peer in users],
+        }
+
+    def name_of(self, participant_id: str) -> str:
+        return self.names.get(participant_id, "Участник")
+
+    def rename(self, participant_id: str, name: str) -> list[str]:
+        """Обновить имя участника во всех его сокетах. Возвращает затронутые доски."""
+        self.names[participant_id] = name
+        boards: list[str] = []
+        for board_id, sockets in self.rooms.items():
+            touched = False
+            for ws in sockets:
+                peer = self.peers.get(id(ws))
+                if peer and peer.id == participant_id:
+                    self.peers[id(ws)] = Peer(participant_id, name)
+                    touched = True
+            if self.facilitators.get(board_id) == participant_id:
+                self.facilitator_names[board_id] = name
+                touched = True
+            if touched:
+                boards.append(board_id)
+        return boards
+
+    # ── Ведущий ──────────────────────────────────────────────────────────────
+
     def cancel_facilitator_grace(self, board_id: str):
         task = self.facilitator_grace_tasks.pop(board_id, None)
         if task and not task.done():
@@ -89,16 +198,16 @@ class ConnectionManager:
             if task is not current:
                 task.cancel()
 
-    def schedule_facilitator_grace(self, board_id: str, username: str):
-        """Очистить сессию фасилитатора только если он не переподключился за grace-период."""
+    def schedule_facilitator_grace(self, board_id: str, participant_id: str):
+        """Завершить сессию, только если ведущий не вернулся за grace-период."""
         self.cancel_facilitator_grace(board_id)
+        self.facilitator_offline_since.setdefault(board_id, time.monotonic())
 
         async def _grace_clear():
             try:
                 await asyncio.sleep(self.FACILITATOR_GRACE_SECONDS)
-                if (
-                    self.facilitators.get(board_id) == username
-                    and username not in self.get_users(board_id)
+                if self.facilitators.get(board_id) == participant_id and not self.is_online(
+                    board_id, participant_id
                 ):
                     self.clear_session(board_id)
                     if self.on_session_cleared:
@@ -107,16 +216,12 @@ class ConnectionManager:
                         except Exception:
                             pass
                     await self.broadcast(
-                        board_id,
-                        "facilitator_update",
-                        {"facilitator": None, "phase": None, "session_id": None},
+                        board_id, "facilitator_update", self.facilitator_payload(board_id)
                     )
-                    await self.broadcast(
-                        board_id, "ready_update", {"ready_users": []}
-                    )
-                    await self.broadcast(
-                        board_id, "spotlight_update", {"card_id": None}
-                    )
+                    await self.broadcast(board_id, "ready_update", self.ready_payload(board_id))
+                    await self.broadcast(board_id, "spotlight_update", {"card_id": None})
+                    # Сессия закончилась — видимость карточек могла измениться
+                    await self.broadcast(board_id, "cards_visibility_changed", {})
             except asyncio.CancelledError:
                 return
             finally:
@@ -130,69 +235,12 @@ class ConnectionManager:
             return
         self.facilitator_grace_tasks[board_id] = loop.create_task(_grace_clear())
 
-    def set_username(
-        self, ws: WebSocket, username: str, board_id: str | None = None
-    ):
-        self.usernames[id(ws)] = username
-        if board_id and self.facilitators.get(board_id) == username:
-            self.cancel_facilitator_grace(board_id)
-
-    def get_username(self, ws: WebSocket) -> str | None:
-        return self.usernames.get(id(ws))
-
-    def get_users(self, board_id: str) -> list[str]:
-        """Return unique usernames currently connected to a board."""
-        seen: set[str] = set()
-        result: list[str] = []
-        for ws in self.rooms.get(board_id, []):
-            name = self.usernames.get(id(ws))
-            if name and name not in seen:
-                seen.add(name)
-                result.append(name)
-        return result
-
-    def disconnect(self, board_id: str, ws: WebSocket) -> tuple[str | None, bool, bool]:
-        """Отключить сокет доски.
-
-        Возвращает (username, still_present, is_facilitator_without_tabs).
-        """
-        if ws in self.rooms[board_id]:
-            self.rooms[board_id].remove(ws)
-        if not self.rooms[board_id]:
-            self.rooms.pop(board_id, None)
-        self.ws_workspaces.pop(id(ws), None)
-        username = self.usernames.pop(id(ws), None)
-        still_present = bool(username and username in self.get_users(board_id))
-        fac_disconnected = bool(
-            username
-            and not still_present
-            and self.facilitators.get(board_id) == username
-        )
-        return username, still_present, fac_disconnected
-
-    def set_typing(self, board_id: str, username: str, column_id: str | None) -> bool:
-        """Update active typing column for username; return True if state changed."""
-        board_typing = self.typing_users[board_id]
-        if column_id:
-            if board_typing.get(username) == column_id:
-                return False
-            board_typing[username] = column_id
-            return True
-        if username in board_typing:
-            board_typing.pop(username, None)
-            return True
-        return False
-
-    def get_typing(self, board_id: str) -> list[dict[str, str]]:
-        """Return list of {username, column_id} currently typing on a board."""
-        return [
-            {"username": uname, "column_id": col_id}
-            for uname, col_id in self.typing_users.get(board_id, {}).items()
-        ]
-
-    def set_facilitator(self, board_id: str, username: str) -> tuple[bool, bool]:
+    def set_facilitator(self, board_id: str, peer: Peer) -> tuple[bool, bool]:
+        """Начать сессию: ведущий, фаза «Штурм», новый номер сессии."""
         self.cancel_facilitator_grace(board_id)
-        self.facilitators[board_id] = username
+        self.facilitator_offline_since.pop(board_id, None)
+        self.facilitators[board_id] = peer.id
+        self.facilitator_names[board_id] = peer.name
         self.phases[board_id] = "brainstorm"
         # Generate new session_id when facilitator starts
         self.session_ids[board_id] = int(time.time())
@@ -200,28 +248,71 @@ class ConnectionManager:
         had_spot = bool(self.spotlights.pop(board_id, None))
         return had_ready, had_spot
 
+    def transfer_facilitator(self, board_id: str, peer: Peer) -> None:
+        """Передать роль ведущего, не трогая фазу, таймер и номер сессии."""
+        self.cancel_facilitator_grace(board_id)
+        self.facilitator_offline_since.pop(board_id, None)
+        self.facilitators[board_id] = peer.id
+        self.facilitator_names[board_id] = peer.name
+
+    def can_take_over(self, board_id: str) -> bool:
+        """Можно ли забрать роль: ведущий не в сети дольше порога."""
+        facilitator_id = self.facilitators.get(board_id)
+        if not facilitator_id or self.is_online(board_id, facilitator_id):
+            return False
+        since = self.facilitator_offline_since.get(board_id)
+        return since is not None and time.monotonic() - since >= self.FACILITATOR_TAKEOVER_SECONDS
+
     def hydrate_session(
         self,
         board_id: str,
-        facilitator: str | None,
+        facilitator_id: str | None,
+        facilitator_name: str | None,
         phase: str | None,
         session_id: int | None,
     ):
-        """Восстановить состояние сессии из БД без генерации нового session_id."""
-        if facilitator:
-            self.facilitators[board_id] = facilitator
+        """Восстановить сессию из БД после рестарта без нового session_id.
+
+        Если ведущий так и не подключится, сессия завершится по тому же
+        grace-таймеру, что и при обычном уходе: иначе она зависла бы навсегда.
+        """
+        if not facilitator_id:
+            return
+        self.facilitators[board_id] = facilitator_id
+        self.facilitator_names[board_id] = facilitator_name or "Ведущий"
         if phase:
             self.phases[board_id] = phase
         if session_id is not None:
             self.session_ids[board_id] = session_id
+        if not self.is_online(board_id, facilitator_id):
+            self.schedule_facilitator_grace(board_id, facilitator_id)
 
     def get_facilitator(self, board_id: str) -> str | None:
+        """Идентификатор участника-ведущего."""
         return self.facilitators.get(board_id)
 
-    def clear_facilitator(self, board_id: str):
-        self.cancel_facilitator_grace(board_id)
-        self.facilitators.pop(board_id, None)
-        self.phases.pop(board_id, None)
+    def get_facilitator_name(self, board_id: str) -> str | None:
+        if board_id not in self.facilitators:
+            return None
+        return self.facilitator_names.get(board_id)
+
+    def facilitator_payload(self, board_id: str) -> dict:
+        facilitator_id = self.facilitators.get(board_id)
+        if not facilitator_id:
+            return {
+                "facilitator": None,
+                "facilitator_id": None,
+                "facilitator_online": False,
+                "phase": None,
+                "session_id": None,
+            }
+        return {
+            "facilitator": self.facilitator_names.get(board_id),
+            "facilitator_id": facilitator_id,
+            "facilitator_online": self.is_online(board_id, facilitator_id),
+            "phase": self.phases.get(board_id),
+            "session_id": self.session_ids.get(board_id),
+        }
 
     def set_phase(self, board_id: str, phase: str) -> tuple[bool, bool]:
         self.phases[board_id] = phase
@@ -244,6 +335,8 @@ class ConnectionManager:
         """Clear all session-related state for a board."""
         self.cancel_facilitator_grace(board_id)
         self.facilitators.pop(board_id, None)
+        self.facilitator_names.pop(board_id, None)
+        self.facilitator_offline_since.pop(board_id, None)
         self.phases.pop(board_id, None)
         self.session_ids.pop(board_id, None)
         self.timers.pop(board_id, None)
@@ -251,29 +344,57 @@ class ConnectionManager:
         had_spot = bool(self.spotlights.pop(board_id, None))
         return had_ready, had_spot
 
+    # ── Готовность, набор текста, фокус, таймер ──────────────────────────────
+
     def toggle_ready(
-        self, board_id: str, username: str, ready: bool | None = None
-    ) -> list[str]:
+        self, board_id: str, participant_id: str, ready: bool | None = None
+    ) -> None:
         bucket = self.ready_users[board_id]
         if ready is True:
-            bucket.add(username)
+            bucket.add(participant_id)
         elif ready is False:
-            bucket.discard(username)
-        elif username in bucket:
-            bucket.discard(username)
+            bucket.discard(participant_id)
+        elif participant_id in bucket:
+            bucket.discard(participant_id)
         else:
-            bucket.add(username)
-        return sorted(bucket)
+            bucket.add(participant_id)
 
-    def get_ready_users(self, board_id: str) -> list[str]:
+    def get_ready_ids(self, board_id: str) -> list[str]:
         return sorted(self.ready_users.get(board_id, set()))
 
-    def remove_ready_user(self, board_id: str, username: str) -> bool:
+    def ready_payload(self, board_id: str) -> dict:
+        ids = self.get_ready_ids(board_id)
+        return {
+            "ready_users": sorted(self.name_of(pid) for pid in ids),
+            "ready_ids": ids,
+        }
+
+    def remove_ready_user(self, board_id: str, participant_id: str) -> bool:
         bucket = self.ready_users.get(board_id)
-        if bucket and username in bucket:
-            bucket.discard(username)
+        if bucket and participant_id in bucket:
+            bucket.discard(participant_id)
             return True
         return False
+
+    def set_typing(self, board_id: str, participant_id: str, column_id: str | None) -> bool:
+        """Update active typing column for a participant; return True if state changed."""
+        board_typing = self.typing_users[board_id]
+        if column_id:
+            if board_typing.get(participant_id) == column_id:
+                return False
+            board_typing[participant_id] = column_id
+            return True
+        if participant_id in board_typing:
+            board_typing.pop(participant_id, None)
+            return True
+        return False
+
+    def get_typing(self, board_id: str) -> list[dict[str, str]]:
+        """Кто сейчас набирает карточку и в какой колонке."""
+        return [
+            {"participant_id": pid, "username": self.name_of(pid), "column_id": col_id}
+            for pid, col_id in self.typing_users.get(board_id, {}).items()
+        ]
 
     def set_spotlight(self, board_id: str, card_id: str | None):
         if card_id:
@@ -313,6 +434,8 @@ class ConnectionManager:
     def get_timer(self, board_id: str) -> dict | None:
         return self.timers.get(board_id)
 
+    # ── Рассылка ─────────────────────────────────────────────────────────────
+
     async def broadcast(
         self,
         board_id: str,
@@ -321,30 +444,76 @@ class ConnectionManager:
         exclude: WebSocket | None = None,
     ):
         message = json.dumps({"event": event, "data": data}, default=str)
+        await self._send_to_room(board_id, event, lambda ws: message, exclude)
+
+    async def broadcast_each(
+        self,
+        board_id: str,
+        event: str,
+        build: Callable[[str | None], dict | None],
+        exclude: WebSocket | None = None,
+    ):
+        """Разослать событие, собрав данные отдельно для каждого получателя.
+
+        `build` получает идентификатор участника за сокетом (или None) и
+        возвращает данные для него; None — этому получателю ничего не слать.
+        Нужно там, где разным участникам положено видеть разное: скрытые до
+        раскрытия карточки, анонимные авторы.
+        """
+        cache: dict[str | None, str | None] = {}
+
+        def render(ws: WebSocket) -> str | None:
+            peer = self.peers.get(id(ws))
+            viewer = peer.id if peer else None
+            if viewer not in cache:
+                data = build(viewer)
+                cache[viewer] = (
+                    None
+                    if data is None
+                    else json.dumps({"event": event, "data": data}, default=str)
+                )
+            return cache[viewer]
+
+        await self._send_to_room(board_id, event, render, exclude)
+
+    async def _send_to_room(
+        self,
+        board_id: str,
+        event: str,
+        render: Callable[[WebSocket], str | None],
+        exclude: WebSocket | None,
+    ):
         dead: list[WebSocket] = []
         for ws in list(self.rooms.get(board_id, [])):
             if ws is exclude:
+                continue
+            message = render(ws)
+            if message is None:
                 continue
             try:
                 await ws.send_text(message)
             except Exception:
                 dead.append(ws)
-        left_users: list[str] = []
+        if dead:
+            await self._drop_dead(board_id, dead, event)
+
+    async def _drop_dead(self, board_id: str, dead: list[WebSocket], event: str = "") -> None:
+        left: list[Peer] = []
         for ws in dead:
-            uname, still_present, fac_disconnected = self.disconnect(board_id, ws)
-            if uname and not still_present:
-                left_users.append(uname)
-            if fac_disconnected and uname:
-                self.schedule_facilitator_grace(board_id, uname)
-        if left_users and event not in ("cursor_leave", "presence_update", "typing_update"):
+            peer, still_present, fac_disconnected = self.disconnect(board_id, ws)
+            if peer and not still_present:
+                left.append(peer)
+            if fac_disconnected and peer:
+                self.schedule_facilitator_grace(board_id, peer.id)
+        if left and event not in ("cursor_leave", "presence_update", "typing_update"):
             typing_changed = False
-            for uname in left_users:
-                if self.set_typing(board_id, uname, None):
+            for peer in left:
+                if self.set_typing(board_id, peer.id, None):
                     typing_changed = True
-                await self.broadcast(board_id, "cursor_leave", {"username": uname})
-            await self.broadcast(
-                board_id, "presence_update", {"users": self.get_users(board_id)}
-            )
+                await self.broadcast(
+                    board_id, "cursor_leave", {"participant_id": peer.id, "username": peer.name}
+                )
+            await self.broadcast(board_id, "presence_update", self.presence_payload(board_id))
             if typing_changed:
                 await self.broadcast(
                     board_id, "typing_update", {"typing": self.get_typing(board_id)}
@@ -368,7 +537,7 @@ class ConnectionManager:
         for ws in dead_ws_sockets:
             self.disconnect_workspace(workspace_id, ws)
 
-        dead_board_sockets: list[tuple[str, WebSocket]] = []
+        dead_by_board: dict[str, list[WebSocket]] = defaultdict(list)
         for b_id, sockets in list(self.rooms.items()):
             for ws in list(sockets):
                 if self.ws_workspaces.get(id(ws)) != workspace_id:
@@ -376,29 +545,10 @@ class ConnectionManager:
                 try:
                     await ws.send_text(message)
                 except Exception:
-                    dead_board_sockets.append((b_id, ws))
+                    dead_by_board[b_id].append(ws)
 
-        if dead_board_sockets:
-            by_board: dict[str, list[str]] = defaultdict(list)
-            for b_id, ws in dead_board_sockets:
-                uname, still_present, fac_disconnected = self.disconnect(b_id, ws)
-                if uname and not still_present:
-                    by_board[b_id].append(uname)
-                if fac_disconnected and uname:
-                    self.schedule_facilitator_grace(b_id, uname)
-            for b_id, users in by_board.items():
-                typing_changed = False
-                for uname in users:
-                    if self.set_typing(b_id, uname, None):
-                        typing_changed = True
-                    await self.broadcast(b_id, "cursor_leave", {"username": uname})
-                await self.broadcast(
-                    b_id, "presence_update", {"users": self.get_users(b_id)}
-                )
-                if typing_changed:
-                    await self.broadcast(
-                        b_id, "typing_update", {"typing": self.get_typing(b_id)}
-                    )
+        for b_id, dead in dead_by_board.items():
+            await self._drop_dead(b_id, dead)
 
 
 manager = ConnectionManager()

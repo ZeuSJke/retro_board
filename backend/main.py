@@ -98,7 +98,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if (
             request.url.path.startswith("/ws/")
             or request.url.path == "/api/admin/login"
-            or request.url.path in ("/health", "/api/health", "/api/workspaces/login")
+            or request.url.path
+            in ("/health", "/api/health", "/api/workspaces/login", "/api/workspaces/join")
         ):
             return await call_next(request)
 

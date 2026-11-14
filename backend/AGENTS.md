@@ -24,7 +24,10 @@ TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::te
 
 ## Модели, soft delete и миграции
 
-- **Иерархия** (`app/models.py`): `Workspace` → `Board` → `Column` → `CardGroup` / `Card`, плюс `ActionItem`, `BoardSummary`, `BoardMood`.
+- **Иерархия** (`app/models.py`): `Workspace` → `Board` → `Column` → `CardGroup` / `Card`, плюс `ActionItem`, `BoardSummary`, `BoardMood` и `Participant` (участник команды).
+- **Участник и личность**: вход создаёт `Participant`, его `id` лежит в токене сессии. Автора, голосующего, владельца оценки и ведущего берите только из `Depends(get_current_participant)` (в WebSocket — из `manager.get_peer(ws)`), **никогда из тела запроса или сообщения клиента**. Имя участника — подпись: `Card.author` и `BoardMood.author` хранят его снимок, личность — в `author_id` / `participant_id` (у данных, созданных до участников, они пустые). `Card.likes` — идентификаторы участников, по одному на голос.
+- **Вид для получателя** (`app/board_view.py`): карточки, доску и настроение отдавайте через `card_view` / `board_view` / `mood_view`, события о карточках — через `broadcast_card` (`manager.broadcast_each`). Они скрывают текст и автора чужих карточек, пока `cards_hidden(board)`, и имена в анонимном режиме. Не сериализуйте ORM-карточку напрямую и не кладите карточки в общие события (`column_updated` несёт только свойства колонки). Эндпоинты, читающие тексты всех карточек (AI), начинайте с `require_cards_visible(board)`.
+- **Права**: текст карточки правит автор (`can_edit_card_text`), удаляет автор или модератор (`can_delete_card`); доску и колонку с карточками удаляет модератор (`require_moderator`) — создатель доски или ведущий активной сессии; у досок без создателя (до участников) — любой.
 - **Soft delete и блокировка доски**: доски удаляются через `Board.deleted_at`. Во всех хендлерах досок и дочерних сущностей используйте `require_live_board()` и `require_unlocked_board()` из `app/utils.py` (`tests/test_audit_guards.py` проверяет `404` для удалённых досок и disambiguation slug, `tests/test_v3_features.py` — `423` для заблокированных досок).
 - **Уникальность**: у `Board` составные ограничения `uq_board_workspace_name` и `uq_board_workspace_slug`; коллизия slug при разных именах должна разрешаться суффиксом, а не 500.
 - **Драйвер PostgreSQL** — psycopg 3. `DATABASE_URL` в окружениях задан как `postgresql://…`; драйвер подставляет `settings.sqlalchemy_database_url` — в движке и в `alembic/env.py` используйте его, а не `settings.database_url`.
@@ -32,6 +35,7 @@ TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::te
 
 ## Auth, CSRF, Rate Limiting и WebSocket
 
+- **Сессия**: JWT содержит `pid` (участник) и `epoch` (поколение токенов команды); `resolve_session` отвечает 401 на токен без участника, чужого участника и устаревшее поколение. Смена ключа доступа увеличивает `Workspace.token_epoch` и перевыпускает ссылку-приглашение — так отзывается доступ. `GET /api/workspaces/me` продлевает сессию.
 - **Auth**: workspace JWT (`app/workspace_auth.py`, библиотека PyJWT, HS256) принимается из `X-Workspace-Token` или `httpOnly` cookie `workspace_token`; `/api/admin/*` использует отдельную cookie `admin_token`.
 - **CSRF** (`CSRFMiddleware` в `main.py`): небезопасные методы (кроме `/ws/*`, `/api/admin/login`, `/api/workspaces/login`, `/health`, `/api/health`) проверяют совпадение cookie `csrf_token` и `X-CSRF-Token`. Отключается только при `CSRF_ENABLED=false`; для HTTP используйте `SECURE_COOKIES=false`.
 - **Rate Limiting** (`app/limiter.py`): `slowapi` включён всегда, кроме `TESTING=true` (логика лимитов тестируется в `tests/test_rate_limiting.py`). Квоты считаются по IP, а команда обычно сидит за одним адресом, поэтому для совместной работы с доской используйте `TEAM_WRITE_LIMIT` / `TEAM_READ_LIMIT`; строгие собственные лимиты — только для редких действий, входа и запросов к AI.
@@ -40,7 +44,8 @@ TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::te
   - эндпоинты `/ws/{board_id}` и `/ws/workspace`;
   - `_authenticate_ws` проверяет `Origin` по `CORS_ORIGINS` и JWT (`workspace_token` cookie в приоритете, query-параметр только для совместимости);
   - `assert_single_worker()` вызывается только в `lifespan` (не на уровне импорта);
-  - рассылка событий — `await manager.broadcast(board_id, "event_name", data_dict)`. В `finally` grace-таймер фасилитатора планируется синхронно до любых `await`;
+  - личность сокета — `Peer(id, name)` участника из сессии, фиксируется при подключении; `identify` её не меняет. Ведущий хранится по `participant_id`: роль переживает переподключение, передаётся (`facilitator_transfer`) и перехватывается у пропавшего ведущего (`facilitator_takeover`, порог `FACILITATOR_TAKEOVER_SECONDS`); сессия без ведущего завершается через `FACILITATOR_GRACE_SECONDS`, в том числе восстановленная из БД после рестарта;
+  - рассылка событий — `await manager.broadcast(board_id, "event_name", data_dict)`; если разным получателям положены разные данные — `manager.broadcast_each`. В `finally` grace-таймер фасилитатора планируется синхронно до любых `await`;
   - всё, что прислал клиент, недоверенное: новые входящие события очищайте функцией из `app/ws_payloads.py` и рассылайте/сохраняйте в `ConnectionManager` только очищенный словарь с известными полями, а не исходный `data`.
 
 ## AI-интеграция (`app/ai/`)

@@ -8,7 +8,8 @@ from app import models, schemas
 from app.utils import get_or_404, require_unlocked_board
 from app.ws_manager import manager
 from app.limiter import limiter
-from app.workspace_auth import get_current_workspace
+from app.board_view import require_moderator
+from app.workspace_auth import get_current_participant, get_current_workspace
 
 router = APIRouter()
 
@@ -39,12 +40,13 @@ async def create_column(
     db.add(col)
     db.commit()
     db.refresh(col)
-    out = schemas.ColumnOut.model_validate(col)
-    await manager.broadcast(body.board_id, "column_created", out.model_dump())
-    return out
+    info = schemas.ColumnInfo.model_validate(col)
+    await manager.broadcast(body.board_id, "column_created", info.model_dump())
+    # Новая колонка пуста: отдаём её с пустыми списками карточек и групп
+    return schemas.ColumnOut(**info.model_dump(), cards=[], groups=[])
 
 
-@router.patch("/{column_id}", response_model=schemas.ColumnOut)
+@router.patch("/{column_id}", response_model=schemas.ColumnInfo)
 @limiter.limit("30/minute")
 async def update_column(
     request: Request,
@@ -71,7 +73,9 @@ async def update_column(
             c.position = i
     db.commit()
     db.refresh(col)
-    out = schemas.ColumnOut.model_validate(col)
+    # Только свойства колонки: карточки приходят своими событиями и собираются
+    # отдельно для каждого получателя, целиком их сюда класть нельзя.
+    out = schemas.ColumnInfo.model_validate(col)
     await manager.broadcast(col.board_id, "column_updated", out.model_dump())
     return out
 
@@ -83,9 +87,17 @@ async def delete_column(
     column_id: str,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     col = get_or_404(db, models.Column, column_id, "Column not found")
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
+    board = require_unlocked_board(
+        db.get(models.Board, col.board_id), workspace.id, "Column not found"
+    )
+    # Удаление колонки стирает все её карточки — это действие создателя доски или ведущего
+    if col.cards:
+        require_moderator(
+            board, participant, "Удалить колонку с карточками может создатель доски или ведущий"
+        )
     board_id = col.board_id
     db.delete(col)
     db.commit()

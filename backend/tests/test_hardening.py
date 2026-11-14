@@ -123,8 +123,7 @@ class TestWebSocketHardening:
             with _ws(client, ws_token) as ws2:
                 # Новое подключение открывается и получает начальное состояние
                 assert _recv(ws2, "facilitator_update")["data"]["facilitator"] is None
-                _send(ws2, "identify", {"username": "Bob"})
-                assert "Bob" in _recv(ws2, "presence_update")["data"]["users"]
+                assert _recv(ws2, "presence_update")["data"]["users"] == ["Tester"]
 
     def test_nan_timer_is_ignored(self, client, ws_token):
         from app.ws_manager import manager
@@ -145,12 +144,12 @@ class TestWebSocketHardening:
     def test_huge_number_does_not_log_errors(self, client, ws_token, caplog):
         """Мусорное число отбрасывается проверкой, а не общим перехватом с трассировкой."""
         with _ws(client, ws_token) as ws1, _ws(client, ws_token) as ws2:
-            _send(ws1, "identify", {"username": "Alice"})
             _recv(ws2, "presence_update")
             with caplog.at_level("ERROR", logger="app.routers.websocket"):
-                ws1.send_text('{"event": "cursor_move", "data": {"username": "Alice", "x": ' + "9" * 3000 + ', "y": 1}}')
-                _send(ws1, "cursor_move", {"username": "Alice", "x": 5, "y": 6})
-                assert _recv(ws2, "cursor_move")["data"] == {"username": "Alice", "x": 5, "y": 6}
+                ws1.send_text('{"event": "cursor_move", "data": {"x": ' + "9" * 3000 + ', "y": 1}}')
+                _send(ws1, "cursor_move", {"x": 5, "y": 6})
+                moved = _recv(ws2, "cursor_move")["data"]
+                assert (moved["username"], moved["x"], moved["y"]) == ("Tester", 5, 6)
             assert not [r for r in caplog.records if r.levelname == "ERROR"]
 
     def test_handler_failure_keeps_connection(self, client, ws_token):
@@ -158,7 +157,6 @@ class TestWebSocketHardening:
         from app.ws_manager import manager
 
         with _ws(client, ws_token) as ws:
-            _send(ws, "identify", {"username": "Alice"})
             _recv(ws, "presence_update")
             with patch.object(manager, "toggle_ready", side_effect=RuntimeError("сбой")):
                 _send(ws, "ready_toggle", {"ready": True})
@@ -190,8 +188,8 @@ class TestWebSocketHardening:
         """data не-словарь раньше обрывал соединение отправителя."""
         with _ws(client, ws_token) as ws:
             ws.send_text(raw)
-            _send(ws, "identify", {"username": "Alice"})
-            assert _recv(ws, "presence_update")["data"]["users"] == ["Alice"]
+            _send(ws, "group_collapse", {"group_id": "g1", "collapsed": True})
+            assert _recv(ws, "group_collapse")["data"] == {"group_id": "g1", "collapsed": True}
 
     def test_oversized_message_is_ignored(self, client, ws_token):
         with _ws(client, ws_token) as ws:
@@ -206,31 +204,22 @@ class TestWebSocketHardening:
             assert _recv(ws2, "group_collapse")["data"] == {"group_id": "g1", "collapsed": True}
 
             _send(ws1, "cursor_move", {"username": "Alice", "x": 10, "y": 20, "junk": "мусор"})
-            assert _recv(ws2, "cursor_move")["data"] == {"username": "Alice", "x": 10, "y": 20}
+            moved = _recv(ws2, "cursor_move")["data"]
+            # Имя и идентификатор — из сессии отправителя, а не из сообщения
+            assert sorted(moved) == ["participant_id", "username", "x", "y"]
+            assert (moved["username"], moved["x"], moved["y"]) == ("Tester", 10, 20)
 
             _send(ws1, "timer_start", {"duration": 300, "remaining": 300, "junk": "мусор"})
             assert _recv(ws2, "timer_start")["data"] == {"duration": 300, "remaining": 300}
 
-    def test_cursor_leave_uses_sender_name(self, client, ws_token):
-        """Нельзя убрать чужой курсор, прислав чужое имя."""
-        with _ws(client, ws_token) as ws1, _ws(client, ws_token) as ws2:
-            _send(ws1, "identify", {"username": "Alice"})
+    def test_cursor_leave_uses_sender_identity(self, client, ws_token_for):
+        """Нельзя убрать чужой курсор, прислав чужое имя: личность берётся из сессии."""
+        with _ws(client, ws_token_for("Alice")) as ws1, _ws(client, ws_token_for("Bob")) as ws2:
             _recv(ws2, "presence_update")
             _send(ws1, "cursor_leave", {"username": "Bob"})
-            assert _recv(ws2, "cursor_leave")["data"] == {"username": "Alice"}
-
-    def test_anonymous_socket_cannot_remove_cursor(self, client, ws_token):
-        """Сокет, который не представился, не может «увести» чужой курсор."""
-        with _ws(client, ws_token) as ws1, _ws(client, ws_token) as ws2:
-            _send(ws1, "cursor_leave", {"username": "Alice"})
-            _send(ws1, "group_collapse", {"group_id": "маркер", "collapsed": True})
-            seen = []
-            while True:
-                msg = ws2.receive_json()
-                seen.append(msg["event"])
-                if msg["event"] == "group_collapse":
-                    break
-            assert "cursor_leave" not in seen
+            left = _recv(ws2, "cursor_leave")["data"]
+            assert left["username"] == "Alice"
+            assert left["participant_id"]
 
 
 class TestSummaryGenerationGuard:
@@ -736,8 +725,10 @@ class TestConnectionReleasedDuringAI:
         from app.ws_manager import manager
         from tests.conftest import TestSessionLocal
 
+        from app.ws_manager import Peer
+
         board_id = sample_board["id"]
-        manager.set_facilitator(board_id, "Ведущий")
+        manager.set_facilitator(board_id, Peer("p-fac", "Ведущий"))
         seen = []
 
         def fake_summary(board_data):
@@ -748,7 +739,7 @@ class TestConnectionReleasedDuringAI:
             patch("app.database.SessionLocal", TestSessionLocal),
             patch.object(boards, "generate_summary", fake_summary),
         ):
-            result = boards._generate_summary_internal(board_id, "Ведущий", "test-workspace-id")
+            result = boards._generate_summary_internal(board_id, "p-fac", "test-workspace-id")
 
         assert seen == [0]
         assert result is not None

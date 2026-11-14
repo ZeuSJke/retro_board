@@ -1,13 +1,22 @@
-"""Tests for WebSocket /ws/{board_id} endpoint."""
+"""Tests for WebSocket /ws/{board_id} endpoint.
+
+Личность сокета сервер берёт из токена сессии, поэтому разные люди в тестах —
+это разные токены (`ws_token_for("Имя")`), а не разные имена в сообщениях.
+"""
 
 import json
+import time
+from contextlib import contextmanager
 
 import pytest
+
+from app.config import settings
+from app.ws_manager import manager
 
 TEST_ORIGIN = "http://localhost:3000"
 
 
-def recv_event(ws, target_event: str, max_messages: int = 10):
+def recv_event(ws, target_event: str, max_messages: int = 15):
     """Receive messages until we get one with the target event, skipping others."""
     for _ in range(max_messages):
         msg = ws.receive_json()
@@ -18,459 +27,552 @@ def recv_event(ws, target_event: str, max_messages: int = 10):
     )
 
 
-class TestWebSocketConnect:
-    def test_connect_and_receive(self, client, ws_token):
-        with client.websocket_connect(
-            f"/ws/test-board?workspace_token={ws_token}",
-            headers={"origin": TEST_ORIGIN},
-        ) as ws:
+def send(ws, event: str, data: dict | None = None) -> None:
+    ws.send_text(json.dumps({"event": event, "data": data or {}}))
+
+
+@contextmanager
+def connect(client, board_id: str, token: str, drain: bool = True):
+    """Подключиться к доске.
+
+    При подключении сервер шлёт начальное состояние и завершает его рассылкой
+    presence_update. По умолчанию эти сообщения пропускаются, чтобы тест не
+    принял стартовое состояние за ответ на своё действие; `drain=False` — для
+    тестов, которые проверяют само начальное состояние.
+    """
+    with client.websocket_connect(
+        f"/ws/{board_id}?workspace_token={token}", headers={"origin": TEST_ORIGIN}
+    ) as ws:
+        if drain:
+            recv_event(ws, "presence_update")
+        yield ws
+
+
+def events_until(ws, marker_event: str, max_messages: int = 20) -> list[str]:
+    """Имена событий, полученных до события-маркера включительно."""
+    seen: list[str] = []
+    for _ in range(max_messages):
+        msg = ws.receive_json()
+        seen.append(msg["event"])
+        if msg["event"] == marker_event:
+            return seen
+    raise AssertionError(f"Marker '{marker_event}' not received: {seen}")
+
+
+def expect_rejected(connect_fn) -> int | None:
+    try:
+        with connect_fn():
+            pass
+    except Exception as exc:  # noqa: BLE001 — TestClient бросает исключение с кодом закрытия
+        return getattr(exc, "code", None)
+    pytest.fail("Expected WebSocket to be rejected")
+
+
+class TestConnect:
+    def test_connect_and_ping(self, client, ws_token):
+        with connect(client, "test-board", ws_token) as ws:
             ws.send_text("ping")
 
+    def test_facilitator_update_is_first_message(self, client, ws_token):
+        with connect(client, "board-init", ws_token, drain=False) as ws:
+            msg = ws.receive_json()
+            assert msg["event"] == "facilitator_update"
+            assert msg["data"]["facilitator"] is None
+            assert msg["data"]["facilitator_id"] is None
+            assert msg["data"]["phase"] is None
 
-class TestWebSocketCursorMove:
-    def test_cursor_broadcast_to_others(self, client, ws_token):
-        """cursor_move should be broadcast to other clients, not the sender."""
-        url = f"/ws/board-1?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "cursor_move",
-                            "data": {"username": "Alice", "x": 100, "y": 200},
-                        }
-                    )
-                )
+    def test_presence_is_announced_on_connect(self, client, ws_token_for):
+        """Участник известен с момента подключения — отдельное «представление» не нужно."""
+        with connect(client, "board-presence", ws_token_for("Alice"), drain=False) as ws1:
+            first = recv_event(ws1, "presence_update")["data"]
+            assert first["users"] == ["Alice"]
+            with connect(client, "board-presence", ws_token_for("Bob")):
+                second = recv_event(ws1, "presence_update")["data"]
+                assert second["users"] == ["Alice", "Bob"]
+                assert [p["name"] for p in second["participants"]] == ["Alice", "Bob"]
+                assert len({p["id"] for p in second["participants"]}) == 2
 
+    def test_two_tabs_are_one_participant(self, client, ws_token_for):
+        token = ws_token_for("Alice")
+        with connect(client, "board-tabs", token, drain=False) as tab1, connect(client, "board-tabs", token):
+            recv_event(tab1, "presence_update")
+            assert recv_event(tab1, "presence_update")["data"]["users"] == ["Alice"]
+
+    def test_namesakes_are_different_participants(self, client, ws_token_for):
+        with connect(client, "board-names", ws_token_for("Саша"), drain=False) as ws1:
+            recv_event(ws1, "presence_update")
+            with connect(client, "board-names", ws_token_for("Саша")):
+                presence = recv_event(ws1, "presence_update")["data"]
+                assert presence["users"] == ["Саша", "Саша"]
+                assert len({p["id"] for p in presence["participants"]}) == 2
+
+
+class TestIdentityComesFromSession:
+    def test_identify_cannot_change_name(self, client, ws_token_for):
+        with connect(client, "board-id", ws_token_for("Mallory"), drain=False) as ws:
+            recv_event(ws, "presence_update")
+            send(ws, "identify", {"username": "Alice"})
+            assert recv_event(ws, "presence_update")["data"]["users"] == ["Mallory"]
+
+    def test_cursor_carries_session_identity(self, client, ws_token_for):
+        with connect(client, "board-id2", ws_token_for("Mallory")) as ws1:
+            with connect(client, "board-id2", ws_token_for("Bob")) as ws2:
+                send(ws1, "cursor_move", {"username": "Alice", "x": 100, "y": 200})
+                moved = recv_event(ws2, "cursor_move")["data"]
+                assert moved["username"] == "Mallory"
+                assert (moved["x"], moved["y"]) == (100, 200)
+
+    def test_facilitator_role_cannot_be_hijacked_by_name(self, client, ws_token_for):
+        """Раньше второй сокет, назвавшись именем ведущего, менял фазу и завершал сессию."""
+        board = "board-hijack"
+        with connect(client, board, ws_token_for("Alice")) as ws_fac:
+            # Тёзка ведущего и участник, «представившийся» его именем
+            with connect(client, board, ws_token_for("Alice")) as ws_twin:
+                send(ws_fac, "facilitator_start")
+                started = recv_event(ws_twin, "facilitator_update")["data"]
+                assert started["facilitator"] == "Alice"
+
+                send(ws_twin, "identify", {"username": "Alice"})
+                send(ws_twin, "phase_change", {"phase": "summary"})
+                send(ws_twin, "facilitator_stop", {"lock_board": True})
+                send(ws_twin, "timer_start", {"duration": 60, "remaining": 60})
+                send(ws_twin, "group_collapse", {"group_id": "маркер", "collapsed": True})
+
+                seen = events_until(ws_fac, "group_collapse")
+                assert "phase_update" not in seen
+                assert "timer_start" not in seen
+                assert manager.get_facilitator(board) == started["facilitator_id"]
+                assert manager.get_phase(board) == "brainstorm"
+
+
+class TestCursor:
+    def test_cursor_broadcast_to_others_not_sender(self, client, ws_token_for):
+        with connect(client, "board-1", ws_token_for("Alice")) as ws1:
+            with connect(client, "board-1", ws_token_for("Bob")) as ws2:
+                send(ws1, "cursor_move", {"x": 100, "y": 200})
                 msg = recv_event(ws2, "cursor_move")
                 assert msg["data"]["username"] == "Alice"
                 assert msg["data"]["x"] == 100
+                send(ws1, "group_collapse", {"group_id": "маркер", "collapsed": True})
+                assert "cursor_move" not in events_until(ws1, "group_collapse")
 
-
-class TestWebSocketCursorLeave:
-    def test_cursor_leave_on_disconnect(self, client, ws_token):
-        """When a client disconnects, cursor_leave is broadcast for their username."""
-        url = f"/ws/board-2?workspace_token={ws_token}"
-        with client.websocket_connect(
-            url, headers={"origin": TEST_ORIGIN}
-        ) as ws_listener:
-            with client.websocket_connect(
-                url, headers={"origin": TEST_ORIGIN}
-            ) as ws_leaver:
-                ws_leaver.send_text(
-                    json.dumps(
-                        {
-                            "event": "cursor_move",
-                            "data": {"username": "Bob", "x": 0, "y": 0},
-                        }
-                    )
-                )
+    def test_cursor_leave_on_disconnect(self, client, ws_token_for):
+        with connect(client, "board-2", ws_token_for("Listener")) as ws_listener:
+            with connect(client, "board-2", ws_token_for("Bob")) as ws_leaver:
+                send(ws_leaver, "cursor_move", {"x": 0, "y": 0})
                 recv_event(ws_listener, "cursor_move")
 
             msg = recv_event(ws_listener, "cursor_leave")
             assert msg["data"]["username"] == "Bob"
+            assert msg["data"]["participant_id"]
 
-
-class TestWebSocketPresence:
-    def test_presence_update_on_join(self, client, ws_token):
-        """presence_update should be broadcast when a user first sends cursor_move."""
-        url = f"/ws/board-presence?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "cursor_move",
-                            "data": {"username": "Alice", "x": 0, "y": 0},
-                        }
-                    )
-                )
-
-                msg = recv_event(ws2, "presence_update")
-                assert "Alice" in msg["data"]["users"]
-
-    def test_presence_update_on_leave(self, client, ws_token):
-        """presence_update should be broadcast when a user disconnects."""
-        url = f"/ws/board-presence2?workspace_token={ws_token}"
-        with client.websocket_connect(
-            url, headers={"origin": TEST_ORIGIN}
-        ) as ws_listener:
-            with client.websocket_connect(
-                url, headers={"origin": TEST_ORIGIN}
-            ) as ws_leaver:
-                ws_leaver.send_text(
-                    json.dumps(
-                        {
-                            "event": "cursor_move",
-                            "data": {"username": "Charlie", "x": 0, "y": 0},
-                        }
-                    )
-                )
-                recv_event(ws_listener, "presence_update")
+    def test_presence_update_on_leave(self, client, ws_token_for):
+        with connect(client, "board-presence2", ws_token_for("Listener")) as ws_listener:
+            with connect(client, "board-presence2", ws_token_for("Charlie")):
+                assert "Charlie" in recv_event(ws_listener, "presence_update")["data"]["users"]
 
             msg = recv_event(ws_listener, "presence_update")
-            assert "Charlie" not in msg["data"]["users"]
+            assert msg["data"]["users"] == ["Listener"]
 
 
-class TestWebSocketFacilitator:
-    def test_facilitator_start(self, client, ws_token):
-        """facilitator_start should set facilitator and broadcast."""
-        url = f"/ws/board-fac?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "cursor_move",
-                            "data": {"username": "Facilitator", "x": 0, "y": 0},
-                        }
-                    )
-                )
-                recv_event(ws2, "cursor_move")
-
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "facilitator_start",
-                            "data": {},
-                        }
-                    )
-                )
-
+class TestFacilitator:
+    def test_start_stop_and_phase(self, client, ws_token_for):
+        board = "board-fac"
+        with connect(client, board, ws_token_for("Leader")) as ws1:
+            with connect(client, board, ws_token_for("Member")) as ws2:
+                send(ws1, "facilitator_start")
                 msg = recv_event(ws2, "facilitator_update")
-                assert msg["data"]["facilitator"] == "Facilitator"
+                assert msg["data"]["facilitator"] == "Leader"
+                assert msg["data"]["facilitator_id"]
+                assert msg["data"]["facilitator_online"] is True
                 assert msg["data"]["phase"] == "brainstorm"
 
-    def test_facilitator_stop(self, client, ws_token):
-        """facilitator_stop should clear facilitator and broadcast."""
-        url = f"/ws/board-fac2?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "cursor_move",
-                            "data": {"username": "Leader", "x": 0, "y": 0},
-                        }
-                    )
-                )
-                recv_event(ws2, "cursor_move")
+                send(ws1, "phase_change", {"phase": "vote"})
+                assert recv_event(ws2, "phase_update")["data"]["phase"] == "vote"
 
-                ws1.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
-                recv_event(ws2, "facilitator_update")
-
-                ws1.send_text(json.dumps({"event": "facilitator_stop", "data": {}}))
+                send(ws1, "facilitator_stop")
                 msg = recv_event(ws2, "facilitator_update")
                 assert msg["data"]["facilitator"] is None
                 assert msg["data"]["phase"] is None
 
-    def test_phase_change(self, client, ws_token):
-        """phase_change should update phase and broadcast."""
-        url = f"/ws/board-fac3?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "cursor_move",
-                            "data": {"username": "Boss", "x": 0, "y": 0},
-                        }
-                    )
-                )
-                recv_event(ws2, "cursor_move")
+    def test_second_start_is_ignored(self, client, ws_token_for):
+        board = "board-fac-second"
+        with connect(client, board, ws_token_for("Leader")) as ws1:
+            with connect(client, board, ws_token_for("Member")) as ws2:
+                send(ws1, "facilitator_start")
+                leader_id = recv_event(ws2, "facilitator_update")["data"]["facilitator_id"]
+                send(ws2, "facilitator_start")
+                send(ws2, "group_collapse", {"group_id": "маркер", "collapsed": True})
+                events_until(ws1, "group_collapse")
+                assert manager.get_facilitator(board) == leader_id
 
-                ws1.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
+    def test_invalid_phase_is_ignored(self, client, ws_token):
+        with connect(client, "board-fac-phase", ws_token) as ws:
+            send(ws, "facilitator_start")
+            recv_event(ws, "facilitator_update")
+            send(ws, "phase_change", {"phase": "не-фаза"})
+            send(ws, "phase_change", {"phase": ["vote"]})
+            send(ws, "group_collapse", {"group_id": "маркер", "collapsed": True})
+            assert "phase_update" not in events_until(ws, "group_collapse")
+
+    def test_rename_via_rest_updates_facilitator_and_presence(
+        self, client, ws_board, ws_token_for
+    ):
+        """Смена имени идёт через REST и не отнимает роль ведущего."""
+        token = ws_token_for("Bob")
+        with connect(client, ws_board.id, token) as ws_fac:
+            with connect(client, ws_board.id, ws_token_for("Other")) as ws_other:
+                send(ws_fac, "facilitator_start")
+                started = recv_event(ws_other, "facilitator_update")["data"]
+                assert started["facilitator"] == "Bob"
+
+                resp = client.patch(
+                    "/api/workspaces/me/participant",
+                    json={"name": "Robert"},
+                    headers={"X-Workspace-Token": token},
+                )
+                assert resp.status_code == 200
+                assert resp.json()["name"] == "Robert"
+
+                renamed = recv_event(ws_other, "participant_renamed")["data"]
+                assert renamed == {"participant_id": started["facilitator_id"], "name": "Robert"}
+                assert "Robert" in recv_event(ws_other, "presence_update")["data"]["users"]
+                fac = recv_event(ws_other, "facilitator_update")["data"]
+                assert fac["facilitator"] == "Robert"
+                assert fac["facilitator_id"] == started["facilitator_id"]
+
+
+class TestFacilitatorHandover:
+    def test_transfer_to_online_participant(self, client, ws_token_for):
+        board = "board-transfer"
+        with connect(client, board, ws_token_for("Leader")) as ws1:
+            with connect(client, board, ws_token_for("Member")) as ws2:
+                presence = recv_event(ws1, "presence_update")
+                member_id = next(
+                    p["id"] for p in presence["data"]["participants"] if p["name"] == "Member"
+                )
+                send(ws1, "facilitator_start")
                 recv_event(ws2, "facilitator_update")
+                send(ws1, "phase_change", {"phase": "discuss"})
+                recv_event(ws1, "phase_update")
+                recv_event(ws2, "phase_update")
 
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "phase_change",
-                            "data": {"phase": "vote"},
-                        }
-                    )
-                )
-                msg = recv_event(ws2, "phase_update")
-                assert msg["data"]["phase"] == "vote"
+                send(ws1, "facilitator_transfer", {"participant_id": member_id})
+                handed = recv_event(ws2, "facilitator_update")["data"]
+                assert handed["facilitator"] == "Member"
+                assert handed["facilitator_id"] == member_id
+                # Фаза и сессия сохраняются
+                assert handed["phase"] == "discuss"
+
+                # Прежний ведущий больше не управляет, новый — управляет
+                send(ws1, "phase_change", {"phase": "vote"})
+                send(ws2, "phase_change", {"phase": "summary"})
+                assert recv_event(ws1, "phase_update")["data"]["phase"] == "summary"
+
+    def test_transfer_to_unknown_participant_is_ignored(self, client, ws_token):
+        board = "board-transfer-bad"
+        with connect(client, board, ws_token) as ws:
+            send(ws, "facilitator_start")
+            me = recv_event(ws, "facilitator_update")["data"]["facilitator_id"]
+            send(ws, "facilitator_transfer", {"participant_id": "нет-такого"})
+            send(ws, "facilitator_transfer", {"participant_id": me})
+            send(ws, "group_collapse", {"group_id": "маркер", "collapsed": True})
+            events_until(ws, "group_collapse")
+            assert manager.get_facilitator(board) == me
+
+    def test_takeover_only_when_facilitator_is_gone(self, client, ws_token_for, monkeypatch):
+        board = "board-takeover"
+        monkeypatch.setattr(manager, "FACILITATOR_TAKEOVER_SECONDS", 0.05)
+        with connect(client, board, ws_token_for("Member")) as ws_member:
+            with connect(client, board, ws_token_for("Leader")) as ws_leader:
+                send(ws_leader, "facilitator_start")
+                leader_id = recv_event(ws_member, "facilitator_update")["data"]["facilitator_id"]
+                send(ws_leader, "phase_change", {"phase": "vote"})
+                recv_event(ws_member, "phase_update")
+
+                # Пока ведущий на доске, роль забрать нельзя
+                send(ws_member, "facilitator_takeover")
+                send(ws_member, "group_collapse", {"group_id": "маркер", "collapsed": True})
+                events_until(ws_member, "group_collapse")
+                assert manager.get_facilitator(board) == leader_id
+
+            # Ведущий ушёл: остальные видят, что он не в сети
+            offline = recv_event(ws_member, "facilitator_update")["data"]
+            assert offline["facilitator_id"] == leader_id
+            assert offline["facilitator_online"] is False
+
+            time.sleep(0.1)
+            send(ws_member, "facilitator_takeover")
+            taken = recv_event(ws_member, "facilitator_update")["data"]
+            assert taken["facilitator"] == "Member"
+            assert taken["facilitator_online"] is True
+            # Сессия не начинается заново
+            assert taken["phase"] == "vote"
+
+    def test_grace_period_preserves_session_on_reconnect(self, client, ws_token_for, monkeypatch):
+        monkeypatch.setattr(manager, "FACILITATOR_GRACE_SECONDS", 0.2)
+        board = "board-grace"
+        leader = ws_token_for("Alice")
+        with connect(client, board, ws_token_for("Other")) as ws_other:
+            with connect(client, board, leader) as ws_fac:
+                send(ws_fac, "facilitator_start")
+                leader_id = recv_event(ws_other, "facilitator_update")["data"]["facilitator_id"]
+
+            # Ведущий отключился (F5): сессия ещё жива
+            assert manager.get_facilitator(board) == leader_id
+
+            with connect(client, board, leader, drain=False) as ws_fac2:
+                fac_ev = recv_event(ws_fac2, "facilitator_update")
+                assert fac_ev["data"]["facilitator"] == "Alice"
+                time.sleep(0.25)
+                # Прежний grace-период истёк, но ведущий вернулся — сессия продолжается
+                assert manager.get_facilitator(board) == leader_id
+
+    def test_grace_period_clears_when_not_reconnected(self, client, ws_token_for, monkeypatch):
+        monkeypatch.setattr(manager, "FACILITATOR_GRACE_SECONDS", 0.05)
+        board = "board-grace-exp"
+        with connect(client, board, ws_token_for("Other")) as ws_other:
+            with connect(client, board, ws_token_for("Alice")) as ws_fac:
+                send(ws_fac, "facilitator_start")
+                assert recv_event(ws_other, "facilitator_update")["data"]["facilitator"] == "Alice"
+
+            # Сначала — «ведущий не в сети», после grace — сессия завершена
+            assert recv_event(ws_other, "facilitator_update")["data"]["facilitator_online"] is False
+            time.sleep(0.1)
+            ev_clear = recv_event(ws_other, "facilitator_update")
+            assert ev_clear["data"]["facilitator"] is None
+            assert manager.get_facilitator(board) is None
+
+    def test_default_grace_survives_a_slow_reconnect(self):
+        """Переподключение после рестарта пода занимает около 10 секунд — запас обязан быть больше."""
+        assert manager.FACILITATOR_GRACE_SECONDS >= 60
+        assert manager.FACILITATOR_TAKEOVER_SECONDS < manager.FACILITATOR_GRACE_SECONDS
+
+    def test_stuck_session_after_restart_is_cleared(
+        self, client, ws_board, ws_token_for, db_session, monkeypatch
+    ):
+        """После рестарта сессия восстанавливается из БД; если ведущий не вернулся, она завершается.
+
+        Раньше grace-таймер ставился только на отключение, и такая сессия висела вечно:
+        никто не мог ни начать новую, ни остановить эту.
+        """
+        from app.models import Board
+
+        monkeypatch.setattr(manager, "FACILITATOR_GRACE_SECONDS", 0.05)
+        with connect(client, ws_board.id, ws_token_for("Host")) as ws_host:
+            send(ws_host, "facilitator_start")
+            recv_event(ws_host, "facilitator_update")
+            # Имитируем рестарт: память пуста, в БД сессия осталась
+            manager.reset()
+
+        db_session.expire_all()
+        assert db_session.get(Board, ws_board.id).active_facilitator == "Host"
+
+        with connect(client, ws_board.id, ws_token_for("Member"), drain=False) as ws_member:
+            hydrated = recv_event(ws_member, "facilitator_update")["data"]
+            assert hydrated["facilitator"] == "Host"
+            assert hydrated["facilitator_online"] is False
+            time.sleep(0.1)
+            cleared = recv_event(ws_member, "facilitator_update")["data"]
+            assert cleared["facilitator"] is None
+            # Теперь сессию можно начать заново
+            send(ws_member, "facilitator_start")
+            assert recv_event(ws_member, "facilitator_update")["data"]["facilitator"] == "Member"
+
+        db_session.expire_all()
+        assert db_session.get(Board, ws_board.id).active_facilitator == "Member"
 
 
-class TestWebSocketTimerEvents:
-    def test_timer_start_broadcast(self, client, ws_token):
-        url = f"/ws/board-t?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "timer_start",
-                            "data": {"duration": 300, "remaining": 300, "ts": 0},
-                        }
-                    )
-                )
+class TestTimerEvents:
+    def test_timer_start_pause_reset_broadcast(self, client, ws_token_for):
+        with connect(client, "board-t", ws_token_for("Alice")) as ws1:
+            with connect(client, "board-t", ws_token_for("Bob")) as ws2:
+                send(ws1, "timer_start", {"duration": 300, "remaining": 300, "ts": 0})
+                assert recv_event(ws1, "timer_start")["data"]["duration"] == 300
+                assert recv_event(ws2, "timer_start")["data"]["remaining"] == 300
 
-                msg1 = recv_event(ws1, "timer_start")
-                msg2 = recv_event(ws2, "timer_start")
-                assert msg1["event"] == "timer_start"
-                assert msg2["event"] == "timer_start"
+                send(ws1, "timer_pause", {"remaining": 120})
+                assert recv_event(ws2, "timer_pause")["data"] == {"remaining": 120}
 
-    def test_timer_pause_broadcast(self, client, ws_token):
-        url = f"/ws/board-tp?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "timer_pause",
-                            "data": {"remaining": 120},
-                        }
-                    )
-                )
+                send(ws1, "timer_reset", {"duration": 300})
+                assert recv_event(ws2, "timer_reset")["data"] == {"duration": 300}
 
-                msg1 = recv_event(ws1, "timer_pause")
-                msg2 = recv_event(ws2, "timer_pause")
-                assert msg1["event"] == "timer_pause"
-                assert msg2["event"] == "timer_pause"
-                assert msg2["data"]["remaining"] == 120
-
-    def test_timer_reset_broadcast(self, client, ws_token):
-        url = f"/ws/board-tr?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws:
-            ws.send_text(
-                json.dumps(
-                    {
-                        "event": "timer_reset",
-                        "data": {"duration": 600},
-                    }
-                )
-            )
-
-            msg = recv_event(ws, "timer_reset")
-            assert msg["event"] == "timer_reset"
-            assert msg["data"]["duration"] == 600
-
-
-class TestWebSocketTimerSync:
-    """Timer state should be sent to newly connected clients."""
-
-    def test_running_timer_sent_on_connect(self, client, ws_token):
-        """A client connecting while the timer is running should receive timer_start."""
-        url = f"/ws/board-tsync1?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            ws1.send_text(
-                json.dumps(
-                    {
-                        "event": "timer_start",
-                        "data": {"duration": 300, "remaining": 300, "ts": 1000000},
-                    }
-                )
-            )
+    def test_running_timer_sent_on_connect(self, client, ws_token_for):
+        with connect(client, "board-ts1", ws_token_for("Alice")) as ws1:
+            send(ws1, "timer_start", {"duration": 300, "remaining": 300, "ts": 0})
             recv_event(ws1, "timer_start")
-
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
+            with connect(client, "board-ts1", ws_token_for("Bob"), drain=False) as ws2:
                 msg = recv_event(ws2, "timer_start")
                 assert msg["data"]["duration"] == 300
-                assert msg["data"]["remaining"] <= 300
+                assert 0 < msg["data"]["remaining"] <= 300
 
-    def test_paused_timer_sent_on_connect(self, client, ws_token):
-        """A client connecting while the timer is paused should receive timer_pause."""
-        url = f"/ws/board-tsync2?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            ws1.send_text(
-                json.dumps(
-                    {
-                        "event": "timer_start",
-                        "data": {"duration": 600, "remaining": 600, "ts": 1000000},
-                    }
-                )
-            )
+    def test_paused_timer_sent_on_connect(self, client, ws_token_for):
+        with connect(client, "board-ts2", ws_token_for("Alice")) as ws1:
+            send(ws1, "timer_start", {"duration": 300, "remaining": 300, "ts": 0})
             recv_event(ws1, "timer_start")
-
-            ws1.send_text(
-                json.dumps(
-                    {
-                        "event": "timer_pause",
-                        "data": {"remaining": 450},
-                    }
-                )
-            )
+            send(ws1, "timer_pause", {"remaining": 120})
             recv_event(ws1, "timer_pause")
+            with connect(client, "board-ts2", ws_token_for("Bob"), drain=False) as ws2:
+                assert recv_event(ws2, "timer_pause")["data"]["remaining"] == 120
 
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                msg = recv_event(ws2, "timer_pause")
-                assert msg["data"]["remaining"] == 450
-                assert msg["data"]["duration"] == 600
-
-    def test_reset_timer_not_sent_on_connect(self, client, ws_token):
-        """After reset to 0 remaining, no timer state should be sent to new clients."""
-        url = f"/ws/board-tsync3?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            ws1.send_text(
-                json.dumps(
-                    {
-                        "event": "timer_reset",
-                        "data": {"duration": 300},
-                    }
-                )
-            )
+    def test_reset_timer_reaches_new_client_as_stopped(self, client, ws_token_for):
+        """После сброса новый участник видит таймер остановленным на полной длительности."""
+        with connect(client, "board-ts3", ws_token_for("Alice")) as ws1:
+            send(ws1, "timer_start", {"duration": 300, "remaining": 40})
+            recv_event(ws1, "timer_start")
+            send(ws1, "timer_reset", {"duration": 300})
             recv_event(ws1, "timer_reset")
+            with connect(client, "board-ts3", ws_token_for("Bob"), drain=False) as ws2:
+                seen = []
+                while True:
+                    msg = ws2.receive_json()
+                    seen.append(msg)
+                    if msg["event"] == "presence_update":
+                        break
+                assert "timer_start" not in [m["event"] for m in seen]
+                paused = next(m for m in seen if m["event"] == "timer_pause")
+                assert paused["data"] == {"remaining": 300, "duration": 300}
 
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                fac_msg = ws2.receive_json()
-                assert fac_msg["event"] == "facilitator_update"
-                ws2.send_text("ping")
+    def test_zero_timer_not_sent_on_connect(self, client, ws_token_for):
+        with connect(client, "board-ts4", ws_token_for("Alice")) as ws1:
+            send(ws1, "timer_reset", {"duration": 0})
+            recv_event(ws1, "timer_reset")
+            with connect(client, "board-ts4", ws_token_for("Bob"), drain=False) as ws2:
+                seen = events_until(ws2, "presence_update")
+                assert "timer_start" not in seen and "timer_pause" not in seen
+
+    def test_non_facilitator_timer_ignored(self, client, ws_token_for):
+        board = "board-tfac1"
+        with connect(client, board, ws_token_for("Facilitator")) as ws_fac:
+            with connect(client, board, ws_token_for("Regular")) as ws_other:
+                send(ws_fac, "facilitator_start")
+                recv_event(ws_other, "facilitator_update")
+
+                send(ws_other, "timer_start", {"duration": 300, "remaining": 300, "ts": 0})
+                send(ws_fac, "group_collapse", {"group_id": "маркер", "collapsed": True})
+                assert "timer_start" not in events_until(ws_other, "group_collapse")
+                assert manager.get_timer(board) is None
+
+    def test_no_facilitator_anyone_can_send_timer(self, client, ws_token_for):
+        with connect(client, "board-tfac2", ws_token_for("Alice")) as ws1:
+            with connect(client, "board-tfac2", ws_token_for("Bob")) as ws2:
+                send(ws2, "timer_start", {"duration": 300, "remaining": 300, "ts": 0})
+                assert recv_event(ws1, "timer_start")["event"] == "timer_start"
 
 
-class TestWebSocketGroupCollapse:
-    def test_group_collapse_broadcast_to_all(self, client, ws_token):
-        url = f"/ws/board-gc?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "group_collapse",
-                            "data": {"group_id": "g1", "collapsed": True},
-                        }
-                    )
-                )
-
-                msg1 = recv_event(ws1, "group_collapse")
-                msg2 = recv_event(ws2, "group_collapse")
-                assert msg1["event"] == "group_collapse"
-                assert msg2["event"] == "group_collapse"
-                assert msg2["data"]["collapsed"] is True
+class TestGroupCollapse:
+    def test_group_collapse_broadcast_to_all(self, client, ws_token_for):
+        with connect(client, "board-g", ws_token_for("Alice")) as ws1:
+            with connect(client, "board-g", ws_token_for("Bob")) as ws2:
+                send(ws1, "group_collapse", {"group_id": "g1", "collapsed": True})
+                assert recv_event(ws1, "group_collapse")["data"]["group_id"] == "g1"
+                assert recv_event(ws2, "group_collapse")["data"]["collapsed"] is True
 
 
-class TestWebSocketOriginValidation:
+class TestOriginValidation:
     """Origin header should be validated against CORS_ORIGINS setting."""
 
     def test_invalid_origin_rejected(self, client, ws_token):
-        """Connecting with an origin not in cors_origins should close with 1008."""
-        try:
-            with client.websocket_connect(
+        code = expect_rejected(
+            lambda: client.websocket_connect(
                 f"/ws/board-origin1?workspace_token={ws_token}",
                 headers={"origin": "http://evil.example.com"},
-            ):
-                pytest.fail("Expected WebSocket to be closed with 1008")
-        except Exception:
-            pass
+            )
+        )
+        assert code == 1008
 
     def test_valid_origin_accepted(self, client, ws_token):
-        """Connecting with a valid origin (from CORS_ORIGINS) should succeed."""
-        with client.websocket_connect(
-            f"/ws/board-origin2?workspace_token={ws_token}",
-            headers={"origin": TEST_ORIGIN},
-        ) as ws:
+        with connect(client, "board-origin2", ws_token) as ws:
             ws.send_text("ping")
 
     def test_no_origin_rejected(self, client, ws_token):
-        """Connecting without an Origin header should be rejected for security."""
-        try:
-            with client.websocket_connect(f"/ws/board-origin3?workspace_token={ws_token}") as ws:
-                ws.send_text("ping")
-                pytest.fail("Expected WebSocket to be closed when no origin provided")
-        except Exception:
-            pass
+        code = expect_rejected(
+            lambda: client.websocket_connect(f"/ws/board-origin3?workspace_token={ws_token}")
+        )
+        assert code == 1008
 
 
-class TestWebSocketTimerRequiresFacilitator:
-    """Timer events should only be accepted from the facilitator when a session is active."""
+class TestAuth:
+    def test_board_ws_auth_via_httponly_cookie(self, client, ws_token, ws_board):
+        with client.websocket_connect(
+            f"/ws/{ws_board.id}",
+            headers={"origin": TEST_ORIGIN, "cookie": f"workspace_token={ws_token}"},
+        ) as ws:
+            assert ws.receive_json()["event"] == "facilitator_update"
 
-    def test_non_facilitator_timer_ignored(self, client, ws_token):
-        """When facilitator is active, non-facilitator timer_start should be ignored."""
-        url = f"/ws/board-tfac1?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_fac:
-            with client.websocket_connect(
-                url, headers={"origin": TEST_ORIGIN}
-            ) as ws_other:
-                ws_fac.send_text(
-                    json.dumps(
-                        {
-                            "event": "cursor_move",
-                            "data": {"username": "Facilitator", "x": 0, "y": 0},
-                        }
-                    )
+    def test_workspace_ws_auth_via_httponly_cookie(self, client, ws_token):
+        with client.websocket_connect(
+            "/ws/workspace",
+            headers={"origin": TEST_ORIGIN, "cookie": f"workspace_token={ws_token}"},
+        ) as ws:
+            create_resp = client.post(
+                "/api/boards/",
+                json={"name": "WS Cookie Board"},
+                headers={"X-Workspace-Token": ws_token},
+            )
+            assert create_resp.status_code == 201
+            ev_created = recv_event(ws, "board_created")
+            assert ev_created["data"]["id"] == create_resp.json()["id"]
+
+    def test_rejects_missing_token(self, client, ws_board):
+        code = expect_rejected(
+            lambda: client.websocket_connect(
+                f"/ws/{ws_board.id}", headers={"origin": TEST_ORIGIN}
+            )
+        )
+        assert code == 1008
+
+    def test_rejects_invalid_cookie_token(self, client, ws_board):
+        code = expect_rejected(
+            lambda: client.websocket_connect(
+                f"/ws/{ws_board.id}",
+                headers={"origin": TEST_ORIGIN, "cookie": "workspace_token=invalid.jwt.token"},
+            )
+        )
+        assert code == 1008
+
+    def test_rejects_token_without_participant(self, client, ws_workspace, ws_board):
+        """Токен, выданный до появления участников, личности не несёт — нужен новый вход."""
+        from datetime import UTC, datetime, timedelta
+
+        import jwt
+
+        legacy = jwt.encode(
+            {
+                "workspace_id": ws_workspace.id,
+                "workspace_slug": ws_workspace.slug,
+                "workspace_name": ws_workspace.name,
+                "exp": datetime.now(UTC) + timedelta(hours=1),
+            },
+            settings.workspace_jwt_secret,
+            algorithm="HS256",
+        )
+        assert expect_rejected(lambda: connect(client, ws_board.id, legacy)) == 1008
+        assert (
+            expect_rejected(
+                lambda: client.websocket_connect(
+                    f"/ws/workspace?workspace_token={legacy}", headers={"origin": TEST_ORIGIN}
                 )
-                recv_event(ws_other, "cursor_move")
+            )
+            == 1008
+        )
 
-                ws_other.send_text(
-                    json.dumps(
-                        {
-                            "event": "cursor_move",
-                            "data": {"username": "Regular", "x": 0, "y": 0},
-                        }
-                    )
-                )
-                recv_event(ws_fac, "cursor_move")
-
-                ws_fac.send_text(
-                    json.dumps(
-                        {
-                            "event": "facilitator_start",
-                            "data": {},
-                        }
-                    )
-                )
-                recv_event(ws_other, "facilitator_update")
-
-                ws_other.send_text(
-                    json.dumps(
-                        {
-                            "event": "timer_start",
-                            "data": {"duration": 300, "remaining": 300, "ts": 0},
-                        }
-                    )
-                )
-
-                ws_fac.send_text(
-                    json.dumps(
-                        {
-                            "event": "cursor_move",
-                            "data": {"username": "Facilitator", "x": 50, "y": 50},
-                        }
-                    )
-                )
-
-                msg = ws_other.receive_json()
-                assert msg["event"] == "cursor_move", (
-                    f"Expected cursor_move sentinel, got {msg['event']} — "
-                    "timer event was not ignored"
-                )
-
-    def test_no_facilitator_anyone_can_send_timer(self, client, ws_token):
-        """When no facilitator is active, anyone can send timer events."""
-        url = f"/ws/board-tfac2?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                ws1.send_text(
-                    json.dumps(
-                        {
-                            "event": "timer_start",
-                            "data": {"duration": 300, "remaining": 300, "ts": 0},
-                        }
-                    )
-                )
-
-                msg1 = recv_event(ws1, "timer_start")
-                msg2 = recv_event(ws2, "timer_start")
-                assert msg1["event"] == "timer_start"
-                assert msg2["event"] == "timer_start"
-
-
-class TestWebSocketBugfixes:
-    """Tests for real-time bugfixes: unconditional facilitator_update, grace period, /ws/workspace, summary_failed."""
-
-    def test_facilitator_update_sent_unconditionally_on_connect(self, client, ws_token):
-        url = f"/ws/board-fac-init?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws:
-            msg = ws.receive_json()
-            assert msg["event"] == "facilitator_update"
-            assert msg["data"]["facilitator"] is None
-            assert msg["data"]["phase"] is None
+    def test_rejects_token_after_key_rotation(
+        self, client, ws_workspace, ws_board, ws_token, db_session
+    ):
+        """Смена ключа доступа увеличивает поколение токенов — старые сессии недействительны."""
+        with connect(client, ws_board.id, ws_token, drain=False) as ws:
+            assert ws.receive_json()["event"] == "facilitator_update"
+        ws_workspace.token_epoch += 1
+        db_session.commit()
+        assert expect_rejected(lambda: connect(client, ws_board.id, ws_token)) == 1008
 
     def test_deleted_board_ws_rejected(self, client, ws_token, ws_board, db_session, monkeypatch):
+        """Ветка проверки доски, которая на SQLite отключена: подменяем сессию БД."""
         from datetime import datetime, timezone
         from types import SimpleNamespace
+
+        from app.models import Board
         from app.routers import websocket as ws_router
 
         ws_board.deleted_at = datetime.now(timezone.utc)
@@ -484,31 +586,27 @@ class TestWebSocketBugfixes:
 
         class _FakeDB:
             def get(self, model, key):
-                return snapshot if key == ws_board.id else None
+                if model is Board:
+                    return snapshot if key == ws_board.id else None
+                return db_session.get(model, key)
 
         def _fake_get_db():
             yield _FakeDB()
 
         monkeypatch.setattr(ws_router, "get_db", _fake_get_db)
+        monkeypatch.setattr(ws_router, "_open_ws_db", lambda websocket: _fake_get_db())
 
-        url = f"/ws/{ws_board.id}?workspace_token={ws_token}"
-        rejected_code = None
-        try:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}):
-                pass
-        except Exception as exc:
-            rejected_code = getattr(exc, "code", None)
-        assert rejected_code == 1008
+        assert expect_rejected(lambda: connect(client, ws_board.id, ws_token)) == 1008
 
+
+class TestWorkspaceSocket:
     def test_workspace_ws_receives_board_events(self, client, ws_token):
         ws_headers = {"X-Workspace-Token": ws_token}
-        ws_url = f"/ws/workspace?workspace_token={ws_token}"
-        with client.websocket_connect(ws_url, headers={"origin": TEST_ORIGIN}) as ws:
-            # Create board
+        with client.websocket_connect(
+            f"/ws/workspace?workspace_token={ws_token}", headers={"origin": TEST_ORIGIN}
+        ) as ws:
             create_resp = client.post(
-                "/api/boards/",
-                json={"name": "WS Live Board"},
-                headers=ws_headers,
+                "/api/boards/", json={"name": "WS Live Board"}, headers=ws_headers
             )
             assert create_resp.status_code == 201
             board = create_resp.json()
@@ -516,7 +614,6 @@ class TestWebSocketBugfixes:
             assert ev_created["data"]["id"] == board["id"]
             assert ev_created["data"]["name"] == "WS Live Board"
 
-            # Update board
             upd_resp = client.patch(
                 f"/api/boards/{board['id']}",
                 json={"name": "WS Live Board Renamed"},
@@ -527,162 +624,49 @@ class TestWebSocketBugfixes:
             assert ev_updated["data"]["id"] == board["id"]
             assert ev_updated["data"]["name"] == "WS Live Board Renamed"
 
-            # Delete board
-            del_resp = client.delete(
-                f"/api/boards/{board['id']}",
-                headers=ws_headers,
-            )
+            del_resp = client.delete(f"/api/boards/{board['id']}", headers=ws_headers)
             assert del_resp.status_code == 204
             ev_deleted = recv_event(ws, "board_deleted")
             assert ev_deleted["data"]["id"] == board["id"]
 
-    def test_facilitator_grace_period_preserves_session_on_reconnect(self, client, ws_token, monkeypatch):
-        from app.ws_manager import manager
 
-        monkeypatch.setattr(manager, "FACILITATOR_GRACE_SECONDS", 0.2)
-        url = f"/ws/board-grace?workspace_token={ws_token}"
-
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_other:
-            assert ws_other.receive_json()["event"] == "facilitator_update"
-            # First facilitator session connects, identifies, starts facilitator
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_fac:
-                assert ws_fac.receive_json()["event"] == "facilitator_update"
-                ws_fac.send_text(json.dumps({"event": "identify", "data": {"username": "Alice"}}))
-                ws_fac.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
-                ev = recv_event(ws_other, "facilitator_update")
-                assert ev["data"]["facilitator"] == "Alice"
-
-            # ws_fac disconnected (F5): grace task is scheduled, facilitator still set before expiry
-            assert manager.get_facilitator("board-grace") == "Alice"
-
-            # Reconnect quickly as Alice before 0.2s grace expires
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_fac2:
-                fac_ev = recv_event(ws_fac2, "facilitator_update")
-                # Initial connect already shows Alice still facilitator
-                assert fac_ev["data"]["facilitator"] == "Alice"
-                ws_fac2.send_text(json.dumps({"event": "identify", "data": {"username": "Alice"}}))
-
-                import time
-                time.sleep(0.25)
-                # After original grace window passes, Alice is still facilitator
-                assert manager.get_facilitator("board-grace") == "Alice"
-
-    def test_facilitator_grace_period_clears_when_not_reconnected(self, client, ws_token, monkeypatch):
-        from app.ws_manager import manager
-        import time
-
-        monkeypatch.setattr(manager, "FACILITATOR_GRACE_SECONDS", 0.05)
-        url = f"/ws/board-grace-exp?workspace_token={ws_token}"
-
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_other:
-            assert ws_other.receive_json()["event"] == "facilitator_update"
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_fac:
-                assert ws_fac.receive_json()["event"] == "facilitator_update"
-                ws_fac.send_text(json.dumps({"event": "identify", "data": {"username": "Alice"}}))
-                ws_fac.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
-                ev_start = recv_event(ws_other, "facilitator_update")
-                assert ev_start["data"]["facilitator"] == "Alice"
-
-            # Drain grace reset broadcast on ws_other after >0.05s
-            time.sleep(0.1)
-            ev_clear = recv_event(ws_other, "facilitator_update")
-            assert ev_clear["data"]["facilitator"] is None
-            assert manager.get_facilitator("board-grace-exp") is None
-
-    def test_identify_rename_updates_facilitator(self, client, ws_token):
-        url = f"/ws/board-rename-fac?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_fac:
-            assert ws_fac.receive_json()["event"] == "facilitator_update"
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws_other:
-                assert ws_other.receive_json()["event"] == "facilitator_update"
-                ws_fac.send_text(json.dumps({"event": "identify", "data": {"username": "Bob"}}))
-                ws_fac.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
-                ev_bob = recv_event(ws_other, "facilitator_update")
-                assert ev_bob["data"]["facilitator"] == "Bob"
-
-                ws_fac.send_text(json.dumps({"event": "identify", "data": {"username": "Robert"}}))
-                ev = recv_event(ws_other, "facilitator_update")
-                assert ev["data"]["facilitator"] == "Robert"
-
-    def test_summary_failed_event_on_generation_error(self, client, ws_token, ws_board, monkeypatch):
+class TestSummaryEvents:
+    def test_summary_failed_event_on_generation_error(
+        self, client, ws_token, ws_board, monkeypatch
+    ):
         from app.routers import boards as boards_router
 
+        monkeypatch.setattr(settings, "ai_base_url", "http://llm.test/v1")
         monkeypatch.setattr(
             boards_router, "_generate_summary_internal", lambda *args, **kwargs: None
         )
-
-        url = f"/ws/{ws_board.id}?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws:
-            ws.send_text(json.dumps({"event": "identify", "data": {"username": "Fac"}}))
-            ws.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
+        with connect(client, ws_board.id, ws_token) as ws:
+            send(ws, "facilitator_start")
             recv_event(ws, "facilitator_update")
-            ws.send_text(json.dumps({"event": "phase_change", "data": {"phase": "summary"}}))
+            send(ws, "phase_change", {"phase": "summary"})
             ev = recv_event(ws, "summary_failed")
-            assert "message" in ev["data"]
+            assert ev["data"]["message"] == "Не удалось сгенерировать итоги"
 
-    def test_board_ws_auth_via_httponly_cookie(self, client, ws_token, ws_board):
-        with client.websocket_connect(
-            f"/ws/{ws_board.id}",
-            headers={"origin": TEST_ORIGIN, "cookie": f"workspace_token={ws_token}"},
-        ) as ws:
-            ev = ws.receive_json()
-            assert ev["event"] == "facilitator_update"
+    def test_summary_failed_event_without_ai(self, client, ws_token, ws_board, monkeypatch):
+        monkeypatch.setattr(settings, "ai_base_url", "")
+        with connect(client, ws_board.id, ws_token) as ws:
+            send(ws, "facilitator_start")
+            recv_event(ws, "facilitator_update")
+            send(ws, "phase_change", {"phase": "summary"})
+            assert "AI не настроен" in recv_event(ws, "summary_failed")["data"]["message"]
 
-    def test_workspace_ws_auth_via_httponly_cookie(self, client, ws_token):
-        ws_headers = {"X-Workspace-Token": ws_token}
-        with client.websocket_connect(
-            "/ws/workspace",
-            headers={"origin": TEST_ORIGIN, "cookie": f"workspace_token={ws_token}"},
-        ) as ws:
-            create_resp = client.post(
-                "/api/boards/",
-                json={"name": "WS Cookie Board"},
-                headers=ws_headers,
-            )
-            assert create_resp.status_code == 201
-            board = create_resp.json()
-            ev_created = recv_event(ws, "board_created")
-            assert ev_created["data"]["id"] == board["id"]
 
-    def test_board_ws_rejects_missing_token(self, client, ws_board):
-        rejected_code = None
-        try:
-            with client.websocket_connect(
-                f"/ws/{ws_board.id}",
-                headers={"origin": TEST_ORIGIN},
-            ):
-                pass
-        except Exception as exc:
-            rejected_code = getattr(exc, "code", None)
-        assert rejected_code == 1008
-
-    def test_board_ws_rejects_invalid_cookie_token(self, client, ws_board):
-        rejected_code = None
-        try:
-            with client.websocket_connect(
-                f"/ws/{ws_board.id}",
-                headers={"origin": TEST_ORIGIN, "cookie": "workspace_token=invalid.jwt.token"},
-            ):
-                pass
-        except Exception as exc:
-            rejected_code = getattr(exc, "code", None)
-        assert rejected_code == 1008
-
+class TestRateLimit:
     def test_cursor_flood_does_not_drop_facilitator_commands(self, client, ws_token, ws_board):
-        url = f"/ws/{ws_board.id}?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws:
+        with connect(client, ws_board.id, ws_token, drain=False) as ws:
             ws.receive_json()  # initial facilitator_update
-            ws.send_text(json.dumps({"event": "identify", "data": {"username": "Fac"}}))
             # Flood cursor_move past cursor rate limit (30/s)
             for i in range(35):
-                ws.send_text(
-                    json.dumps(
-                        {"event": "cursor_move", "data": {"username": "Fac", "x": 10 + i, "y": 20 + i}}
-                    )
-                )
-            ws.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
+                send(ws, "cursor_move", {"x": 10 + i, "y": 20 + i})
+
+            send(ws, "facilitator_start")
             ev_fac = recv_event(ws, "facilitator_update")
-            assert ev_fac["data"]["facilitator"] == "Fac"
-            ws.send_text(json.dumps({"event": "phase_change", "data": {"phase": "vote"}}))
-            ev_phase = recv_event(ws, "phase_update")
-            assert ev_phase["data"]["phase"] == "vote"
+            assert ev_fac["data"]["facilitator"] == "Tester"
+
+            send(ws, "phase_change", {"phase": "vote"})
+            assert recv_event(ws, "phase_update")["data"]["phase"] == "vote"

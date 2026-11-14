@@ -7,7 +7,12 @@ from sqlalchemy import func
 
 from app.database import get_db
 from app import models, schemas
-from app.workspace_auth import hash_access_key, get_admin_user, create_admin_token
+from app.workspace_auth import (
+    create_admin_token,
+    get_admin_user,
+    hash_access_key,
+    new_invite_token,
+)
 from app.config import settings
 from app.limiter import limiter
 
@@ -128,9 +133,51 @@ def update_workspace(
         ws.name = body.name
     if body.access_key is not None:
         ws.access_key_hash = hash_access_key(body.access_key)
+        # Смена ключа закрывает доступ всем, кто его получил: выданные сессии
+        # перестают действовать, ссылка-приглашение перевыпускается.
+        ws.token_epoch += 1
+        ws.invite_token = new_invite_token()
     db.commit()
     db.refresh(ws)
     return ws
+
+
+@router.get("/workspaces/{workspace_id}/invite", response_model=schemas.InviteOut)
+@limiter.limit("30/minute")
+def get_workspace_invite(
+    request: Request,
+    workspace_id: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Токен ссылки-приглашения команды; создаётся при первом обращении."""
+    ws = db.get(models.Workspace, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if not ws.invite_token:
+        ws.invite_token = new_invite_token()
+        db.commit()
+    return schemas.InviteOut(invite_token=ws.invite_token)
+
+
+@router.post("/workspaces/{workspace_id}/invite/rotate", response_model=schemas.InviteOut)
+@limiter.limit("30/minute")
+def rotate_workspace_invite(
+    request: Request,
+    workspace_id: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Перевыпустить ссылку-приглашение: старая перестаёт работать.
+
+    Уже вошедшие участники остаются в команде — их сессии отзывает смена ключа.
+    """
+    ws = db.get(models.Workspace, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    ws.invite_token = new_invite_token()
+    db.commit()
+    return schemas.InviteOut(invite_token=ws.invite_token)
 
 
 @router.delete("/workspaces/{workspace_id}", status_code=204)

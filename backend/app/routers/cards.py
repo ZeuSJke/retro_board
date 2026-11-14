@@ -3,25 +3,38 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.board_view import (
+    broadcast_card,
+    can_delete_card,
+    can_edit_card_text,
+    card_view,
+)
 from app.database import get_db
 from app import models, schemas
 from app.utils import get_or_404, require_unlocked_board
 from app.ws_manager import manager
 from app.limiter import TEAM_BULK_LIMIT, TEAM_WRITE_LIMIT, limiter
-from app.workspace_auth import get_current_workspace
+from app.workspace_auth import get_current_participant, get_current_workspace
 
 router = APIRouter()
 
+_NOT_YOUR_CARD = "Текст карточки может менять только её автор"
+_CANNOT_DELETE = "Удалить чужую карточку может только создатель доски или ведущий"
 
-def _count_user_votes(db: Session, board_id: str, username: str) -> int:
-    """Count how many likes a user has across all cards in a board."""
+
+def _count_votes(db: Session, board_id: str, participant_id: str) -> int:
+    """Сколько голосов участник уже отдал на доске."""
     cards = (
         db.query(models.Card.likes)
         .join(models.Column, models.Card.column_id == models.Column.id)
         .filter(models.Column.board_id == board_id)
         .all()
     )
-    return sum((likes or []).count(username) for (likes,) in cards)
+    return sum((likes or []).count(participant_id) for (likes,) in cards)
+
+
+def _column_card_ids(column: models.Column) -> list[str]:
+    return [c.id for c in sorted(column.cards, key=lambda c: c.position)]
 
 
 @router.post("/", response_model=schemas.CardOut, status_code=201)
@@ -31,25 +44,33 @@ async def create_card(
     body: schemas.CardCreate,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     col = get_or_404(db, models.Column, body.column_id, "Column not found")
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
-    pos = db.query(func.count(models.Card.id)).filter(models.Card.column_id == body.column_id).scalar() or 0
+    board = require_unlocked_board(
+        db.get(models.Board, col.board_id), workspace.id, "Column not found"
+    )
+    max_pos = (
+        db.query(func.max(models.Card.position))
+        .filter(models.Card.column_id == body.column_id)
+        .scalar()
+    )
     card = models.Card(
         id=str(uuid.uuid4()),
         column_id=body.column_id,
         text=body.text,
-        author=body.author,
+        # Автор — участник сессии; имя сохраняем как снимок для отображения
+        author=participant.name,
+        author_id=participant.id,
         color=body.color,
-        position=pos,
+        position=(max_pos if max_pos is not None else -1) + 1,
         likes=[],
     )
     db.add(card)
     db.commit()
     db.refresh(card)
-    out = schemas.CardOut.model_validate(card)
-    await manager.broadcast(col.board_id, "card_created", out.model_dump(mode="json"))
-    return out
+    await broadcast_card(board, "card_created", card)
+    return card_view(card, board, participant.id)
 
 
 @router.patch("/{card_id}", response_model=schemas.CardOut)
@@ -60,11 +81,16 @@ async def update_card(
     body: schemas.CardUpdate,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     card = get_or_404(db, models.Card, card_id, "Card not found")
     col = db.get(models.Column, card.column_id)
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Card not found")
-    if body.text is not None:
+    board = require_unlocked_board(
+        db.get(models.Board, col.board_id), workspace.id, "Card not found"
+    )
+    if body.text is not None and body.text != card.text:
+        if not can_edit_card_text(card, participant.id):
+            raise HTTPException(403, _NOT_YOUR_CARD)
         card.text = body.text
     if body.color is not None:
         card.color = body.color
@@ -76,9 +102,8 @@ async def update_card(
         card.group_id = body.group_id
     db.commit()
     db.refresh(card)
-    out = schemas.CardOut.model_validate(card)
-    await manager.broadcast(col.board_id, "card_updated", out.model_dump(mode="json"))
-    return out
+    await broadcast_card(board, "card_updated", card)
+    return card_view(card, board, participant.id)
 
 
 @router.post("/{card_id}/move", response_model=schemas.CardOut)
@@ -89,10 +114,13 @@ async def move_card(
     body: schemas.MoveCard,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     card = get_or_404(db, models.Card, card_id, "Card not found")
     col = db.get(models.Column, card.column_id)
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Card not found")
+    board = require_unlocked_board(
+        db.get(models.Board, col.board_id), workspace.id, "Card not found"
+    )
     old_col = db.get(models.Column, card.column_id)
     new_col = get_or_404(db, models.Column, body.column_id, "Target column not found")
     if new_col.board_id != old_col.board_id:
@@ -118,11 +146,17 @@ async def move_card(
 
     db.commit()
     db.refresh(card)
-    out = schemas.CardOut.model_validate(card)
-    await manager.broadcast(new_col.board_id, "card_moved", {
-        "card": out.model_dump(mode="json"),
+    db.refresh(new_col)
+    if old_col.id != new_col.id:
+        db.refresh(old_col)
+    # Сервер перенумеровал соседей: шлём итоговый порядок обеих колонок,
+    # иначе у остальных клиентов карточки встанут по устаревшим позициям.
+    order = {
         "old_column_id": old_col.id,
-    })
+        "column_card_ids": _column_card_ids(new_col),
+        "old_column_card_ids": _column_card_ids(old_col),
+    }
+    await broadcast_card(board, "card_moved", card, lambda view: {"card": view, **order})
 
     # Auto-delete old group if it became empty after cross-column move
     if old_group_id:
@@ -135,7 +169,7 @@ async def move_card(
                 db.commit()
                 await manager.broadcast(new_col.board_id, "group_deleted", {"id": old_group_id, "column_id": col_id, "card_ids": []})
 
-    return out
+    return card_view(card, board, participant.id)
 
 
 @router.post("/{card_id}/like", response_model=schemas.CardOut)
@@ -143,11 +177,13 @@ async def move_card(
 async def toggle_like(
     request: Request,
     card_id: str,
-    username: str = Query(..., min_length=1, max_length=60),
     action: str = Query("toggle", pattern="^(toggle|add|remove)$"),
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
+    """Голос участника сессии. От чужого имени проголосовать или снять голос нельзя."""
+    voter = participant.id
     # Lock the card row to prevent concurrent vote race conditions
     card = db.query(models.Card).filter(models.Card.id == card_id).with_for_update().first()
     if not card:
@@ -164,26 +200,25 @@ async def toggle_like(
     likes = list(card.likes or [])
     if board.allow_multiple_votes_per_card:
         if action == "remove":
-            if username in likes:
-                likes.remove(username)
+            if voter in likes:
+                likes.remove(voter)
         else:
-            if _count_user_votes(db, col.board_id, username) >= board.max_votes:
+            if _count_votes(db, col.board_id, voter) >= board.max_votes:
                 raise HTTPException(403, "Лимит голосов исчерпан")
-            likes.append(username)
+            likes.append(voter)
     else:
-        if username in likes:
+        if voter in likes:
             if action in ("toggle", "remove"):
-                likes = [u for u in likes if u != username]
+                likes = [u for u in likes if u != voter]
         elif action in ("toggle", "add"):
-            if _count_user_votes(db, col.board_id, username) >= board.max_votes:
+            if _count_votes(db, col.board_id, voter) >= board.max_votes:
                 raise HTTPException(403, "Лимит голосов исчерпан")
-            likes.append(username)
+            likes.append(voter)
     card.likes = likes
     db.commit()
     db.refresh(card)
-    out = schemas.CardOut.model_validate(card)
-    await manager.broadcast(col.board_id, "card_updated", out.model_dump(mode="json"))
-    return out
+    await broadcast_card(board, "card_updated", card)
+    return card_view(card, board, participant.id)
 
 
 def _load_board_cards(
@@ -234,6 +269,7 @@ async def bulk_update_cards(
     payload: schemas.BulkCardsUpdateRequest,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     board, cards, col_map = _load_board_cards(db, payload.card_ids, workspace.id)
     touched_group_ids: set[str] = set()
@@ -306,12 +342,11 @@ async def bulk_update_cards(
         group_out = schemas.CardGroupOut.model_validate(created_group)
         await manager.broadcast(board.id, "group_created", group_out.model_dump(mode="json"))
 
-    results: list[schemas.CardOut] = []
+    results: list[dict] = []
     for card in cards:
         db.refresh(card)
-        out = schemas.CardOut.model_validate(card)
-        results.append(out)
-        await manager.broadcast(board.id, "card_updated", out.model_dump(mode="json"))
+        results.append(card_view(card, board, participant.id))
+        await broadcast_card(board, "card_updated", card)
 
     for deleted_payload in deleted_groups:
         await manager.broadcast(board.id, "group_deleted", deleted_payload)
@@ -326,8 +361,11 @@ async def bulk_delete_cards(
     payload: schemas.BulkCardsDeleteRequest,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     board, cards, _ = _load_board_cards(db, payload.card_ids, workspace.id)
+    if not all(can_delete_card(card, board, participant.id) for card in cards):
+        raise HTTPException(403, _CANNOT_DELETE)
     touched_group_ids: set[str] = {c.group_id for c in cards if c.group_id}
     deleted_events = [{"id": c.id, "column_id": c.column_id} for c in cards]
 
@@ -352,6 +390,7 @@ async def merge_cards(
     payload: schemas.MergeCardsRequest,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     board, cards, _ = _load_board_cards(db, payload.card_ids, workspace.id)
     if len(cards) < 2:
@@ -391,13 +430,12 @@ async def merge_cards(
     db.commit()
     db.refresh(primary)
 
-    out = schemas.CardOut.model_validate(primary)
-    await manager.broadcast(board.id, "card_updated", out.model_dump(mode="json"))
+    await broadcast_card(board, "card_updated", primary)
     for evt in deleted_events:
         await manager.broadcast(board.id, "card_deleted", evt)
     for deleted_payload in deleted_groups:
         await manager.broadcast(board.id, "group_deleted", deleted_payload)
-    return out
+    return card_view(primary, board, participant.id)
 
 
 @router.delete("/{card_id}", status_code=204)
@@ -407,10 +445,15 @@ async def delete_card(
     card_id: str,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
+    participant: models.Participant = Depends(get_current_participant),
 ):
     card = get_or_404(db, models.Card, card_id, "Card not found")
     col = db.get(models.Column, card.column_id)
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Card not found")
+    board = require_unlocked_board(
+        db.get(models.Board, col.board_id), workspace.id, "Card not found"
+    )
+    if not can_delete_card(card, board, participant.id):
+        raise HTTPException(403, _CANNOT_DELETE)
     board_id = col.board_id
     group_id = card.group_id
     db.delete(card)

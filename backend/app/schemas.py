@@ -44,20 +44,85 @@ def _access_key_within_bcrypt_limit(v: str | None) -> str | None:
 # ── Workspace ─────────────────────────────────────────────────────────────────
 
 
+DEFAULT_PARTICIPANT_NAME = "Участник"
+
+
+def _participant_name(v: str | None) -> str:
+    """Имя участника: непустое, без HTML, кодируемое в UTF-8."""
+    if v is None:
+        return DEFAULT_PARTICIPANT_NAME
+    stripped = _utf8_encodable(v).strip()
+    if not stripped:
+        return DEFAULT_PARTICIPANT_NAME
+    if _HTML_TAG_RE.search(stripped):
+        raise ValueError("Имя не должно содержать HTML-теги")
+    return stripped
+
+
 class WorkspaceLoginRequest(BaseModel):
     workspace_slug: str = Field(..., min_length=1, max_length=80)
     access_key: str = Field(..., min_length=1, max_length=100)
+    # Имя, под которым участник появится на досках; личностью оно не является
+    name: Optional[str] = Field(default=None, max_length=60, validate_default=True)
 
     @field_validator("workspace_slug", "access_key")
     @classmethod
     def validate_encodable(cls, v: str) -> str:
         return _utf8_encodable(v)
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str | None) -> str:
+        return _participant_name(v)
 
-class WorkspaceTokenResponse(BaseModel):
-    token: str
+
+class WorkspaceJoinRequest(BaseModel):
+    """Вход по ссылке-приглашению: достаточно токена из ссылки и имени."""
+
+    invite_token: str = Field(..., min_length=8, max_length=64)
+    name: Optional[str] = Field(default=None, max_length=60, validate_default=True)
+
+    @field_validator("invite_token")
+    @classmethod
+    def validate_encodable(cls, v: str) -> str:
+        return _utf8_encodable(v)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str | None) -> str:
+        return _participant_name(v)
+
+
+class ParticipantOut(BaseModel):
+    id: str
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
+class ParticipantUpdate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=60)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        return _participant_name(v)
+
+
+class SessionOut(BaseModel):
+    """Ответ на вход. Токен сессии уходит только в httpOnly-cookie."""
+
     workspace_id: str
     workspace_slug: str
+    workspace_name: str
+    participant: ParticipantOut
+
+
+class InviteOut(BaseModel):
+    invite_token: str
+
+
+class InviteInfoOut(BaseModel):
     workspace_name: str
 
 
@@ -100,6 +165,13 @@ class WorkspaceOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class WorkspaceMeOut(WorkspaceOut):
+    """Текущая сессия: команда, участник и возможности инстанса."""
+
+    participant: ParticipantOut
+    ai_enabled: bool = False
+
+
 class WorkspaceListItem(WorkspaceOut):
     boards_count: int = 0
 
@@ -122,22 +194,18 @@ class AdminLoginRequest(BaseModel):
 
 class CardBase(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
-    author: str = Field(default="Аноним", min_length=1, max_length=60)
     color: str = Field(default="#FFFFFF", pattern=r"^#[0-9a-fA-F]{6}$")
 
 
 class CardCreate(CardBase):
+    """Автор карточки — участник текущей сессии; из запроса он не принимается."""
+
     column_id: str
 
     @field_validator("text")
     @classmethod
     def validate_text(cls, v: str) -> str:
         return _strip_non_empty(v, "Текст карточки") or ""
-
-    @field_validator("author")
-    @classmethod
-    def validate_author(cls, v: str) -> str:
-        return _strip_non_empty(v, "Автор") or "Аноним"
 
 
 class CardUpdate(BaseModel):
@@ -160,15 +228,25 @@ class CardUpdate(BaseModel):
         return v
 
 
-class CardOut(CardBase):
+class CardOut(BaseModel):
+    """Карточка в виде, собранном для конкретного получателя (см. app/board_view.py).
+
+    `likes` — идентификаторы проголосовавших участников, по одному на голос;
+    в анонимном режиме чужие заменены на "anon". `masked` — карточка чужая и
+    ещё не раскрыта: текст, автор и голоса не передаются.
+    """
+
     id: str
     column_id: str
     group_id: Optional[str] = None
+    text: str = ""
+    author: str = ""
+    author_id: Optional[str] = None
+    color: str = "#FFFFFF"
     position: int
     likes: list[str] = []
+    masked: bool = False
     created_at: datetime
-
-    model_config = {"from_attributes": True}
 
 
 # ── CardGroup ─────────────────────────────────────────────────────────────────
@@ -237,14 +315,19 @@ class ColumnUpdate(BaseModel):
         return v
 
 
-class ColumnOut(ColumnBase):
+class ColumnInfo(ColumnBase):
+    """Свойства колонки без карточек — для ответов и событий об изменении колонки."""
+
     id: str
     board_id: str
     position: int
-    cards: list[CardOut] = []
-    groups: list[CardGroupOut] = []
 
     model_config = {"from_attributes": True}
+
+
+class ColumnOut(ColumnInfo):
+    cards: list[CardOut] = []
+    groups: list[CardGroupOut] = []
 
 
 # ── Board ─────────────────────────────────────────────────────────────────────
@@ -279,14 +362,10 @@ class ColumnSeed(BaseModel):
 
 
 class BoardMoodCreate(BaseModel):
-    author: str = Field(..., min_length=1, max_length=60)
+    """Оценку ставит участник текущей сессии; автор из запроса не принимается."""
+
     score: int = Field(..., ge=1, le=5)
     note: Optional[str] = Field(default=None, max_length=200)
-
-    @field_validator("author")
-    @classmethod
-    def validate_author(cls, v: str) -> str:
-        return _strip_non_empty(v, "Имя автора") or ""
 
     @field_validator("note")
     @classmethod
@@ -305,11 +384,12 @@ class BoardMoodOut(BaseModel):
     id: str
     board_id: str
     author: str
+    participant_id: Optional[str] = None
     score: int
     note: Optional[str] = None
     created_at: datetime
-
-    model_config = {"from_attributes": True}
+    # Оценка текущего участника (в анонимном режиме чужие имена скрыты)
+    mine: bool = False
 
 
 class BoardTemplateInfo(BaseModel):
@@ -361,14 +441,18 @@ class BoardOut(BoardBase):
     anonymous_votes: bool = False
     allow_multiple_votes_per_card: bool = False
     active_facilitator: Optional[str] = None
+    active_facilitator_id: Optional[str] = None
     active_phase: Optional[str] = None
     active_session_id: Optional[int] = None
     created_at: datetime
     workspace_id: Optional[str] = None
+    # Создатель доски; пусто у досок, созданных до появления участников
+    created_by_id: Optional[str] = None
+    # Скрытый сбор: раскрыты ли карточки и скрыты ли они сейчас для получателя
+    cards_revealed: bool = False
+    cards_hidden: bool = False
     columns: list[ColumnOut] = []
     moods: list[BoardMoodOut] = []
-
-    model_config = {"from_attributes": True}
 
 
 class BoardListItem(BoardBase):
@@ -379,6 +463,7 @@ class BoardListItem(BoardBase):
     is_locked: bool = False
     created_at: datetime
     workspace_id: Optional[str] = None
+    created_by_id: Optional[str] = None
     action_items_total: int = 0
     action_items_open: int = 0
     has_summary: bool = False
@@ -449,6 +534,8 @@ class ActionItemOut(BaseModel):
     status: str = "open"
     completed_at: Optional[datetime] = None
     created_at: datetime
+    # Задача перенесена на другую доску: открытой считается её копия, а не она
+    superseded_by_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -471,6 +558,8 @@ class GenerateTitleResponse(BaseModel):
 class CarryForwardRequest(BaseModel):
     source_board_id: str
     target_board_id: str
+    # Перенести только эти задачи; без списка — все незакрытые с исходной доски
+    item_ids: Optional[list[str]] = Field(default=None, max_length=200)
 
 
 # ── Trends ────────────────────────────────────────────────────────────────────

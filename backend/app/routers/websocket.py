@@ -8,16 +8,17 @@ import anyio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException
 
 from app.config import settings
-from app.ws_manager import manager
+from app.ws_manager import Peer, manager
 from app.ws_payloads import (
-    MAX_USERNAME_LENGTH,
+    MAX_ID_LENGTH,
     MAX_WS_MESSAGE_CHARS,
     clean_cursor_move,
     clean_group_collapse,
     clean_timer,
     number_in_range,
+    short_str,
 )
-from app.workspace_auth import decode_workspace_token
+from app.workspace_auth import SESSION_COOKIE, decode_workspace_token, resolve_session
 from app.database import get_db
 from app import models
 
@@ -44,6 +45,8 @@ KNOWN_EVENTS = frozenset(
         "timer_reset",
         "facilitator_start",
         "facilitator_stop",
+        "facilitator_transfer",
+        "facilitator_takeover",
         "phase_change",
         "summary_generated",
         "ready_toggle",
@@ -65,12 +68,21 @@ def _sync_board_session_db(
     websocket: WebSocket | None,
     board_id: str,
     workspace_id: str | None,
-    facilitator: str | None,
+    facilitator: Peer | None,
     phase: str | None,
     session_id: int | None,
     lock_board: bool = False,
+    reveal: bool = False,
 ) -> dict | None:
-    """Persist active session state on Board row (best-effort for unit tests without DB rows)."""
+    """Сохранить состояние сессии в строке доски.
+
+    Возвращает настройки доски, если они изменились (блокировка), иначе None.
+    Доски может не быть (тесты подключаются к синтетическим идентификаторам) —
+    тогда сохранять нечего. Сбой записи не должен рвать WebSocket, но обязан
+    попасть в журнал: иначе память и БД расходятся незаметно.
+    """
+    from app.board_view import board_settings_payload
+
     db_gen = _open_ws_db(websocket) if websocket is not None else get_db()
     try:
         db = next(db_gen)
@@ -81,28 +93,20 @@ def _sync_board_session_db(
             or (workspace_id is not None and board.workspace_id != workspace_id)
         ):
             return None
-        board.active_facilitator = facilitator
+        board.active_facilitator = facilitator.name if facilitator else None
+        board.active_facilitator_id = facilitator.id if facilitator else None
         board.active_phase = phase
         board.active_session_id = session_id
+        if reveal:
+            board.cards_revealed = True
         if lock_board:
             board.is_locked = True
         db.commit()
         if lock_board:
-            return {
-                "id": board.id,
-                "name": board.name,
-                "slug": board.slug,
-                "max_votes": board.max_votes,
-                "template": board.template,
-                "is_locked": board.is_locked,
-                "hide_cards_until_reveal": board.hide_cards_until_reveal,
-                "anonymous_votes": board.anonymous_votes,
-        "allow_multiple_votes_per_card": board.allow_multiple_votes_per_card,
-                "workspace_id": board.workspace_id,
-            }
+            return board_settings_payload(board)
         return None
     except Exception:
-        logger.debug("Skipping DB session sync for board %s", board_id, exc_info=True)
+        logger.warning("Failed to persist session state for board %s", board_id, exc_info=True)
         return None
     finally:
         try:
@@ -112,7 +116,7 @@ def _sync_board_session_db(
 
 
 def _clear_board_session_on_grace(board_id: str) -> None:
-    _sync_board_session_db(None, board_id, None, None, None, None, lock_board=False)
+    _sync_board_session_db(None, board_id, None, None, None, None)
 
 
 manager.on_session_cleared = _clear_board_session_on_grace
@@ -134,29 +138,30 @@ def _origin_allowed(websocket: WebSocket) -> bool:
 async def _authenticate_ws(
     websocket: WebSocket,
     query_token: str | None = None,
-) -> str | None:
-    """Validate WebSocket Origin and workspace JWT (preferring httpOnly cookie)."""
+) -> dict | None:
+    """Проверить Origin и подпись токена сессии; вернуть содержимое токена.
+
+    Токен берётся из httpOnly-cookie; параметр запроса оставлен только для
+    неинтерактивных клиентов и тестов — браузерный клиент его не использует.
+    """
     if not _origin_allowed(websocket):
         await websocket.close(code=1008, reason="Origin not allowed")
         return None
 
-    # Prefer httpOnly cookie so JWTs are not leaked into URLs / access logs.
-    # Keep query parameter fallback for backward compatibility with older clients/tests.
-    token = websocket.cookies.get("workspace_token") or query_token
+    token = websocket.cookies.get(SESSION_COOKIE) or query_token
     if not token:
         await websocket.close(code=1008, reason="Workspace token required")
         return None
 
     try:
-        payload = decode_workspace_token(token)
-        return payload["workspace_id"]
+        return decode_workspace_token(token)
     except HTTPException:
         await websocket.close(code=1008, reason="Invalid or expired token")
         return None
 
 
 async def _trigger_summary_generation(
-    board_id: str, username: str, workspace_id: str
+    board_id: str, facilitator_id: str, workspace_id: str
 ):
     """Trigger automatic summary generation when entering summary phase.
 
@@ -174,11 +179,11 @@ async def _trigger_summary_generation(
         )
         return
 
-    logger.info("Starting summary generation for board %s by %s", board_id, username)
+    logger.info("Starting summary generation for board %s", board_id)
 
     try:
         summary_data = await asyncio.to_thread(
-            _generate_summary_internal, board_id, username, workspace_id
+            _generate_summary_internal, board_id, facilitator_id, workspace_id
         )
         if summary_data:
             logger.info("Summary generated for board %s, broadcasting", board_id)
@@ -205,7 +210,7 @@ async def _trigger_summary_generation(
         logger.info("Summary generation task completed for board %s", board_id)
 
 
-def _start_summary_generation(board_id: str, username: str, workspace_id: str) -> bool:
+def _start_summary_generation(board_id: str, facilitator_id: str, workspace_id: str) -> bool:
     """Запустить генерацию итогов, если она для этой доски ещё не идёт."""
     loop = asyncio.get_running_loop()
     key = (board_id, manager.get_session_id(board_id))
@@ -214,7 +219,7 @@ def _start_summary_generation(board_id: str, username: str, workspace_id: str) -
         logger.info("Summary generation already running for board %s, skipping", board_id)
         return False
 
-    task = loop.create_task(_trigger_summary_generation(board_id, username, workspace_id))
+    task = loop.create_task(_trigger_summary_generation(board_id, facilitator_id, workspace_id))
     _summary_tasks[key] = task
 
     def _forget(done: asyncio.Task) -> None:
@@ -252,15 +257,43 @@ def _timer_snapshot_message(timer: dict) -> dict | None:
     return None
 
 
+async def _send(websocket: WebSocket, event: str, data: dict) -> None:
+    await websocket.send_text(json.dumps({"event": event, "data": data}, default=str))
+
+
+async def _broadcast_session_reset(board_id: str, had_ready: bool, had_spot: bool) -> None:
+    if had_ready:
+        await manager.broadcast(board_id, "ready_update", manager.ready_payload(board_id))
+    if had_spot:
+        await manager.broadcast(board_id, "spotlight_update", {"card_id": None})
+
+
 @router.websocket("/ws/workspace")
 async def workspace_websocket_endpoint(
     websocket: WebSocket,
     workspace_token: str = Query(None, alias="workspace_token"),
 ):
     """WebSocket уровня workspace для live-обновления списка досок (напр., на /dashboard)."""
-    workspace_id = await _authenticate_ws(websocket, workspace_token)
-    if not workspace_id:
+    claims = await _authenticate_ws(websocket, workspace_token)
+    if not claims:
         return
+
+    db_gen = _open_ws_db(websocket)
+    try:
+        db = next(db_gen)
+        workspace, _participant = resolve_session(db, claims)
+        workspace_id = workspace.id
+    except HTTPException:
+        await websocket.close(code=1008, reason="Session expired")
+        return
+    except Exception:
+        await websocket.close(code=1011, reason="Server error")
+        return
+    finally:
+        try:
+            next(db_gen)
+        except StopIteration:
+            pass
 
     await manager.connect_workspace(workspace_id, websocket)
     try:
@@ -278,13 +311,22 @@ async def websocket_endpoint(
     board_id: str,
     workspace_token: str = Query(None, alias="workspace_token"),
 ):
-    workspace_id = await _authenticate_ws(websocket, workspace_token)
-    if not workspace_id:
+    claims = await _authenticate_ws(websocket, workspace_token)
+    if not claims:
         return
 
     db_gen = _open_ws_db(websocket)
     try:
         db = next(db_gen)
+        try:
+            workspace, participant = resolve_session(db, claims)
+        except HTTPException:
+            await websocket.close(code=1008, reason="Session expired")
+            return
+        workspace_id = workspace.id
+        # Личность сокета фиксируется здесь и больше не меняется сообщениями клиента
+        peer = Peer(participant.id, participant.name)
+
         # Skip DB guard only under SQLite unit tests (tests often connect to synthetic board IDs)
         dialect_name = getattr(getattr(getattr(db, "bind", None), "dialect", None), "name", None)
         board = None
@@ -305,10 +347,11 @@ async def websocket_endpoint(
             and board.deleted_at is None
             and board.workspace_id == workspace_id
             and manager.get_facilitator(board_id) is None
-            and board.active_facilitator
+            and board.active_facilitator_id
         ):
             manager.hydrate_session(
                 board_id,
+                board.active_facilitator_id,
                 board.active_facilitator,
                 board.active_phase,
                 board.active_session_id,
@@ -322,61 +365,33 @@ async def websocket_endpoint(
         except StopIteration:
             pass
 
-    await manager.connect(board_id, websocket, workspace_id=workspace_id)
+    await manager.connect(board_id, websocket, workspace_id=workspace_id, peer=peer)
     msg_timestamps: list[float] = []
     cursor_timestamps: list[float] = []
-    username_announced = False
 
     try:
-        # Всегда отправляем начальное состояние сессии, даже если фасилитатор не назначен
-        fac = manager.get_facilitator(board_id)
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "event": "facilitator_update",
-                    "data": {
-                        "facilitator": fac,
-                        "phase": manager.get_phase(board_id) if fac else None,
-                        "session_id": manager.get_session_id(board_id) if fac else None,
-                    },
-                }
-            )
-        )
-        ready_users = manager.get_ready_users(board_id)
-        if ready_users:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "event": "ready_update",
-                        "data": {"ready_users": ready_users},
-                    }
-                )
-            )
+        # Начальное состояние: кто на доске, сессия ведущего, готовность, фокус, таймер
+        await _send(websocket, "facilitator_update", manager.facilitator_payload(board_id))
+        if manager.get_ready_ids(board_id):
+            await _send(websocket, "ready_update", manager.ready_payload(board_id))
         spotlight_id = manager.get_spotlight(board_id)
         if spotlight_id:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "event": "spotlight_update",
-                        "data": {"card_id": spotlight_id},
-                    }
-                )
-            )
+            await _send(websocket, "spotlight_update", {"card_id": spotlight_id})
         typing_users = manager.get_typing(board_id)
         if typing_users:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "event": "typing_update",
-                        "data": {"typing": typing_users},
-                    }
-                )
-            )
-        # Send current timer state to new client
+            await _send(websocket, "typing_update", {"typing": typing_users})
         timer = manager.get_timer(board_id)
         timer_message = _timer_snapshot_message(timer) if timer else None
         if timer_message:
             await websocket.send_text(json.dumps(timer_message))
+        # Участник известен с момента подключения — сообщаем о нём всем сразу
+        await manager.broadcast(board_id, "presence_update", manager.presence_payload(board_id))
+        if manager.get_facilitator(board_id) == peer.id:
+            # Ведущий вернулся: остальным пора убрать «ведущий не в сети»
+            await manager.broadcast(
+                board_id, "facilitator_update", manager.facilitator_payload(board_id)
+            )
+
         while True:
             data = await websocket.receive_text()
 
@@ -413,124 +428,37 @@ async def websocket_endpoint(
                         continue
                     msg_timestamps.append(now)
 
-                # Validate cursor_move coordinates
-                cursor: dict | None = None
-                if event == "cursor_move":
+                # Имя могли сменить через REST — берём актуальное
+                peer = manager.get_peer(websocket) or peer
+                facilitator_id = manager.get_facilitator(board_id)
+                is_facilitator = facilitator_id == peer.id
+
+                if event == "identify":
+                    # Личность задаёт сессия, а не сообщение. Событие оставлено для
+                    # клиентов, которые ждут в ответ состав доски и состояние сессии.
+                    await _send(websocket, "presence_update", manager.presence_payload(board_id))
+                    await _send(
+                        websocket, "facilitator_update", manager.facilitator_payload(board_id)
+                    )
+
+                elif event == "cursor_move":
                     cursor = clean_cursor_move(payload)
                     if cursor is None:
                         continue
-
-                # Validate username length for identify / cursor_move
-                if event in ("identify", "cursor_move"):
-                    uname = payload.get("username")
-                    if uname and (
-                        not isinstance(uname, str) or len(uname) > MAX_USERNAME_LENGTH
-                    ):
-                        continue
-
-                if event == "identify":
-                    uname = payload.get("username")
-                    if uname:
-                        prev_uname = manager.get_username(websocket)
-                        manager.set_username(websocket, uname, board_id=board_id)
-                        name_changed = bool(prev_uname and prev_uname != uname)
-                        if name_changed and manager.get_facilitator(board_id) == prev_uname:
-                            manager.facilitators[board_id] = uname
-                            _sync_board_session_db(
-                                websocket,
-                                board_id,
-                                workspace_id,
-                                uname,
-                                manager.get_phase(board_id),
-                                manager.get_session_id(board_id),
-                            )
-                            await manager.broadcast(
-                                board_id,
-                                "facilitator_update",
-                                {
-                                    "facilitator": uname,
-                                    "phase": manager.get_phase(board_id),
-                                    "session_id": manager.get_session_id(board_id),
-                                },
-                            )
-                        if not username_announced or name_changed:
-                            username_announced = True
-                            if name_changed and prev_uname not in manager.get_users(board_id):
-                                await manager.broadcast(
-                                    board_id, "cursor_leave", {"username": prev_uname}
-                                )
-                            await manager.broadcast(
-                                board_id,
-                                "presence_update",
-                                {"users": manager.get_users(board_id)},
-                            )
-                            fac = manager.get_facilitator(board_id)
-                            if fac:
-                                await websocket.send_text(
-                                    json.dumps(
-                                        {
-                                            "event": "facilitator_update",
-                                            "data": {
-                                                "facilitator": fac,
-                                                "phase": manager.get_phase(board_id),
-                                                "session_id": manager.get_session_id(
-                                                    board_id
-                                                ),
-                                            },
-                                        }
-                                    )
-                                )
-
-                elif event == "cursor_move":
-                    username = payload.get("username")
-                    if username:
-                        manager.set_username(websocket, username, board_id=board_id)
-                        # Broadcast presence on first cursor_move (user joined)
-                        if not username_announced:
-                            username_announced = True
-                            await manager.broadcast(
-                                board_id,
-                                "presence_update",
-                                {"users": manager.get_users(board_id)},
-                            )
-                            # Send current facilitator state to new user
-                            fac = manager.get_facilitator(board_id)
-                            if fac:
-                                await websocket.send_text(
-                                    json.dumps(
-                                        {
-                                            "event": "facilitator_update",
-                                            "data": {
-                                                "facilitator": fac,
-                                                "phase": manager.get_phase(board_id),
-                                                "session_id": manager.get_session_id(
-                                                    board_id
-                                                ),
-                                            },
-                                        }
-                                    )
-                                )
-                    # Рассылаем только известные поля, а не всё, что прислал клиент
-                    sender = manager.get_username(websocket)
-                    if sender and cursor is not None:
-                        await manager.broadcast(
-                            board_id,
-                            "cursor_move",
-                            {"username": sender, **cursor},
-                            exclude=websocket,
-                        )
+                    await manager.broadcast(
+                        board_id,
+                        "cursor_move",
+                        {"participant_id": peer.id, "username": peer.name, **cursor},
+                        exclude=websocket,
+                    )
 
                 elif event == "cursor_leave":
-                    # Имя берём только у сокета: непредставившийся клиент
-                    # не может «увести» чужой курсор, назвав чужое имя.
-                    sender = manager.get_username(websocket)
-                    if sender:
-                        await manager.broadcast(
-                            board_id,
-                            "cursor_leave",
-                            {"username": sender},
-                            exclude=websocket,
-                        )
+                    await manager.broadcast(
+                        board_id,
+                        "cursor_leave",
+                        {"participant_id": peer.id, "username": peer.name},
+                        exclude=websocket,
+                    )
 
                 elif event == "group_collapse":
                     collapse = clean_group_collapse(payload)
@@ -540,10 +468,8 @@ async def websocket_endpoint(
                     await manager.broadcast(board_id, "group_collapse", collapse)
 
                 elif event in ("timer_start", "timer_pause", "timer_reset"):
-                    ws_user = manager.get_username(websocket)
-                    fac_user = manager.get_facilitator(board_id)
                     # Only facilitator can control timer when session is active
-                    if fac_user and ws_user != fac_user:
+                    if facilitator_id and not is_facilitator:
                         continue
                     timer_data = clean_timer(event, payload)
                     if timer_data is None:
@@ -552,137 +478,130 @@ async def websocket_endpoint(
                     await manager.broadcast(board_id, event, timer_data)
 
                 elif event == "facilitator_start":
-                    username = manager.get_username(websocket)
-                    if username and not manager.get_facilitator(board_id):
-                        had_ready, had_spot = manager.set_facilitator(board_id, username)
-                        session_id = manager.get_session_id(board_id)
-                        _sync_board_session_db(
-                            websocket,
-                            board_id,
-                            workspace_id,
-                            username,
-                            "brainstorm",
-                            session_id,
-                        )
-                        await manager.broadcast(
-                            board_id,
-                            "facilitator_update",
-                            {
-                                "facilitator": username,
-                                "phase": "brainstorm",
-                                "session_id": session_id,
-                            },
-                        )
-                        if had_ready:
-                            await manager.broadcast(
-                                board_id, "ready_update", {"ready_users": []}
-                            )
-                        if had_spot:
-                            await manager.broadcast(
-                                board_id, "spotlight_update", {"card_id": None}
-                            )
+                    if facilitator_id:
+                        continue
+                    had_ready, had_spot = manager.set_facilitator(board_id, peer)
+                    _sync_board_session_db(
+                        websocket,
+                        board_id,
+                        workspace_id,
+                        peer,
+                        "brainstorm",
+                        manager.get_session_id(board_id),
+                    )
+                    await manager.broadcast(
+                        board_id, "facilitator_update", manager.facilitator_payload(board_id)
+                    )
+                    await _broadcast_session_reset(board_id, had_ready, had_spot)
+                    # «Штурм» скрывает чужие карточки: клиенты перечитывают доску
+                    await manager.broadcast(board_id, "cards_visibility_changed", {})
 
                 elif event == "facilitator_stop":
-                    username = manager.get_username(websocket)
-                    if username and manager.get_facilitator(board_id) == username:
-                        lock_board = bool(
-                            isinstance(payload, dict) and payload.get("lock_board")
+                    if not is_facilitator:
+                        continue
+                    lock_board = bool(payload.get("lock_board"))
+                    had_ready, had_spot = manager.clear_session(board_id)
+                    # Завершение сессии раскрывает всё, что было скрыто в «Штурме»
+                    board_payload = _sync_board_session_db(
+                        websocket,
+                        board_id,
+                        workspace_id,
+                        None,
+                        None,
+                        None,
+                        lock_board=lock_board,
+                        reveal=True,
+                    )
+                    await manager.broadcast(
+                        board_id, "facilitator_update", manager.facilitator_payload(board_id)
+                    )
+                    await _broadcast_session_reset(board_id, had_ready, had_spot)
+                    await manager.broadcast(board_id, "cards_visibility_changed", {})
+                    if board_payload:
+                        await manager.broadcast(board_id, "board_updated", board_payload)
+                        await manager.broadcast_workspace(
+                            workspace_id, "board_updated", board_payload
                         )
-                        had_ready, had_spot = manager.clear_session(board_id)
-                        board_payload = _sync_board_session_db(
-                            websocket,
-                            board_id,
-                            workspace_id,
-                            None,
-                            None,
-                            None,
-                            lock_board=lock_board,
-                        )
-                        await manager.broadcast(
-                            board_id,
-                            "facilitator_update",
-                            {"facilitator": None, "phase": None, "session_id": None},
-                        )
-                        if had_ready:
-                            await manager.broadcast(
-                                board_id, "ready_update", {"ready_users": []}
-                            )
-                        if had_spot:
-                            await manager.broadcast(
-                                board_id, "spotlight_update", {"card_id": None}
-                            )
-                        if board_payload:
-                            await manager.broadcast(board_id, "board_updated", board_payload)
-                            await manager.broadcast_workspace(
-                                workspace_id, "board_updated", board_payload
-                            )
+
+                elif event == "facilitator_transfer":
+                    # Ведущий передаёт роль участнику, который сейчас на доске
+                    if not is_facilitator:
+                        continue
+                    target_id = short_str(payload.get("participant_id"), MAX_ID_LENGTH)
+                    target = next(
+                        (p for p in manager.get_users(board_id) if p.id == target_id), None
+                    )
+                    if target is None or target.id == peer.id:
+                        continue
+                    manager.transfer_facilitator(board_id, target)
+                    _sync_board_session_db(
+                        websocket,
+                        board_id,
+                        workspace_id,
+                        target,
+                        manager.get_phase(board_id),
+                        manager.get_session_id(board_id),
+                    )
+                    await manager.broadcast(
+                        board_id, "facilitator_update", manager.facilitator_payload(board_id)
+                    )
+
+                elif event == "facilitator_takeover":
+                    # Любой участник забирает роль, если ведущий пропал
+                    if not manager.can_take_over(board_id):
+                        continue
+                    manager.transfer_facilitator(board_id, peer)
+                    _sync_board_session_db(
+                        websocket,
+                        board_id,
+                        workspace_id,
+                        peer,
+                        manager.get_phase(board_id),
+                        manager.get_session_id(board_id),
+                    )
+                    await manager.broadcast(
+                        board_id, "facilitator_update", manager.facilitator_payload(board_id)
+                    )
 
                 elif event == "phase_change":
-                    username = manager.get_username(websocket)
                     phase = payload.get("phase")
-                    logger.info(
-                        "phase_change: username=%s, facilitator=%s, phase=%s",
-                        username, manager.get_facilitator(board_id), phase,
+                    if not is_facilitator or phase not in VALID_PHASES:
+                        continue
+                    previous_phase = manager.get_phase(board_id)
+                    had_ready, had_spot = manager.set_phase(board_id, phase)
+                    # Выход из «Штурма» раскрывает карточки насовсем
+                    leaving_brainstorm = previous_phase == "brainstorm" and phase != "brainstorm"
+                    _sync_board_session_db(
+                        websocket,
+                        board_id,
+                        workspace_id,
+                        peer,
+                        phase,
+                        manager.get_session_id(board_id),
+                        reveal=leaving_brainstorm,
                     )
-                    if (
-                        username
-                        and manager.get_facilitator(board_id) == username
-                        and phase in VALID_PHASES
-                    ):
-                        had_ready, had_spot = manager.set_phase(board_id, phase)
-                        _sync_board_session_db(
-                            websocket,
-                            board_id,
-                            workspace_id,
-                            username,
-                            phase,
-                            manager.get_session_id(board_id),
-                        )
-                        await manager.broadcast(
-                            board_id, "phase_update", {"phase": phase}
-                        )
-                        if had_ready:
-                            await manager.broadcast(
-                                board_id, "ready_update", {"ready_users": []}
-                            )
-                        if had_spot:
-                            await manager.broadcast(
-                                board_id, "spotlight_update", {"card_id": None}
-                            )
-                        if phase == "summary":
-                            logger.info(
-                                "Summary phase entered on board %s by %s",
-                                board_id, username,
-                            )
-                            _start_summary_generation(board_id, username, workspace_id)
+                    await manager.broadcast(board_id, "phase_update", {"phase": phase})
+                    await _broadcast_session_reset(board_id, had_ready, had_spot)
+                    if leaving_brainstorm or phase == "brainstorm":
+                        await manager.broadcast(board_id, "cards_visibility_changed", {})
+                    if phase == "summary":
+                        logger.info("Summary phase entered on board %s", board_id)
+                        _start_summary_generation(board_id, peer.id, workspace_id)
 
                 elif event == "ready_toggle":
-                    username = manager.get_username(websocket)
-                    if username:
-                        ready_flag = (
-                            payload.get("ready")
-                            if isinstance(payload, dict)
-                            and isinstance(payload.get("ready"), bool)
-                            else None
-                        )
-                        ready_users = manager.toggle_ready(
-                            board_id, username, ready=ready_flag
-                        )
-                        await manager.broadcast(
-                            board_id, "ready_update", {"ready_users": ready_users}
-                        )
+                    ready_flag = (
+                        payload.get("ready") if isinstance(payload.get("ready"), bool) else None
+                    )
+                    manager.toggle_ready(board_id, peer.id, ready=ready_flag)
+                    await manager.broadcast(
+                        board_id, "ready_update", manager.ready_payload(board_id)
+                    )
 
                 elif event == "spotlight_card":
-                    username = manager.get_username(websocket)
-                    fac = manager.get_facilitator(board_id)
-                    if not username or (fac and username != fac):
+                    if facilitator_id and not is_facilitator:
                         continue
-                    card_id = (
-                        payload.get("card_id") if isinstance(payload, dict) else None
-                    )
-                    if card_id is not None and (
-                        not isinstance(card_id, str) or len(card_id) > 100
-                    ):
+                    card_id = payload.get("card_id")
+                    if card_id is not None and short_str(card_id, MAX_ID_LENGTH) is None:
                         continue
                     manager.set_spotlight(board_id, card_id)
                     await manager.broadcast(
@@ -690,21 +609,12 @@ async def websocket_endpoint(
                     )
 
                 elif event == "reaction":
-                    emoji = payload.get("emoji") if isinstance(payload, dict) else None
+                    emoji = payload.get("emoji")
                     if not isinstance(emoji, str) or emoji not in ALLOWED_REACTIONS:
                         continue
-                    username = (
-                        manager.get_username(websocket)
-                        or (
-                            payload.get("username")
-                            if isinstance(payload, dict)
-                            else None
-                        )
-                        or "Участник"
-                    )
                     reaction_id = (
                         payload.get("id")
-                        if isinstance(payload, dict) and isinstance(payload.get("id"), str)
+                        if isinstance(payload.get("id"), str)
                         else f"{time.time():.6f}"
                     )
                     await manager.broadcast(
@@ -713,28 +623,19 @@ async def websocket_endpoint(
                         {
                             "id": reaction_id[:64],
                             "emoji": emoji,
-                            "username": str(username)[:60],
+                            "username": peer.name,
+                            "participant_id": peer.id,
                         },
                     )
 
                 elif event == "card_typing":
-                    username = manager.get_username(websocket)
-                    if not username:
-                        continue
-                    column_id = (
-                        payload.get("column_id") if isinstance(payload, dict) else None
-                    )
-                    is_typing = (
-                        bool(payload.get("is_typing"))
-                        if isinstance(payload, dict)
-                        else False
-                    )
-                    if is_typing:
-                        if not isinstance(column_id, str) or not (1 <= len(column_id) <= 100):
+                    column_id = payload.get("column_id")
+                    if bool(payload.get("is_typing")):
+                        if short_str(column_id, MAX_ID_LENGTH) is None:
                             continue
-                        changed = manager.set_typing(board_id, username, column_id)
+                        changed = manager.set_typing(board_id, peer.id, column_id)
                     else:
-                        changed = manager.set_typing(board_id, username, None)
+                        changed = manager.set_typing(board_id, peer.id, None)
                     if changed:
                         await manager.broadcast(
                             board_id,
@@ -756,34 +657,37 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         pass
     finally:
-        username, still_present, fac_disconnected = manager.disconnect(
-            board_id, websocket
-        )
+        gone, still_present, fac_disconnected = manager.disconnect(board_id, websocket)
         # Синхронно планируем grace-таймер и чистим ready ДО любых await,
         # иначе CancelledError при отмене задачи оборвёт finally до планирования.
-        if fac_disconnected and username:
-            manager.schedule_facilitator_grace(board_id, username)
-        if username and not still_present:
-            ready_changed = manager.remove_ready_user(board_id, username)
-            typing_changed = manager.set_typing(board_id, username, None)
+        if fac_disconnected and gone:
+            manager.schedule_facilitator_grace(board_id, gone.id)
+        if gone and not still_present:
+            ready_changed = manager.remove_ready_user(board_id, gone.id)
+            typing_changed = manager.set_typing(board_id, gone.id, None)
             try:
                 # Защищаем рассылку о выходе от CancelledError при закрытии сокета (Starlette TestClient / cancel),
                 # иначе cursor_leave / presence_update обрываются на await и клиенты не получают обновление.
                 with anyio.CancelScope(shield=True):
                     with anyio.move_on_after(2.0):
                         await manager.broadcast(
-                            board_id, "cursor_leave", {"username": username}
+                            board_id,
+                            "cursor_leave",
+                            {"participant_id": gone.id, "username": gone.name},
                         )
                         await manager.broadcast(
-                            board_id,
-                            "presence_update",
-                            {"users": manager.get_users(board_id)},
+                            board_id, "presence_update", manager.presence_payload(board_id)
                         )
-                        if ready_changed:
+                        if fac_disconnected:
+                            # Остальные видят, что ведущий не в сети и роль можно забрать
                             await manager.broadcast(
                                 board_id,
-                                "ready_update",
-                                {"ready_users": manager.get_ready_users(board_id)},
+                                "facilitator_update",
+                                manager.facilitator_payload(board_id),
+                            )
+                        if ready_changed:
+                            await manager.broadcast(
+                                board_id, "ready_update", manager.ready_payload(board_id)
                             )
                         if typing_changed:
                             await manager.broadcast(

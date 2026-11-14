@@ -195,19 +195,38 @@ def test_workspace(db_session):
     return ws
 
 
-@pytest.fixture()
-def workspace_headers(client, test_workspace):
-    """Получить заголовки с X-Workspace-Token для тестовых запросов."""
+def login_headers(client, name: str, slug: str = "test-team", key: str = "testkey123") -> dict:
+    """Войти в команду под именем `name` и вернуть заголовки нового участника.
+
+    Каждый вход создаёт отдельного участника — так тесты изображают разных людей.
+    Токен сессии сервер отдаёт только в cookie; для запросов передаём его заголовком,
+    который сервер принимает от неинтерактивных клиентов.
+    """
     resp = client.post(
         "/api/workspaces/login",
-        json={
-            "workspace_slug": "test-team",
-            "access_key": "testkey123",
-        },
+        json={"workspace_slug": slug, "access_key": key, "name": name},
     )
-    assert resp.status_code == 200
-    token = resp.json()["token"]
-    return {"X-Workspace-Token": token}
+    assert resp.status_code == 200, resp.text
+    headers = {"X-Workspace-Token": resp.cookies["workspace_token"]}
+    # Cookie в клиенте не оставляем: иначе она подмешивалась бы в запросы других участников
+    client.cookies.clear()
+    return headers
+
+
+def participant_id_of(client, headers: dict) -> str:
+    return client.get("/api/workspaces/me", headers=headers).json()["participant"]["id"]
+
+
+@pytest.fixture()
+def workspace_headers(client, test_workspace):
+    """Заголовки участника «Tester» в тестовой команде."""
+    return login_headers(client, "Tester")
+
+
+@pytest.fixture()
+def login_as(client, test_workspace):
+    """Фабрика: `login_as("Аня")` → заголовки ещё одного участника той же команды."""
+    return lambda name: login_headers(client, name)
 
 
 @pytest.fixture()
@@ -317,15 +336,29 @@ def ws_workspace(db_session):
 
 
 @pytest.fixture()
-def ws_token(ws_workspace):
-    """Generate a valid workspace token for WebSocket tests."""
-    from app.workspace_auth import create_workspace_token
+def ws_token_for(db_session, ws_workspace):
+    """Фабрика токенов: `ws_token_for("Аня")` — новый участник команды WebSocket-тестов.
 
-    return create_workspace_token(
-        workspace_id=ws_workspace.id,
-        workspace_slug=ws_workspace.slug,
-        workspace_name=ws_workspace.name,
-    )
+    Личность сокета сервер берёт из токена, поэтому разные люди в тесте —
+    это разные токены, а не разные имена в сообщении identify.
+    """
+    from app.models import Participant
+    from app.workspace_auth import issue_session_token
+
+    def make(name: str = "Tester") -> str:
+        participant = Participant(workspace_id=ws_workspace.id, name=name)
+        db_session.add(participant)
+        db_session.commit()
+        db_session.refresh(participant)
+        return issue_session_token(ws_workspace, participant)
+
+    return make
+
+
+@pytest.fixture()
+def ws_token(ws_token_for):
+    """Токен одного участника для тестов, которым не важно, кто подключён."""
+    return ws_token_for("Tester")
 
 
 @pytest.fixture()

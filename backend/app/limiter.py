@@ -1,6 +1,24 @@
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from starlette.requests import Request
+
 from app.config import _is_testing
+
+
+def rate_limit_key(request: Request) -> str:
+    """Ключ лимита: участник сессии, а для запросов без сессии — IP-адрес.
+
+    Команда обычно сидит за одним адресом (офис, VPN): общая квота на IP
+    упиралась бы в лимит на первом же голосовании. Вход и прочие запросы
+    без сессии по-прежнему считаются по адресу.
+    """
+    from app.workspace_auth import participant_key_from_token, token_from_request
+
+    participant_id = participant_key_from_token(token_from_request(request))
+    if participant_id:
+        return f"participant:{participant_id}"
+    return get_remote_address(request)
+
 
 # В тестовом окружении (TESTING=true — юнит-тесты и E2E) лимитер выключен.
 # Причина: E2E-сьют делает ~35 записей в минуту на один endpoint (beforeEach
@@ -9,12 +27,11 @@ from app.config import _is_testing
 # меняются: в проде TESTING не задан, и лимитер работает как раньше.
 # Прицельно лимитер проверяется в tests/test_rate_limiting.py — он включает
 # limiter.enabled = True и убеждается, что превышение даёт 429.
-limiter = Limiter(key_func=get_remote_address, enabled=not _is_testing())
+limiter = Limiter(key_func=rate_limit_key, enabled=not _is_testing())
 
-# Квоты считаются по IP-адресу, а команда обычно сидит за одним адресом
-# (офис, VPN), поэтому лимиты на совместную работу с доской рассчитаны на
-# команду, а не на одного человека: десять участников, каждый из которых
-# за минуту голосует, двигает и создаёт карточки, не должны получать 429.
+# Лимиты на совместную работу с доской. Квота считается на участника, но
+# оставлена с запасом: перетаскивание, голосование и массовые правки в разгар
+# ретро дают десятки запросов в минуту с одного клиента.
 # Редкие действия (создание и удаление досок и колонок, вход, запросы к AI)
 # сохраняют собственные, более строгие лимиты рядом с эндпоинтами.
 TEAM_WRITE_LIMIT = "300/minute"

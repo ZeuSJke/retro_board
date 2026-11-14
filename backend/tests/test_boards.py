@@ -112,7 +112,13 @@ class TestUpdateBoard:
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "Renamed Board"
-        assert data["slug"] == "renamed-board"
+        # Адрес доски при переименовании не меняется: разосланные ссылки продолжают работать
+        assert data["slug"] == sample_board["slug"]
+        by_old_slug = client.get(
+            f"/api/boards/by-slug/{sample_board['slug']}", headers=workspace_headers
+        )
+        assert by_old_slug.status_code == 200
+        assert by_old_slug.json()["id"] == sample_board["id"]
 
     def test_rename_to_existing_name_returns_409(
         self, client, workspace_headers, sample_board

@@ -1,7 +1,17 @@
+"""Сессии команды и участника.
+
+Вход в команду создаёт участника (`models.Participant`) и выдаёт подписанный
+JWT в httpOnly-cookie. В токене — идентификаторы команды и участника и номер
+поколения токенов команды. Личность участника сервер берёт только отсюда:
+имя, автор, голос и роль ведущего из тела запроса или WebSocket-сообщения
+не принимаются.
+"""
+
 from datetime import datetime, timedelta, UTC
 import logging
+import secrets
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, Response
 import bcrypt
 import jwt
 from jwt import InvalidTokenError
@@ -14,6 +24,10 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 ALGORITHM = "HS256"
+SESSION_COOKIE = "workspace_token"
+# Токен старше этого возраста перевыпускается при обращении к /workspaces/me:
+# пока человек пользуется доской, сессия не истекает.
+SESSION_RENEW_AFTER = timedelta(days=1)
 
 # bcrypt учитывает только первые 72 байта пароля, а начиная с 5-й версии
 # отказывается принимать более длинный ввод. Новые ключи длиннее лимита
@@ -42,18 +56,36 @@ def verify_access_key(key: str, key_hash: str) -> bool:
         return False
 
 
+def new_invite_token() -> str:
+    """Случайный токен ссылки-приглашения."""
+    return secrets.token_urlsafe(24)
+
+
 def create_workspace_token(
-    workspace_id: str, workspace_slug: str, workspace_name: str
+    workspace_id: str,
+    workspace_slug: str,
+    workspace_name: str,
+    participant_id: str,
+    epoch: int = 0,
 ) -> str:
-    """Создать JWT токен для workspace."""
-    expire = datetime.now(UTC) + timedelta(hours=settings.workspace_jwt_expire_hours)
+    """Создать JWT сессии: команда, участник и поколение токенов команды."""
+    now = datetime.now(UTC)
     payload = {
         "workspace_id": workspace_id,
         "workspace_slug": workspace_slug,
         "workspace_name": workspace_name,
-        "exp": expire,
+        "pid": participant_id,
+        "epoch": epoch,
+        "iat": now,
+        "exp": now + timedelta(hours=settings.workspace_jwt_expire_hours),
     }
     return jwt.encode(payload, settings.workspace_jwt_secret, algorithm=ALGORITHM)
+
+
+def issue_session_token(workspace: models.Workspace, participant: models.Participant) -> str:
+    return create_workspace_token(
+        workspace.id, workspace.slug, workspace.name, participant.id, workspace.token_epoch
+    )
 
 
 def decode_workspace_token(token: str) -> dict:
@@ -66,21 +98,96 @@ def decode_workspace_token(token: str) -> dict:
         ) from err
 
 
-def get_current_workspace(
+def set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=settings.workspace_jwt_expire_hours * 3600,
+        secure=settings.secure_cookies,
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=SESSION_COOKIE,
+        httponly=True,
+        samesite="lax",
+        secure=settings.secure_cookies,
+    )
+
+
+def token_from_request(request: Request) -> str | None:
+    """Токен сессии: заголовок для неинтерактивных клиентов, иначе cookie."""
+    return request.headers.get("X-Workspace-Token") or request.cookies.get(SESSION_COOKIE)
+
+
+def resolve_session(
+    db: Session, payload: dict
+) -> tuple[models.Workspace, models.Participant]:
+    """По содержимому токена найти команду и участника или ответить 401.
+
+    Сессия недействительна, если токен выпущен до появления участников
+    (нет `pid`), участник или команда удалены либо ключ доступа команды
+    сменили после выдачи токена (поколение не совпадает).
+    """
+    participant_id = payload.get("pid")
+    if not participant_id or not isinstance(participant_id, str):
+        raise HTTPException(status_code=401, detail="Сессия устарела, войдите снова")
+    participant = db.get(models.Participant, participant_id)
+    if participant is None or participant.workspace_id != payload.get("workspace_id"):
+        raise HTTPException(status_code=401, detail="Сессия устарела, войдите снова")
+    workspace = db.get(models.Workspace, participant.workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=401, detail="Workspace not found")
+    if payload.get("epoch") != workspace.token_epoch:
+        raise HTTPException(status_code=401, detail="Доступ отозван, войдите снова")
+    return workspace, participant
+
+
+def get_current_participant(
     request: Request,
     db: Session = Depends(get_db),
-) -> models.Workspace:
-    """Dependency: получить текущий workspace из headers или cookie."""
-    token = request.headers.get("X-Workspace-Token")
-    if not token:
-        token = request.cookies.get("workspace_token")
+) -> models.Participant:
+    """Dependency: участник текущей сессии."""
+    token = token_from_request(request)
     if not token:
         raise HTTPException(status_code=401, detail="Workspace authentication required")
     payload = decode_workspace_token(token)
-    workspace = db.get(models.Workspace, payload["workspace_id"])
-    if not workspace:
-        raise HTTPException(status_code=401, detail="Workspace not found")
-    return workspace
+    workspace, participant = resolve_session(db, payload)
+    # Содержимое токена нужно тем, кто решает, пора ли его перевыпускать
+    request.state.session_claims = payload
+    request.state.workspace = workspace
+    return participant
+
+
+def get_current_workspace(
+    request: Request,
+    participant: models.Participant = Depends(get_current_participant),
+) -> models.Workspace:
+    """Dependency: команда текущей сессии."""
+    return request.state.workspace
+
+
+def session_needs_renewal(payload: dict) -> bool:
+    issued_at = payload.get("iat")
+    if not isinstance(issued_at, (int, float)):
+        return True
+    age = datetime.now(UTC) - datetime.fromtimestamp(issued_at, UTC)
+    return age >= SESSION_RENEW_AFTER
+
+
+def participant_key_from_token(token: str | None) -> str | None:
+    """Идентификатор участника из токена без обращения к БД (для лимита запросов)."""
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.workspace_jwt_secret, algorithms=[ALGORITHM])
+    except InvalidTokenError:
+        return None
+    participant_id = payload.get("pid")
+    return participant_id if isinstance(participant_id, str) and participant_id else None
 
 
 def create_admin_token() -> str:

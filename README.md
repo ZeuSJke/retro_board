@@ -221,7 +221,11 @@ retro_board/
 
 ## API Reference
 
-Все пути (кроме `/health`, `/api/health`, `/api/workspaces/login`, `/api/admin/*`) требуют валидный workspace JWT (`httpOnly` cookie `workspace_token` или заголовок `X-Workspace-Token`). Небезопасные HTTP-методы (кроме логинов) защищены `CSRFMiddleware` (`csrf_token` cookie + заголовок `X-CSRF-Token`).
+Все пути (кроме `/health`, `/api/health`, `/api/workspaces/login`, `/api/workspaces/join`, `/api/workspaces/invite/{token}`, `/api/admin/*`) требуют действующую сессию: JWT в `httpOnly` cookie `workspace_token` (заголовок `X-Workspace-Token` — для неинтерактивных клиентов). Небезопасные HTTP-методы (кроме входов) защищены `CSRFMiddleware` (`csrf_token` cookie + заголовок `X-CSRF-Token`).
+
+**Участник.** Вход создаёт на сервере участника команды; его идентификатор лежит в токене сессии. Автора карточки, голос, оценку настроения и роль ведущего сервер берёт из сессии — из тела запроса и WebSocket-сообщений они не принимаются. Имя — подпись: тёзки — разные участники, смена имени ничего не отвязывает. Аккаунтов нет, поэтому новое устройство или очищенные cookie дают нового участника.
+
+**Что видит участник.** Ответы и события собираются для конкретного получателя: текст и автор чужой карточки до раскрытия (`masked: true`) и имена авторов в анонимном режиме не передаются. `likes` карточки — идентификаторы проголосовавших участников; в анонимном режиме чужие заменены на `"anon"`.
 
 ### Health
 
@@ -234,8 +238,13 @@ retro_board/
 
 | Метод | Путь | Описание |
 |---|---|---|
-| `POST` | `/api/workspaces/login` | Вход в workspace (`workspace_slug` + `access_key`), выставляет `workspace_token` cookie |
-| `GET` | `/api/workspaces/me` | Текущий workspace и обновление `csrf_token` cookie |
+| `POST` | `/api/workspaces/login` | Вход в команду (`workspace_slug` + `access_key` + `name`): создаёт участника и выставляет `httpOnly` cookie `workspace_token`; в теле ответа токена нет |
+| `POST` | `/api/workspaces/join` | Вход по ссылке-приглашению (`invite_token` + `name`) |
+| `POST` | `/api/workspaces/logout` | Выход: сбрасывает cookie сессии |
+| `GET` | `/api/workspaces/me` | Текущая сессия: команда, участник (`participant`), признак `ai_enabled`; продлевает сессию и обновляет `csrf_token` cookie |
+| `PATCH` | `/api/workspaces/me/participant` | Сменить имя участника — карточки, голоса и роль ведущего остаются за ним |
+| `GET` | `/api/workspaces/invite` | Токен ссылки-приглашения в команду (создаётся при первом обращении) |
+| `GET` | `/api/workspaces/invite/{token}` | Название команды для страницы приглашения (без входа) |
 
 ### Admin (`/api/admin/*`, отдельная cookie `admin_token`)
 
@@ -245,7 +254,9 @@ retro_board/
 | `POST` | `/api/admin/logout` | Выход администратора |
 | `GET` | `/api/admin/workspaces` | Список всех workspaces |
 | `POST` | `/api/admin/workspaces` | Создать workspace |
-| `PATCH` | `/api/admin/workspaces/{workspace_id}` | Переименовать / сменить ключ доступа |
+| `PATCH` | `/api/admin/workspaces/{workspace_id}` | Переименовать / сменить ключ доступа (смена ключа отзывает все сессии команды и ссылку-приглашение) |
+| `GET` | `/api/admin/workspaces/{workspace_id}/invite` | Токен ссылки-приглашения команды |
+| `POST` | `/api/admin/workspaces/{workspace_id}/invite/rotate` | Перевыпустить ссылку-приглашение (старая перестаёт работать) |
 | `DELETE` | `/api/admin/workspaces/{workspace_id}` | Удалить workspace |
 
 ### Boards (`/api/boards/*`)
@@ -260,11 +271,12 @@ retro_board/
 | `GET` | `/api/boards/by-slug/{slug}` | Получить доску по slug |
 | `GET` | `/api/boards/{board_id}` | Получить доску со всеми колонками, группами, карточками и mood |
 | `PATCH` | `/api/boards/{board_id}` | Обновить настройки доски (`name`, `max_votes`, `is_locked`, `hide_cards_until_reveal`, `anonymous_votes`, `allow_multiple_votes_per_card`) |
-| `DELETE` | `/api/boards/{board_id}` | Удалить доску (soft delete через `deleted_at`) |
-| `POST` | `/api/boards/{board_id}/mood` | Сохранить / обновить оценку настроения участника |
+| `DELETE` | `/api/boards/{board_id}` | Удалить доску (soft delete через `deleted_at`); доступно создателю доски или ведущему |
+| `POST` | `/api/boards/{board_id}/reveal` | Раскрыть карточки скрытого сбора вне сессии ведущего (создатель доски) |
+| `POST` | `/api/boards/{board_id}/mood` | Сохранить / обновить оценку настроения участника сессии |
 | `GET` | `/api/boards/{board_id}/summary` | Получить последнее AI-резюме доски |
 | `POST` | `/api/boards/{board_id}/summary/regenerate` | Перегенерировать AI-резюме доски |
-| `POST` | `/api/boards/{board_id}/reset-votes` | Сбросить голоса пользователя на доске |
+| `POST` | `/api/boards/{board_id}/reset-votes` | Сбросить собственные голоса участника на доске |
 
 ### Columns (`/api/columns/*`)
 
@@ -281,7 +293,7 @@ retro_board/
 | `POST` | `/api/cards/` | Создать карточку |
 | `PATCH` | `/api/cards/{card_id}` | Обновить текст / цвет / группу |
 | `POST` | `/api/cards/{card_id}/move` | Переместить карточку между колонками / позициями |
-| `POST` | `/api/cards/{card_id}/like` | Добавить / снять голос (лайк) |
+| `POST` | `/api/cards/{card_id}/like` | Добавить / снять голос участника сессии (`action=toggle\|add\|remove`) |
 | `POST` | `/api/cards/bulk-update` | Массовое перемещение / смена цвета / группировка карточек |
 | `POST` | `/api/cards/bulk-delete` | Массовое удаление карточек |
 | `POST` | `/api/cards/merge` | Объединить несколько карточек в одну |
@@ -306,8 +318,8 @@ retro_board/
 | Метод | Путь | Описание |
 |---|---|---|
 | `GET` | `/api/action-items/trends` | Данные для графика трендов задач |
-| `GET` | `/api/action-items/all` | Все задачи workspace (для `/dashboard`) |
-| `POST` | `/api/action-items/carry-forward` | Перенести незакрытые задачи с исходной доски на целевую |
+| `GET` | `/api/action-items/all` | Все задачи workspace (для `/dashboard`); перенесённые оригиналы скрыты, пока не передан `include_carried=true` |
+| `POST` | `/api/action-items/carry-forward` | Перенести незакрытые задачи с исходной доски на целевую: на целевой появляется копия, оригинал помечается перенесённым (`superseded_by_id`) и больше не считается открытым |
 | `GET` | `/api/action-items/` | Задачи конкретной доски (`?board_id=...`) |
 | `POST` | `/api/action-items/generate-title` | Сгенерировать заголовок задачи через AI |
 | `POST` | `/api/action-items/suggest` | Предложить список Action Items по итогам доски через AI |
@@ -328,9 +340,11 @@ retro_board/
 
 | Событие | Описание |
 |---|---|
-| `identify` | Регистрация имени участника (`username`) |
+| `identify` | Личность сокета задаёт сессия, имя из сообщения не принимается; в ответ сервер присылает `presence_update` и `facilitator_update` |
 | `cursor_move` / `cursor_leave` | Позиция курсора (`x`, `y`) и уход курсора |
 | `facilitator_start` / `facilitator_stop` | Старт / завершение сессии фасилитации (опционально блокировка доски при стопе) |
+| `facilitator_transfer` | Ведущий передаёт роль участнику на доске (`participant_id`); фаза и таймер сохраняются |
+| `facilitator_takeover` | Участник забирает роль, если ведущий не в сети дольше 15 секунд |
 | `phase_change` | Смена фазы (`brainstorm`, `reveal`, `discuss`, `vote`, `summary`) |
 | `timer_start` / `timer_pause` / `timer_reset` | Управление таймером (в активной сессии — только фасилитатор) |
 | `group_collapse` | Свернуть / развернуть группу |
@@ -343,8 +357,10 @@ retro_board/
 
 | Событие | Описание |
 |---|---|
-| `presence_update` | Список активных участников доски |
-| `facilitator_update` | Текущий фасилитатор, фаза и `session_id` |
+| `presence_update` | Участники на доске: `users` (имена) и `participants` (`id` + `name`; тёзки — разные участники) |
+| `facilitator_update` | Текущий ведущий (`facilitator`, `facilitator_id`, `facilitator_online`), фаза и `session_id` |
+| `participant_renamed` | Участник сменил имя (`participant_id`, `name`) |
+| `cards_visibility_changed` | Изменилась видимость чужих карточек (начало / конец «Штурма», раскрытие скрытого сбора) — клиент перечитывает доску |
 | `phase_update` | Смена фазы ретро |
 | `cursor_move` / `cursor_leave` | Позиции курсоров других участников |
 | `timer_start` / `timer_pause` / `timer_reset` | Синхронизация таймера |

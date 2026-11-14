@@ -32,11 +32,13 @@ def _hs256(payload: dict, secret: str, header: dict | None = None) -> str:
 
 class TestWorkspaceTokens:
     def test_roundtrip(self):
-        token = create_workspace_token("ws-1", "team", "Команда")
+        token = create_workspace_token("ws-1", "team", "Команда", "p-1", epoch=3)
         payload = decode_workspace_token(token)
         assert payload["workspace_id"] == "ws-1"
         assert payload["workspace_slug"] == "team"
         assert payload["workspace_name"] == "Команда"
+        assert payload["pid"] == "p-1"
+        assert payload["epoch"] == 3
 
     def test_token_issued_by_previous_library_is_accepted(self):
         """Сессии, выданные до замены библиотеки, не должны слететь при выкате."""
@@ -82,7 +84,7 @@ class TestAdminTokens:
         assert verify_admin_token(create_admin_token()) is True
 
     def test_workspace_token_is_not_admin(self):
-        assert verify_admin_token(create_workspace_token("ws-1", "team", "Команда")) is False
+        assert verify_admin_token(create_workspace_token("ws-1", "team", "Команда", "p-1")) is False
 
     def test_wrong_subject_is_rejected(self):
         token = _hs256({"sub": "user", "exp": int(time.time()) + 3600}, settings.admin_jwt_secret)

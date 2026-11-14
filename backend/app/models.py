@@ -33,12 +33,52 @@ class Workspace(Base):
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     access_key_hash: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Номер поколения токенов: смена ключа доступа увеличивает его и тем самым
+    # отзывает все выданные ранее сессии (claim `epoch` в JWT).
+    token_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Токен ссылки-приглашения; перевыпуск делает старую ссылку недействительной.
+    invite_token: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
     )
 
     boards: Mapped[list["Board"]] = relationship(
         "Board", back_populates="workspace", cascade="all, delete-orphan"
+    )
+    participants: Mapped[list["Participant"]] = relationship(
+        "Participant", back_populates="workspace", cascade="all, delete-orphan"
+    )
+
+
+class Participant(Base):
+    """Участник команды: серверная личность, привязанная к сессии в cookie.
+
+    Создаётся при входе (имя + код команды и ключ либо ссылка-приглашение).
+    Имя — подпись, а не идентификатор: тёзки — разные участники, смена имени
+    ничего не отвязывает. Аккаунтов нет: новое устройство — новый участник;
+    `account_id` зарезервирован под будущий вход через SSO.
+    """
+
+    __tablename__ = "participants"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    workspace_id: Mapped[str] = mapped_column(
+        String, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(60), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="human")
+    account_id: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc
+    )
+
+    workspace: Mapped["Workspace"] = relationship(
+        "Workspace", back_populates="participants"
     )
 
 
@@ -64,7 +104,11 @@ class Board(Base):
     hide_cards_until_reveal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     anonymous_votes: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     allow_multiple_votes_per_card: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Имя ведущего хранится для отображения, личность — в active_facilitator_id
     active_facilitator: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    active_facilitator_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("participants.id", ondelete="SET NULL"), nullable=True, default=None
+    )
     active_phase: Mapped[str | None] = mapped_column(String(30), nullable=True, default=None)
     active_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
@@ -73,6 +117,12 @@ class Board(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
+    # Создатель доски; NULL у досок, созданных до появления участников
+    created_by_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("participants.id", ondelete="SET NULL"), nullable=True, default=None
+    )
+    # Скрытый сбор: при hide_cards_until_reveal чужие карточки скрыты, пока не раскрыты
+    cards_revealed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     workspace: Mapped["Workspace | None"] = relationship(
         "Workspace", back_populates="boards"
@@ -156,9 +206,20 @@ class Card(Base):
         index=True,
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Имя автора — снимок для отображения (обновляется при смене имени),
+    # личность — в author_id; NULL у карточек, созданных до появления участников.
     author: Mapped[str] = mapped_column(String(60), default="Аноним")
+    author_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("participants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        default=None,
+    )
     color: Mapped[str] = mapped_column(String(20), default="#FFFFFF")
     position: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    # Голоса: идентификаторы участников (по одному на голос). У старых карточек
+    # здесь остались имена — они учитываются в счёте, но никому не принадлежат.
     likes: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
@@ -181,6 +242,11 @@ class ActionItem(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # Задача перенесена на другую доску: дальше живёт её копия, а эта запись
+    # остаётся в истории и не считается открытой.
+    superseded_by_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("action_items.id", ondelete="SET NULL"), nullable=True, default=None
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
@@ -215,7 +281,8 @@ class BoardSummary(Base):
 class BoardMood(Base):
     __tablename__ = "board_moods"
     __table_args__ = (
-        UniqueConstraint("board_id", "author", name="uq_mood_board_author"),
+        # Одна оценка на участника; у старых записей participant_id пуст
+        UniqueConstraint("board_id", "participant_id", name="uq_mood_board_participant"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
@@ -223,6 +290,9 @@ class BoardMood(Base):
         String, ForeignKey("boards.id", ondelete="CASCADE"), index=True
     )
     author: Mapped[str] = mapped_column(String(60), nullable=False)
+    participant_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("participants.id", ondelete="SET NULL"), nullable=True, default=None
+    )
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     note: Mapped[str | None] = mapped_column(String(200), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(

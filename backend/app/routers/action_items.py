@@ -4,9 +4,10 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, case
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
+from app.board_view import require_cards_visible
 from app.database import get_db, release_connection
 from app import models, schemas
 from app.models import now_utc
@@ -45,7 +46,14 @@ def get_trends(
             func.count(case((models.ActionItem.status == "done", 1))).label("done"),
             func.count(models.ActionItem.id).label("total"),
         )
-        .outerjoin(models.ActionItem, models.Board.id == models.ActionItem.board_id)
+        .outerjoin(
+            models.ActionItem,
+            and_(
+                models.Board.id == models.ActionItem.board_id,
+                # Перенесённая задача считается на доске, куда её перенесли
+                models.ActionItem.superseded_by_id.is_(None),
+            ),
+        )
         .filter(
             models.Board.deleted_at.is_(None),
             models.Board.workspace_id == workspace.id,
@@ -75,6 +83,7 @@ def list_all_action_items(
     status: Optional[str] = None,
     board_id: Optional[str] = None,
     assignee: Optional[str] = None,
+    include_carried: bool = False,
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
@@ -87,6 +96,9 @@ def list_all_action_items(
             models.Board.workspace_id == workspace.id,
         )
     )
+    if not include_carried:
+        # Задача, перенесённая на другую доску, представлена там своей копией
+        q = q.filter(models.ActionItem.superseded_by_id.is_(None))
     if status:
         q = q.filter(models.ActionItem.status == status)
     if board_id:
@@ -105,19 +117,30 @@ def list_all_action_items(
 
 
 def copy_unresolved_action_items(
-    db: Session, source_board_id: str, target_board_id: str
-) -> list[schemas.ActionItemOut]:
-    """Копировать нерешённые задачи со старой доски на целевую (без commit)."""
-    items = (
-        db.query(models.ActionItem)
-        .filter(
-            models.ActionItem.board_id == source_board_id,
-            models.ActionItem.status != "done",
-        )
-        .order_by(models.ActionItem.created_at)
-        .all()
+    db: Session,
+    source_board_id: str,
+    target_board_id: str,
+    item_ids: list[str] | None = None,
+) -> tuple[list[schemas.ActionItemOut], list[schemas.ActionItemOut]]:
+    """Перенести нерешённые задачи со старой доски на целевую (без commit).
+
+    На целевой доске появляется копия, а оригинал помечается перенесённым
+    (`superseded_by_id`): он остаётся в истории своей доски, но больше не
+    считается открытым — иначе одна задача считалась бы дважды. Уже
+    перенесённые задачи повторно не переносятся.
+
+    Возвращает (созданные копии, помеченные оригиналы).
+    """
+    query = db.query(models.ActionItem).filter(
+        models.ActionItem.board_id == source_board_id,
+        models.ActionItem.status != "done",
+        models.ActionItem.superseded_by_id.is_(None),
     )
+    if item_ids is not None:
+        query = query.filter(models.ActionItem.id.in_(item_ids))
+    items = query.order_by(models.ActionItem.created_at).all()
     created: list[schemas.ActionItemOut] = []
+    carried: list[schemas.ActionItemOut] = []
     for src in items:
         new_item = models.ActionItem(
             id=str(uuid.uuid4()),
@@ -125,13 +148,18 @@ def copy_unresolved_action_items(
             title=src.title,
             text=src.text,
             assignee=src.assignee,
-            status="open",
+            source_card_ids=list(src.source_card_ids or []),
+            status=src.status,
         )
         db.add(new_item)
         db.flush()
+        src.superseded_by_id = new_item.id
+        db.flush()
         db.refresh(new_item)
+        db.refresh(src)
         created.append(schemas.ActionItemOut.model_validate(new_item))
-    return created
+        carried.append(schemas.ActionItemOut.model_validate(src))
+    return created, carried
 
 
 @router.post(
@@ -154,14 +182,21 @@ async def carry_forward(
     )
     require_live_board(tgt_board, workspace.id, "Target board not found")
 
-    created = copy_unresolved_action_items(
-        db, body.source_board_id, body.target_board_id
+    if body.source_board_id == body.target_board_id:
+        raise HTTPException(400, "Исходная и целевая доски совпадают")
+
+    created, carried = copy_unresolved_action_items(
+        db, body.source_board_id, body.target_board_id, body.item_ids
     )
     db.commit()
 
     for out in created:
         await manager.broadcast(
             body.target_board_id, "action_item_created", out.model_dump(mode="json")
+        )
+    for out in carried:
+        await manager.broadcast(
+            body.source_board_id, "action_item_updated", out.model_dump(mode="json")
         )
 
     return created
@@ -224,6 +259,8 @@ async def suggest_action_items(
     require_live_board(board, workspace.id)
     if not settings.ai_configured:
         raise HTTPException(503, "AI сервис не настроен")
+    # Подбор задач читает тексты всех карточек — до раскрытия он выдал бы скрытое
+    require_cards_visible(board)
 
     rows = (
         db.query(models.Card, models.Column.title)
