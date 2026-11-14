@@ -24,7 +24,7 @@ TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::te
 
 ## Модели, soft delete и миграции
 
-- **Иерархия** (`app/models.py`): `Workspace` → `Board` → `Column` → `CardGroup` / `Card`, плюс `ActionItem`, `BoardSummary`, `BoardMood`.
+- **Иерархия** (`app/models.py`): `Workspace` → `Board` → `Column` → `CardGroup` / `Card`, плюс `ActionItem`, `BoardSummary`, `BoardMood` и темы команды `WorkspaceTheme` ↔ `BoardTheme`.
 - **Soft delete и блокировка доски**: доски удаляются через `Board.deleted_at`. Во всех хендлерах досок и дочерних сущностей используйте `require_live_board()` и `require_unlocked_board()` из `app/utils.py` (`tests/test_audit_guards.py` проверяет `404` для удалённых досок и disambiguation slug, `tests/test_v3_features.py` — `423` для заблокированных досок).
 - **Уникальность**: у `Board` составные ограничения `uq_board_workspace_name` и `uq_board_workspace_slug`; коллизия slug при разных именах должна разрешаться суффиксом, а не 500.
 - **Драйвер PostgreSQL** — psycopg 3. `DATABASE_URL` в окружениях задан как `postgresql://…`; драйвер подставляет `settings.sqlalchemy_database_url` — в движке и в `alembic/env.py` используйте его, а не `settings.database_url`.
@@ -49,4 +49,5 @@ TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::te
 - **Соединение с БД на время вызова модели не держим**: запрос идёт до трёх минут, а пул — 15 соединений. Прочитайте всё нужное, вызовите `release_connection(db)` из `app/database.py` и только потом обращайтесь к модели; после вызова объекты сессии отсоединены — перечитывайте их заново (`tests/test_hardening.py::TestConnectionReleasedDuringAI`).
 - Одновременных запросов к шлюзу — не больше `AI_MAX_CONCURRENCY`; ответ модели — недоверенный ввод, приводите его к ожидаемым типам.
 - **Qwen3 reasoning**: при `AI_DISABLE_THINKING=true` передаётся `chat_template_kwargs: {"enable_thinking": False}`; без этого `max_tokens` уходит в `reasoning_content` и `content` пустой.
-- **Prompt injection**: входной текст карточек/досок санитизируется и обрезается (`_sanitize_card_text`, `_sanitize_text`), а ответы валидируются по whitelist ID (в `clustering.py` группы из `< 2` карточек расформировываются).
+- **Prompt injection**: входной текст карточек/досок санитизируется и обрезается (`sanitize_prompt_text` из `app/ai/sanitize.py`, `_sanitize_text`), в запросе прямо сказано не исполнять инструкции из данных, а ответы валидируются по whitelist ID (в `clustering.py` группы из `< 2` карточек расформировываются).
+- **Темы команды** (`app/themes.py`): при генерации итогов модель получает темы workspace и должна переиспользовать их названия. Что считать той же темой, решает сервер (`resolve_candidates`: совпало название → id из показанного списка → иначе новая тема), а не модель. `apply_board_themes` заменяет набор тем доски той же транзакцией, что и итоги, и выстраивает запись тем одной команды в очередь блокировкой строки workspace. Счётчики (`boards_count`, `streak`) считаются по живым доскам с итогами в порядке `Board.created_at`; `BoardSummary.key_themes` хранит те же названия для совместимости.
