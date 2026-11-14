@@ -29,10 +29,12 @@ _TABLES = (
 
 
 def upgrade() -> None:
+    # if_exists: прежние индексы — чистая оптимизация, и их отсутствие в
+    # какой-то базе не должно останавливать выкатку.
     for table, parent, composite in _TABLES:
         op.create_index(composite, table, [parent, "position"], unique=False)
-        op.drop_index(f"ix_{table}_position", table_name=table)
-        op.drop_index(f"ix_{table}_{parent}", table_name=table)
+        op.drop_index(f"ix_{table}_position", table_name=table, if_exists=True)
+        op.drop_index(f"ix_{table}_{parent}", table_name=table, if_exists=True)
 
 
 def downgrade() -> None:
