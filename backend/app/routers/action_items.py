@@ -13,8 +13,9 @@ from app.models import now_utc
 from app.utils import get_or_404, require_live_board
 from app.ai import ai_client
 from app.ai.prompts.title_generation import (
-    TITLE_GENERATION_PROMPT,
     TITLE_GENERATION_CONFIG,
+    build_title_prompt,
+    clean_generated_title,
 )
 from app.ws_manager import manager
 from app.limiter import TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
@@ -197,12 +198,15 @@ async def generate_action_item_title(
     """Generate action item title from card text using AI."""
     # Проверка токена уже открыла сессию — на время вызова модели она не нужна
     release_connection(db)
-    prompt = TITLE_GENERATION_PROMPT.format(card_text=body.text)
+    prompt = build_title_prompt(body.text)
     try:
         title = await asyncio.to_thread(
             ai_client.generate, prompt, TITLE_GENERATION_CONFIG
         )
-        return schemas.GenerateTitleResponse(title=title)
+        # Ответ модели — недоверенный ввод; пустой после очистки заменяем текстом
+        return schemas.GenerateTitleResponse(
+            title=clean_generated_title(title) or body.text[:50]
+        )
     except Exception:
         logger.exception("Action item title generation failed")
         return schemas.GenerateTitleResponse(title=body.text[:50])
