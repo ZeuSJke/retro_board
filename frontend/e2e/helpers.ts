@@ -1,16 +1,91 @@
-import { type APIRequestContext, type Page } from '@playwright/test'
+import { type APIRequestContext, type APIResponse, type Page } from '@playwright/test'
 
-const API = 'http://localhost:8000/api'
-const ADMIN_API = 'http://localhost:8000/api/admin'
+/**
+ * Адреса стенда. По умолчанию — как в CI (nginx на 3080, бэкенд на 8000);
+ * для локального стенда на других портах задайте E2E_BASE_URL и E2E_API_URL.
+ */
+export const BASE_URL = (process.env.E2E_BASE_URL || 'http://localhost:3080').replace(/\/$/, '')
+export const API_ORIGIN = (process.env.E2E_API_URL || 'http://localhost:8000').replace(/\/$/, '')
+export const API = `${API_ORIGIN}/api`
+const ADMIN_API = `${API}/admin`
 
 const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'admin'
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme'
+
+/** Имя участника по умолчанию: под ним же работают API-вызовы спеков. */
+export const DEFAULT_USER_NAME = 'E2E Тестер'
+
+/** Версия сохранённого состояния стора (см. APP_STORE_VERSION в store/index.ts). */
+const STORE_VERSION = 1
+
+/**
+ * Сессия участника для тестов. Сервер отдаёт токен только в httpOnly-cookie
+ * `workspace_token`; здесь он вынут из ответа входа, чтобы спеки могли слать его
+ * в заголовке `X-Workspace-Token` (сервер принимает его от неинтерактивных клиентов).
+ */
+export interface E2ESession {
+  token: string
+  workspace_id: string
+  workspace_slug: string
+  workspace_name: string
+  participant: { id: string; name: string }
+}
 
 /** Cache CSRF token per request context. */
 let csrfToken: string | null = null
 
 /** Cache workspace session to avoid rate-limited login calls. */
-let cachedWorkspaceSession: Record<string, unknown> | null = null
+let cachedWorkspaceSession: E2ESession | null = null
+
+/** Имя, заданное странице через setUsername: под ним loginWorkspace выполнит вход. */
+const pageNames = new WeakMap<Page, string>()
+
+/** Значение cookie из заголовков Set-Cookie ответа. */
+function cookieFromResponse(res: APIResponse, name: string): string | null {
+  for (const header of res.headersArray()) {
+    if (header.name.toLowerCase() !== 'set-cookie') continue
+    const match = header.value.match(new RegExp(`(?:^|\\n)${name}=([^;\\n]+)`))
+    if (match) return match[1]
+  }
+  return null
+}
+
+/** Сессия общего участника из global-setup (переменная окружения E2E_SHARED_SESSION). */
+function sharedSessionFromEnv(workspaceSlug: string): E2ESession | null {
+  const raw = process.env.E2E_SHARED_SESSION
+  if (!raw) return null
+  try {
+    const session = JSON.parse(raw) as E2ESession
+    return session.token && session.participant?.id && session.workspace_slug === workspaceSlug
+      ? session
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** Разобрать ответ входа: тело плюс токен из cookie `workspace_token`. */
+async function sessionFromLoginResponse(res: APIResponse): Promise<E2ESession> {
+  const token = cookieFromResponse(res, 'workspace_token')
+  if (!token) throw new Error('Login response has no workspace_token cookie')
+  const body = (await res.json()) as Omit<E2ESession, 'token'>
+  return { ...body, token }
+}
+
+/**
+ * Войти в команду через API новым участником с именем `name`.
+ * Каждый вызов создаёт нового участника — тёзки на сервере различаются.
+ */
+export async function loginViaAPI(
+  request: APIRequestContext,
+  name = DEFAULT_USER_NAME,
+  workspaceSlug = 'e2e-team',
+  accessKey = 'e2e-test-key',
+): Promise<E2ESession> {
+  const session = await loginWithRetry(request, workspaceSlug, accessKey, name)
+  if (!session) throw new Error(`Failed to login to workspace ${workspaceSlug} as "${name}"`)
+  return session
+}
 
 /** Cache admin cookie for admin API calls. */
 let cachedAdminCookie: string | null = null
@@ -18,15 +93,22 @@ let cachedAdminCookie: string | null = null
 /** Obtain a CSRF token via GET, then return headers for mutating requests. */
 export async function getCsrfHeaders(request: APIRequestContext): Promise<Record<string, string>> {
   if (!csrfToken) {
-    const res = await request.get(`${API}/boards/`)
-    const setCookie = res.headers()['set-cookie'] || ''
-    const match = setCookie.match(/csrf_token=([^;]+)/)
-    csrfToken = match ? match[1] : null
+    // GET /workspaces/me выставляет cookie csrf_token всегда — и без сессии, и когда
+    // cookie уже есть (другие GET повторно её не присылают)
+    const res = await request.get(`${API}/workspaces/me`)
+    csrfToken = cookieFromResponse(res, 'csrf_token')
   }
   return csrfToken ? { 'X-CSRF-Token': csrfToken, Cookie: `csrf_token=${csrfToken}` } : {}
 }
 
-/** Delete all boards (and cascade-deletes columns, cards, action items). */
+/**
+ * Delete all boards (and cascade-deletes columns, cards, action items).
+ *
+ * Удалить доску может только её создатель (или ведущий), поэтому доски в спеках
+ * создаёт общий участник — через API его токеном или со страницы с именем по умолчанию.
+ * Доска другого участника здесь не удалится: падаем сразу и с понятной причиной,
+ * а не цепочкой 409 «такая доска уже есть» в следующих тестах.
+ */
 export async function cleanupBoards(request: APIRequestContext, workspaceToken?: string) {
   const csrfHeaders = await getCsrfHeaders(request)
   const headers = workspaceToken
@@ -34,79 +116,102 @@ export async function cleanupBoards(request: APIRequestContext, workspaceToken?:
     : csrfHeaders
 
   const res = await request.get(`${API}/boards/`, { headers })
-  const boards = await res.json()
+  if (!res.ok()) throw new Error(`cleanupBoards: не удалось получить список досок (${res.status()})`)
+  const boards = (await res.json()) as Array<{ id: string; name: string }>
   for (const b of boards) {
-    await request.delete(`${API}/boards/${b.id}`, { headers })
+    const del = await request.delete(`${API}/boards/${b.id}`, { headers })
+    if (!del.ok() && del.status() !== 404) {
+      throw new Error(
+        `cleanupBoards: доска «${b.name}» не удалена (${del.status()}): ` +
+          'её создал другой участник? Доски в спеках создаёт общий участник',
+      )
+    }
   }
 }
 
-/** Set username in localStorage to skip welcome dialog. Clears stale state. */
-export async function setUsername(page: Page, name = 'E2E Тестер') {
-  await page.addInitScript((n) => {
-    // Clear stale board lock flags and timer state from previous tests
-    const keysToRemove = Object.keys(localStorage).filter(
-      (k) => k.startsWith('retro_locked_') || k.startsWith('retro_timer_'),
-    )
-    keysToRemove.forEach((k) => localStorage.removeItem(k))
-    const store = {
-      state: {
-        username: n,
-        currentBoardId: null,
-        theme: { primary: '#6750A4', dark: false },
-        workspace: null,
-      },
-      version: 0,
-    }
-    localStorage.setItem('retroboard-app', JSON.stringify(store))
-  }, name)
+/**
+ * Задать имя участника для страницы и сбросить устаревшее локальное состояние.
+ * Сам вход выполняет loginWorkspace: имя по умолчанию — общий участник спеков
+ * (создатель досок и автор карточек, созданных через API), другое имя — новый участник.
+ */
+export async function setUsername(page: Page, name = DEFAULT_USER_NAME) {
+  pageNames.set(page, name)
+  await page.addInitScript(
+    ({ n, version }) => {
+      // Clear stale board lock flags and timer state from previous tests
+      const keysToRemove = Object.keys(localStorage).filter(
+        (k) => k.startsWith('retro_locked_') || k.startsWith('retro_timer_'),
+      )
+      keysToRemove.forEach((k) => localStorage.removeItem(k))
+      const store = {
+        state: {
+          username: n,
+          currentBoardId: null,
+          theme: { primary: '#6750A4', dark: false },
+          workspace: null,
+          participant: null,
+        },
+        version,
+      }
+      localStorage.setItem('retroboard-app', JSON.stringify(store))
+    },
+    { n: name, version: STORE_VERSION },
+  )
 }
 
-/** Login to workspace and set token in localStorage. Uses cached session when available. */
+/**
+ * Открыть сессию для страницы без экрана входа: cookie `workspace_token` в контекст
+ * браузера и сессия (команда + участник) в localStorage — как после входа через форму.
+ *
+ * Страница с именем по умолчанию работает от имени общего участника спеков
+ * (см. ensureE2EWorkspace); страница с другим именем (setUsername) получает
+ * собственного участника. Возвращает сессию страницы.
+ */
 export async function loginWorkspace(
   page: Page,
   request: APIRequestContext,
   workspaceSlug = 'e2e-team',
   accessKey = 'e2e-test-key',
-) {
-  // Reuse cached session from ensureE2EWorkspace to avoid rate limiting
-  let data = cachedWorkspaceSession
-  if (!data) {
-    const res = await request.post(`${API}/workspaces/login`, {
-      data: { workspace_slug: workspaceSlug, access_key: accessKey },
-    })
-    if (!res.ok()) {
-      throw new Error(`Failed to login to workspace: ${res.status()}`)
-    }
-    data = await res.json()
-    cachedWorkspaceSession = data
-  }
+): Promise<E2ESession> {
+  const name = pageNames.get(page) ?? DEFAULT_USER_NAME
+  const useShared =
+    name === DEFAULT_USER_NAME && workspaceSlug === 'e2e-team' && accessKey === 'e2e-test-key'
+  const session = useShared
+    ? await ensureE2EWorkspace(request)
+    : await loginViaAPI(request, name, workspaceSlug, accessKey)
 
-  const rawToken = (data as Record<string, unknown>).token
-  const token = typeof rawToken === 'string' ? rawToken : ''
-  if (token) {
-    await page.context().addCookies([
-      {
-        name: 'workspace_token',
-        value: token,
-        domain: 'localhost',
-        path: '/',
-        httpOnly: true,
-        sameSite: 'Lax',
+  await page.context().addCookies([
+    {
+      name: 'workspace_token',
+      value: session.token,
+      domain: new URL(BASE_URL).hostname,
+      path: '/',
+      httpOnly: true,
+      sameSite: 'Lax',
+    },
+  ])
+
+  await page.addInitScript(
+    ({ workspace, participant, version }) => {
+      const stored = localStorage.getItem('retroboard-app')
+      const state = stored ? JSON.parse(stored) : { state: {}, version }
+      state.version = version
+      state.state.workspace = workspace
+      state.state.participant = participant
+      state.state.username = participant.name
+      localStorage.setItem('retroboard-app', JSON.stringify(state))
+    },
+    {
+      workspace: {
+        workspaceId: session.workspace_id,
+        workspaceSlug: session.workspace_slug,
+        workspaceName: session.workspace_name,
       },
-    ])
-  }
-
-  await page.addInitScript((session) => {
-    const stored = localStorage.getItem('retroboard-app')
-    const state = stored ? JSON.parse(stored) : { state: {}, version: 0 }
-    state.state.workspace = session
-    localStorage.setItem('retroboard-app', JSON.stringify(state))
-  }, {
-    token: (data as Record<string, unknown>).token,
-    workspaceId: (data as Record<string, unknown>).workspace_id,
-    workspaceSlug: (data as Record<string, unknown>).workspace_slug,
-    workspaceName: (data as Record<string, unknown>).workspace_name,
-  })
+      participant: session.participant,
+      version: STORE_VERSION,
+    },
+  )
+  return session
 }
 
 /** Helper: retry a login request with delays to handle rate limiting (429). */
@@ -114,13 +219,14 @@ async function loginWithRetry(
   request: APIRequestContext,
   workspaceSlug: string,
   accessKey: string,
+  name = DEFAULT_USER_NAME,
   maxRetries = 3,
-) {
+): Promise<E2ESession | null> {
   for (let i = 0; i <= maxRetries; i++) {
     const res = await request.post(`${API}/workspaces/login`, {
-      data: { workspace_slug: workspaceSlug, access_key: accessKey },
+      data: { workspace_slug: workspaceSlug, access_key: accessKey, name },
     })
-    if (res.ok()) return await res.json()
+    if (res.ok()) return await sessionFromLoginResponse(res)
     if (res.status() === 429 && i < maxRetries) {
       await new Promise((r) => setTimeout(r, 2000 * (i + 1)))
       continue
@@ -152,15 +258,32 @@ async function adminLoginWithRetry(
   return null
 }
 
-/** Ensure E2E workspace exists, create if needed. Returns workspace session. */
+/**
+ * Ensure E2E workspace exists, create if needed. Returns the shared session:
+ * общий участник спеков с именем DEFAULT_USER_NAME. Его токен спеки шлют в
+ * `X-Workspace-Token`, и под ним же открывается страница с именем по умолчанию.
+ */
 export async function ensureE2EWorkspace(
   request: APIRequestContext,
   workspaceSlug = 'e2e-team',
   accessKey = 'e2e-test-key',
   workspaceName = 'E2E Team',
-) {
+): Promise<E2ESession> {
   // Return cached session to avoid hitting rate limits
   if (cachedWorkspaceSession) return cachedWorkspaceSession
+
+  // Сессию общего участника готовит global-setup и передаёт воркерам через окружение:
+  // так участник один на весь прогон, даже если воркер перезапустился после упавшего теста
+  const shared = sharedSessionFromEnv(workspaceSlug)
+  if (shared) {
+    const me = await request.get(`${API}/workspaces/me`, {
+      headers: { 'X-Workspace-Token': shared.token },
+    })
+    if (me.ok()) {
+      cachedWorkspaceSession = shared
+      return shared
+    }
+  }
 
   // Try to login first (with retry for rate limiting)
   const loginResult = await loginWithRetry(request, workspaceSlug, accessKey)
@@ -266,18 +389,15 @@ export async function deleteWorkspace(
   })
 }
 
-/** Dismiss welcome dialog if it appears (Next.js hydration may show it). */
+/**
+ * Дождаться, пока страница покажет доску (сессия открыта через loginWorkspace)
+ * либо экран входа. Экран входа сам не закрывается: вход — это код команды и ключ.
+ */
 export async function dismissWelcome(page: Page) {
-  // Wait until either the welcome dialog or the board toolbar appears (loading done)
   await Promise.race([
     page.getByText('Войти на доску').waitFor({ timeout: 15000 }),
     page.getByTestId('user-settings-btn').waitFor({ timeout: 15000 }),
   ]).catch(() => {})
-
-  const btn = page.getByText('Войти на доску')
-  if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
-    await btn.click()
-  }
 }
 
 /** Create a board via API and return its data (retries briefly on 429 rate-limit). */

@@ -36,11 +36,11 @@ describe('Dashboard — 401 and workspace expiration recovery', () => {
       username: 'Алиса',
       currentBoardId: null,
       workspace: {
-        token: 'expired-token',
         workspaceId: 'w-1',
         workspaceSlug: 'team-a',
         workspaceName: 'Team A',
       },
+      participant: { id: 'p-1', name: 'Алиса' },
     })
   })
 
@@ -49,7 +49,7 @@ describe('Dashboard — 401 and workspace expiration recovery', () => {
 
     mockGetBoards
       .mockImplementationOnce(() => {
-        useAppStore.setState({ workspace: null })
+        useAppStore.getState().clearSession()
         return Promise.reject(Object.assign(new Error('Unauthorized'), { response: { status: 401 } }))
       })
       .mockResolvedValueOnce([
@@ -69,10 +69,12 @@ describe('Dashboard — 401 and workspace expiration recovery', () => {
       .mockResolvedValueOnce([])
 
     mockLoginToWorkspace.mockResolvedValueOnce({
-      token: 'fresh-token',
-      workspaceId: 'w-1',
-      workspaceSlug: 'team-a',
-      workspaceName: 'Team A',
+      workspace: {
+        workspaceId: 'w-1',
+        workspaceSlug: 'team-a',
+        workspaceName: 'Team A',
+      },
+      participant: { id: 'p-2', name: 'Алиса' },
     })
 
     render(<Dashboard />)
@@ -85,9 +87,11 @@ describe('Dashboard — 401 and workspace expiration recovery', () => {
     await user.click(screen.getByRole('button', { name: /войти на доску/i }))
 
     await waitFor(() => {
+      // Имя подставлено из прошлой сессии и уходит на сервер вместе с кодом и ключом
       expect(mockLoginToWorkspace).toHaveBeenCalledWith({
         workspace_slug: 'team-a',
         access_key: 'secret',
+        name: 'Алиса',
       })
     })
 
@@ -111,8 +115,8 @@ describe('Dashboard — 401 and workspace expiration recovery', () => {
 
     expect(screen.queryByRole('button', { name: /войти на доску/i })).not.toBeInTheDocument()
 
-    // Имитация сброса workspace axios interceptor-ом при 401 mid-session
-    useAppStore.setState({ workspace: null })
+    // Имитация сброса сессии axios interceptor-ом при 401 mid-session
+    useAppStore.getState().clearSession()
 
     expect(await screen.findByRole('button', { name: /войти на доску/i })).toBeInTheDocument()
   })

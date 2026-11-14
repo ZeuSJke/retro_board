@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, createBoardViaAPI, createActionItemViaAPI, getCsrfHeaders, ensureE2EWorkspace, loginWorkspace } from './helpers'
+import { cleanupBoards, setUsername, createBoardViaAPI, createActionItemViaAPI, getCsrfHeaders, ensureE2EWorkspace, loginWorkspace, API } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
   const wsData = await ensureE2EWorkspace(request)
@@ -43,7 +43,7 @@ test.describe('Dashboard', () => {
     await createActionItemViaAPI(request, board.id, 'Открытая задача', wsData.token, { title: 'Задача А' })
     const doneItem = await createActionItemViaAPI(request, board.id, 'Готовая задача', wsData.token, { title: 'Задача Б' })
     const csrf = await getCsrfHeaders(request)
-    await request.patch(`http://localhost:8000/api/action-items/${doneItem.id}`, {
+    await request.patch(`${API}/action-items/${doneItem.id}`, {
       data: { status: 'done' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })

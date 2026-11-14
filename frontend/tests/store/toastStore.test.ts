@@ -25,7 +25,8 @@ describe('showToast', () => {
   it('ошибка и успех уходят в соответствующие варианты sonner', () => {
     showToast('Не получилось', 'error')
     showToast('Готово', 'success')
-    expect(toastMock.error).toHaveBeenCalledWith('Не получилось')
+    // У ошибки есть id по тексту: одинаковые сообщения не складываются в стопку
+    expect(toastMock.error).toHaveBeenCalledWith('Не получилось', { id: 'error:Не получилось' })
     expect(toastMock.success).toHaveBeenCalledWith('Готово')
     expect(toastMock).not.toHaveBeenCalled()
   })
