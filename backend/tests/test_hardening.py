@@ -17,7 +17,7 @@ from sqlalchemy import event
 from app.ai.ai_client import AIClient, AIModelConfig
 from app.config import settings
 from app.database import _engine_options
-from app.limiter import TEAM_READ_LIMIT, TEAM_WRITE_LIMIT
+from app.limiter import TEAM_WRITE_LIMIT
 from app.workspace_auth import verify_access_key
 from app.ws_payloads import (
     MAX_WS_MESSAGE_CHARS,
@@ -64,6 +64,11 @@ class TestPayloadCleaners:
     def test_number_in_range_accepts_numbers(self):
         assert number_in_range(0, 0, 10) == 0
         assert number_in_range(2.5, 0, 10) == 2.5
+
+    def test_huge_integer_is_rejected_without_overflow(self):
+        """Целое из тысяч цифр укладывается в лимит сообщения; isfinite на нём падал."""
+        assert number_in_range(10**4000, 0, 10000) is None
+        assert clean_cursor_move({"x": 10**4000, "y": 1}) is None
 
     def test_timer_start_keeps_only_known_fields(self):
         clean = clean_timer(
@@ -122,10 +127,53 @@ class TestWebSocketHardening:
                 assert "Bob" in _recv(ws2, "presence_update")["data"]["users"]
 
     def test_nan_timer_is_ignored(self, client, ws_token):
-        with _ws(client, ws_token) as ws1:
+        from app.ws_manager import manager
+
+        with _ws(client, ws_token) as ws1, _ws(client, ws_token) as ws2:
             ws1.send_text('{"event": "timer_start", "data": {"duration": 300, "remaining": NaN}}')
-            _send(ws1, "timer_reset", {"duration": 60})
-            assert _recv(ws1, "timer_reset")["data"] == {"duration": 60}
+            _send(ws1, "group_collapse", {"group_id": "маркер", "collapsed": True})
+            # До маркера второму клиенту не должно прийти ни одного события таймера
+            seen = []
+            while True:
+                msg = ws2.receive_json()
+                seen.append(msg["event"])
+                if msg["event"] == "group_collapse":
+                    break
+            assert "timer_start" not in seen
+            assert manager.get_timer("hardening-board") is None
+
+    def test_huge_number_does_not_log_errors(self, client, ws_token, caplog):
+        """Мусорное число отбрасывается проверкой, а не общим перехватом с трассировкой."""
+        with _ws(client, ws_token) as ws1, _ws(client, ws_token) as ws2:
+            _send(ws1, "identify", {"username": "Alice"})
+            _recv(ws2, "presence_update")
+            with caplog.at_level("ERROR", logger="app.routers.websocket"):
+                ws1.send_text('{"event": "cursor_move", "data": {"username": "Alice", "x": ' + "9" * 3000 + ', "y": 1}}')
+                _send(ws1, "cursor_move", {"username": "Alice", "x": 5, "y": 6})
+                assert _recv(ws2, "cursor_move")["data"] == {"username": "Alice", "x": 5, "y": 6}
+            assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+    def test_handler_failure_keeps_connection(self, client, ws_token):
+        """Сбой обработки одного сообщения не рвёт соединение — следующее обрабатывается."""
+        from app.ws_manager import manager
+
+        with _ws(client, ws_token) as ws:
+            _send(ws, "identify", {"username": "Alice"})
+            _recv(ws, "presence_update")
+            with patch.object(manager, "toggle_ready", side_effect=RuntimeError("сбой")):
+                _send(ws, "ready_toggle", {"ready": True})
+                _send(ws, "group_collapse", {"group_id": "g1", "collapsed": True})
+                assert _recv(ws, "group_collapse")["data"] == {"group_id": "g1", "collapsed": True}
+
+    def test_pause_keeps_extended_duration(self, client, ws_token):
+        """После «+время» на паузе новый участник получает согласованные duration и remaining."""
+        with _ws(client, ws_token) as ws1:
+            _send(ws1, "timer_start", {"duration": 300, "remaining": 300})
+            _recv(ws1, "timer_start")
+            _send(ws1, "timer_pause", {"duration": 420, "remaining": 370})
+            _recv(ws1, "timer_pause")
+            with _ws(client, ws_token) as ws2:
+                assert _recv(ws2, "timer_pause")["data"] == {"remaining": 370, "duration": 420}
 
     @pytest.mark.parametrize(
         "raw",
@@ -171,30 +219,54 @@ class TestWebSocketHardening:
             _send(ws1, "cursor_leave", {"username": "Bob"})
             assert _recv(ws2, "cursor_leave")["data"] == {"username": "Alice"}
 
+    def test_anonymous_socket_cannot_remove_cursor(self, client, ws_token):
+        """Сокет, который не представился, не может «увести» чужой курсор."""
+        with _ws(client, ws_token) as ws1, _ws(client, ws_token) as ws2:
+            _send(ws1, "cursor_leave", {"username": "Alice"})
+            _send(ws1, "group_collapse", {"group_id": "маркер", "collapsed": True})
+            seen = []
+            while True:
+                msg = ws2.receive_json()
+                seen.append(msg["event"])
+                if msg["event"] == "group_collapse":
+                    break
+            assert "cursor_leave" not in seen
+
 
 class TestSummaryGenerationGuard:
     def test_second_start_is_skipped_while_first_runs(self):
         from app.routers import websocket as ws_router
+        from app.ws_manager import manager
 
         started = []
 
-        async def fake_trigger(board_id, username, workspace_id):
-            started.append(board_id)
-            await asyncio.sleep(0.05)
-
         async def scenario():
+            release = asyncio.Event()
+
+            async def fake_trigger(board_id, username, workspace_id):
+                started.append(board_id)
+                await release.wait()
+
             with patch.object(ws_router, "_trigger_summary_generation", fake_trigger):
+                manager.set_session_id("b1", 1)
                 first = ws_router._start_summary_generation("b1", "u", "w")
                 second = ws_router._start_summary_generation("b1", "u", "w")
-                other = ws_router._start_summary_generation("b2", "u", "w")
-                await asyncio.sleep(0.15)
+                other_board = ws_router._start_summary_generation("b2", "u", "w")
+                # Новая сессия на той же доске не ждёт генерацию прошлой сессии
+                manager.set_session_id("b1", 2)
+                new_session = ws_router._start_summary_generation("b1", "u", "w")
+                await asyncio.sleep(0)
+                release.set()
+                await asyncio.gather(*list(ws_router._summary_tasks.values()))
+                await asyncio.sleep(0)
+                # Генерация завершилась — следующий запуск снова разрешён
                 again = ws_router._start_summary_generation("b1", "u", "w")
-                await asyncio.sleep(0.1)
-                return first, second, other, again
+                await asyncio.gather(*list(ws_router._summary_tasks.values()))
+                await asyncio.sleep(0)
+                return first, second, other_board, new_session, again
 
-        first, second, other, again = asyncio.run(scenario())
-        assert (first, second, other, again) == (True, False, True, True)
-        assert started == ["b1", "b2", "b1"]
+        assert asyncio.run(scenario()) == (True, False, True, True, True)
+        assert started == ["b1", "b2", "b1", "b1"]
         assert ws_router._summary_tasks == {}
 
     def test_no_ai_means_no_generation_thread(self):
@@ -246,6 +318,32 @@ class TestLoginHardening:
         """secrets.compare_digest на str падал с TypeError на кириллице."""
         resp = client.post("/api/admin/login", json={"login": "админ", "password": "пароль"})
         assert resp.status_code == 401
+
+    def test_lone_surrogate_is_422_on_both_logins(self, client, test_workspace):
+        """Строку с одиночным суррогатом нельзя закодировать в UTF-8 — раньше это был 500."""
+        bad = '"\\ud800"'
+        headers = {"content-type": "application/json"}
+        ws_login = client.post(
+            "/api/workspaces/login",
+            content='{"workspace_slug": "test-team", "access_key": ' + bad + "}",
+            headers=headers,
+        )
+        admin_login = client.post(
+            "/api/admin/login",
+            content='{"login": ' + bad + ', "password": "x"}',
+            headers=headers,
+        )
+        assert ws_login.status_code == 422
+        assert admin_login.status_code == 422
+
+    def test_validation_error_does_not_echo_input(self, client):
+        """Ответ 422 не возвращает введённое значение — иначе пароль уезжает обратно в ответ."""
+        resp = client.post(
+            "/api/admin/login", json={"login": "a", "password": "секрет-" + "x" * 300}
+        )
+        assert resp.status_code == 422
+        assert "секрет" not in resp.text
+        assert resp.json()["detail"][0]["loc"] == ["body", "password"]
 
     def test_admin_login_rejects_huge_fields(self, client):
         resp = client.post("/api/admin/login", json={"login": "a" * 5000, "password": "b"})
@@ -337,6 +435,52 @@ class TestBodySizeLimit:
         )
         assert resp.status_code == 413
 
+    def test_app_crash_on_cut_body_is_still_413(self):
+        """Если приложение упало на «обрыве», который устроил сам лимит, ответ — 413, а не 500."""
+        from app.body_limit import BodySizeLimitMiddleware
+
+        async def crashing_app(scope, receive, send):
+            while True:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    raise RuntimeError("клиент отвалился")
+
+        sent = []
+
+        async def scenario():
+            chunks = [b"x" * 600, b"x" * 600]
+
+            async def receive():
+                body = chunks.pop(0)
+                return {"type": "http.request", "body": body, "more_body": bool(chunks)}
+
+            async def send(message):
+                sent.append(message)
+
+            middleware = BodySizeLimitMiddleware(crashing_app, max_bytes=1000)
+            await middleware({"type": "http", "headers": []}, receive, send)
+
+        asyncio.run(scenario())
+        assert sent[0]["status"] == 413
+
+    def test_app_crash_without_overflow_propagates(self):
+        from app.body_limit import BodySizeLimitMiddleware
+
+        async def crashing_app(scope, receive, send):
+            raise RuntimeError("своя ошибка приложения")
+
+        async def scenario():
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            async def send(message):
+                pass
+
+            await BodySizeLimitMiddleware(crashing_app, max_bytes=1000)({"type": "http", "headers": []}, receive, send)
+
+        with pytest.raises(RuntimeError, match="своя ошибка"):
+            asyncio.run(scenario())
+
     def test_normal_body_passes(self, client, test_workspace):
         resp = client.post(
             "/api/workspaces/login",
@@ -355,6 +499,10 @@ class TestDatabaseTimeouts:
         assert f"statement_timeout={settings.db_statement_timeout_ms}" in opts["connect_args"]["options"]
         assert f"lock_timeout={settings.db_lock_timeout_ms}" in opts["connect_args"]["options"]
         assert opts["pool_timeout"] == settings.db_pool_timeout_s
+
+    def test_explicit_url_options_win(self):
+        opts = _engine_options("postgresql://u:p@db/retro?options=-c%20statement_timeout%3D5&connect_timeout=1")
+        assert opts["connect_args"] == {}
 
     def test_sqlite_is_untouched(self):
         assert _engine_options("sqlite://") == {"pool_pre_ping": True}
@@ -390,20 +538,45 @@ class TestAIClientHardening:
             calls.append(1)
             return httpx.Response(400, json={"error": "bad request"})
 
-        with pytest.raises(RuntimeError):
-            self._client(handler).generate("hi", AIModelConfig(retries=3))
+        with pytest.raises(RuntimeError, match=r"after 1 attempt"):
+            self._client(handler).generate("hi", AIModelConfig(retries=3, backoff=0))
         assert len(calls) == 1
 
-    def test_server_error_is_retried(self):
+    def test_server_error_is_retried_with_growing_pause(self):
         calls = []
+        pauses = []
 
         def handler(request):
             calls.append(1)
             return httpx.Response(503)
 
-        with pytest.raises(RuntimeError):
-            self._client(handler).generate("hi", AIModelConfig(retries=3))
+        with (
+            patch.object(ai_client_module.time, "sleep", pauses.append),
+            pytest.raises(RuntimeError, match=r"after 3 attempt"),
+        ):
+            self._client(handler).generate("hi", AIModelConfig(retries=3, backoff=0.5))
         assert len(calls) == 3
+        assert pauses == [0.5, 1.0]
+
+    def test_connect_timeout_is_separate_from_read_timeout(self):
+        """Недоступный шлюз отваливается за секунды, а не за полный таймаут ответа."""
+        seen = {}
+        real_client = httpx.Client
+
+        def capture(*args, **kwargs):
+            seen["timeout"] = kwargs["timeout"]
+            return real_client(*args, **kwargs)
+
+        client = self._client(
+            lambda request: httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        )
+        with (
+            patch.object(ai_client_module.httpx, "Client", capture),
+            patch.object(settings, "ai_connect_timeout_s", 3.0),
+        ):
+            assert client.generate("hi", AIModelConfig(timeout=90)) == "ok"
+        assert seen["timeout"].connect == 3.0
+        assert seen["timeout"].read == 90
 
     def test_busy_gateway_fails_fast(self):
         """Когда все слоты заняты, запрос не ждёт бесконечно."""
@@ -506,6 +679,27 @@ class TestConnectionReleasedDuringAI:
         assert resp.json()["summary_text"] == "Итог"
         assert seen == [0]
 
+    def test_regenerate_rechecks_board_after_model(self, client, sample_card, sample_board, workspace_headers):
+        """Пока модель думала, доску удалили: итоги к удалённой доске не пишем."""
+        from tests.conftest import TestSessionLocal
+        from app.models import BoardSummary
+
+        def fake_summary(board_data):
+            deleted = client.delete(f"/api/boards/{sample_board['id']}", headers=workspace_headers)
+            assert deleted.status_code == 204
+            return {"summary_text": "Итог", "key_themes": [], "recommendations": []}
+
+        with (
+            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            patch("app.routers.boards.generate_summary", fake_summary),
+        ):
+            resp = client.post(
+                f"/api/boards/{sample_board['id']}/summary/regenerate", headers=workspace_headers
+            )
+        assert resp.status_code == 404
+        with TestSessionLocal() as db:
+            assert db.query(BoardSummary).count() == 0
+
     def test_cluster_preview_releases_connection(
         self, client, sample_column, workspace_headers, open_connections
     ):
@@ -593,7 +787,80 @@ class TestConnectionReleasedDuringAI:
 
 
 class TestTeamLimits:
-    def test_team_limits_cover_a_voting_team(self):
-        """Десять человек по пять голосов за минуту — это 50 запросов с одного IP."""
-        assert int(TEAM_WRITE_LIMIT.split("/")[0]) >= 200
-        assert int(TEAM_READ_LIMIT.split("/")[0]) >= 200
+    def test_forty_votes_from_one_address_pass(self, client, sample_card, workspace_headers):
+        """Десять человек по четыре голоса за минуту с одного IP: раньше 31-й получал 429."""
+        from app.limiter import limiter
+
+        limiter.enabled = True
+        try:
+            codes = {
+                client.post(
+                    f"/api/cards/{sample_card['id']}/like",
+                    params={"username": f"user-{i % 10}"},
+                    headers=workspace_headers,
+                ).status_code
+                for i in range(40)
+            }
+        finally:
+            limiter.enabled = False
+            limiter.reset()
+        assert codes == {200}
+
+    def test_bulk_operations_keep_stricter_limit(self, client, sample_card, workspace_headers):
+        from app.limiter import TEAM_BULK_LIMIT, limiter
+
+        limit = int(TEAM_BULK_LIMIT.split("/")[0])
+        assert limit < int(TEAM_WRITE_LIMIT.split("/")[0])
+        limiter.enabled = True
+        try:
+            codes = [
+                client.post(
+                    "/api/cards/bulk-update",
+                    json={"card_ids": [sample_card["id"]], "color": "#FFFFFF"},
+                    headers=workspace_headers,
+                ).status_code
+                for _ in range(limit + 1)
+            ]
+        finally:
+            limiter.enabled = False
+            limiter.reset()
+        assert codes[:limit] == [200] * limit
+        assert codes[-1] == 429
+
+
+# ── Ответ модели приводится к ожидаемым типам ────────────────────────────────
+
+
+class TestSummaryResponseCleaning:
+    def _generate(self, raw: str) -> dict:
+        from app.ai.prompts import summary_generation
+
+        board = {"id": "b", "name": "Доска", "columns": []}
+        with patch.object(summary_generation.ai_client, "generate", lambda prompt, config=None: raw):
+            return summary_generation.generate_summary(board)
+
+    def test_wrong_types_are_coerced(self):
+        """Модель вернула число, объект и вложенные списки — в БД уходят только строки."""
+        result = self._generate(
+            json.dumps(
+                {
+                    "summary_text": 42,
+                    "key_themes": ["тема", 7, None, {"a": 1}, "  ", "ещё тема"],
+                    "recommendations": "не список",
+                },
+                ensure_ascii=False,
+            )
+        )
+        assert result == {"summary_text": "", "key_themes": ["тема", "ещё тема"], "recommendations": []}
+
+    def test_non_object_json_falls_back_to_text(self):
+        result = self._generate('["просто", "список"]')
+        assert result["key_themes"] == [] and result["recommendations"] == []
+        assert isinstance(result["summary_text"], str)
+
+    def test_lists_are_capped(self):
+        result = self._generate(
+            json.dumps({"summary_text": "ок", "key_themes": [f"тема {i}" for i in range(50)], "recommendations": ["x" * 5000]})
+        )
+        assert len(result["key_themes"]) == 10
+        assert len(result["recommendations"][0]) == 300

@@ -16,7 +16,6 @@ from app.ws_payloads import (
     clean_group_collapse,
     clean_timer,
     number_in_range,
-    short_str,
 )
 from app.workspace_auth import decode_workspace_token
 from app.database import get_db
@@ -118,9 +117,10 @@ def _clear_board_session_on_grace(board_id: str) -> None:
 
 manager.on_session_cleared = _clear_board_session_on_grace
 
-# Идущие генерации итогов по доскам: повторный переход в фазу «Итоги»
-# не должен запускать вторую генерацию, пока не закончилась первая.
-_summary_tasks: dict[str, asyncio.Task] = {}
+# Идущие генерации итогов по (доска, сессия): повторный переход в фазу «Итоги»
+# не должен запускать вторую генерацию, пока не закончилась первая. Новая
+# сессия на той же доске — другой ключ, её итоги не ждут чужую генерацию.
+_summary_tasks: dict[tuple[str, int | None], asyncio.Task] = {}
 
 
 def _origin_allowed(websocket: WebSocket) -> bool:
@@ -208,15 +208,16 @@ async def _trigger_summary_generation(
 def _start_summary_generation(board_id: str, username: str, workspace_id: str) -> bool:
     """Запустить генерацию итогов, если она для этой доски ещё не идёт."""
     loop = asyncio.get_running_loop()
-    running = _summary_tasks.get(board_id)
+    key = (board_id, manager.get_session_id(board_id))
+    running = _summary_tasks.get(key)
     if running is not None and not running.done() and running.get_loop() is loop:
         logger.info("Summary generation already running for board %s, skipping", board_id)
         return False
 
     task = loop.create_task(_trigger_summary_generation(board_id, username, workspace_id))
-    _summary_tasks[board_id] = task
+    _summary_tasks[key] = task
 
-    def _forget(done: asyncio.Task, key: str = board_id) -> None:
+    def _forget(done: asyncio.Task) -> None:
         if _summary_tasks.get(key) is done:
             _summary_tasks.pop(key, None)
 
@@ -520,9 +521,9 @@ async def websocket_endpoint(
                         )
 
                 elif event == "cursor_leave":
-                    sender = manager.get_username(websocket) or short_str(
-                        payload.get("username"), MAX_USERNAME_LENGTH
-                    )
+                    # Имя берём только у сокета: непредставившийся клиент
+                    # не может «увести» чужой курсор, назвав чужое имя.
+                    sender = manager.get_username(websocket)
                     if sender:
                         await manager.broadcast(
                             board_id,

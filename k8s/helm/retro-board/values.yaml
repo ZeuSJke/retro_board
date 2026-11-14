@@ -53,6 +53,11 @@ config:
   aiBaseUrl: ""
   aiModel: ""
   aiDisableThinking: "true"
+  # Необязательные несекретные переменные бэкенда, которым хватает значений по
+  # умолчанию: DB_STATEMENT_TIMEOUT_MS, DB_LOCK_TIMEOUT_MS, DB_CONNECT_TIMEOUT_S,
+  # DB_POOL_TIMEOUT_S, AI_MAX_CONCURRENCY, AI_QUEUE_TIMEOUT_S, AI_CONNECT_TIMEOUT_S,
+  # MAX_REQUEST_BODY_BYTES, WS_MAX_SIZE. Пример: extraEnv: { AI_MAX_CONCURRENCY: "2" }
+  extraEnv: {}
 
 secrets:
   # Recommended for dev & staging: create Secret outside Helm once and pass its name.

@@ -21,7 +21,9 @@ def number_in_range(value: object, low: float, high: float) -> float | int | Non
     """Вернуть число из диапазона или None. bool, NaN и бесконечность числом не считаются."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    if not math.isfinite(value):
+    # isfinite — только для float: на целом из тысяч цифр он бросает OverflowError,
+    # а сравнение int с границами диапазона работает при любой величине.
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     if not (low <= value <= high):
         return None

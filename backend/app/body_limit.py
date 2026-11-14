@@ -85,6 +85,11 @@ class BodySizeLimitMiddleware:
                 rejected = True
                 await _reject(send)
 
-        await self.app(scope, limited_receive, guarded_send)
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except Exception:
+            # Исключение из-за «обрыва», который устроили мы сами, — это всё тот же 413
+            if not exceeded:
+                raise
         if exceeded and not response_started and not rejected:
             await _reject(send)

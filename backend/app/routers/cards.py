@@ -7,7 +7,7 @@ from app.database import get_db
 from app import models, schemas
 from app.utils import get_or_404, require_unlocked_board
 from app.ws_manager import manager
-from app.limiter import TEAM_WRITE_LIMIT, limiter
+from app.limiter import TEAM_BULK_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.workspace_auth import get_current_workspace
 
 router = APIRouter()
@@ -228,7 +228,7 @@ def _prune_empty_groups(db: Session, group_ids: set[str]) -> list[dict]:
 
 
 @router.post("/bulk-update", response_model=list[schemas.CardOut])
-@limiter.limit(TEAM_WRITE_LIMIT)
+@limiter.limit(TEAM_BULK_LIMIT)
 async def bulk_update_cards(
     request: Request,
     payload: schemas.BulkCardsUpdateRequest,
@@ -320,7 +320,7 @@ async def bulk_update_cards(
 
 
 @router.post("/bulk-delete", status_code=200)
-@limiter.limit(TEAM_WRITE_LIMIT)
+@limiter.limit(TEAM_BULK_LIMIT)
 async def bulk_delete_cards(
     request: Request,
     payload: schemas.BulkCardsDeleteRequest,
@@ -346,7 +346,7 @@ async def bulk_delete_cards(
 
 
 @router.post("/merge", response_model=schemas.CardOut)
-@limiter.limit(TEAM_WRITE_LIMIT)
+@limiter.limit(TEAM_BULK_LIMIT)
 async def merge_cards(
     request: Request,
     payload: schemas.MergeCardsRequest,

@@ -14,7 +14,7 @@ from app.ai.prompts.workspace_insights import generate_workspace_insights
 from app.config import settings
 from app.database import get_db, release_connection
 from app import models, schemas
-from app.limiter import TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
+from app.limiter import TEAM_BULK_LIMIT, TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.models import now_utc
 from app.routers.action_items import copy_unresolved_action_items
 from app.utils import get_or_404, require_live_board, require_unlocked_board
@@ -921,7 +921,7 @@ async def regenerate_summary(
 
 
 @router.post("/{board_id}/reset-votes", response_model=schemas.BoardVotesResetOut)
-@limiter.limit(TEAM_WRITE_LIMIT)
+@limiter.limit(TEAM_BULK_LIMIT)
 async def reset_user_votes(
     request: Request,
     board_id: str,

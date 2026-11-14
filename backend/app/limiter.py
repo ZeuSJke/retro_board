@@ -19,3 +19,5 @@ limiter = Limiter(key_func=get_remote_address, enabled=not _is_testing())
 # сохраняют собственные, более строгие лимиты рядом с эндпоинтами.
 TEAM_WRITE_LIMIT = "300/minute"
 TEAM_READ_LIMIT = "300/minute"
+# Массовые операции затрагивают до сотни карточек за запрос — им хватает меньшего
+TEAM_BULK_LIMIT = "60/minute"

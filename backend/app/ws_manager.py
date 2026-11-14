@@ -300,6 +300,7 @@ class ConnectionManager:
             if t:
                 t["running"] = False
                 t["remaining"] = data.get("remaining", t["remaining"])
+                t["duration"] = data.get("duration", t["duration"])
         elif event == "timer_reset":
             dur = data.get("duration", 0)
             self.timers[board_id] = {

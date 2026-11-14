@@ -1,3 +1,4 @@
+import json
 import logging
 import secrets
 import traceback
@@ -17,8 +18,10 @@ from app.routers import (
     admin,
 )
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
@@ -45,6 +48,23 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> Response:
+    """Ответ 422 без отражения введённого значения.
+
+    Стандартный обработчик возвращает поле `input` как есть: пароль из
+    запроса уезжает обратно в ответ, а строка с одиночным суррогатом
+    («\\ud800») роняет сериализацию ответа в 500. Убираем `input` и
+    пишем тело в ASCII-экранировании — оно кодируется при любом вводе.
+    """
+    errors = [
+        {key: value for key, value in error.items() if key != "input"}
+        for error in exc.errors()
+    ]
+    body = json.dumps({"detail": jsonable_encoder(errors)}, ensure_ascii=True)
+    return Response(content=body, status_code=422, media_type="application/json")
 
 
 class GlobalErrorMiddleware(BaseHTTPMiddleware):

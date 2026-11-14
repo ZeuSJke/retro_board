@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -16,6 +17,8 @@ class AIModelConfig:
     max_tokens: int = 100
     timeout: int = 30
     retries: int = 2
+    # Пауза перед повтором растёт с номером попытки: backoff, 2×backoff, …
+    backoff: float = 0.5
 
 
 # Один шлюз обслуживает все команды: ограничиваем число одновременных запросов,
@@ -73,7 +76,11 @@ class AIClient:
         # Недоступный шлюз должен отваливаться быстро, а не через полный таймаут ответа
         timeout = httpx.Timeout(config.timeout, connect=settings.ai_connect_timeout_s)
         last_error: Exception | None = None
-        for _attempt in range(config.retries):
+        attempts = 0
+        for attempt in range(config.retries):
+            if attempt:
+                time.sleep(config.backoff * attempt)
+            attempts += 1
             try:
                 with httpx.Client(timeout=timeout, transport=self.transport) as client:
                     response = client.post(
@@ -100,9 +107,7 @@ class AIClient:
             ) as e:
                 last_error = e
 
-        raise RuntimeError(
-            f"AI request failed after {config.retries} retries: {last_error}"
-        )
+        raise RuntimeError(f"AI request failed after {attempts} attempt(s): {last_error}")
 
 
 def _extract_content(data: object) -> str:

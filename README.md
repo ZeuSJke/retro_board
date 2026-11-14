@@ -173,18 +173,20 @@ retro_board/
 │   ├── requirements.txt
 │   ├── requirements-dev.txt         # pytest + ruff
 │   ├── .env.example
-│   ├── main.py                      # FastAPI app, lifespan, GlobalErrorMiddleware, CSRFMiddleware, CORS
+│   ├── main.py                      # FastAPI app, lifespan, GlobalErrorMiddleware, CSRFMiddleware, лимит тела запроса, CORS
 │   ├── alembic.ini
 │   ├── alembic/versions/            # Миграции схемы БД
 │   ├── app/
+│   │   ├── body_limit.py            # Ответ 413 на слишком большое тело HTTP-запроса
 │   │   ├── config.py                # Pydantic Settings + валидаторы секретов/админки
-│   │   ├── database.py
+│   │   ├── database.py              # Движок с таймаутами PostgreSQL, get_db, release_connection
 │   │   ├── limiter.py               # slowapi rate limiter (отключается при TESTING=true)
 │   │   ├── models.py                # ORM: Workspace, Board, Column, CardGroup, Card, ActionItem, BoardSummary, BoardMood
 │   │   ├── schemas.py
 │   │   ├── utils.py                 # Проверки мягкого удаления и блокировки доски
 │   │   ├── workspace_auth.py
 │   │   ├── ws_manager.py            # In-memory ConnectionManager
+│   │   ├── ws_payloads.py           # Проверка входящих WebSocket-сообщений
 │   │   ├── ai/
 │   │   │   ├── ai_client.py         # Синхронный httpx.Client к OpenAI-совместимому /v1 API
 │   │   │   ├── clustering.py        # AI-кластеризация с санитизацией и валидацией ID

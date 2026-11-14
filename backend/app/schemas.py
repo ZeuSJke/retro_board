@@ -19,6 +19,15 @@ def _strip_non_empty(v: str | None, field_name: str = "Поле") -> str | None:
     return stripped
 
 
+def _utf8_encodable(v: str) -> str:
+    """Отклонить строку, которую нельзя передать в БД и в bcrypt (одиночный суррогат)."""
+    try:
+        v.encode("utf-8")
+    except UnicodeEncodeError as err:
+        raise ValueError("Строка содержит недопустимые символы") from err
+    return v
+
+
 # bcrypt учитывает только первые 72 байта; кириллица в UTF-8 — по два байта на букву
 _BCRYPT_MAX_BYTES = 72
 
@@ -38,6 +47,11 @@ def _access_key_within_bcrypt_limit(v: str | None) -> str | None:
 class WorkspaceLoginRequest(BaseModel):
     workspace_slug: str = Field(..., min_length=1, max_length=80)
     access_key: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("workspace_slug", "access_key")
+    @classmethod
+    def validate_encodable(cls, v: str) -> str:
+        return _utf8_encodable(v)
 
 
 class WorkspaceTokenResponse(BaseModel):
@@ -96,6 +110,11 @@ class WorkspaceListItem(WorkspaceOut):
 class AdminLoginRequest(BaseModel):
     login: str = Field(..., min_length=1, max_length=200)
     password: str = Field(..., min_length=1, max_length=200)
+
+    @field_validator("login", "password")
+    @classmethod
+    def validate_encodable(cls, v: str) -> str:
+        return _utf8_encodable(v)
 
 
 # ── Card ──────────────────────────────────────────────────────────────────────

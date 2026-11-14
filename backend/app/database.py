@@ -9,17 +9,21 @@ from app.config import settings
 def _engine_options(database_url: str) -> dict:
     """Параметры движка: таймауты задаём только для PostgreSQL."""
     options: dict = {"pool_pre_ping": True}
-    if make_url(database_url).get_backend_name() != "postgresql":
+    url = make_url(database_url)
+    if url.get_backend_name() != "postgresql":
         return options
     options["pool_timeout"] = settings.db_pool_timeout_s
-    options["connect_args"] = {
-        "connect_timeout": settings.db_connect_timeout_s,
-        # Серверные таймауты на каждый запрос и на ожидание блокировки
-        "options": (
+    connect_args: dict = {}
+    if "connect_timeout" not in url.query:
+        connect_args["connect_timeout"] = settings.db_connect_timeout_s
+    # Серверные таймауты на каждый запрос и на ожидание блокировки.
+    # Если options заданы прямо в строке подключения — они главнее, не затираем.
+    if "options" not in url.query:
+        connect_args["options"] = (
             f"-c statement_timeout={settings.db_statement_timeout_ms} "
             f"-c lock_timeout={settings.db_lock_timeout_ms}"
-        ),
-    }
+        )
+    options["connect_args"] = connect_args
     return options
 
 
