@@ -229,7 +229,7 @@ async def _compute_column_clusters(
         result = await asyncio.to_thread(cluster_cards, cards_data)
     except Exception as e:
         logger.error("AI clustering failed for column %s: %s", column_id, type(e).__name__)
-        raise HTTPException(503, "AI-сервис временно недоступен")
+        raise HTTPException(503, "AI-сервис временно недоступен") from e
     return col, result
 
 

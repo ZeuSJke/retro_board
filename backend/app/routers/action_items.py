@@ -3,7 +3,7 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 

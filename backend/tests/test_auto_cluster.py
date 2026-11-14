@@ -7,8 +7,6 @@ POST /api/groups/auto-cluster endpoint.
 import json
 from unittest.mock import patch
 
-import pytest
-
 from app.config import settings
 
 
@@ -321,6 +319,8 @@ class TestAutoCluster:
 
         assert resp.status_code == 200, resp.text
         data = resp.json()
+        assert len(data["created_groups"]) == 1
+        assert set(data["created_groups"][0]["card_ids"]) == set(ungrouped_ids)
         # Verify the AI was called only with ungrouped cards
         call_prompt = mock_ai.generate.call_args[0][0]
         # Grouped card (cards[0]) should NOT appear in the prompt

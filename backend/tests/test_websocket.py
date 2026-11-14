@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 TEST_ORIGIN = "http://localhost:3000"
 
 
@@ -348,7 +350,7 @@ class TestWebSocketOriginValidation:
             with client.websocket_connect(
                 f"/ws/board-origin1?workspace_token={ws_token}",
                 headers={"origin": "http://evil.example.com"},
-            ) as ws:
+            ):
                 pytest.fail("Expected WebSocket to be closed with 1008")
         except Exception:
             pass

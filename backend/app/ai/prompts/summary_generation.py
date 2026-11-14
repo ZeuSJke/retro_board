@@ -1,7 +1,6 @@
 """Промпт и конфигурация для генерации резюме ретроспективы."""
 
 import json
-from dataclasses import dataclass
 from typing import Any
 
 from app.ai.ai_client import AIModelConfig, ai_client

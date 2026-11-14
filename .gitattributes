@@ -4,18 +4,19 @@
 # Shell scripts must use LF
 *.sh text eol=lf
 
-# Docker and config files must use LF
+# Docker, Nginx, and env configs must use LF
 Dockerfile text eol=lf
-docker-compose*.yml text eol=lf
-nginx.conf text eol=lf
+*.conf text eol=lf
 .env* text eol=lf
 
 # Python files must use LF
 *.py text eol=lf
 
-# JS/JSX/CSS files must use LF
+# JS/TS/CSS/JSON files must use LF
 *.js text eol=lf
 *.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
 *.css text eol=lf
 *.html text eol=lf
 *.json text eol=lf
