@@ -419,9 +419,9 @@ async def create_board(
     db.add(board)
     try:
         db.flush()
-    except IntegrityError:
+    except IntegrityError as err:
         db.rollback()
-        raise HTTPException(409, "Измени название, такая доска уже есть")
+        raise HTTPException(409, "Измени название, такая доска уже есть") from err
 
     for i, col in enumerate(columns_spec):
         db.add(
@@ -559,9 +559,9 @@ async def update_board(
         board.allow_multiple_votes_per_card = body.allow_multiple_votes_per_card
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as err:
         db.rollback()
-        raise HTTPException(409, "Измени название, такая доска уже есть")
+        raise HTTPException(409, "Измени название, такая доска уже есть") from err
     board = _board_query(db).filter(models.Board.id == board.id).first() or board
     payload = {
         "id": board.id,

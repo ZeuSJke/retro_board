@@ -1,8 +1,5 @@
 """Tests for board summary endpoints."""
 
-import pytest
-from unittest.mock import patch, MagicMock
-
 
 class TestBoardSummary:
     """Tests for board summary retrieval."""

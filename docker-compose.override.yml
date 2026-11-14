@@ -1,7 +1,0 @@
-# Локальная разработка: hot-reload бэкенда через volume mount.
-# Подхватывается автоматически при `docker compose up`.
-# НЕ используется при развёртывании в Dokploy.
-services:
-  backend:
-    volumes:
-      - ./backend:/app

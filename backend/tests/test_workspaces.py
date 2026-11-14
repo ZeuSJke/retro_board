@@ -1,7 +1,5 @@
 """Tests for workspace login and auth."""
 
-import pytest
-
 
 def test_workspace_login_success(client, test_workspace):
     """Успешный вход в workspace."""

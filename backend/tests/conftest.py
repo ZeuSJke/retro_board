@@ -6,7 +6,10 @@ The ARRAY(String) column (Card.likes) is patched to use a JSON-based
 TypeDecorator that stores Python lists as JSON text in SQLite.
 """
 
-import os, json, bcrypt
+import json
+import os
+
+import bcrypt
 
 # Must be set before any app import — pydantic Settings needs it.
 os.environ.setdefault("DATABASE_URL", "sqlite://")
@@ -23,9 +26,6 @@ os.environ["TESTING"] = "true"
 # ---------------------------------------------------------------------------
 # WebSocket test workspace and token
 # ---------------------------------------------------------------------------
-# Create a dedicated workspace for WebSocket tests before other imports
-from app.workspace_auth import create_workspace_token
-
 _test_ws_id = "ws-for-websocket-tests"
 _test_ws_slug = "ws-test"
 _test_ws_name = "WebSocket Test Workspace"
@@ -302,7 +302,6 @@ def sample_group(client, sample_column, workspace_headers):
 def ws_workspace(db_session):
     """Create a workspace for WebSocket tests."""
     from app.models import Workspace
-    from app.workspace_auth import create_workspace_token
 
     ws = Workspace(
         id="ws-for-websocket-tests",

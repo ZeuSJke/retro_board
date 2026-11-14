@@ -153,6 +153,9 @@ describe('Polished dialogs, collapsed group & PDF export', () => {
         cards={cards}
         collapsed
         onToggleCollapse={vi.fn()}
+        currentUser="TestUser"
+        maxVotes={5}
+        userTotalVotes={0}
         onUpdated={vi.fn()}
         onDeleted={vi.fn()}
         onCardUpdated={vi.fn()}
@@ -191,7 +194,7 @@ describe('Polished dialogs, collapsed group & PDF export', () => {
         open
         onOpenChange={vi.fn()}
         columnTitle="Идеи"
-        preview={{ groups: [{ title: 'Инфра', card_ids: ['c1', 'c2'] }] }}
+        preview={{ column_id: 'col1', groups: [{ title: 'Инфра', card_ids: ['c1', 'c2'] }], ungrouped_card_ids: [] }}
         cards={cards}
         onApply={vi.fn().mockResolvedValue(undefined)}
       />,
@@ -223,6 +226,7 @@ describe('Polished dialogs, collapsed group & PDF export', () => {
         summary={{
           id: 'sum1',
           board_id: 'b1',
+          session_id: null,
           summary_text: 'Команда ускорила релизы.',
           key_themes: ['Релизы'],
           recommendations: ['Продолжать автоматизацию'],
@@ -256,6 +260,7 @@ describe('Polished dialogs, collapsed group & PDF export', () => {
         summary={{
           id: 'sum2',
           board_id: 'b1',
+          session_id: null,
           summary_text: 'Только темы без рекомендаций.',
           key_themes: ['Релизы'],
           recommendations: [],
@@ -327,12 +332,14 @@ describe('Polished dialogs, collapsed group & PDF export', () => {
           assignee: 'Alice',
           status: 'in_progress',
           source_card_ids: ['c1'],
+          completed_at: null,
           created_at: '2026-03-01T11:00:00Z',
         },
       ],
       {
         id: 'sum1',
         board_id: 'b1',
+        session_id: null,
         summary_text: 'Хороший спринт с фокусом на стабильность.',
         key_themes: ['Автоматизация CI'],
         recommendations: ['Сократить время ревью'],

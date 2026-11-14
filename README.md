@@ -1,354 +1,198 @@
 # RetroBoard — Agile Ретро Доска
 
-Веб-приложение для проведения Agile-ретроспектив в реальном времени.
+Веб-приложение для проведения командных Agile-ретроспектив в реальном времени.
 
-**Стек:** Next.js 15 · TypeScript · FastAPI · PostgreSQL · Alembic · WebSocket · Docker
+**Стек:** Next.js 15 (App Router, TypeScript) · Tailwind CSS · shadcn/ui (Radix UI) · Zustand · `@dnd-kit` · FastAPI · SQLAlchemy 2 · Alembic · PostgreSQL 16 · WebSocket · Kubernetes (Helm + Traefik) · GitLab CI
 
 ---
 
 ## Возможности
 
-- **Несколько досок** — создавай, переключайся, удаляй; новая доска создаётся с тремя колонками по умолчанию
-- **Колонки** — добавляй любое количество, меняй название (двойной клик) и цвет метки
-- **Карточки** — с именем автора, цветом фона, лайками и drag & drop
-- **Группы карточек** — объединяй карточки в именованные группы, перемещай группу целиком в другую колонку
-- **AI-возможности** (OpenRouter):
-  - **Кластеризация** — кнопка «Сгруппировать похожие (AI)» в заголовке колонки: AI автоматически находит семантически похожие карточки и создаёт группы
-  - **Резюме ретро** — автоматическая генерация summary, ключевых тем и рекомендаций при переходе в фазу «Итоги»
-  - **Генерация названий задач** — AI создаёт краткие заголовки для Action Items из текста карточек
-- **Drag & Drop** — перетаскивай карточки и группы между колонками (@dnd-kit, мышь + тач)
-- **Real-time** — все участники видят изменения мгновенно через WebSocket
-- **Курсоры участников** — позиции курсоров транслируются в реальном времени
-- **Фасилитатор** — режим ведущего: фазы ретро (мозговой штурм → обсуждение → голосование), управление таймером
-- **Таймер** — обратный отсчёт для временных слотов ретро (старт / пауза / сброс), синхронизируется через WebSocket
-- **Лимит голосов** — настраиваемый лимит голосов на участника (по умолчанию 5), бейдж использования в топбаре
-- **Итоги (Action Items)** — мастер-колонка на доске для фиксации решений и задач (статус read-only); полное управление (редактирование, статусы, удаление) — на странице Dashboard; перенос незакрытых задач между досками (carry-forward)
-- **Dashboard** — история ретро, кросс-доска список задач с фильтрами (статус, доска, ответственный), карточки задач с inline-редактированием, секция выполненных задач, график трендов, просмотр AI-резюме
-- **Экспорт в PDF** — сохрани содержимое доски одним кликом
-- **Workspaces** — изолированные рабочие пространства для разных команд, каждый с собственным набором досок
-- **Admin-панель** — управление workspaces (создание, переименование, смена ключа доступа, удаление)
-- **Тема** — Material Design 3, меняй акцентный цвет и тёмный/светлый режим
-- **Обработка ошибок** — глобальный middleware на бэкенде, toast-уведомления и ErrorBoundary на фронтенде
-- **Rate Limiting** — ограничение частоты запросов (100/мин чтение, 30/мин мутации, 20 сообщений/сек WebSocket)
-- **Адаптивность** — колонки масштабируются под размер экрана
-- **Мягкое удаление досок** — доски помечаются `deleted_at`, а не удаляются физически
-- **CSRF-защита** — cookie token + заголовок `X-CSRF-Token` на мутациях
-- **Персистентность** — данные хранятся в PostgreSQL
+- **Workspaces и Admin-панель** — изолированные рабочие пространства команд (`/admin` для создания, переименования, смены ключа и удаления)
+- **Доски и шаблоны** — создание из 6 шаблонов (`classic`, `start_stop_continue`, `4ls`, `sailboat`, `mad_sad_glad`, `empty`), уникальные slug, soft delete (`deleted_at`), блокировка доски (`is_locked`), скрытие карточек до reveal (`hide_cards_until_reveal`), анонимное голосование (`anonymous_votes`), множественные голоса на карточку (`allow_multiple_votes_per_card`), сброс голосов (`reset-votes`)
+- **Колонки, карточки и группы** — редактирование колонок и цветов, стикеры с rich-текстом, фильтрация/поиск, лайки с лимитом голосов на участника (`max_votes`), drag & drop карточек и целых групп между колонками (`@dnd-kit`), массовое обновление/удаление (`bulk-update`, `bulk-delete`) и объединение карточек (`merge`)
+- **Real-time и фасилитация** — WebSocket-синхронизация состояния доски и списка досок workspace (`/ws/{board_id}`, `/ws/workspace`), режим фасилитатора с фазами (`brainstorm` → `reveal` → `discuss` → `vote` → `summary`), общий таймер, индикаторы готовности (`ready_toggle`), индикаторы набора (`card_typing`), spotlight карточки, курсоры участников и живые реакции поверх доски
+- **AI-функции** (OpenAI-совместимый `/v1` шлюз, по умолчанию модель Qwen3.6 с `AI_DISABLE_THINKING=true`):
+  - **Кластеризация** — автогруппировка похожих карточек в колонке и предпросмотр кластеров до применения (`auto-cluster`, `auto-cluster-preview`, `apply-clusters`)
+  - **Резюме ретро** — автоматическая генерация и перегенерация summary, ключевых тем и рекомендаций (`summary`, `summary/regenerate`)
+  - **Action Items** — генерация заголовков и AI-предложения задач из карточек (`generate-title`, `suggest`)
+  - **Кросс-спринт инсайты** — аналитика повторяющихся тем по workspace (`workspace-insights`) с детерминистическим fallback при недоступности AI
+- **Итоги, Mood и Dashboard** — мастер-колонка Action Items на доске, перенос незакрытых задач между досками (`carry-forward`), трекинг настроения участников (`mood`), графики трендов задач и настроения на `/dashboard`
+- **Экспорт и UX** — экспорт доски в PDF и Markdown, палитра команд (`Ctrl+K` / `Cmd+K`), горячие клавиши, светлая/тёмная тема и цветовые акценты
+- **Безопасность** — `httpOnly` JWT-куки, CSRF double-submit защита (`csrf_token` + `X-CSRF-Token`), rate limiting (`slowapi` + WS-лимиты), проверка `Origin` на WebSocket, санитизация пользовательского текста для AI и security headers
 
 ---
 
-## Быстрый старт (Docker)
+## Быстрый старт и разработка (Kubernetes-first)
 
-### 1. Подготовь переменные окружения
+Разработка и выверка ведутся на кластере `k3s-dev`, а ветка `main` автоматически катится на `k3s-stage` через GitLab CI.
 
-```bash
-cp .env.example .env
-```
-
-Отредактируй `.env`:
-
-```env
-POSTGRES_DB=retroboard
-POSTGRES_USER=retro
-POSTGRES_PASSWORD=your_secure_password
-
-CORS_ORIGINS=http://localhost:3080
-```
-
-### 2. Запусти
+### 1. Инициализация рабочего дерева (Orca / чистый клон)
 
 ```bash
-docker compose up --build
+make setup    # (алиас: make install) создаёт backend/.venv + ставит frontend/node_modules и проверяет CLI
 ```
 
-### 3. Открой браузер
-
-| Адрес | Назначение |
-|---|---|
-| http://localhost:3080 | Приложение |
-| http://localhost:8000/docs | Swagger UI (API) |
-| http://localhost:8000/redoc | ReDoc (API) |
-| http://localhost:3080/admin | Admin-панель (управление workspaces) |
-
----
-
-## Разработка без Docker
-
-### База данных
+### 2. Локальные проверки (DoD gate)
 
 ```bash
-docker compose up db -d
+make verify         # helm-lint + lint (ruff + next build/tsc/lint) + test-backend + test-frontend
+make helm-lint      # helm lint (dev + staging) + kubeconform + scripts/helm-render-checks.sh
+make lint           # backend ruff check . + frontend next build && tsc && next lint
+make test-backend   # alembic heads --verbose + pytest -v (SQLite in-memory)
+make test-frontend  # vitest run
 ```
 
-### Бэкенд (FastAPI)
+### 3. Выкат и проверка на `k3s-dev`
 
 ```bash
+make dev            # dev-images (buildctl SSH tunnel -> .26) + dev-deploy (k3s-dev/retro-board)
+```
+
+- Стенд: `https://retro-dev.kirillbessonov.ru`
+- При первом запуске `make dev-secrets` автоматически создаст namespace `retro-board`, скопирует `registry-pull` (из `stratum`, если есть) и сгенерирует `retro-board-secrets`.
+- Для параллельных проверок можно переопределить тег: `make dev TAG=dev-mybranch`.
+
+### 4. Локальный запуск процессов (опционально, без кластера)
+
+Если нужен локальный `uvicorn` + `next dev` (например, против port-forward PostgreSQL или локальной БД):
+
+```bash
+# Backend
 cd backend
+cp .env.example .env          # при необходимости поправь DATABASE_URL / AI_*
+.venv/bin/alembic upgrade head
+.venv/bin/uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
-pip install -r requirements.txt
-pip install -r requirements-dev.txt  # для тестов
-
-cp .env.example .env
-# Укажи DATABASE_URL для localhost в backend/.env
-
-# Применить миграции
-alembic upgrade head
-
-# Запусти с hot reload
-uvicorn main:app --reload
-# -> http://localhost:8000
-# -> Swagger: http://localhost:8000/docs
-```
-
-### Фронтенд (Next.js + TypeScript)
-
-```bash
+# Frontend (в отдельном терминале)
 cd frontend
-npm install
+# .env.local (опционально): BACKEND_URL=http://localhost:8000
+npm run dev                   # -> http://localhost:3000
 ```
 
-Создай файл `frontend/.env.local`:
-
-```env
-BACKEND_URL=http://localhost:8000
-NEXT_PUBLIC_WS_HOST=localhost:8000
-```
-
-```bash
-npm run dev
-# -> http://localhost:3000
-```
-
-> Next.js проксирует `/api/*` на `http://localhost:8000` через `next.config.mjs` (rewrites).
-> WebSocket подключается напрямую к `localhost:8000` через `NEXT_PUBLIC_WS_HOST`.
+Для локального запуска Playwright E2E (`cd frontend && npx playwright test`) требуется поднятый стек на `http://localhost:3080` и `http://localhost:8000` (с `TESTING=true` на бэкенде, чтобы не упираться в rate limiter) и корневой `.env` (см. `.env.example`).
 
 ---
 
-## Структура проекта
+## Структура репозитория
 
-```
+```text
 retro_board/
-├── .env.example                  # Шаблон переменных окружения
-├── .gitlab-ci.yml                # CI: тесты бэкенда + линт и тесты фронтенда
-├── ci/e2e-nginx.conf             # nginx для E2E (прокси /api и /ws, как в проде)
-├── docker-compose.yml
-├── docker-compose.override.yml   # Dev-оверрайд: volume mount для hot-reload
-├── docker-compose.dokploy.yml    # Compose для развёртывания в Dokploy за Traefik
-│
+├── .env.example                     # Шаблон env для локального E2E / справочник переменных
+├── .gitattributes
+├── .gitignore
+├── .gitlab-ci.yml                   # GitLab CI/CD: тесты, E2E, helm-гейты, buildctl, deploy-staging
+├── AGENTS.md                        # Инструкция по процессу, DoD и сквозным инвариантам
+├── Makefile                         # setup/install, verify, helm-lint, lint, test-*, dev-*
+├── README.md
+├── ci/
+│   └── e2e-nginx.conf               # nginx-прокси (:3080) для E2E-джобы в GitLab CI
+├── scripts/
+│   ├── build-image.sh               # Сборка образов через buildctl (SSH-туннель или $BUILDKIT_HOST)
+│   └── helm-render-checks.sh        # kubeconform и негативные/позитивные render-гейты чарта
+├── k8s/helm/retro-board/
+│   ├── Chart.yaml
+│   ├── values.yaml
+│   ├── values-dev.yaml              # Профиль k3s-dev (retro-dev.kirillbessonov.ru)
+│   ├── values-staging.yaml          # Профиль k3s-stage (retro.kirillbessonov.ru, NetworkPolicy, NFS-бэкапы)
+│   └── templates/                   # api, web, postgres, configmap, secret, ingress, traefik, networkpolicy, backup-cronjob
 ├── backend/
-│   ├── Dockerfile
-│   ├── entrypoint.sh             # Docker entrypoint: миграции + запуск uvicorn
+│   ├── AGENTS.md                    # Правила и инварианты бэкенда
+│   ├── Dockerfile                   # python:3.12-slim, не-root user 1000
+│   ├── entrypoint.sh                # alembic upgrade head (если SKIP_MIGRATIONS != true) + uvicorn
+│   ├── pyproject.toml               # Конфигурация ruff
 │   ├── requirements.txt
-│   ├── requirements-dev.txt      # Зависимости для тестов (pytest, etc.)
-│   ├── main.py                   # FastAPI app, CORS, миграции, rate limiter
-│   ├── alembic.ini               # Конфигурация Alembic
-│   ├── alembic/
-│   │   ├── env.py
-│   │   └── versions/             # Миграции БД
-│   ├── tests/                    # Тесты pytest
-│   │   ├── conftest.py
-│   │   ├── test_boards.py
-│   │   ├── test_cards.py
-│   │   ├── test_columns.py
-│   │   ├── test_groups.py
-│   │   ├── test_action_items.py
-│   │   ├── test_workspaces.py
-│   │   ├── test_admin.py
-│   │   ├── test_csrf.py
-│   │   ├── test_websocket.py
-│   │   ├── test_error_handling.py
-│   │   ├── test_rate_limiting.py
-│   │   ├── test_auto_cluster.py
-│   │   └── test_summary.py
-│   └── app/
-│       ├── config.py             # Pydantic Settings
-│       ├── database.py           # SQLAlchemy engine + сессия
-│       ├── limiter.py            # Конфигурация slowapi rate limiter
-│       ├── models.py             # ORM-модели
-│       ├── schemas.py            # Pydantic-схемы с валидацией
-│       ├── ws_manager.py         # WebSocket connection manager
-│       ├── workspace_auth.py     # Валидация workspace токена
-│       ├── ai/
-│       │   ├── ai_client.py      # OpenRouter AI клиент
-│       │   ├── clustering.py     # AI-кластеризация карточек
-│       │   └── prompts/          # Промпты для summary, title generation
-│       └── routers/
-│           ├── boards.py
-│           ├── columns.py
-│           ├── cards.py
-│           ├── groups.py
-│           ├── action_items.py
-│           ├── workspaces.py     # Вход в workspace
-│           ├── admin.py          # Admin API (CRUD workspaces)
-│           └── websocket.py
-│
+│   ├── requirements-dev.txt         # pytest + ruff
+│   ├── .env.example
+│   ├── main.py                      # FastAPI app, lifespan, GlobalErrorMiddleware, CSRFMiddleware, CORS
+│   ├── alembic.ini
+│   ├── alembic/versions/            # Миграции 0001..0005
+│   ├── app/
+│   │   ├── config.py                # Pydantic Settings + валидаторы секретов/админки
+│   │   ├── database.py
+│   │   ├── limiter.py               # slowapi (отключён только при TESTING=true)
+│   │   ├── models.py                # ORM: Workspace, Board, Column, CardGroup, Card, ActionItem, BoardSummary, BoardMood
+│   │   ├── schemas.py
+│   │   ├── utils.py                 # require_live_board(), require_unlocked_board()
+│   │   ├── workspace_auth.py
+│   │   ├── ws_manager.py            # In-memory ConnectionManager + assert_single_worker()
+│   │   ├── ai/
+│   │   │   ├── ai_client.py         # Синхронный httpx.Client к /v1 шлюзу
+│   │   │   ├── clustering.py        # AI-кластеризация с санитизацией и валидацией ID
+│   │   │   └── prompts/             # action_item_suggestions, summary_generation, title_generation, workspace_insights
+│   │   └── routers/                 # boards, columns, cards, groups, action_items, workspaces, admin, websocket
+│   └── tests/                       # pytest (SQLite in-memory)
 └── frontend/
-    ├── Dockerfile                # Multi-stage: builder -> pure standalone node:22-alpine (:3000)
-    ├── next.config.mjs           # Next.js: standalone output, security headers, conditional API rewrite
-    ├── tsconfig.json             # TypeScript strict конфиг
-    ├── .eslintrc.json            # ESLint + next/core-web-vitals
-    ├── playwright.config.ts      # Playwright E2E конфиг
-    ├── vitest.config.ts          # Конфигурация Vitest
-    ├── .env.local                # Локальные env переменные
-    ├── api/
-    │   ├── index.ts              # Main API, workspace functions, interceptors
-    │   └── admin.ts             # Admin API (separate axios instance)
-    ├── app/
-    │   ├── layout.tsx           # Root layout: шрифты, ErrorBoundary, Toast
-    │   ├── globals.css           # CSS-переменные MD3, глобальные стили
-    │   ├── page.tsx             # Главная: список досок, редирект
-    │   ├── dashboard/page.tsx   # Dashboard: история ретро, задачи
-    │   ├── board/[id]/page.tsx # Страница доски
-    │   └── admin/
-    │       ├── page.tsx         # Admin-панель: управление workspaces
-    │       ├── layout.tsx
-    │       └── admin.module.css
-    ├── components/
-    │   ├── App.tsx              # Корневой компонент
-    │   ├── BoardPage.tsx        # Доска с DnD-контекстом
-    │   ├── BoardsPanel.tsx      # Боковая панель со списком досок
-    │   ├── CardGroupWidget.tsx  # Группа карточек с DnD
-    │   ├── CardWidget.tsx       # Карточка с DnD, лайками
-    │   ├── Column.tsx           # Колонка с карточками
-    │   ├── Dashboard.tsx        # Dashboard: задачи, фильтры
-    │   ├── MasterColumn.tsx     # Мастер-колонка итогов (read-only)
-    │   ├── PhaseProgress.tsx    # Визуальный индикатор фаз ретро
-    │   ├── TimerWidget.tsx      # Таймер обратного отсчёта
-    │   ├── Topbar.tsx           # Верхняя панель навигации
-    │   ├── WelcomeDialog.tsx    # Диалог входа (имя + workspace)
-    │   ├── ThemePanel.tsx       # Панель смены темы
-    │   ├── TrendChart.tsx       # График трендов на Dashboard
-    │   ├── CursorMarker.tsx     # Индикатор курсора участника
-    │   ├── SummaryModal.tsx     # Просмотр AI-резюме ретро
-    │   ├── Dialog.tsx           # Переиспользуемый диалог
-    │   ├── ErrorBoundary.tsx    # Обработка ошибок рендера
-    │   └── Toast.tsx            # Toast-уведомления
-    ├── hooks/
-    │   ├── useWebSocket.ts      # WS с автореконнектом
-    │   ├── useBoardWebSocket.ts # WS доски: CRUD, курсоры, фасилитатор
-    │   ├── useBoardDragDrop.ts  # DnD сенсоры, коллизии
-    │   ├── useTimer.ts          # Таймер с localStorage
-    │   └── useFacilitator.ts    # Управление фазами
-    ├── store/
-    │   ├── index.ts             # Zustand: username, theme, workspace
-    │   └── toastStore.ts        # Toast-уведомления
-    ├── types/
-    │   └── index.ts             # TypeScript интерфейсы, WS events
-    ├── utils/
-    │   ├── boardMapper.ts       # Преобразование типов
-    │   ├── apiError.ts          # Обработка ошибок API
-    │   ├── theme.ts             # Цвета, тема, initials
-    │   ├── wsData.ts            # WS data converters
-    │   └── exportPDF.ts         # Экспорт в PDF
-    ├── tests/                   # Vitest + Testing Library
-    │   ├── setup.ts
-    │   ├── store/
-    │   ├── api/
-    │   ├── components/
-    │   └── hooks/
-    └── e2e/                      # Playwright E2E тесты
-        ├── helpers.ts           # Утилиты для тестов
-        ├── admin.spec.ts
-        ├── board.spec.ts
-        ├── workspace.spec.ts
-        ├── dashboard.spec.ts
-        ├── action-items.spec.ts
-        ├── dnd.spec.ts
-        └── home.spec.ts
+    ├── AGENTS.md                    # Правила и UI/Radix-инварианты фронтенда
+    ├── Dockerfile                   # Multi-stage: pure standalone node:22-alpine (:3000, без nginx)
+    ├── next.config.mjs              # standalone output, CSP/security headers, dev API rewrite
+    ├── package.json
+    ├── playwright.config.ts
+    ├── vitest.config.ts
+    ├── tailwind.config.ts
+    ├── tsconfig.json
+    ├── api/                         # index.ts (workspace/board Axios + CSRF/auth interceptors), admin.ts
+    ├── app/                         # page.tsx, layout.tsx, globals.css, admin/, board/[id]/, dashboard/
+    ├── components/                  # App, BoardPage, Dashboard, Topbar, Column, CardWidget, диалоги и components/ui/
+    ├── hooks/                       # useWebSocket, useBoardWebSocket, useBoardDragDrop, useFacilitator, useTimer
+    ├── lib/                         # board-themes, export-markdown, rich-text, utils
+    ├── store/                       # index.ts (useAppStore), toastStore.ts (sonner)
+    ├── types/index.ts
+    ├── utils/                       # apiError, boardMapper, exportPDF, theme, wsData
+    ├── tests/                       # Vitest + Testing Library
+    └── e2e/                         # Playwright E2E-спеки
 ```
 
 ---
 
-## CI/CD
+## CI/CD и деплой
 
-Репозиторий живёт на GitLab (`gitlab.kirillbessonov.ru/fmrm/retro_board`), GitHub — только зеркало. CI — GitLab CI (`.gitlab-ci.yml`), работа идёт через merge request'ы.
+Основной репозиторий — GitLab (`gitlab.kirillbessonov.ru/fmrm/retro_board`), GitHub — только зеркало.
 
-### CI — тесты и линт (`.gitlab-ci.yml`)
+### Джобы `.gitlab-ci.yml`
 
-Пайплайн запускается на self-hosted раннере (тег `homelab`) для merge request'ов в `main` и пушей в `main`.
+Пайплайн запускается на runner с тегом `homelab` в образе `$CI_BASE_IMAGE` для MR в `main` и пушей в `main`:
 
-| Job | Окружение | Команда |
+| Job | Триггер | Что делает |
 |---|---|---|
-| **backend-tests** | Python 3.12 (uv) | `pytest -v` |
-| **frontend-lint** | Node 24 | `npm run build` + `npm run lint` |
-| **frontend-tests** | Node 24 | `npm test` |
-| **e2e-tests** | PostgreSQL (GitLab service) + Playwright | Playwright против полного стека |
+| `backend-tests` | MR / `main` | `alembic heads --verbose`, `ruff check .`, `pytest -v` (SQLite in-memory) |
+| `frontend-lint` | MR / `main` | `npm ci`, `npm run build`, `npm run typecheck`, `npm run lint` |
+| `frontend-tests` | MR / `main` | `npm ci`, `npm test` (Vitest) |
+| `e2e-tests` | MR / `main` | `postgres:16-alpine` service + `alembic upgrade head` + `uvicorn` + standalone Next `:3000` + `nginx` `:3080` (`ci/e2e-nginx.conf`) + `npx playwright test` |
+| `helm` | MR / `main` | `helm lint` (`values-dev.yaml`, `values-staging.yaml`) + `scripts/helm-render-checks.sh` |
+| `image-smoke` | MR (изменения сборки/зависимостей) | `buildctl` сборка `api` и `web` без пуша |
+| `build-app-staging` | `push` в `main` | Сборка и пуш `$CI_REGISTRY_IMAGE/{api,web}:staging-$CI_COMMIT_SHORT_SHA` и `:latest` |
+| `deploy-staging` | `push` в `main` | Деплой Helm-чарта (`values-staging.yaml`, иммутабельный тег `staging-$CI_COMMIT_SHORT_SHA`) в `k3s-stage` через GitLab Agent `fmrm/cluster-admins:k3s-stage` |
 
-Базовый образ — `registry.kirillbessonov.ru/tools/ci-base` (тег задан переменной `CI_BASE_IMAGE` в `.gitlab-ci.yml`). Docker-демона на стенде нет, поэтому E2E поднимает PostgreSQL как GitLab CI service, а бэкенд, standalone Next.js и nginx (`ci/e2e-nginx.conf`) — процессами в джобе.
+### Особенности Kubernetes-деплоя (`k8s/helm/retro-board`)
 
-### Деплой
-
-Деплой выполняется вручную в Dokploy. Сервис собирается из этого репозитория по `docker-compose.dokploy.yml`, переменные окружения задаются в интерфейсе Dokploy. Автодеплой отключён.
+- Образ `web` не содержит nginx (`node server.js` на `:3000`). Маршрутизацию `/api` и `/ws` → `api:8000` и `/` → `web:3000` выполняет Traefik Ingress (`ServersTransport` + `Middleware` `security-headers`).
+- `api.replicas` зафиксирован на `1` со стратегией `Recreate` (stateful `ConnectionManager` в памяти).
+- Миграции `alembic upgrade head` выполняет initContainer `migrate` перед стартом `api`, а основной контейнер запускается с `SKIP_MIGRATIONS=true`.
+- На `k3s-stage` включены `NetworkPolicy` (для `postgres`, `api`, `web`, `backup`) и ежедневный `CronJob` (`pg_dump --format=custom`) на NFS (`192.168.1.10:/tank/k8s-backup`, хранение 14 дней).
+- В namespace `retro-board` должен существовать Secret `retro-board-secrets` (`POSTGRES_PASSWORD`, `ADMIN_LOGIN`, `ADMIN_PASSWORD`, `WORKSPACE_JWT_SECRET`, `ADMIN_JWT_SECRET` и опционально `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL`).
 
 ---
 
 ## API Reference
 
-### Boards
+Все пути (кроме `/health`, `/api/health`, `/api/workspaces/login`, `/api/admin/*`) требуют валидный workspace JWT (`httpOnly` cookie `workspace_token` или заголовок `X-Workspace-Token`). Небезопасные HTTP-методы (кроме логинов) защищены `CSRFMiddleware` (`csrf_token` cookie + `X-CSRF-Token`).
+
+### Health
 
 | Метод | Путь | Описание |
 |---|---|---|
-| `GET` | `/api/boards/` | Список всех досок |
-| `POST` | `/api/boards/` | Создать доску (+ 3 колонки по умолчанию) |
-| `GET` | `/api/boards/{id}` | Получить доску со всеми данными |
-| `GET` | `/api/boards/by-slug/{slug}` | Получить доску по slug |
-| `PATCH` | `/api/boards/{id}` | Обновить доску (название, лимит голосов) |
-| `DELETE` | `/api/boards/{id}` | Удалить доску (soft delete) |
-| `GET` | `/api/boards/{id}/summary` | Получить AI-резюме доски |
-
-### Columns
-
-| Метод | Путь | Описание |
-|---|---|---|
-| `POST` | `/api/columns/` | Создать колонку |
-| `PATCH` | `/api/columns/{id}` | Обновить название / цвет / позицию |
-| `DELETE` | `/api/columns/{id}` | Удалить колонку (каскадно) |
-
-### Cards
-
-| Метод | Путь | Описание |
-|---|---|---|
-| `POST` | `/api/cards/` | Создать карточку |
-| `PATCH` | `/api/cards/{id}` | Обновить текст / цвет |
-| `POST` | `/api/cards/{id}/move` | Переместить в другую колонку |
-| `POST` | `/api/cards/{id}/like` | Добавить / убрать лайк |
-| `DELETE` | `/api/cards/{id}` | Удалить карточку |
-
-### Groups
-
-| Метод | Путь | Описание |
-|---|---|---|
-| `POST` | `/api/groups/` | Создать группу |
-| `PATCH` | `/api/groups/{id}` | Переименовать группу |
-| `DELETE` | `/api/groups/{id}` | Удалить группу |
-| `POST` | `/api/groups/{id}/set_card/{card_id}` | Добавить карточку в группу |
-| `DELETE` | `/api/groups/{id}/remove_card/{card_id}` | Убрать из группы |
-| `PATCH` | `/api/groups/{id}/move` | Переместить группу |
-| `POST` | `/api/groups/auto-cluster` | AI-кластеризация карточек в колонке |
-
-### Action Items
-
-| Метод | Путь | Описание |
-|---|---|---|
-| `GET` | `/api/action-items/?board_id=...` | Список итогов доски |
-| `GET` | `/api/action-items/all` | Все итоги со всех досок (для Dashboard) |
-| `GET` | `/api/action-items/trends` | Данные для графика трендов |
-| `POST` | `/api/action-items/` | Создать итог |
-| `POST` | `/api/action-items/generate-title` | Сгенерировать название через AI |
-| `POST` | `/api/action-items/carry-forward` | Перенести незакрытые итоги на другую доску |
-| `PATCH` | `/api/action-items/{id}` | Обновить текст / ответственного / статус |
-| `DELETE` | `/api/action-items/{id}` | Удалить итог |
+| `GET` | `/health` | Проверка здоровья бэкенда |
+| `GET` | `/api/health` | То же (для Ingress/прокси) |
 
 ### Workspaces
 
 | Метод | Путь | Описание |
 |---|---|---|
-| `POST` | `/api/workspaces/login` | Вход в workspace (slug + access_key) |
+| `POST` | `/api/workspaces/login` | Вход в workspace (`workspace_slug` + `access_key`), выставляет `workspace_token` cookie |
+| `GET` | `/api/workspaces/me` | Текущий workspace и обновление `csrf_token` cookie |
 
-### Admin
+### Admin (`/api/admin/*`, отдельная cookie `admin_token`)
 
 | Метод | Путь | Описание |
 |---|---|---|
@@ -356,150 +200,149 @@ retro_board/
 | `POST` | `/api/admin/logout` | Выход администратора |
 | `GET` | `/api/admin/workspaces` | Список всех workspaces |
 | `POST` | `/api/admin/workspaces` | Создать workspace |
-| `PATCH` | `/api/admin/workspaces/{id}` | Обновить workspace |
-| `DELETE` | `/api/admin/workspaces/{id}` | Удалить workspace |
+| `PATCH` | `/api/admin/workspaces/{workspace_id}` | Переименовать / сменить ключ доступа |
+| `DELETE` | `/api/admin/workspaces/{workspace_id}` | Удалить workspace |
 
-### Health
+### Boards (`/api/boards/*`)
 
 | Метод | Путь | Описание |
 |---|---|---|
-| `GET` | `/api/health` | Проверка здоровья бэкенда |
+| `GET` | `/api/boards/templates` | Список шаблонов досок |
+| `GET` | `/api/boards/mood-trends` | Динамика настроения, карточек и задач по доскам workspace |
+| `POST` | `/api/boards/workspace-insights` | Кросс-спринт инсайты workspace (AI + fallback) |
+| `GET` | `/api/boards/` | Список живых досок workspace |
+| `POST` | `/api/boards/` | Создать доску (по шаблону / custom колонкам / с carry-forward) |
+| `GET` | `/api/boards/by-slug/{slug}` | Получить доску по slug |
+| `GET` | `/api/boards/{board_id}` | Получить доску со всеми колонками, группами, карточками и mood |
+| `PATCH` | `/api/boards/{board_id}` | Обновить настройки доски (`name`, `max_votes`, `is_locked`, `hide_cards_until_reveal`, `anonymous_votes`, `allow_multiple_votes_per_card`) |
+| `DELETE` | `/api/boards/{board_id}` | Удалить доску (soft delete через `deleted_at`) |
+| `POST` | `/api/boards/{board_id}/mood` | Сохранить / обновить оценку настроения участника |
+| `GET` | `/api/boards/{board_id}/summary` | Получить последнее AI-резюме доски |
+| `POST` | `/api/boards/{board_id}/summary/regenerate` | Перегенерировать AI-резюме доски |
+| `POST` | `/api/boards/{board_id}/reset-votes` | Сбросить голоса пользователя на доске |
 
-### WebSocket
+### Columns (`/api/columns/*`)
 
-```
-ws://localhost/ws/{board_id}?workspace_token={token}
-```
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/api/columns/` | Создать колонку |
+| `PATCH` | `/api/columns/{column_id}` | Обновить название / цвет / позицию |
+| `DELETE` | `/api/columns/{column_id}` | Удалить колонку (каскадно с карточками и группами) |
 
-#### События от клиента к серверу
+### Cards (`/api/cards/*`)
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/api/cards/` | Создать карточку |
+| `PATCH` | `/api/cards/{card_id}` | Обновить текст / цвет / группу |
+| `POST` | `/api/cards/{card_id}/move` | Переместить карточку между колонками / позициями |
+| `POST` | `/api/cards/{card_id}/like` | Добавить / снять голос (лайк) |
+| `POST` | `/api/cards/bulk-update` | Массовое перемещение / смена цвета / группировка карточек |
+| `POST` | `/api/cards/bulk-delete` | Массовое удаление карточек |
+| `POST` | `/api/cards/merge` | Объединить несколько карточек в одну |
+| `DELETE` | `/api/cards/{card_id}` | Удалить карточку |
+
+### Groups (`/api/groups/*`)
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/api/groups/` | Создать группу карточек |
+| `PATCH` | `/api/groups/{group_id}` | Переименовать группу |
+| `DELETE` | `/api/groups/{group_id}` | Удалить группу (карточки остаются в колонке) |
+| `POST` | `/api/groups/{group_id}/set_card/{card_id}` | Привязать карточку к группе |
+| `PATCH` | `/api/groups/{group_id}/move` | Переместить группу целиком |
+| `DELETE` | `/api/groups/{group_id}/remove_card/{card_id}` | Убрать карточку из группы |
+| `POST` | `/api/groups/auto-cluster` | AI-кластеризация и немедленное создание групп в колонке |
+| `POST` | `/api/groups/auto-cluster-preview` | AI-предпросмотр кластеризации без сохранения |
+| `POST` | `/api/groups/apply-clusters` | Применить подтверждённые кластеры |
+
+### Action Items (`/api/action-items/*`)
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/action-items/trends` | Данные для графика трендов задач |
+| `GET` | `/api/action-items/all` | Все задачи workspace (для `/dashboard`) |
+| `POST` | `/api/action-items/carry-forward` | Перенести незакрытые задачи с исходной доски на целевую |
+| `GET` | `/api/action-items/` | Задачи конкретной доски (`?board_id=...`) |
+| `POST` | `/api/action-items/generate-title` | Сгенерировать заголовок задачи через AI |
+| `POST` | `/api/action-items/suggest` | Предложить список Action Items по итогам доски через AI |
+| `POST` | `/api/action-items/` | Создать задачу |
+| `PATCH` | `/api/action-items/{item_id}` | Обновить заголовок / текст / ответственного / статус |
+| `DELETE` | `/api/action-items/{item_id}` | Удалить задачу |
+
+---
+
+## WebSocket Protocol
+
+- `/ws/{board_id}` — события конкретной доски; аутентификация по `Origin` (`CORS_ORIGINS`) и JWT (`httpOnly` cookie `workspace_token` в приоритете, query `?workspace_token=...` — fallback для совместимости).
+- `/ws/workspace` — live-события списка досок workspace для `/dashboard` (`board_created`, `board_updated`, `board_deleted`).
+- Лимиты входящих сообщений на соединение: `20` управляющих сообщений/сек и `30` `cursor_move`/сек. Формат JSON: `{ "event": "<name>", "data": { ... } }` (плюс текстовый heartbeat `"ping"`).
+
+### События от клиента к серверу
 
 | Событие | Описание |
 |---|---|
-| `identify` | Регистрация пользователя (username) |
-| `cursor_move` | Позиция курсора (x, y) |
-| `cursor_leave` | Пользователь убрал курсор |
-| `facilitator_start` | Начать фасилитацию |
-| `facilitator_stop` | Завершить фасилитацию (закрывает доску) |
-| `phase_change` | Сменить фазу (brainstorm → reveal → discuss → vote → summary) |
-| `timer_start` | Запустить таймер (duration, remaining) |
-| `timer_pause` | Пауза таймера |
-| `timer_reset` | Сброс таймера |
+| `identify` | Регистрация имени участника (`username`) |
+| `cursor_move` / `cursor_leave` | Позиция курсора (`x`, `y`) и уход курсора |
+| `facilitator_start` / `facilitator_stop` | Старт / завершение сессии фасилитации (опционально блокировка доски при стопе) |
+| `phase_change` | Смена фазы (`brainstorm`, `reveal`, `discuss`, `vote`, `summary`) |
+| `timer_start` / `timer_pause` / `timer_reset` | Управление таймером (в активной сессии — только фасилитатор) |
 | `group_collapse` | Свернуть / развернуть группу |
+| `ready_toggle` | Переключить статус готовности участника |
+| `spotlight_card` | Выделить карточку в фокус (или сбросить) |
+| `reaction` | Отправить быструю реакцию (`❤️`, `👍`, `🔥`, `🎉`, `💡`, `👏`, `😂`) |
+| `card_typing` | Индикатор набора карточки в колонке |
 
-#### События от сервера к клиентам
+### События от сервера к клиентам
 
 | Событие | Описание |
 |---|---|
-| `presence_update` | Список активных пользователей |
-| `facilitator_update` | Статус фасилитатора и текущая фаза |
+| `presence_update` | Список активных участников доски |
+| `facilitator_update` | Текущий фасилитатор, фаза и `session_id` |
 | `phase_update` | Смена фазы ретро |
-| `cursor_move` / `cursor_leave` | Курсоры других участников |
+| `cursor_move` / `cursor_leave` | Позиции курсоров других участников |
 | `timer_start` / `timer_pause` / `timer_reset` | Синхронизация таймера |
-| `card_created` / `card_updated` / `card_deleted` | CRUD карточек |
-| `card_moved` | Перемещение карточки между колонками |
+| `ready_update` | Список участников, отметивших готовность |
+| `spotlight_update` | Текущая карточка в фокусе |
+| `typing_update` | Активные участники, набирающие текст по колонкам |
+| `reaction` | Быстрая реакция участника |
+| `mood_updated` | Обновление оценки настроения на доске |
+| `board_created` / `board_updated` / `board_deleted` | Изменения досок (на доске и в `/ws/workspace`) |
 | `column_created` / `column_updated` / `column_deleted` | CRUD колонок |
-| `group_created` / `group_updated` / `group_deleted` | CRUD групп |
-| `group_moved` | Перемещение группы между колонками |
-| `group_collapse` | Свернуть/развернуть группу |
-| `action_item_created` / `action_item_updated` / `action_item_deleted` | CRUD итогов |
-| `summary_generated` | AI-резюме сгенерировано |
-| `auto_cluster_completed` | AI-кластеризация завершена |
+| `card_created` / `card_updated` / `card_moved` / `card_deleted` | CRUD и перемещение карточек |
+| `group_created` / `group_updated` / `group_moved` / `group_deleted` / `group_collapse` | CRUD, перемещение и сворачивание групп |
+| `action_item_created` / `action_item_updated` / `action_item_deleted` | CRUD Action Items |
+| `auto_cluster_completed` | Завершение AI-кластеризации |
+| `summary_generated` / `summary_failed` | Результат генерации AI-резюме |
 
 ---
 
 ## Переменные окружения
 
-### Корневой `.env` (Docker Compose)
+### Backend (`ConfigMap` / `Secret` в Helm или `backend/.env`)
+
+| Переменная | Обязательна | Описание |
+|---|---|---|
+| `DATABASE_URL` | Да | Строка подключения PostgreSQL (в Helm собирается из `PG_*`) |
+| `CORS_ORIGINS` | Да | Разрешённые origin'ы через запятую (в Helm запрещены пустое значение, `*` и `null`) |
+| `ADMIN_LOGIN` | Да | Логин администратора (`/admin`, >= 3 символов, не `"admin"`) |
+| `ADMIN_PASSWORD` | Да | Пароль администратора (>= 8 символов, не `"changeme"`) |
+| `WORKSPACE_JWT_SECRET` | Да | Секрет подписи JWT workspace (>= 32 символов) |
+| `ADMIN_JWT_SECRET` | Да | Секрет подписи JWT администратора (>= 32 символов) |
+| `WORKSPACE_JWT_EXPIRE_HOURS` | Нет | Срок жизни workspace-токена в часах (по умолчанию: `168`) |
+| `SECURE_COOKIES` | Нет | Флаг `Secure` на куках (по умолчанию: `true`; для локального HTTP — `false`) |
+| `CSRF_ENABLED` | Нет | CSRF-защита (по умолчанию: `true`; `false` — только для тестовых стендов) |
+| `AI_BASE_URL` | Нет | OpenAI-совместимый `/v1` эндпоинт AI-шлюза (без него AI-функции отключены) |
+| `AI_API_KEY` | Нет | API-ключ AI-шлюза |
+| `AI_MODEL` | Нет | Модель AI-шлюза (по умолчанию: `qwen3.6-35b-a3b-mtp-ud-q8_k_xl`) |
+| `AI_DISABLE_THINKING` | Нет | Передавать `enable_thinking=false` для Qwen3 (по умолчанию: `true`) |
+| `SKIP_MIGRATIONS` | Нет | Пропуск `alembic upgrade head` в `entrypoint.sh` (`true` в k8s, т.к. миграции идут в initContainer) |
+| `FORWARDED_ALLOW_IPS` | Нет | Доверенные прокси для `--forwarded-allow-ips` в `uvicorn` (по умолчанию: `*`) |
+| `TESTING` | Нет | Режим тестов (`true` отключает `slowapi` и прод-валидаторы `Settings`) |
+
+### Frontend (`frontend/.env.local` при локальной разработке)
 
 | Переменная | Описание |
 |---|---|
-| `POSTGRES_DB` | Имя базы данных |
-| `POSTGRES_USER` | Пользователь PostgreSQL |
-| `POSTGRES_PASSWORD` | Пароль PostgreSQL |
-| `CORS_ORIGINS` | Разрешённые CORS-источники |
-| `ADMIN_LOGIN` | Логин админа (по умолчанию: admin) |
-| `ADMIN_PASSWORD` | Пароль админа (по умолчанию: changeme) |
-| `AI_BASE_URL` | OpenAI-совместимый эндпоинт AI-гейта, напр. `https://llm-api.kirillbessonov.ru/v1` (обязательно для AI-функций) |
-| `AI_API_KEY` | API-ключ AI-гейта (опционально, если гейт без авторизации) |
-| `AI_MODEL` | Модель AI-гейта (по умолчанию: `qwen3.6-35b-a3b-mtp-ud-q8_k_xl`) |
-| `AI_DISABLE_THINKING` | Отключать reasoning у Qwen3 через `enable_thinking=false` (по умолчанию: true; иначе content пустой) |
-| `WORKSPACE_JWT_SECRET` | Секрет для JWT токенов workspace (обязательно, 32+ символов) |
-| `ADMIN_JWT_SECRET` | Секрет для JWT токенов админа (обязательно, 32+ символов) |
-| `WORKSPACE_JWT_EXPIRE_HOURS` | Срок жизни workspace токена (по умолчанию: 168 = 7 дней) |
-| `SECURE_COOKIES` | Secure-флаг кук (по умолчанию: true; для HTTP-dev ставить false) |
-| `CSRF_ENABLED` | CSRF-защита (по умолчанию: true; false — только для E2E) |
-
-### `backend/.env` (локальная разработка)
-
-| Переменная | Описание |
-|---|---|
-| `DATABASE_URL` | Строка подключения к PostgreSQL |
-| `CORS_ORIGINS` | Разрешённые CORS-источники |
-| `WORKSPACE_JWT_SECRET` | Секрет для JWT токенов workspace |
-| `ADMIN_JWT_SECRET` | Секрет для JWT токенов админа |
-| `AI_BASE_URL` | OpenAI-совместимый эндпоинт AI-гейта (опционально; без него AI-функции отключены) |
-| `AI_API_KEY` | API-ключ AI-гейта (опционально) |
-| `AI_MODEL` | Модель AI-гейта (по умолчанию: `qwen3.6-35b-a3b-mtp-ud-q8_k_xl`) |
-
-### `frontend/.env.local` (локальная разработка)
-
-| Переменная | Описание |
-|---|---|
-| `BACKEND_URL` | URL бэкенда |
-| `NEXT_PUBLIC_WS_HOST` | Хост WebSocket |
-
----
-
-## Полезные команды
-
-```bash
-# Docker
-docker compose up --build          # Собрать и запустить (dev с hot-reload)
-docker compose up --build -d       # Фоновый режим
-docker compose up db -d           # Только БД
-docker compose down -v             # Полный сброс (включая данные)
-
-# Бэкенд
-cd backend && pytest -v             # Тесты
-cd backend && alembic upgrade head  # Миграции
-
-# Фронтенд
-cd frontend && npm run dev          # Dev сервер
-cd frontend && npm run build        # Production build
-cd frontend && npm run lint         # ESLint
-cd frontend && npm test             # Vitest тесты
-cd frontend && npm run test:e2e    # Playwright E2E
-
-# Бэкап БД
-docker compose exec db pg_dump -U retro retroboard > backup_$(date +%Y%m%d).sql
-```
-
----
-
-## Деплой (Kubernetes + Helm)
-
-Основной деплой — в Kubernetes (`k3s-dev` и `k3s-stage`) с помощью Helm-чарта [`k8s/helm/retro-board`](k8s/helm/retro-board) и shared-агента `fmrm/cluster-admins`.
-
-- На `push` в `main` GitLab CI собирает образы `api` и `web` через `buildctl` и автоматически выкатывает релиз `retro-board` в namespace `retro-board` кластера `k3s-stage` (`https://retro.kirillbessonov.ru`).
-- Локальная проверка чарта и деплой на dev-кластер:
-  - `make helm-lint` — `helm lint`, `kubeconform` и render-гейты (`scripts/helm-render-checks.sh`);
-  - `make dev-images` — сборка dev-образов через `buildctl` SSH-туннель;
-  - `make dev-deploy` — деплой в `k3s-dev` (`https://retro-dev.kirillbessonov.ru`).
-- Предварительно в namespace `retro-board` должен быть создан Secret `retro-board-secrets` (`POSTGRES_PASSWORD`, `ADMIN_LOGIN`, `ADMIN_PASSWORD`, `WORKSPACE_JWT_SECRET`, `ADMIN_JWT_SECRET` и опционально `AI_*`) и `registry-pull`.
-- Ежедневный `pg_dump -Fc` выполняется CronJob (`backup-cronjob.yaml`) на NFS `/tank/k8s-backup` с хранением 14 дней.
-
-`docker-compose.dokploy.yml` оставлен как deprecated для legacy-стенда Dokploy на период переключения.
-
----
-
-## Безопасность
-
-- `.env` добавлен в `.gitignore` — секреты не попадут в репозиторий
-- `.env.example` показывает структуру без реальных значений
-- **CSRF-защита** — cookie token + заголовок `X-CSRF-Token` на всех мутациях
-- **JWT-аутентификация** — workspace и admin токены с настраиваемым сроком жизни
-- **Rate Limiting** — slowapi: 100/мин чтение, 30/мин мутации, 5/мин AI-вызовы
-- **WebSocket Rate Limiting** — максимум 20 сообщений/сек на соединение
-- **Лимит голосов** — серверная проверка
-- **Workspace изоляция** — JWT токен в каждом запросе, данные изолированы
-- **AI-безопасность** — санитизация текста карточек перед отправкой в AI, валидация ответов по белому списку ID
+| `BACKEND_URL` | URL бэкенда для dev-rewrite `/api/*` (по умолчанию `http://localhost:8000`; в production при отсутствии не используется) |
+| `NEXT_PUBLIC_WS_HOST` | Явный хост WebSocket (если отличается от `location.host`) |

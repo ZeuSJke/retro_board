@@ -4,6 +4,10 @@ e2e
 tests
 test-results
 playwright-report
+coverage
+tsconfig.tsbuildinfo
+next-env.d.ts
+.eslintcache
 .git
 .gitignore
 .dockerignore

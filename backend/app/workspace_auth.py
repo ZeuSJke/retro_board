@@ -1,8 +1,7 @@
 from datetime import datetime, timedelta, UTC
-from typing import Optional
 import logging
 
-from fastapi import Depends, HTTPException, Request, Response
+from fastapi import Depends, HTTPException, Request
 from jose import JWTError, jwt
 import bcrypt
 from sqlalchemy.orm import Session
@@ -49,10 +48,10 @@ def decode_workspace_token(token: str) -> dict:
     """Декодировать JWT токен workspace."""
     try:
         return jwt.decode(token, settings.workspace_jwt_secret, algorithms=[ALGORITHM])
-    except JWTError:
+    except JWTError as err:
         raise HTTPException(
             status_code=401, detail="Invalid or expired workspace token"
-        )
+        ) from err
 
 
 def get_current_workspace(

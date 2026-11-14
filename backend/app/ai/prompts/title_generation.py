@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-
 from app.ai.ai_client import AIModelConfig
 
 TITLE_GENERATION_PROMPT = """Сгенерируй краткое название задачи (до 50 символов) на основе текста ниже.
