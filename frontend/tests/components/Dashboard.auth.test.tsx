@@ -78,7 +78,7 @@ describe('Dashboard — 401 and workspace expiration recovery', () => {
     render(<Dashboard />)
 
     // Должен появиться WelcomeDialog с полями входа в команду
-    await expect(screen.findByRole('button', { name: /войти на доску/i })).resolves.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /войти на доску/i })).toBeInTheDocument()
 
     await user.type(screen.getByPlaceholderText(/код команды|fmrm/i), 'team-a')
     await user.type(screen.getByPlaceholderText(/ключ доступа/i), 'secret')
@@ -114,6 +114,6 @@ describe('Dashboard — 401 and workspace expiration recovery', () => {
     // Имитация сброса workspace axios interceptor-ом при 401 mid-session
     useAppStore.setState({ workspace: null })
 
-    await expect(screen.findByRole('button', { name: /войти на доску/i })).resolves.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /войти на доску/i })).toBeInTheDocument()
   })
 })
