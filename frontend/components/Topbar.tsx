@@ -20,6 +20,7 @@ import {
   Users,
 } from 'lucide-react'
 import { BrandMark } from '@/components/BrandLogo'
+import { ShareBoardButton, ShareBoardMenuItem } from '@/components/ShareBoardDialog'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import type { Board } from '@/types'
 import { Badge } from '@/components/ui/badge'
@@ -245,6 +246,8 @@ export default function Topbar({
           </Link>
         </Button>
 
+        {board && <ShareBoardButton board={board} />}
+
         {board && (
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
@@ -260,6 +263,7 @@ export default function Topbar({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <ShareBoardMenuItem />
               <DropdownMenuItem onClick={onOpenSummary}>
                 <Sparkles className="h-4 w-4 text-primary" />
                 Итоги ретро и AI
