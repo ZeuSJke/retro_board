@@ -8,7 +8,7 @@
   Веб-приложение с открытым исходным кодом для проведения командных Agile-ретроспектив в реальном времени.
 </p>
 
-**Стек:** Next.js 15 (App Router, TypeScript) · Tailwind CSS · shadcn/ui (Radix UI) · Zustand · `@dnd-kit` · FastAPI · SQLAlchemy 2 · Alembic · PostgreSQL 16 · WebSocket · Docker · Kubernetes (Helm)
+**Стек:** Next.js 16 (App Router, TypeScript, React 19) · Tailwind CSS 4 · shadcn/ui (Radix UI) · Zustand · `@dnd-kit` · FastAPI · SQLAlchemy 2 · Alembic · PostgreSQL 16 · WebSocket · Docker · Kubernetes (Helm)
 
 ---
 
@@ -91,7 +91,7 @@ npm run dev                   # -> http://localhost:3000
 
 ```bash
 make verify         # полный прогон: helm-lint + lint + test-backend + test-frontend
-make lint           # backend (ruff check .) + frontend (next build && typecheck && next lint)
+make lint           # backend (ruff check .) + frontend (next build && typecheck && eslint)
 make test-backend   # alembic heads --verbose + pytest -v (SQLite in-memory)
 make test-backend-pg TEST_DATABASE_URL=postgresql://…  # те же тесты и alembic check на пустой базе PostgreSQL
 make test-frontend  # vitest run
@@ -199,12 +199,12 @@ retro_board/
 │   │   └── routers/                 # boards, columns, cards, groups, action_items, workspaces, admin, websocket
 │   └── tests/                       # pytest (SQLite in-memory)
 └── frontend/
-    ├── Dockerfile                   # Multi-stage standalone node:22-alpine (:3000)
+    ├── Dockerfile                   # Multi-stage standalone node:24-alpine (:3000)
     ├── next.config.mjs              # standalone output, CSP/security headers, dev API rewrite
     ├── package.json
     ├── playwright.config.ts
-    ├── vitest.config.ts
-    ├── tailwind.config.ts
+    ├── vitest.config.mts
+    ├── eslint.config.mjs            # ESLint 10 (flat config) + typescript-eslint
     ├── tsconfig.json
     ├── api/                         # HTTP-клиенты (workspace/board Axios + CSRF/auth interceptors, admin API)
     ├── app/                         # App Router: /, /admin, /board/[id], /dashboard

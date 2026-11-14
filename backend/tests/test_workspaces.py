@@ -42,7 +42,7 @@ def test_list_boards_requires_workspace_token(client, workspace_headers):
     """GET /api/boards/ без токена → 401."""
     resp = client.get("/api/boards/")
     assert resp.status_code == 401
-    assert "Workspace authentication required" in resp.json()["detail"]
+    assert "Требуется вход в команду" in resp.json()["detail"]
 
 
 def test_list_boards_with_workspace_token(client, workspace_headers, sample_board):

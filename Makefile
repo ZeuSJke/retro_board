@@ -17,7 +17,7 @@ help:
 	@echo "  audit           - check backend and frontend dependencies for known vulnerabilities"
 	@echo "  helm-lint       - helm lint + kubeconform + render guard gates"
 	@echo "  lint-backend    - backend ruff check"
-	@echo "  lint-frontend   - frontend next build + tsc + next lint"
+	@echo "  lint-frontend   - frontend next build + tsc + eslint"
 	@echo "  lint            - lint-backend + lint-frontend"
 	@echo "  test-backend    - backend alembic heads + pytest (SQLite in-memory)"
 	@echo "  test-backend-pg - same tests + alembic check on PostgreSQL (needs TEST_DATABASE_URL)"

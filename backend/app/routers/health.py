@@ -19,7 +19,7 @@ router = APIRouter()
 
 def _live_board(db: Session, board_id: str, workspace_id: str) -> models.Board:
     # Опрос и оценка встречи доступны и на заблокированной доске: встреча уже прошла
-    return require_live_board(get_or_404(db, models.Board, board_id, "Board not found"), workspace_id)
+    return require_live_board(get_or_404(db, models.Board, board_id, "Доска не найдена"), workspace_id)
 
 
 async def _broadcast_summary(db: Session, board_id: str) -> None:

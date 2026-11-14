@@ -28,8 +28,8 @@ async def create_group(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    col = get_or_404(db, models.Column, body.column_id, "Column not found")
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
+    col = get_or_404(db, models.Column, body.column_id, "Колонка не найдена")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Колонка не найдена")
     max_pos = (
         db.query(func.max(models.CardGroup.position))
         .filter(models.CardGroup.column_id == body.column_id)
@@ -59,9 +59,9 @@ async def update_group(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    group = get_or_404(db, models.CardGroup, group_id, "Group not found")
+    group = get_or_404(db, models.CardGroup, group_id, "Группа не найдена")
     col = db.get(models.Column, group.column_id)
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Group not found")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Группа не найдена")
     if body.title is not None:
         group.title = body.title
     db.commit()
@@ -79,9 +79,9 @@ async def delete_group(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    group = get_or_404(db, models.CardGroup, group_id, "Group not found")
+    group = get_or_404(db, models.CardGroup, group_id, "Группа не найдена")
     col = db.get(models.Column, group.column_id)
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Group not found")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Группа не найдена")
     board_id = col.board_id
     col_id = group.column_id  # capture before deletion
 
@@ -111,14 +111,14 @@ async def set_card_group(
     participant: models.Participant = Depends(get_current_participant),
 ):
     """Add a card to a group."""
-    group = get_or_404(db, models.CardGroup, group_id, "Group not found")
+    group = get_or_404(db, models.CardGroup, group_id, "Группа не найдена")
     col = db.get(models.Column, group.column_id)
     board = require_unlocked_board(
-        db.get(models.Board, col.board_id), workspace.id, "Group not found"
+        db.get(models.Board, col.board_id), workspace.id, "Группа не найдена"
     )
-    card = get_or_404(db, models.Card, card_id, "Card not found")
+    card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
     if card.column_id != group.column_id:
-        raise HTTPException(400, "Card and group must be in the same column")
+        raise HTTPException(400, "Карточка и группа должны быть в одной колонке")
     card.group_id = group_id
     db.commit()
     db.refresh(card)
@@ -136,15 +136,15 @@ async def move_group(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Move a group (and all its cards) to a different column."""
-    group = get_or_404(db, models.CardGroup, group_id, "Group not found")
+    group = get_or_404(db, models.CardGroup, group_id, "Группа не найдена")
     col = db.get(models.Column, group.column_id)
     board = require_unlocked_board(
-        db.get(models.Board, col.board_id), workspace.id, "Group not found"
+        db.get(models.Board, col.board_id), workspace.id, "Группа не найдена"
     )
     old_col = db.get(models.Column, group.column_id)
-    new_col = get_or_404(db, models.Column, body.column_id, "Column not found")
+    new_col = get_or_404(db, models.Column, body.column_id, "Колонка не найдена")
     if old_col.board_id != new_col.board_id:
-        raise HTTPException(400, "Columns must be on the same board")
+        raise HTTPException(400, "Колонки должны быть на одной доске")
 
     old_column_id = group.column_id
     group.column_id = body.column_id
@@ -180,13 +180,13 @@ async def remove_card_from_group(
     participant: models.Participant = Depends(get_current_participant),
 ):
     """Remove a card from its group. Auto-deletes the group if it becomes empty."""
-    card = get_or_404(db, models.Card, card_id, "Card not found")
+    card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
     col = db.get(models.Column, card.column_id)
     board = require_unlocked_board(
-        db.get(models.Board, col.board_id), workspace.id, "Card not found"
+        db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
     if card.group_id != group_id:
-        raise HTTPException(400, "Card is not in this group")
+        raise HTTPException(400, "Карточка не входит в эту группу")
     card.group_id = None
     db.commit()
     db.refresh(card)

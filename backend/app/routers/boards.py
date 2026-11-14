@@ -540,7 +540,7 @@ def get_board_by_slug(
         .first()
     )
     if not board:
-        raise HTTPException(404, "Board not found")
+        raise HTTPException(404, "Доска не найдена")
     return board_view(board, participant.id)
 
 
@@ -563,7 +563,7 @@ def get_board(
         .first()
     )
     if not board:
-        raise HTTPException(404, "Board not found")
+        raise HTTPException(404, "Доска не найдена")
     return board_view(board, participant.id)
 
 
@@ -577,7 +577,7 @@ async def update_board(
     workspace: models.Workspace = Depends(get_current_workspace),
     participant: models.Participant = Depends(get_current_participant),
 ):
-    board = get_or_404(db, models.Board, board_id, "Board not found")
+    board = get_or_404(db, models.Board, board_id, "Доска не найдена")
     require_live_board(board, workspace.id)
     was_hidden = cards_hidden(board)
     if body.name is not None:
@@ -662,9 +662,9 @@ async def delete_board(
     workspace: models.Workspace = Depends(get_current_workspace),
     participant: models.Participant = Depends(get_current_participant),
 ):
-    board = get_or_404(db, models.Board, board_id, "Board not found")
+    board = get_or_404(db, models.Board, board_id, "Доска не найдена")
     if board.workspace_id != workspace.id or board.deleted_at is not None:
-        raise HTTPException(404, "Board not found")
+        raise HTTPException(404, "Доска не найдена")
     require_moderator(board, participant, "Удалить доску может её создатель или ведущий")
     board.deleted_at = datetime.now(UTC)
     # Clear unique fields so the name/slug can be reused
@@ -925,7 +925,7 @@ def get_summary(
     summary = query.order_by(models.BoardSummary.created_at.desc()).first()
 
     if not summary:
-        raise HTTPException(404, "Summary not found")
+        raise HTTPException(404, "Итоги не найдены")
 
     return themes.summary_out(db, summary, workspace.id)
 
@@ -946,7 +946,7 @@ async def regenerate_summary(
 
     board_data = _get_board_full_data(db, board.id, workspace.id)
     if not board_data:
-        raise HTTPException(404, "Board not found")
+        raise HTTPException(404, "Доска не найдена")
 
     board_pk = board.id
     workspace_pk = workspace.id
@@ -1015,7 +1015,7 @@ async def reset_user_votes(
     participant: models.Participant = Depends(get_current_participant),
 ):
     """Снять все голоса участника сессии на доске. Чужие голоса сбросить нельзя."""
-    board = require_unlocked_board(db.get(models.Board, board_id), workspace.id, "Board not found")
+    board = require_unlocked_board(db.get(models.Board, board_id), workspace.id, "Доска не найдена")
     cards = (
         db.query(models.Card)
         .join(models.Column, models.Card.column_id == models.Column.id)

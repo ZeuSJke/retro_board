@@ -96,7 +96,7 @@ def create_workspace(
         )
         if existing:
             raise HTTPException(
-                status_code=409, detail="Workspace with this slug already exists"
+                status_code=409, detail="Команда с таким кодом уже существует"
             )
         hashed_key = hash_access_key(body.access_key)
         ws = models.Workspace(
@@ -128,7 +128,7 @@ def update_workspace(
     """Обновить workspace."""
     ws = db.get(models.Workspace, workspace_id)
     if not ws:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+        raise HTTPException(status_code=404, detail="Команда не найдена")
     if body.name is not None:
         ws.name = body.name
     if body.access_key is not None:
@@ -153,7 +153,7 @@ def get_workspace_invite(
     """Токен ссылки-приглашения команды; создаётся при первом обращении."""
     ws = db.get(models.Workspace, workspace_id)
     if not ws:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+        raise HTTPException(status_code=404, detail="Команда не найдена")
     if not ws.invite_token:
         ws.invite_token = new_invite_token()
         db.commit()
@@ -174,7 +174,7 @@ def rotate_workspace_invite(
     """
     ws = db.get(models.Workspace, workspace_id)
     if not ws:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+        raise HTTPException(status_code=404, detail="Команда не найдена")
     ws.invite_token = new_invite_token()
     db.commit()
     return schemas.InviteOut(invite_token=ws.invite_token)
@@ -191,6 +191,6 @@ def delete_workspace(
     """Удалить workspace и все его доски."""
     ws = db.get(models.Workspace, workspace_id)
     if not ws:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+        raise HTTPException(status_code=404, detail="Команда не найдена")
     db.delete(ws)
     db.commit()

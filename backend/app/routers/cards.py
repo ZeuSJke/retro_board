@@ -46,9 +46,9 @@ async def create_card(
     workspace: models.Workspace = Depends(get_current_workspace),
     participant: models.Participant = Depends(get_current_participant),
 ):
-    col = get_or_404(db, models.Column, body.column_id, "Column not found")
+    col = get_or_404(db, models.Column, body.column_id, "Колонка не найдена")
     board = require_unlocked_board(
-        db.get(models.Board, col.board_id), workspace.id, "Column not found"
+        db.get(models.Board, col.board_id), workspace.id, "Колонка не найдена"
     )
     max_pos = (
         db.query(func.max(models.Card.position))
@@ -83,10 +83,10 @@ async def update_card(
     workspace: models.Workspace = Depends(get_current_workspace),
     participant: models.Participant = Depends(get_current_participant),
 ):
-    card = get_or_404(db, models.Card, card_id, "Card not found")
+    card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
     col = db.get(models.Column, card.column_id)
     board = require_unlocked_board(
-        db.get(models.Board, col.board_id), workspace.id, "Card not found"
+        db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
     if body.text is not None and body.text != card.text:
         if not can_edit_card_text(card, participant.id):
@@ -96,9 +96,9 @@ async def update_card(
         card.color = body.color
     if "group_id" in body.model_fields_set:
         if body.group_id is not None:
-            group = get_or_404(db, models.CardGroup, body.group_id, "Group not found")
+            group = get_or_404(db, models.CardGroup, body.group_id, "Группа не найдена")
             if group.column_id != card.column_id:
-                raise HTTPException(400, "Card and group must be in the same column")
+                raise HTTPException(400, "Карточка и группа должны быть в одной колонке")
         card.group_id = body.group_id
     db.commit()
     db.refresh(card)
@@ -116,15 +116,15 @@ async def move_card(
     workspace: models.Workspace = Depends(get_current_workspace),
     participant: models.Participant = Depends(get_current_participant),
 ):
-    card = get_or_404(db, models.Card, card_id, "Card not found")
+    card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
     col = db.get(models.Column, card.column_id)
     board = require_unlocked_board(
-        db.get(models.Board, col.board_id), workspace.id, "Card not found"
+        db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
     old_col = db.get(models.Column, card.column_id)
-    new_col = get_or_404(db, models.Column, body.column_id, "Target column not found")
+    new_col = get_or_404(db, models.Column, body.column_id, "Колонка назначения не найдена")
     if new_col.board_id != old_col.board_id:
-        raise HTTPException(400, "Columns must be on the same board")
+        raise HTTPException(400, "Колонки должны быть на одной доске")
 
     old_group_id = card.group_id if old_col.id != new_col.id else None
 
@@ -187,7 +187,7 @@ async def toggle_like(
     # Lock the card row to prevent concurrent vote race conditions
     card = db.query(models.Card).filter(models.Card.id == card_id).with_for_update().first()
     if not card:
-        raise HTTPException(404, "Card not found")
+        raise HTTPException(404, "Карточка не найдена")
     col = db.get(models.Column, card.column_id)
     # Lock board row too to prevent parallel votes across different cards from exceeding max_votes
     board = (
@@ -196,7 +196,7 @@ async def toggle_like(
         .with_for_update()
         .first()
     )
-    board = require_unlocked_board(board, workspace.id, "Card not found")
+    board = require_unlocked_board(board, workspace.id, "Карточка не найдена")
     likes = list(card.likes or [])
     if board.allow_multiple_votes_per_card:
         if action == "remove":
@@ -232,17 +232,17 @@ def _load_board_cards(
     by_id = {c.id: c for c in cards}
     ordered_cards = [by_id[cid] for cid in unique_ids if cid in by_id]
     if len(ordered_cards) != len(unique_ids):
-        raise HTTPException(404, "Card not found")
+        raise HTTPException(404, "Карточка не найдена")
 
     col_ids = {c.column_id for c in ordered_cards}
     cols = db.query(models.Column).filter(models.Column.id.in_(col_ids)).all()
     col_map = {col.id: col for col in cols}
     board_ids = {col.board_id for col in cols}
     if len(board_ids) != 1:
-        raise HTTPException(400, "Cards must belong to the same board")
+        raise HTTPException(400, "Карточки должны быть с одной доски")
 
     board_id = next(iter(board_ids))
-    board = require_unlocked_board(db.get(models.Board, board_id), workspace_id, "Card not found")
+    board = require_unlocked_board(db.get(models.Board, board_id), workspace_id, "Карточка не найдена")
     return board, ordered_cards, col_map
 
 
@@ -277,9 +277,9 @@ async def bulk_update_cards(
 
     target_col: models.Column | None = None
     if payload.column_id is not None:
-        target_col = get_or_404(db, models.Column, payload.column_id, "Column not found")
+        target_col = get_or_404(db, models.Column, payload.column_id, "Колонка не найдена")
         if target_col.board_id != board.id:
-            raise HTTPException(400, "Target column belongs to another board")
+            raise HTTPException(400, "Колонка назначения принадлежит другой доске")
         max_pos = (
             db.query(func.max(models.Card.position))
             .filter(models.Card.column_id == target_col.id)
@@ -318,10 +318,10 @@ async def bulk_update_cards(
             card.group_id = created_group.id
     elif "group_id" in payload.model_fields_set:
         if payload.group_id:
-            target_group = get_or_404(db, models.CardGroup, payload.group_id, "Group not found")
+            target_group = get_or_404(db, models.CardGroup, payload.group_id, "Группа не найдена")
             target_group_col = db.get(models.Column, target_group.column_id)
             if not target_group_col or target_group_col.board_id != board.id:
-                raise HTTPException(400, "Group belongs to another board")
+                raise HTTPException(400, "Группа принадлежит другой доске")
             if any(c.column_id != target_group.column_id for c in cards):
                 raise HTTPException(400, "Карточки должны находиться в той же колонке, что и группа")
         for card in cards:
@@ -405,7 +405,7 @@ async def merge_cards(
         parts = [c.text.strip() for c in cards if c.text and c.text.strip()]
         merged_text = "\n".join(dict.fromkeys(parts))[:2000]
     if not merged_text:
-        raise HTTPException(400, "Card text cannot be empty")
+        raise HTTPException(400, "Текст карточки не может быть пустым")
     primary.text = merged_text
 
     combined_likes: list[str] = []
@@ -447,10 +447,10 @@ async def delete_card(
     workspace: models.Workspace = Depends(get_current_workspace),
     participant: models.Participant = Depends(get_current_participant),
 ):
-    card = get_or_404(db, models.Card, card_id, "Card not found")
+    card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
     col = db.get(models.Column, card.column_id)
     board = require_unlocked_board(
-        db.get(models.Board, col.board_id), workspace.id, "Card not found"
+        db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
     if not can_delete_card(card, board, participant.id):
         raise HTTPException(403, _CANNOT_DELETE)

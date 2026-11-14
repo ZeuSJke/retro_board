@@ -68,7 +68,7 @@ def test_admin_create_workspace_duplicate_slug(client, admin_headers, test_works
         "access_key": "key123",
     }, headers=admin_headers)
     assert resp.status_code == 409
-    assert "already exists" in resp.json()["detail"]
+    assert "уже существует" in resp.json()["detail"]
 
 
 def test_admin_update_workspace_name(client, admin_headers, test_workspace):

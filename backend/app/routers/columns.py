@@ -22,7 +22,7 @@ async def create_column(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    board = get_or_404(db, models.Board, body.board_id, "Board not found")
+    board = get_or_404(db, models.Board, body.board_id, "Доска не найдена")
     require_unlocked_board(board, workspace.id)
     max_pos = (
         db.query(func.max(models.Column.position))
@@ -56,8 +56,8 @@ async def update_column(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    col = get_or_404(db, models.Column, column_id, "Column not found")
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
+    col = get_or_404(db, models.Column, column_id, "Колонка не найдена")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Колонка не найдена")
     if body.title is not None:
         col.title = body.title
     if body.color is not None:
@@ -90,9 +90,9 @@ async def delete_column(
     workspace: models.Workspace = Depends(get_current_workspace),
     participant: models.Participant = Depends(get_current_participant),
 ):
-    col = get_or_404(db, models.Column, column_id, "Column not found")
+    col = get_or_404(db, models.Column, column_id, "Колонка не найдена")
     board = require_unlocked_board(
-        db.get(models.Board, col.board_id), workspace.id, "Column not found"
+        db.get(models.Board, col.board_id), workspace.id, "Колонка не найдена"
     )
     # Удаление колонки стирает все её карточки — это действие создателя доски или ведущего
     if col.cards:

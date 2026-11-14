@@ -175,13 +175,13 @@ async def carry_forward(
 ):
     """Copy unresolved action items from source board to target board."""
     src_board = get_or_404(
-        db, models.Board, body.source_board_id, "Source board not found"
+        db, models.Board, body.source_board_id, "Исходная доска не найдена"
     )
-    require_live_board(src_board, workspace.id, "Source board not found")
+    require_live_board(src_board, workspace.id, "Исходная доска не найдена")
     tgt_board = get_or_404(
-        db, models.Board, body.target_board_id, "Target board not found"
+        db, models.Board, body.target_board_id, "Целевая доска не найдена"
     )
-    require_live_board(tgt_board, workspace.id, "Target board not found")
+    require_live_board(tgt_board, workspace.id, "Целевая доска не найдена")
 
     if body.source_board_id == body.target_board_id:
         raise HTTPException(400, "Исходная и целевая доски совпадают")
@@ -211,7 +211,7 @@ def list_action_items(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    board = get_or_404(db, models.Board, board_id, "Board not found")
+    board = get_or_404(db, models.Board, board_id, "Доска не найдена")
     require_live_board(board, workspace.id)
     items = (
         db.query(models.ActionItem)
@@ -259,7 +259,7 @@ async def suggest_action_items(
     from app.ai.prompts.action_item_suggestions import suggest_action_items_from_cards
     from app.config import settings
 
-    board = get_or_404(db, models.Board, body.board_id, "Board not found")
+    board = get_or_404(db, models.Board, body.board_id, "Доска не найдена")
     require_live_board(board, workspace.id)
     if not settings.ai_configured:
         raise HTTPException(503, "AI сервис не настроен")
@@ -307,7 +307,7 @@ async def create_action_item(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    board = get_or_404(db, models.Board, body.board_id, "Board not found")
+    board = get_or_404(db, models.Board, body.board_id, "Доска не найдена")
     require_live_board(board, workspace.id)
     if body.source_card_ids:
         valid_cards = (
@@ -354,9 +354,9 @@ async def update_action_item(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    item = get_or_404(db, models.ActionItem, item_id, "Action item not found")
+    item = get_or_404(db, models.ActionItem, item_id, "Задача не найдена")
     require_live_board(
-        db.get(models.Board, item.board_id), workspace.id, "Action item not found"
+        db.get(models.Board, item.board_id), workspace.id, "Задача не найдена"
     )
     if body.title is not None:
         item.title = body.title
@@ -387,9 +387,9 @@ async def delete_action_item(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    item = get_or_404(db, models.ActionItem, item_id, "Action item not found")
+    item = get_or_404(db, models.ActionItem, item_id, "Задача не найдена")
     require_live_board(
-        db.get(models.Board, item.board_id), workspace.id, "Action item not found"
+        db.get(models.Board, item.board_id), workspace.id, "Задача не найдена"
     )
     board_id = item.board_id
     db.delete(item)

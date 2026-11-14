@@ -94,7 +94,7 @@ def decode_workspace_token(token: str) -> dict:
         return jwt.decode(token, settings.workspace_jwt_secret, algorithms=[ALGORITHM])
     except InvalidTokenError as err:
         raise HTTPException(
-            status_code=401, detail="Invalid or expired workspace token"
+            status_code=401, detail="Сессия недействительна или истекла, войдите снова"
         ) from err
 
 
@@ -140,7 +140,7 @@ def resolve_session(
         raise HTTPException(status_code=401, detail="Сессия устарела, войдите снова")
     workspace = db.get(models.Workspace, participant.workspace_id)
     if workspace is None:
-        raise HTTPException(status_code=401, detail="Workspace not found")
+        raise HTTPException(status_code=401, detail="Команда не найдена")
     if payload.get("epoch") != workspace.token_epoch:
         raise HTTPException(status_code=401, detail="Доступ отозван, войдите снова")
     return workspace, participant
@@ -153,7 +153,7 @@ def get_current_participant(
     """Dependency: участник текущей сессии."""
     token = token_from_request(request)
     if not token:
-        raise HTTPException(status_code=401, detail="Workspace authentication required")
+        raise HTTPException(status_code=401, detail="Требуется вход в команду")
     payload = decode_workspace_token(token)
     workspace, participant = resolve_session(db, payload)
     # Содержимое токена нужно тем, кто решает, пора ли его перевыпускать
@@ -210,5 +210,5 @@ def get_admin_user(request: Request) -> bool:
     """Dependency: проверить администраторскую аутентификацию."""
     token = request.cookies.get("admin_token")
     if not token or not verify_admin_token(token):
-        raise HTTPException(status_code=401, detail="Admin authentication required")
+        raise HTTPException(status_code=401, detail="Требуется вход администратора")
     return True

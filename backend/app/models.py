@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -159,14 +160,17 @@ class Board(Base):
 
 class Column(Base):
     __tablename__ = "columns"
+    # Порядок всегда читается внутри родителя, поэтому индекс составной:
+    # он же обслуживает поиск по внешнему ключу (первая колонка индекса).
+    __table_args__ = (Index("ix_columns_board_position", "board_id", "position"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     board_id: Mapped[str] = mapped_column(
-        String, ForeignKey("boards.id", ondelete="CASCADE"), index=True
+        String, ForeignKey("boards.id", ondelete="CASCADE")
     )
     title: Mapped[str] = mapped_column(String(80), nullable=False)
     color: Mapped[str] = mapped_column(String(20), default="#6750A4")
-    position: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
 
     board: Mapped["Board"] = relationship("Board", back_populates="columns")
     cards: Mapped[list["Card"]] = relationship(
@@ -185,23 +189,27 @@ class Column(Base):
 
 class CardGroup(Base):
     __tablename__ = "card_groups"
+    __table_args__ = (
+        Index("ix_card_groups_column_position", "column_id", "position"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     column_id: Mapped[str] = mapped_column(
-        String, ForeignKey("columns.id", ondelete="CASCADE"), index=True
+        String, ForeignKey("columns.id", ondelete="CASCADE")
     )
     title: Mapped[str] = mapped_column(String(120), nullable=False, default="Группа")
-    position: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
 
     column: Mapped["Column"] = relationship("Column", back_populates="groups")
 
 
 class Card(Base):
     __tablename__ = "cards"
+    __table_args__ = (Index("ix_cards_column_position", "column_id", "position"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
     column_id: Mapped[str] = mapped_column(
-        String, ForeignKey("columns.id", ondelete="CASCADE"), index=True
+        String, ForeignKey("columns.id", ondelete="CASCADE")
     )
     group_id: Mapped[str | None] = mapped_column(
         String,
@@ -221,7 +229,7 @@ class Card(Base):
         default=None,
     )
     color: Mapped[str] = mapped_column(String(20), default="#FFFFFF")
-    position: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
     # Голоса: идентификаторы участников (по одному на голос). У старых карточек
     # здесь остались имена — они учитываются в счёте, но никому не принадлежат.
     likes: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)

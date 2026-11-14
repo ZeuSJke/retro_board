@@ -124,8 +124,7 @@ frontend-lint:
     # В репозитории npm-lockfile (package-lock.json) — ставим зависимости через
     # npm ci. Кэш npm (npm_config_cache=/cache/npm) задан в образе и смонтирован
     # раннером с хоста: со второго прогона npm ci заметно быстрее.
-    # node 24 в образе новее node 20 из GitHub Actions, но Next.js 15 его
-    # поддерживает.
+    # Node 24 — та же линия, что в frontend/Dockerfile.
     - npm ci
     - npm run build
     - npm run typecheck
