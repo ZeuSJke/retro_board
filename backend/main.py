@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 
 from app.body_limit import BodySizeLimitMiddleware
 from app.config import settings
+from app.database import engine
+from app.request_context import RequestIdMiddleware, configure_logging
 from app.routers import (
     action_items,
     boards,
@@ -29,7 +31,7 @@ from slowapi import _rate_limit_exceeded_handler
 from app.limiter import limiter
 
 logger = logging.getLogger("retroboard")
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 
 
 @asynccontextmanager
@@ -100,7 +102,13 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             request.url.path.startswith("/ws/")
             or request.url.path == "/api/admin/login"
             or request.url.path
-            in ("/health", "/api/health", "/api/workspaces/login", "/api/workspaces/join")
+            in (
+                "/health",
+                "/api/health",
+                "/api/ready",
+                "/api/workspaces/login",
+                "/api/workspaces/join",
+            )
         ):
             return await call_next(request)
 
@@ -141,6 +149,10 @@ app.add_middleware(
     BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes
 )
 
+# Идентификатор запроса — снаружи всего остального, чтобы он был в журнале
+# и в ответе при любой ошибке, включая 413 и CSRF
+app.add_middleware(RequestIdMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -166,4 +178,21 @@ app.include_router(websocket.router, tags=["websocket"])
 @app.get("/health", tags=["health"])
 @app.get("/api/health", tags=["health"], include_in_schema=False)
 def health():
+    """Процесс жив. В БД не ходит: по этой проверке под перезапускают."""
+    return {"status": "ok"}
+
+
+@app.get("/api/ready", tags=["health"], include_in_schema=False)
+def ready():
+    """Готов обслуживать запросы: база отвечает.
+
+    Для readiness-пробы: под без связи с БД убирается из балансировки, но не
+    перезапускается — перезапуск базу не вернёт, а состояние досок в памяти уронит.
+    """
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql("SELECT 1")
+    except Exception:
+        logger.warning("Readiness check failed: database is unreachable", exc_info=True)
+        return JSONResponse(status_code=503, content={"status": "database unavailable"})
     return {"status": "ok"}

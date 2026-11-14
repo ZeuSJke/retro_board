@@ -50,6 +50,11 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 
 {{- define "retro-board.assertGuards" -}}
+{{- range $name, $value := .Values.config.extraEnv -}}
+{{- if eq (upper $name) "TESTING" -}}
+{{- fail "config.extraEnv must not set TESTING: it disables rate limiting and secret validation" -}}
+{{- end -}}
+{{- end -}}
 {{- if ne (int .Values.api.replicas) 1 -}}
 {{- fail "api.replicas must be 1: RetroBoard WS room/timer state is in-process memory (single-worker invariant)" -}}
 {{- end -}}

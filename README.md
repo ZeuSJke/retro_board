@@ -93,6 +93,7 @@ npm run dev                   # -> http://localhost:3000
 make verify         # полный прогон: helm-lint + lint + test-backend + test-frontend
 make lint           # backend (ruff check .) + frontend (next build && typecheck && next lint)
 make test-backend   # alembic heads --verbose + pytest -v (SQLite in-memory)
+make test-backend-pg TEST_DATABASE_URL=postgresql://…  # те же тесты и alembic check на пустой базе PostgreSQL
 make test-frontend  # vitest run
 make helm-lint      # helm lint + kubeconform + render-гарды чарта
 make lock           # пересобрать backend/requirements*.txt из requirements*.in (нужен uv)
@@ -221,7 +222,7 @@ retro_board/
 
 ## API Reference
 
-Все пути (кроме `/health`, `/api/health`, `/api/workspaces/login`, `/api/workspaces/join`, `/api/workspaces/invite/{token}`, `/api/admin/*`) требуют действующую сессию: JWT в `httpOnly` cookie `workspace_token` (заголовок `X-Workspace-Token` — для неинтерактивных клиентов). Небезопасные HTTP-методы (кроме входов) защищены `CSRFMiddleware` (`csrf_token` cookie + заголовок `X-CSRF-Token`).
+Все пути (кроме `/health`, `/api/health`, `/api/ready`, `/api/workspaces/login`, `/api/workspaces/join`, `/api/workspaces/invite/{token}`, `/api/admin/*`) требуют действующую сессию: JWT в `httpOnly` cookie `workspace_token` (заголовок `X-Workspace-Token` — для неинтерактивных клиентов). Небезопасные HTTP-методы (кроме входов) защищены `CSRFMiddleware` (`csrf_token` cookie + заголовок `X-CSRF-Token`).
 
 **Участник.** Вход создаёт на сервере участника команды; его идентификатор лежит в токене сессии. Автора карточки, голос, оценку настроения и роль ведущего сервер берёт из сессии — из тела запроса и WebSocket-сообщений они не принимаются. Имя — подпись: тёзки — разные участники, смена имени ничего не отвязывает. Аккаунтов нет, поэтому новое устройство или очищенные cookie дают нового участника.
 
@@ -233,6 +234,9 @@ retro_board/
 |---|---|---|
 | `GET` | `/health` | Проверка здоровья бэкенда |
 | `GET` | `/api/health` | То же (для Ingress / reverse proxy) |
+| `GET` | `/api/ready` | Готовность: проверяет связь с БД (`503`, если база недоступна) — для readiness-пробы |
+
+Каждый ответ несёт заголовок `X-Request-ID`; тот же идентификатор стоит в каждой записи журнала бэкенда, сделанной при обработке запроса. Идентификатор от прокси принимается, если он состоит из 8–64 символов `A-Z a-z 0-9 . _ -`, иначе выдаётся новый.
 
 ### Workspaces
 

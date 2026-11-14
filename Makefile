@@ -8,7 +8,7 @@ BACKEND_PYTEST = $(shell [ -x backend/.venv/bin/pytest ] && echo .venv/bin/pytes
 BACKEND_RUFF = $(shell [ -x backend/.venv/bin/ruff ] && echo .venv/bin/ruff || echo ruff)
 BACKEND_ALEMBIC = $(shell [ -x backend/.venv/bin/alembic ] && echo .venv/bin/alembic || echo alembic)
 
-.PHONY: help setup install lock audit helm-lint lint lint-backend lint-frontend test-backend test-frontend verify dev-images dev-secrets dev-deploy dev
+.PHONY: help setup install lock audit helm-lint lint lint-backend lint-frontend test-backend test-backend-pg test-frontend verify dev-images dev-secrets dev-deploy dev
 
 help:
 	@echo "Targets:"
@@ -20,6 +20,7 @@ help:
 	@echo "  lint-frontend   - frontend next build + tsc + next lint"
 	@echo "  lint            - lint-backend + lint-frontend"
 	@echo "  test-backend    - backend alembic heads + pytest (SQLite in-memory)"
+	@echo "  test-backend-pg - same tests + alembic check on PostgreSQL (needs TEST_DATABASE_URL)"
 	@echo "  test-frontend   - frontend vitest"
 	@echo "  verify          - full local DoD gate (helm-lint + lint + test-backend + test-frontend)"
 	@echo "  dev-images      - build & push api/web images via buildctl tunnel to .26"
@@ -72,6 +73,14 @@ lint: lint-backend lint-frontend
 
 test-backend:
 	cd backend && $(BACKEND_ALEMBIC) heads --verbose && TESTING=true DATABASE_URL=sqlite:// $(BACKEND_PYTEST) -v
+
+# Тот же набор на настоящем PostgreSQL. База из TEST_DATABASE_URL должна быть пустой:
+# тесты создают и удаляют в ней таблицы. Локально без Docker её даёт пакет pgserver.
+test-backend-pg:
+	@[ -n "$(TEST_DATABASE_URL)" ] || { echo "TEST_DATABASE_URL is not set (postgresql://user:pass@host/empty_db)"; exit 1; }
+	cd backend && DATABASE_URL="$(TEST_DATABASE_URL)" TESTING=true $(BACKEND_ALEMBIC) upgrade head
+	cd backend && DATABASE_URL="$(TEST_DATABASE_URL)" TESTING=true $(BACKEND_ALEMBIC) check
+	cd backend && TESTING=true DATABASE_URL=sqlite:// TEST_DATABASE_URL="$(TEST_DATABASE_URL)" $(BACKEND_PYTEST) -q
 
 test-frontend:
 	cd frontend && npm test

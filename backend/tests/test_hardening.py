@@ -47,7 +47,21 @@ def _recv(ws, target_event: str, max_messages: int = 10) -> dict:
     raise AssertionError(f"Did not receive '{target_event}'")
 
 
+# WebSocket подключается только к существующей доске — создаём её на лету
+_ensure_board = None
+
+
+@pytest.fixture(autouse=True)
+def _boards_on_demand(ensure_board):
+    global _ensure_board
+    _ensure_board = ensure_board
+    yield
+    _ensure_board = None
+
+
 def _ws(client, token, board="hardening-board"):
+    if _ensure_board is not None:
+        _ensure_board(board)
     return client.websocket_connect(
         f"/ws/{board}?workspace_token={token}", headers={"origin": TEST_ORIGIN}
     )

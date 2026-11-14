@@ -1,9 +1,11 @@
 """
 Shared fixtures for RetroBoard backend tests.
 
-Uses SQLite in-memory so no running PostgreSQL is needed.
-The ARRAY(String) column (Card.likes) is patched to use a JSON-based
-TypeDecorator that stores Python lists as JSON text in SQLite.
+По умолчанию — SQLite in-memory: PostgreSQL для прогона не нужен, а колонки
+ARRAY подменяются JSON-текстом. Чтобы прогнать тот же набор на настоящем
+PostgreSQL (блокировки, типы, длины строк, проверка доски в WebSocket),
+задайте TEST_DATABASE_URL — так тесты идут в CI и так их можно запустить
+локально на встроенном сервере из пакета pgserver.
 """
 
 import json
@@ -99,34 +101,44 @@ def _test_500_endpoint():
     raise RuntimeError("test error")
 
 
-# Patch ALL ARRAY columns to JSONEncodedList so SQLite can handle list<->json.
-# Auto-walk every mapped model — new ARRAY columns are covered without
-# touching this file (аудит: каждая новая ARRAY-колонка обязана идти через
-# этот декоратор, иначе тесты на SQLite упадут).
-for _mapper in Base.registry.mappers:
-    _table = getattr(_mapper.class_, "__table__", None)
-    if _table is None:
-        continue
-    for _col in _table.columns:
-        if isinstance(_col.type, ARRAY):
-            _col.type = JSONEncodedList()
-
 # ---------------------------------------------------------------------------
-# Engine (single in-memory database shared across all threads)
+# Engine: SQLite in-memory по умолчанию или PostgreSQL из TEST_DATABASE_URL
 # ---------------------------------------------------------------------------
 
-engine = create_engine(
-    "sqlite://",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+USE_POSTGRES = TEST_DATABASE_URL.startswith(("postgresql", "postgres://"))
 
+if USE_POSTGRES:
+    from app.config import Settings
 
-@event.listens_for(engine, "connect")
-def _set_sqlite_pragma(dbapi_conn, _rec):
-    cur = dbapi_conn.cursor()
-    cur.execute("PRAGMA foreign_keys=ON")
-    cur.close()
+    engine = create_engine(
+        Settings(database_url=TEST_DATABASE_URL).sqlalchemy_database_url, pool_pre_ping=True
+    )
+else:
+    # Patch ALL ARRAY columns to JSONEncodedList so SQLite can handle list<->json.
+    # Auto-walk every mapped model — new ARRAY columns are covered without
+    # touching this file (аудит: каждая новая ARRAY-колонка обязана идти через
+    # этот декоратор, иначе тесты на SQLite упадут).
+    for _mapper in Base.registry.mappers:
+        _table = getattr(_mapper.class_, "__table__", None)
+        if _table is None:
+            continue
+        for _col in _table.columns:
+            if isinstance(_col.type, ARRAY):
+                _col.type = JSONEncodedList()
+
+    # Single in-memory database shared across all threads
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, _rec):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
 
 
 TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -359,6 +371,26 @@ def ws_token_for(db_session, ws_workspace):
 def ws_token(ws_token_for):
     """Токен одного участника для тестов, которым не важно, кто подключён."""
     return ws_token_for("Tester")
+
+
+@pytest.fixture()
+def ensure_board(db_session, ws_workspace):
+    """Фабрика: `ensure_board("board-1")` создаёт доску с таким идентификатором, если её нет.
+
+    WebSocket подключается только к существующей доске своей команды, поэтому
+    тестам, которым важен сам обмен сообщениями, достаточно пустой доски.
+    """
+    from app.models import Board
+
+    def make(board_id: str) -> str:
+        if db_session.get(Board, board_id) is None:
+            db_session.add(
+                Board(id=board_id, name=f"Доска {board_id}", slug=board_id, workspace_id=ws_workspace.id)
+            )
+            db_session.commit()
+        return board_id
+
+    return make
 
 
 @pytest.fixture()

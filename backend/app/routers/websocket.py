@@ -353,35 +353,18 @@ async def websocket_endpoint(
         # Личность сокета фиксируется здесь и больше не меняется сообщениями клиента
         peer = Peer(participant.id, participant.name)
 
-        # Skip DB guard only under SQLite unit tests (tests often connect to synthetic board IDs)
-        dialect_name = getattr(getattr(getattr(db, "bind", None), "dialect", None), "name", None)
-        board = None
+        # Подключиться можно только к живой доске своей команды
+        board = db.get(models.Board, board_id)
+        if board is None or board.workspace_id != workspace_id or board.deleted_at is not None:
+            await websocket.close(code=1008, reason="Board not found")
+            return
+        # Таймер и фокус поднимаются из БД один раз после рестарта процесса
         try:
-            board = db.get(models.Board, board_id)
-        except Exception:
-            board = None
-        if dialect_name != "sqlite":
-            if (
-                not board
-                or board.workspace_id != workspace_id
-                or board.deleted_at is not None
-            ):
-                await websocket.close(code=1008, reason="Board not found")
-                return
-        if board is not None and board.deleted_at is None and board.workspace_id == workspace_id:
-            # Таймер и фокус поднимаются из БД один раз после рестарта процесса
-            try:
-                saved_state = json.loads(board.session_state) if board.session_state else None
-            except ValueError:
-                saved_state = None
-            manager.restore_state(board_id, saved_state)
-        if (
-            board is not None
-            and board.deleted_at is None
-            and board.workspace_id == workspace_id
-            and manager.get_facilitator(board_id) is None
-            and board.active_facilitator_id
-        ):
+            saved_state = json.loads(board.session_state) if board.session_state else None
+        except ValueError:
+            saved_state = None
+        manager.restore_state(board_id, saved_state)
+        if manager.get_facilitator(board_id) is None and board.active_facilitator_id:
             manager.hydrate_session(
                 board_id,
                 board.active_facilitator_id,

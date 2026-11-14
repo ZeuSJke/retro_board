@@ -31,6 +31,19 @@ def send(ws, event: str, data: dict | None = None) -> None:
     ws.send_text(json.dumps({"event": event, "data": data or {}}))
 
 
+# WebSocket подключается только к существующей доске: помощник connect() создаёт
+# пустую доску с нужным идентификатором через фикстуру ensure_board.
+_ensure_board = None
+
+
+@pytest.fixture(autouse=True)
+def _boards_on_demand(ensure_board):
+    global _ensure_board
+    _ensure_board = ensure_board
+    yield
+    _ensure_board = None
+
+
 @contextmanager
 def connect(client, board_id: str, token: str, drain: bool = True):
     """Подключиться к доске.
@@ -40,6 +53,8 @@ def connect(client, board_id: str, token: str, drain: bool = True):
     принял стартовое состояние за ответ на своё действие; `drain=False` — для
     тестов, которые проверяют само начальное состояние.
     """
+    if _ensure_board is not None:
+        _ensure_board(board_id)
     with client.websocket_connect(
         f"/ws/{board_id}?workspace_token={token}", headers={"origin": TEST_ORIGIN}
     ) as ws:
@@ -567,36 +582,27 @@ class TestAuth:
         db_session.commit()
         assert expect_rejected(lambda: connect(client, ws_board.id, ws_token)) == 1008
 
-    def test_deleted_board_ws_rejected(self, client, ws_token, ws_board, db_session, monkeypatch):
-        """Ветка проверки доски, которая на SQLite отключена: подменяем сессию БД."""
+    def test_deleted_board_ws_rejected(self, client, ws_token, ws_board, db_session):
         from datetime import datetime, timezone
-        from types import SimpleNamespace
-
-        from app.models import Board
-        from app.routers import websocket as ws_router
 
         ws_board.deleted_at = datetime.now(timezone.utc)
         db_session.commit()
-
-        snapshot = SimpleNamespace(
-            id=ws_board.id,
-            workspace_id=ws_board.workspace_id,
-            deleted_at=ws_board.deleted_at,
-        )
-
-        class _FakeDB:
-            def get(self, model, key):
-                if model is Board:
-                    return snapshot if key == ws_board.id else None
-                return db_session.get(model, key)
-
-        def _fake_get_db():
-            yield _FakeDB()
-
-        monkeypatch.setattr(ws_router, "get_db", _fake_get_db)
-        monkeypatch.setattr(ws_router, "_open_ws_db", lambda websocket: _fake_get_db())
-
         assert expect_rejected(lambda: connect(client, ws_board.id, ws_token)) == 1008
+
+    def test_unknown_board_ws_rejected(self, client, ws_token):
+        """Раньше под SQLite проверка доски пропускалась — теперь она одна для всех СУБД."""
+        code = expect_rejected(
+            lambda: client.websocket_connect(
+                f"/ws/no-such-board?workspace_token={ws_token}", headers={"origin": TEST_ORIGIN}
+            )
+        )
+        assert code == 1008
+
+    def test_other_team_board_ws_rejected(self, client, ws_token, sample_board):
+        """Доска другой команды для сокета не существует."""
+        assert expect_rejected(lambda: client.websocket_connect(
+            f"/ws/{sample_board['id']}?workspace_token={ws_token}", headers={"origin": TEST_ORIGIN}
+        )) == 1008
 
 
 class TestWorkspaceSocket:

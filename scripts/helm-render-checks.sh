@@ -117,6 +117,8 @@ expect_fail "short JWT secret rejected" "must be at least 32 characters" \
   "${INLINE[@]}" --set secrets.workspaceJwtSecret=short-secret
 expect_fail "backup without NFS server rejected" "backup.nfs.server and backup.nfs.path must be non-empty" \
   "${DEV[@]}" --set backup.enabled=true
+expect_fail "TESTING via extraEnv rejected" "config.extraEnv must not set TESTING" \
+  "${STAGING[@]}" --set-string config.extraEnv.TESTING=true
 
 if [ "$failed" -ne 0 ]; then
   exit 1

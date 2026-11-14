@@ -10,6 +10,8 @@
 .venv/bin/alembic heads --verbose
 TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v
 TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::test_name
+# Тот же набор на настоящем PostgreSQL (пустая база; в CI — джоба backend-tests-pg)
+TESTING=true DATABASE_URL=sqlite:// TEST_DATABASE_URL=postgresql://… .venv/bin/pytest -q
 
 # Миграции и локальный запуск
 .venv/bin/alembic upgrade head
@@ -32,6 +34,8 @@ TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::te
 - **Soft delete и блокировка доски**: доски удаляются через `Board.deleted_at`. Во всех хендлерах досок и дочерних сущностей используйте `require_live_board()` и `require_unlocked_board()` из `app/utils.py` (`tests/test_audit_guards.py` проверяет `404` для удалённых досок и disambiguation slug, `tests/test_v3_features.py` — `423` для заблокированных досок).
 - **Уникальность**: у `Board` составные ограничения `uq_board_workspace_name` и `uq_board_workspace_slug`; коллизия slug при разных именах должна разрешаться суффиксом, а не 500.
 - **Драйвер PostgreSQL** — psycopg 3. `DATABASE_URL` в окружениях задан как `postgresql://…`; драйвер подставляет `settings.sqlalchemy_database_url` — в движке и в `alembic/env.py` используйте его, а не `settings.database_url`.
+- **Журнал и пробы**: формат журнала с идентификатором запроса задаёт `app/request_context.py` (`X-Request-ID` в ответе и `[id]` в каждой записи); пишите через `logging`, не через `print`. `/api/health` — живость процесса, `/api/ready` — готовность с проверкой БД.
+- **Тесты на двух СУБД**: `tests/conftest.py` по умолчанию поднимает SQLite, а с `TEST_DATABASE_URL` — PostgreSQL; пишите тесты так, чтобы они проходили на обеих (без SQLite-специфики и без зависимости от порядка строк без `ORDER BY`). `alembic check` в CI сверяет модели со схемой: изменил модель — добавь миграцию.
 - **SQLite в тестах и Alembic**: `tests/conftest.py` подменяет `ARRAY` на `JSONEncodedList` и сбрасывает `ws_manager` между тестами. Любое изменение `models.py` требует миграции в `alembic/versions/` без неэкранированного Postgres-only DDL, ломающего SQLite-тесты.
 
 ## Auth, CSRF, Rate Limiting и WebSocket

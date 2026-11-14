@@ -30,7 +30,7 @@
 6. **Merge Request и CI gate**:
    - основной репозиторий — GitLab (`gitlab.kirillbessonov.ru/fmrm/retro_board`), GitHub — только зеркало. Работа ведётся через **MR** и CLI `glab` (не `gh`);
    - в описании MR указать суть изменений, результаты локальных проверок/выверки на dev, итог ревью и оставшиеся action items (если есть);
-   - дождаться 100% зелёного пайплайна MR (`backend-tests`, `frontend-lint`, `frontend-tests`, `e2e-tests`, `helm`, а при правках сборки — `image-smoke`).
+   - дождаться 100% зелёного пайплайна MR (`backend-tests`, `backend-tests-pg`, `frontend-lint`, `frontend-tests`, `e2e-tests`, `helm`, а при правках сборки — `image-smoke`).
 7. **Post-merge контроль**: после мерджа в `main` дождаться завершения `build-app-staging` и `deploy-staging`, затем убедиться, что `https://retro.kirillbessonov.ru/api/health` отвечает `200`.
 
 ## Сквозные архитектурные инварианты
