@@ -639,7 +639,7 @@ class TestConnectionReleasedDuringAI:
     def test_insights_release_connection(self, client, sample_card, workspace_headers, open_connections):
         seen = []
 
-        def fake_insights(snapshot):
+        def fake_insights(snapshot, team_themes=None):
             seen.append(open_connections["open"])
             return {"summary_text": "ок", "recurring_themes": [], "recommendations": [], "boards_analyzed": 1}
 
@@ -842,7 +842,9 @@ class TestSummaryResponseCleaning:
                 ensure_ascii=False,
             )
         )
+        themes = result.pop("themes")
         assert result == {"summary_text": "", "key_themes": ["тема", "ещё тема"], "recommendations": []}
+        assert [theme["name"] for theme in themes] == ["тема", "ещё тема"]
 
     def test_non_object_json_falls_back_to_text(self):
         result = self._generate('["просто", "список"]')

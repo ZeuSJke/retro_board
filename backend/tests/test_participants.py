@@ -583,6 +583,36 @@ class TestAnonymousMode:
         hers = _cards(_get_board(client, anya, board["id"]))[0]
         assert hers["author"] == "Аня" and hers["author_id"] == participant_id_of(client, anya)
 
+    def test_authors_do_not_reach_the_model(self, client, workspace_headers, login_as):
+        """Автор карточки раньше уходил в запрос к модели и мог всплыть в итогах и задачах."""
+        anya = login_as("Аня")
+        board = _board(client, workspace_headers, "Анонимная для модели", anonymous_votes=True)
+        _card(client, anya, board["columns"][0]["id"], "От Ани")
+        captured = {}
+
+        def fake_summary(board_data):
+            captured["summary"] = json.dumps(board_data, ensure_ascii=False, default=str)
+            return {"summary_text": "ок", "key_themes": [], "recommendations": []}
+
+        def fake_suggest(cards):
+            captured["suggest"] = json.dumps(cards, ensure_ascii=False)
+            return []
+
+        with (
+            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            patch("app.routers.boards.generate_summary", fake_summary),
+            patch("app.ai.prompts.action_item_suggestions.suggest_action_items_from_cards", fake_suggest),
+        ):
+            assert client.post(
+                f"/api/boards/{board['id']}/summary/regenerate", headers=workspace_headers
+            ).status_code == 200
+            assert client.post(
+                "/api/action-items/suggest", json={"board_id": board["id"]}, headers=workspace_headers
+            ).status_code == 200
+        assert "От Ани" in captured["summary"] and "От Ани" in captured["suggest"]
+        assert "Аня" not in captured["summary"].replace("От Ани", "")
+        assert "Аня" not in captured["suggest"].replace("От Ани", "")
+
     def test_live_card_event_hides_author(self, client, workspace_headers, login_as):
         anya = login_as("Аня")
         board = _board(client, workspace_headers, "Анонимная живая", anonymous_votes=True)

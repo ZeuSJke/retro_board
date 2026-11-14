@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.ai.prompts.summary_generation import generate_summary
 from app.ai.prompts.workspace_insights import generate_workspace_insights
 from app.board_view import (
+    ANON_AUTHOR,
     board_settings_payload,
     board_view,
     broadcast_card,
@@ -24,6 +25,7 @@ from app.board_view import (
 from app.config import settings
 from app.database import get_db, release_connection
 from app import models, schemas
+from app import themes
 from app.limiter import TEAM_BULK_LIMIT, TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.models import now_utc
 from app.routers.action_items import copy_unresolved_action_items
@@ -312,10 +314,26 @@ async def get_workspace_insights(
             }
         )
 
+    # Повторяющиеся темы считаем по списку тем команды, а не спрашиваем у модели
+    theme_counters = themes.themes_for_insights(db, workspace.id)
+
     # Снимок собран — соединение на время вызова модели не держим
     release_connection(db)
-    result = await asyncio.to_thread(generate_workspace_insights, snapshot)
+    result = await asyncio.to_thread(
+        generate_workspace_insights, snapshot, theme_counters
+    )
     return schemas.WorkspaceInsightsOut(**result)
+
+
+@router.get("/themes", response_model=list[schemas.WorkspaceThemeOut])
+@limiter.limit(TEAM_READ_LIMIT)
+def list_workspace_themes(
+    request: Request,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Темы команды: на скольких досках названы и сколько досок подряд поднимаются."""
+    return themes.list_workspace_themes(db, workspace.id)
 
 
 @router.get("/", response_model=list[schemas.BoardListItem])
@@ -691,6 +709,8 @@ def _get_board_full_data(
     return {
         "id": board.id,
         "name": board.name,
+        # Темы команды: модель переиспользует их названия вместо новых
+        "team_themes": themes.themes_for_prompt(db, workspace_id),
         "columns": [
             {
                 "id": col.id,
@@ -700,7 +720,7 @@ def _get_board_full_data(
                     {
                         "id": card.id,
                         "text": card.text,
-                        "author": card.author,
+                        "author": ANON_AUTHOR if board.anonymous_votes else card.author,
                         "likes": card.likes or [],
                         "position": card.position,
                     }
@@ -765,7 +785,7 @@ def _generate_summary_internal(
                 board_id,
                 session_id,
             )
-            return schemas.BoardSummaryOut.model_validate(existing).model_dump(
+            return themes.summary_out(db, existing, workspace_id).model_dump(
                 mode="json"
             )
 
@@ -786,12 +806,16 @@ def _generate_summary_internal(
             )
             return None
 
+        # Темы доски пишутся той же транзакцией, что и итоги
+        theme_names = themes.apply_board_themes(
+            db, workspace_id, board_data["id"], ai_result
+        )
         summary = models.BoardSummary(
             id=str(uuid.uuid4()),
             board_id=board_data["id"],
             session_id=session_id,
             summary_text=ai_result.get("summary_text", ""),
-            key_themes=ai_result.get("key_themes", []),
+            key_themes=theme_names,
             recommendations=ai_result.get("recommendations", []),
         )
         db.add(summary)
@@ -814,13 +838,13 @@ def _generate_summary_internal(
             )
             if existing is None:
                 return None
-            return schemas.BoardSummaryOut.model_validate(existing).model_dump(
+            return themes.summary_out(db, existing, workspace_id).model_dump(
                 mode="json"
             )
         db.refresh(summary)
         logger.info("Summary saved to DB for board %s", board_id)
 
-        return schemas.BoardSummaryOut.model_validate(summary).model_dump(mode="json")
+        return themes.summary_out(db, summary, workspace_id).model_dump(mode="json")
     finally:
         db.close()
 
@@ -895,7 +919,7 @@ def get_summary(
             .first()
         )
         if summary:
-            return summary
+            return themes.summary_out(db, summary, workspace.id)
 
     # Fall back to latest summary
     summary = query.order_by(models.BoardSummary.created_at.desc()).first()
@@ -903,7 +927,7 @@ def get_summary(
     if not summary:
         raise HTTPException(404, "Summary not found")
 
-    return summary
+    return themes.summary_out(db, summary, workspace.id)
 
 
 @router.post("/{board_id}/summary/regenerate", response_model=schemas.BoardSummaryOut)
@@ -943,6 +967,9 @@ async def regenerate_summary(
         or int(datetime.now(UTC).timestamp())
     )
 
+    # Перегенерация заменяет набор тем доски; пишется той же транзакцией
+    theme_names = themes.apply_board_themes(db, workspace_pk, board.id, ai_result)
+
     summary = (
         db.query(models.BoardSummary)
         .filter(
@@ -953,7 +980,7 @@ async def regenerate_summary(
     )
     if summary:
         summary.summary_text = ai_result.get("summary_text", "")
-        summary.key_themes = ai_result.get("key_themes", [])
+        summary.key_themes = theme_names
         summary.recommendations = ai_result.get("recommendations", [])
         summary.created_at = now_utc()
     else:
@@ -962,14 +989,14 @@ async def regenerate_summary(
             board_id=board.id,
             session_id=session_id,
             summary_text=ai_result.get("summary_text", ""),
-            key_themes=ai_result.get("key_themes", []),
+            key_themes=theme_names,
             recommendations=ai_result.get("recommendations", []),
         )
         db.add(summary)
 
     db.commit()
     db.refresh(summary)
-    out = schemas.BoardSummaryOut.model_validate(summary)
+    out = themes.summary_out(db, summary, workspace_pk)
     await manager.broadcast(
         board.id,
         "summary_generated",

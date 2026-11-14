@@ -300,3 +300,48 @@ class BoardMood(Base):
     )
 
     board: Mapped["Board"] = relationship("Board", back_populates="moods")
+
+
+# ── Темы команды ─────────────────────────────────────────────────────────────
+
+
+class WorkspaceTheme(Base):
+    """Тема команды: одно название на все ретроспективы workspace."""
+
+    __tablename__ = "workspace_themes"
+    __table_args__ = (
+        # name_key — нормализованное название: одна тема не заводится дважды
+        # из-за регистра, пробелов или кавычек
+        UniqueConstraint(
+            "workspace_id", "name_key", name="uq_theme_workspace_name_key"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    workspace_id: Mapped[str] = mapped_column(
+        String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=now_utc
+    )
+
+
+class BoardTheme(Base):
+    """Связь «тема ↔ доска»: тема названа в итогах этой доски."""
+
+    __tablename__ = "board_themes"
+
+    board_id: Mapped[str] = mapped_column(
+        String, ForeignKey("boards.id", ondelete="CASCADE"), primary_key=True
+    )
+    theme_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("workspace_themes.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    # Порядок темы в итогах доски (как в BoardSummary.key_themes)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

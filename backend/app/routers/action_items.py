@@ -7,15 +7,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
-from app.board_view import require_cards_visible
+from app.board_view import ANON_AUTHOR, require_cards_visible
 from app.database import get_db, release_connection
 from app import models, schemas
 from app.models import now_utc
 from app.utils import get_or_404, require_live_board
 from app.ai import ai_client
 from app.ai.prompts.title_generation import (
-    TITLE_GENERATION_PROMPT,
     TITLE_GENERATION_CONFIG,
+    build_title_prompt,
+    clean_generated_title,
 )
 from app.ws_manager import manager
 from app.limiter import TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
@@ -232,12 +233,15 @@ async def generate_action_item_title(
     """Generate action item title from card text using AI."""
     # Проверка токена уже открыла сессию — на время вызова модели она не нужна
     release_connection(db)
-    prompt = TITLE_GENERATION_PROMPT.format(card_text=body.text)
+    prompt = build_title_prompt(body.text)
     try:
         title = await asyncio.to_thread(
             ai_client.generate, prompt, TITLE_GENERATION_CONFIG
         )
-        return schemas.GenerateTitleResponse(title=title)
+        # Ответ модели — недоверенный ввод; пустой после очистки заменяем текстом
+        return schemas.GenerateTitleResponse(
+            title=clean_generated_title(title) or body.text[:50]
+        )
     except Exception:
         logger.exception("Action item title generation failed")
         return schemas.GenerateTitleResponse(title=body.text[:50])
@@ -276,7 +280,7 @@ async def suggest_action_items(
             "id": card.id,
             "column": col_title,
             "text": card.text,
-            "author": card.author,
+            "author": ANON_AUTHOR if board.anonymous_votes else card.author,
             "likes_count": len(card.likes or []),
         }
         for card, col_title in rows
