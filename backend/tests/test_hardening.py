@@ -851,7 +851,9 @@ class TestSummaryResponseCleaning:
                 ensure_ascii=False,
             )
         )
+        themes = result.pop("themes")
         assert result == {"summary_text": "", "key_themes": ["тема", "ещё тема"], "recommendations": []}
+        assert [theme["name"] for theme in themes] == ["тема", "ещё тема"]
 
     def test_non_object_json_falls_back_to_text(self):
         result = self._generate('["просто", "список"]')

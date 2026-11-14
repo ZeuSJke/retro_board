@@ -489,6 +489,18 @@ class TrendPoint(BaseModel):
 # ── Board Summary ────────────────────────────────────────────────────────────
 
 
+class BoardThemeStat(BaseModel):
+    """Тема из итогов доски и её повторы между спринтами."""
+
+    id: str
+    name: str
+    description: str = ""
+    # На скольких досках команды тема названа в итогах
+    boards_count: int
+    # Сколько досок подряд, заканчивая этой: «N-й спринт подряд»
+    streak: int
+
+
 class BoardSummaryOut(BaseModel):
     id: str
     board_id: str
@@ -497,6 +509,8 @@ class BoardSummaryOut(BaseModel):
     key_themes: list[str] = []
     recommendations: list[str] = []
     created_at: datetime
+    # Только темы из списка команды; у итогов, созданных до него, список пуст
+    theme_stats: list[BoardThemeStat] = []
 
     model_config = {"from_attributes": True}
 
@@ -607,3 +621,28 @@ class BoardVotesResetOut(BaseModel):
     board_id: str
     username: str
     updated_cards: int
+
+
+# ── Темы команды ─────────────────────────────────────────────────────────────
+
+
+class ThemeBoardRef(BaseModel):
+    id: str
+    name: str
+    slug: Optional[str] = None
+    created_at: datetime
+
+
+class WorkspaceThemeOut(BaseModel):
+    """Тема команды и её повторы между спринтами."""
+
+    id: str
+    name: str
+    description: str = ""
+    # На скольких досках команды тема названа в итогах
+    boards_count: int
+    # Сколько досок подряд, заканчивая последней доской с итогами;
+    # 0 — на последней доске тему не называли
+    streak: int
+    # Последняя доска, в итогах которой тема названа
+    last_board: ThemeBoardRef
