@@ -6,6 +6,7 @@ import {
   getCsrfHeaders,
   loginWorkspace,
   setUsername,
+  API,
 } from './helpers'
 
 test.describe('Ключевые исправления (сессия, live-доски, штурм)', () => {
@@ -30,7 +31,7 @@ test.describe('Ключевые исправления (сессия, live-до�
     await createBoardViaAPI(request, 'Первая доска', wsData.token)
     const targetBoard = await createBoardViaAPI(request, 'Целевая доска', wsData.token)
 
-    await request.post('http://localhost:8000/api/columns/', {
+    await request.post(`${API}/columns/`, {
       data: { board_id: targetBoard.id, title: 'Целевая колонка' },
       headers,
     })
@@ -116,13 +117,13 @@ test.describe('Ключевые исправления (сессия, live-до�
     const headers = { ...csrf, 'X-Workspace-Token': wsData.token }
 
     const board = await createBoardViaAPI(request, 'Штурм Доска', wsData.token)
-    const colRes = await request.post('http://localhost:8000/api/columns/', {
+    const colRes = await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Идеи' },
       headers,
     })
     const col = await colRes.json()
 
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: col.id, text: 'Секрет ведущего', author: 'Ведущий' },
       headers,
     })

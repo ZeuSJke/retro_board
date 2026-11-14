@@ -22,8 +22,9 @@ export function useWebSocket(
   const pendingQueueRef = useRef<WsMessage[]>([])
   const attemptsRef = useRef(0)
   const [connected, setConnected] = useState(false)
-  // Токен воркспейса — в deps эффекта ниже: смена токена переподключает сокет
-  const wsToken = useAppStore((s) => s.workspace?.token ?? '')
+  // Сервер берёт сессию из httpOnly-cookie при рукопожатии и закрепляет за сокетом участника.
+  // Участник — в deps эффекта ниже: без сессии не подключаемся, повторный вход переподключает сокет.
+  const sessionKey = useAppStore((s) => s.participant?.id ?? '')
 
   const sendMessage = useCallback((msg: WsMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -38,7 +39,7 @@ export function useWebSocket(
   }, [])
 
   useEffect(() => {
-    if (!boardId || !wsToken) return
+    if (!boardId || !sessionKey) return
 
     let cancelled = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -54,7 +55,7 @@ export function useWebSocket(
     const connect = () => {
       if (cancelled || typeof WebSocket === 'undefined') return
 
-      // Закрыть старый сокет перед новым connect (смена токена/boardId),
+      // Закрыть старый сокет перед новым connect (смена участника/boardId),
       // подавив его onclose чтобы не планировать лишнее переподключение
       const prev = wsRef.current
       wsRef.current = null
@@ -117,7 +118,7 @@ export function useWebSocket(
       wsRef.current = null
       setConnected(false)
     }
-  }, [boardId, wsToken])
+  }, [boardId, sessionKey])
 
   return { sendMessage, connected }
 }

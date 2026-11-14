@@ -17,12 +17,15 @@ import type {
   Column,
   DashboardActionItem,
   MoodTrendPoint,
+  Participant,
+  SessionInfo,
   TrendPoint,
   WorkspaceInsights,
-  WorkspaceSession,
+  WorkspaceMe,
 } from '../types'
 import { showToast } from '../store/toastStore'
 import { useAppStore } from '../store'
+import { isApiErrorReported, RATE_LIMIT_MESSAGE } from '../utils/apiError'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -34,7 +37,7 @@ export function getCsrfToken(): string {
 
 export function handleCommonHttpError(status?: number, detail = ''): void {
   if (status === 429) {
-    showToast('Слишком много запросов. Подождите немного.', 'error')
+    showToast(RATE_LIMIT_MESSAGE, 'error')
   } else if (status === 423) {
     showToast(detail || 'Доска заблокирована для изменений', 'error')
   } else if (status === 403) {
@@ -44,18 +47,17 @@ export function handleCommonHttpError(status?: number, detail = ''): void {
   }
 }
 
+// Сессия — в httpOnly-cookie `workspace_token`: браузер сам прикладывает её к запросам
+// того же origin, поэтому токена нет ни в сторе, ни в заголовках.
 api.interceptors.request.use((config) => {
   if (config.method && !['get', 'head', 'options'].includes(config.method)) {
     config.headers['X-CSRF-Token'] = getCsrfToken()
   }
-
-  const workspace = useAppStore.getState().workspace
-  if (workspace?.token) {
-    config.headers['X-Workspace-Token'] = workspace.token
-  }
-
   return config
 })
+
+/** Запросы, которые сами начинают сессию: их 401 — «неверный ключ», а не «сессия истекла». */
+const SESSION_ENTRY_URLS = ['/workspaces/login', '/workspaces/join']
 
 api.interceptors.response.use(
   (r) => r,
@@ -64,12 +66,21 @@ api.interceptors.response.use(
     const detail = error.response?.data?.detail || ''
     const reqUrl = String(error.config?.url || '')
 
-    if (status === 401 && !reqUrl.includes('/workspaces/login')) {
-      useAppStore.setState({ workspace: null })
+    if (status === 401) {
+      // Сессии нет или она отозвана (в том числе выданная до появления участников):
+      // забываем её — приложение покажет экран входа. Тостов здесь нет.
+      if (!SESSION_ENTRY_URLS.some((url) => reqUrl.includes(url))) {
+        useAppStore.getState().clearSession()
+      }
       return Promise.reject(error)
     }
 
-    handleCommonHttpError(status, detail)
+    // Общий тост — запасной вариант. Обработчик вызывающего кода выполнится раньше этого
+    // таймера; если он сам показал сообщение (getApiErrorMessage помечает ошибку),
+    // второго тоста не будет.
+    setTimeout(() => {
+      if (!isApiErrorReported(error)) handleCommonHttpError(status, detail)
+    }, 0)
     return Promise.reject(error)
   },
 )
@@ -228,24 +239,54 @@ export const getBoardSummary = (boardId: string): Promise<BoardSummary | null> =
 export const regenerateBoardSummary = (boardId: string): Promise<BoardSummary> =>
   api.post<BoardSummary>(`/boards/${boardId}/summary/regenerate`).then((r) => r.data)
 
-// ── Workspace ───────────────────────────────────────────────────────────────
-interface WorkspaceLoginResponse {
-  token: string
+// ── Сессия: команда и участник ──────────────────────────────────────────────
+interface SessionResponse {
   workspace_id: string
   workspace_slug: string
   workspace_name: string
+  participant: Participant
 }
 
+const toSessionInfo = (data: SessionResponse): SessionInfo => ({
+  workspace: {
+    workspaceId: data.workspace_id,
+    workspaceSlug: data.workspace_slug,
+    workspaceName: data.workspace_name,
+  },
+  participant: data.participant,
+})
+
+/**
+ * Вход в команду по коду и ключу. Сервер создаёт участника и кладёт токен в httpOnly-cookie;
+ * в ответе токена нет. Имя необязательно — без него сервер назовёт участника «Участник».
+ */
 export const loginToWorkspace = (data: {
   workspace_slug: string
   access_key: string
-}): Promise<WorkspaceSession> =>
-  api.post<WorkspaceLoginResponse>('/workspaces/login', data).then((r) => ({
-    token: r.data.token,
-    workspaceId: r.data.workspace_id,
-    workspaceSlug: r.data.workspace_slug,
-    workspaceName: r.data.workspace_name,
-  }))
+  name?: string
+}): Promise<SessionInfo> =>
+  api.post<SessionResponse>('/workspaces/login', data).then((r) => toSessionInfo(r.data))
 
-export const checkWorkspaceSession = (): Promise<{ id: string; slug: string; name: string }> =>
-  api.get<{ id: string; slug: string; name: string }>('/workspaces/me').then((r) => r.data)
+/** Завершить сессию на сервере (сбрасывает cookie). Локальное состояние чистит вызывающий код. */
+export const logoutWorkspace = (): Promise<void> =>
+  api.post('/workspaces/logout').then(() => undefined)
+
+/** Текущая сессия по cookie: команда, участник и возможности сервера. Заодно продлевает сессию. */
+export const checkWorkspaceSession = (): Promise<WorkspaceMe> =>
+  api.get<WorkspaceMe>('/workspaces/me').then((r) => r.data)
+
+/** Сверить сессию с сервером и записать в стор участника, команду и признак `ai_enabled`. */
+export const refreshWorkspaceSession = async (): Promise<WorkspaceMe> => {
+  const me = await checkWorkspaceSession()
+  const store = useAppStore.getState()
+  store.setSession({
+    workspace: { workspaceId: me.id, workspaceSlug: me.slug, workspaceName: me.name },
+    participant: me.participant,
+  })
+  store.setAiEnabled(Boolean(me.ai_enabled))
+  return me
+}
+
+/** Сменить имя участника. Карточки, голоса и роль ведущего остаются за ним. */
+export const renameParticipant = (name: string): Promise<Participant> =>
+  api.patch<Participant>('/workspaces/me/participant', { name }).then((r) => r.data)

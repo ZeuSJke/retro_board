@@ -4,11 +4,14 @@ import { APP_STORE_VERSION, migratePersistedState, useAppStore } from '../../sto
 const STORAGE_KEY = 'retroboard-app'
 
 const workspace = {
-  token: 'jwt-token',
   workspaceId: 'ws-1',
   workspaceSlug: 'team',
   workspaceName: 'Команда',
 }
+const participant = { id: 'p-1', name: 'Анна' }
+
+/** Сессия в том виде, в каком её писала версия 0: токен лежал прямо в сторе. */
+const legacyWorkspace = { token: 'jwt-token', ...workspace }
 
 function resetStore() {
   useAppStore.setState({
@@ -17,7 +20,16 @@ function resetStore() {
     theme: { primary: '#6750A4', dark: false },
     dotGrid: true,
     workspace: null,
+    participant: null,
+    aiEnabled: null,
   })
+}
+
+function readStored(): { state: Record<string, unknown>; version: number } {
+  return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as {
+    state: Record<string, unknown>
+    version: number
+  }
 }
 
 describe('useAppStore', () => {
@@ -28,6 +40,9 @@ describe('useAppStore', () => {
     expect(state.username).toBe('Аноним')
     expect(state.currentBoardId).toBeNull()
     expect(state.theme).toEqual({ primary: '#6750A4', dark: false })
+    expect(state.workspace).toBeNull()
+    expect(state.participant).toBeNull()
+    expect(state.aiEnabled).toBeNull()
   })
 
   it('setUsername updates username', () => {
@@ -46,6 +61,69 @@ describe('useAppStore', () => {
   })
 })
 
+describe('useAppStore — сессия', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    resetStore()
+  })
+
+  it('setSession записывает команду и участника, имя для входа берёт у участника', () => {
+    useAppStore.getState().setSession({ workspace, participant })
+
+    const state = useAppStore.getState()
+    expect(state.workspace).toEqual(workspace)
+    expect(state.participant).toEqual(participant)
+    expect(state.username).toBe('Анна')
+  })
+
+  it('setSession с теми же данными не пересоздаёт объекты', () => {
+    useAppStore.getState().setSession({ workspace, participant })
+    const before = useAppStore.getState()
+
+    useAppStore.getState().setSession({ workspace: { ...workspace }, participant: { ...participant } })
+
+    const after = useAppStore.getState()
+    expect(after.workspace).toBe(before.workspace)
+    expect(after.participant).toBe(before.participant)
+  })
+
+  it('setParticipant меняет имя, не трогая идентификатор и команду', () => {
+    useAppStore.getState().setSession({ workspace, participant })
+    useAppStore.getState().setParticipant({ id: 'p-1', name: 'Анна Петрова' })
+
+    const state = useAppStore.getState()
+    expect(state.participant).toEqual({ id: 'p-1', name: 'Анна Петрова' })
+    expect(state.username).toBe('Анна Петрова')
+    expect(state.workspace).toEqual(workspace)
+  })
+
+  it('clearSession забывает команду и участника, но оставляет имя, тему и доску', () => {
+    useAppStore.getState().setSession({ workspace, participant })
+    useAppStore.getState().setCurrentBoard('board-9')
+    useAppStore.getState().setTheme({ primary: 'emerald', dark: true })
+
+    useAppStore.getState().clearSession()
+
+    const state = useAppStore.getState()
+    expect(state.workspace).toBeNull()
+    expect(state.participant).toBeNull()
+    expect(state.username).toBe('Анна')
+    expect(state.currentBoardId).toBe('board-9')
+    expect(state.theme).toEqual({ primary: 'emerald', dark: true })
+  })
+
+  it('в localStorage попадает участник, но не токен и не признак AI', () => {
+    useAppStore.getState().setSession({ workspace, participant })
+    useAppStore.getState().setAiEnabled(true)
+
+    const stored = readStored()
+    expect(stored.state.participant).toEqual(participant)
+    expect(stored.state.workspace).toEqual(workspace)
+    expect(stored.state).not.toHaveProperty('aiEnabled')
+    expect(JSON.stringify(stored)).not.toContain('token')
+  })
+})
+
 describe('useAppStore — сохранённое состояние', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -54,11 +132,10 @@ describe('useAppStore — сохранённое состояние', () => {
 
   it('пишет в localStorage текущую версию схемы', () => {
     useAppStore.getState().setUsername('Alice')
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as { version?: number }
-    expect(stored.version).toBe(APP_STORE_VERSION)
+    expect(readStored().version).toBe(APP_STORE_VERSION)
   })
 
-  it('читает без потерь данные, записанные сборками до появления явной версии', async () => {
+  it('читает состояние текущей версии как есть', async () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -68,6 +145,31 @@ describe('useAppStore — сохранённое состояние', () => {
           theme: { primary: 'emerald', dark: true },
           dotGrid: false,
           workspace,
+          participant,
+        },
+        version: APP_STORE_VERSION,
+      }),
+    )
+
+    await useAppStore.persist.rehydrate()
+
+    const state = useAppStore.getState()
+    expect(state.workspace).toEqual(workspace)
+    expect(state.participant).toEqual(participant)
+    expect(state.currentBoardId).toBe('board-42')
+    expect(state._hasHydrated).toBe(true)
+  })
+
+  it('версия 0: убирает токен из localStorage, сохраняет тему, сетку, доску и имя', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          username: 'Анна',
+          currentBoardId: 'board-42',
+          theme: { primary: 'emerald', dark: true },
+          dotGrid: false,
+          workspace: legacyWorkspace,
         },
         version: 0,
       }),
@@ -80,11 +182,19 @@ describe('useAppStore — сохранённое состояние', () => {
     expect(state.currentBoardId).toBe('board-42')
     expect(state.theme).toEqual({ primary: 'emerald', dark: true })
     expect(state.dotGrid).toBe(false)
+    // Команда известна (код подставится в форму входа), участника нет — нужен вход
     expect(state.workspace).toEqual(workspace)
+    expect(state.participant).toBeNull()
     expect(state._hasHydrated).toBe(true)
+
+    // Перенесённое состояние записано обратно уже без токена
+    const stored = readStored()
+    expect(stored.version).toBe(APP_STORE_VERSION)
+    expect(JSON.stringify(stored)).not.toContain('jwt-token')
+    expect(stored.state.workspace).toEqual(workspace)
   })
 
-  it('читает самые старые записи без dotGrid и с hex-цветом темы', async () => {
+  it('версия 0: читает самые старые записи без dotGrid и с hex-цветом темы', async () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -105,6 +215,7 @@ describe('useAppStore — сохранённое состояние', () => {
     expect(state.theme).toEqual({ primary: '#6750A4', dark: false })
     expect(state.dotGrid).toBe(true)
     expect(state.workspace).toBeNull()
+    expect(state.participant).toBeNull()
   })
 
   it('из записи с незнакомой версией забирает понятные поля и не ломается на остальных', async () => {
@@ -117,6 +228,7 @@ describe('useAppStore — сохранённое состояние', () => {
           theme: 'dark',
           dotGrid: 'yes',
           workspace: { token: 'jwt-token' },
+          participant: { id: 42 },
           somethingNew: [1, 2, 3],
         },
         version: APP_STORE_VERSION + 5,
@@ -131,25 +243,46 @@ describe('useAppStore — сохранённое состояние', () => {
     expect(state.theme).toEqual({ primary: 'violet', dark: false })
     expect(state.dotGrid).toBe(true)
     expect(state.workspace).toBeNull()
+    expect(state.participant).toBeNull()
     expect(state).not.toHaveProperty('somethingNew')
   })
 })
 
 describe('migratePersistedState', () => {
+  const defaults = {
+    username: 'Аноним',
+    currentBoardId: null,
+    theme: { primary: 'violet', dark: false },
+    dotGrid: true,
+    workspace: null,
+    participant: null,
+  }
+
   it('возвращает значения по умолчанию для мусора', () => {
-    const defaults = {
-      username: 'Аноним',
-      currentBoardId: null,
-      theme: { primary: 'violet', dark: false },
-      dotGrid: true,
-      workspace: null,
-    }
     expect(migratePersistedState(null, 0)).toEqual(defaults)
     expect(migratePersistedState('oops', 3)).toEqual(defaults)
     expect(migratePersistedState([], 1)).toEqual(defaults)
   })
 
-  it('сохраняет корректную сессию пространства', () => {
-    expect(migratePersistedState({ workspace }, 3).workspace).toEqual(workspace)
+  it('шаг 0 → 1 отбрасывает токен и не выдумывает участника', () => {
+    const migrated = migratePersistedState(
+      { username: 'Анна', workspace: legacyWorkspace, participant },
+      0,
+    )
+    expect(migrated.workspace).toEqual(workspace)
+    expect(migrated.workspace).not.toHaveProperty('token')
+    // Участника в версии 0 не было: даже если поле есть, сессии старого образца сервер не примет
+    expect(migrated.participant).toBeNull()
+    expect(migrated.username).toBe('Анна')
+  })
+
+  it('сохраняет корректную сессию из записи более новой версии', () => {
+    const migrated = migratePersistedState({ workspace, participant }, APP_STORE_VERSION + 2)
+    expect(migrated.workspace).toEqual(workspace)
+    expect(migrated.participant).toEqual(participant)
+  })
+
+  it('участник без команды — не сессия', () => {
+    expect(migratePersistedState({ participant }, APP_STORE_VERSION + 1).participant).toBeNull()
   })
 })

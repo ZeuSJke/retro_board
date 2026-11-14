@@ -265,11 +265,33 @@ export interface Theme {
   dark: boolean
 }
 
+/** Участник команды: серверная личность (`id`) и подпись (`name`). Тёзки — разные участники. */
+export interface Participant {
+  id: string
+  name: string
+}
+
+/** Команда текущей сессии. Токена здесь нет: он живёт только в httpOnly-cookie. */
 export interface WorkspaceSession {
-  token: string
   workspaceId: string
   workspaceSlug: string
   workspaceName: string
+}
+
+/** Сессия целиком: команда и участник. Приходит из ответа входа и из `GET /api/workspaces/me`. */
+export interface SessionInfo {
+  workspace: WorkspaceSession
+  participant: Participant
+}
+
+/** Ответ `GET /api/workspaces/me`. */
+export interface WorkspaceMe {
+  id: string
+  slug: string
+  name: string
+  created_at: string
+  participant: Participant
+  ai_enabled: boolean
 }
 
 export interface BoardSummary {
@@ -283,17 +305,32 @@ export interface BoardSummary {
 }
 
 export interface AppStore {
+  /**
+   * Имя для формы входа: последнее введённое или полученное от сервера.
+   * Личностью не является — «я» на доске определяется по `participant.id`.
+   */
   username: string
   currentBoardId: string | null
   theme: Theme
   dotGrid: boolean
+  /** Команда текущей сессии; `null` — сессии нет. */
   workspace: WorkspaceSession | null
+  /** Участник текущей сессии; `null` — сессии нет или её нужно подтвердить входом. */
+  participant: Participant | null
+  /** Настроен ли AI на сервере (`ai_enabled` из `/workspaces/me`); `null` — ещё не знаем. Не сохраняется. */
+  aiEnabled: boolean | null
   _hasHydrated?: boolean
   setUsername: (name: string) => void
   setCurrentBoard: (id: string) => void
   setTheme: (theme: Theme) => void
   setDotGrid: (enabled: boolean) => void
-  setWorkspace: (ws: WorkspaceSession | null) => void
+  /** Записать сессию после входа или сверки с сервером. */
+  setSession: (session: SessionInfo) => void
+  /** Обновить участника (например, после переименования). */
+  setParticipant: (participant: Participant) => void
+  setAiEnabled: (enabled: boolean | null) => void
+  /** Забыть сессию: выход или ответ 401. Имя для формы входа остаётся. */
+  clearSession: () => void
   setHasHydrated?: (hydrated: boolean) => void
 }
 

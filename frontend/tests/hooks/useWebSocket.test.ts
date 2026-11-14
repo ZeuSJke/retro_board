@@ -2,11 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useWebSocket } from '../../hooks/useWebSocket'
 
+// Сессию хук берёт из стора: подключается, только когда есть участник
+const session = vi.hoisted((): { participant: { id: string; name: string } | null } => ({
+  participant: { id: 'p-1', name: 'Анна' },
+}))
+
 vi.mock('../../store', () => {
-  // Хук вызывает useAppStore как селектор-функцию: useAppStore((s) => s.workspace?.token)
-  const useAppStore = (selector: (s: { workspace: { token: string } | null }) => string) =>
-    selector({ workspace: { token: 'test-token' } })
-  useAppStore.getState = () => ({ workspace: { token: 'test-token' } })
+  // Хук вызывает useAppStore как селектор-функцию: useAppStore((s) => s.participant?.id)
+  const useAppStore = <T,>(selector: (s: typeof session) => T) => selector(session)
+  useAppStore.getState = () => session
   return { useAppStore }
 })
 
@@ -40,6 +44,7 @@ describe('useWebSocket', () => {
     vi.useFakeTimers()
     MockWebSocket.instances = []
     vi.stubGlobal('WebSocket', MockWebSocket)
+    session.participant = { id: 'p-1', name: 'Анна' }
   })
 
   afterEach(() => {
@@ -59,6 +64,33 @@ describe('useWebSocket', () => {
     expect(MockWebSocket.instances).toHaveLength(1)
     expect(MockWebSocket.instances[0].url).toContain('/ws/board-1')
     expect(MockWebSocket.instances[0].url).not.toContain('workspace_token')
+  })
+
+  it('без участника (сессии нет) не подключается', () => {
+    session.participant = null
+    setup()
+    expect(MockWebSocket.instances).toHaveLength(0)
+  })
+
+  it('повторный вход другим участником переподключает сокет', () => {
+    const { rerender, ws } = setup()
+    expect(MockWebSocket.instances).toHaveLength(1)
+
+    session.participant = { id: 'p-2', name: 'Анна' }
+    rerender()
+
+    expect(ws.close).toHaveBeenCalled()
+    expect(MockWebSocket.instances).toHaveLength(2)
+  })
+
+  it('смена имени участника сокет не трогает', () => {
+    const { rerender, ws } = setup()
+
+    session.participant = { id: 'p-1', name: 'Анна Петрова' }
+    rerender()
+
+    expect(ws.close).not.toHaveBeenCalled()
+    expect(MockWebSocket.instances).toHaveLength(1)
   })
 
   it('calls onOpen when the socket opens', () => {
