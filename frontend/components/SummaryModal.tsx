@@ -104,7 +104,7 @@ export default function SummaryModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent layout="structured" className="max-w-2xl">
+      <DialogContent layout="structured" className="h-[min(86vh,760px)] max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-primary" />
@@ -125,11 +125,11 @@ export default function SummaryModal({
             </TabsList>
           </div>
 
-          {/* Фиксированная высота тела исключает скачки модалки и кнопок футера при смене вкладки */}
-          <DialogBody className="h-[420px] flex-none">
-            <TabsContent value="summary" className="mt-0 space-y-4">
+          {/* Высота модалки зафиксирована на DialogContent — flex-1 на DialogBody заполняет окно без скачков и лишнего скролла */}
+          <DialogBody>
+            <TabsContent value="summary" className="mt-0 flex min-h-full flex-col space-y-4">
               {(loading || regenerating) && (
-                <div className="flex h-[340px] flex-col items-center justify-center gap-3 text-muted-foreground">
+                <div className="flex min-h-[260px] flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
                   <p className="text-sm">Анализируем карточки и формируем выводы...</p>
                 </div>
@@ -142,7 +142,7 @@ export default function SummaryModal({
               )}
 
               {!loading && !regenerating && !error && !summary && (
-                <div className="flex h-[340px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 text-center">
+                <div className="flex min-h-[260px] flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 text-center">
                   <p className="max-w-md text-sm text-muted-foreground">
                     AI-резюме для этой доски ещё не создано. Переведите сессию на этап «Итоги» или
                     сгенерируйте его вручную.
@@ -156,55 +156,65 @@ export default function SummaryModal({
 
               {!loading && !regenerating && summary && (
                 <div className="space-y-4">
-                  <div className="rounded-xl border bg-muted/40 p-4">
-                    <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <div className="rounded-xl border bg-muted/40 p-3.5">
+                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       Общий вывод
                     </div>
                     <p className="text-sm leading-relaxed text-foreground">{summary.summary_text}</p>
                   </div>
 
-                  {summary.key_themes.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        <Tag className="h-3.5 w-3.5 text-primary" />
-                        Ключевые темы
-                      </div>
-                      <ul className="divide-y divide-border/60 rounded-xl border bg-card/60">
-                        {summary.key_themes.map((theme, idx) => (
-                          <li
-                            key={idx}
-                            className="flex items-start gap-2.5 px-3.5 py-2.5 text-sm leading-relaxed text-foreground"
-                          >
-                            <span
-                              className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
-                              aria-hidden="true"
-                            />
-                            <span>{theme}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+                  {(summary.key_themes.length > 0 || summary.recommendations.length > 0) && (
+                    <div
+                      className={
+                        summary.key_themes.length > 0 && summary.recommendations.length > 0
+                          ? 'grid gap-4 md:grid-cols-2'
+                          : 'grid grid-cols-1 gap-4'
+                      }
+                    >
+                      {summary.key_themes.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            <Tag className="h-3.5 w-3.5 text-primary" />
+                            Ключевые темы
+                          </div>
+                          <ul className="divide-y divide-border/60 rounded-xl border bg-card/60">
+                            {summary.key_themes.map((theme, idx) => (
+                              <li
+                                key={idx}
+                                className="flex items-start gap-2.5 px-3 py-2 text-sm leading-snug text-foreground"
+                              >
+                                <span
+                                  className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                                  aria-hidden="true"
+                                />
+                                <span>{theme}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
 
-                  {summary.recommendations.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        <Lightbulb className="h-3.5 w-3.5 text-amber-500" />
-                        Рекомендации
-                      </div>
-                      <ol className="divide-y divide-border/60 rounded-xl border bg-card/60">
-                        {summary.recommendations.map((rec, idx) => (
-                          <li
-                            key={idx}
-                            className="flex items-start gap-3 px-3.5 py-2.5 text-sm leading-relaxed text-foreground"
-                          >
-                            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                              {idx + 1}
-                            </span>
-                            <span>{rec}</span>
-                          </li>
-                        ))}
-                      </ol>
+                      {summary.recommendations.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            <Lightbulb className="h-3.5 w-3.5 text-amber-500" />
+                            Рекомендации
+                          </div>
+                          <ol className="divide-y divide-border/60 rounded-xl border bg-card/60">
+                            {summary.recommendations.map((rec, idx) => (
+                              <li
+                                key={idx}
+                                className="flex items-start gap-2.5 px-3 py-2 text-sm leading-snug text-foreground"
+                              >
+                                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                                  {idx + 1}
+                                </span>
+                                <span>{rec}</span>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

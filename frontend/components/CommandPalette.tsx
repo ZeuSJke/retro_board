@@ -43,6 +43,9 @@ interface CommandPaletteProps {
   searchableCards?: CommandSearchCard[]
 }
 
+const COMMAND_ITEM_CLASS =
+  'flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm text-foreground outline-none transition-colors aria-selected:bg-accent aria-selected:text-accent-foreground'
+
 export default function CommandPalette({
   boards,
   open: controlledOpen,
@@ -77,31 +80,36 @@ export default function CommandPalette({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-lg overflow-hidden p-0" hideClose>
-        <Command className="bg-popover text-popover-foreground">
-          <div className="flex items-center border-b px-3.5">
-            <Search className="mr-2.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      <DialogContent layout="structured" className="max-w-xl" hideClose>
+        <Command className="flex min-w-0 flex-1 flex-col overflow-hidden bg-popover text-popover-foreground">
+          <div className="flex shrink-0 items-center gap-2.5 border-b border-border/70 px-4">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <Command.Input
               placeholder="Найти доску или команду..."
-              className="flex h-11 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              className="flex h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             />
+            <kbd className="hidden shrink-0 rounded border border-border/70 bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
+              Esc
+            </kbd>
           </div>
-          <Command.List className="max-h-80 overflow-y-auto p-2">
-            <Command.Empty className="py-6 text-center text-sm text-muted-foreground">
+          <Command.List className="max-h-[min(56vh,420px)] overflow-y-auto scroll-py-2 p-2.5 scrollbar-subtle [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground/80 [&_[cmdk-group]]:px-1 [&_[cmdk-group]]:py-1">
+            <Command.Empty className="py-8 text-center text-sm text-muted-foreground">
               Ничего не найдено
             </Command.Empty>
 
-            <Command.Group heading="Действия" className="px-1.5 py-1 text-xs font-medium text-muted-foreground">
+            <Command.Group heading="Действия">
               <Command.Item
                 value="create new board новая доска"
                 onSelect={() => {
                   setOpen(false)
                   onCreateBoard()
                 }}
-                className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground aria-selected:bg-accent"
+                className={COMMAND_ITEM_CLASS}
               >
-                <Plus className="h-4 w-4 text-primary" />
-                Создать новую доску
+                <span className="flex items-center gap-2.5">
+                  <Plus className="h-4 w-4 shrink-0 text-primary" />
+                  <span>Создать новую доску</span>
+                </span>
               </Command.Item>
               <Command.Item
                 value="dashboard панель управления аналитика задачи action items"
@@ -109,10 +117,12 @@ export default function CommandPalette({
                   setOpen(false)
                   onNavigateDashboard()
                 }}
-                className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground aria-selected:bg-accent"
+                className={COMMAND_ITEM_CLASS}
               >
-                <BarChart3 className="h-4 w-4 text-primary" />
-                Панель управления и задачи
+                <span className="flex items-center gap-2.5">
+                  <BarChart3 className="h-4 w-4 shrink-0 text-primary" />
+                  <span>Панель управления и задачи</span>
+                </span>
               </Command.Item>
               <Command.Item
                 value="toggle theme переключить тему светлая тёмная"
@@ -120,92 +130,131 @@ export default function CommandPalette({
                   setTheme(theme === 'dark' ? 'light' : 'dark')
                   setOpen(false)
                 }}
-                className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground aria-selected:bg-accent"
+                className={COMMAND_ITEM_CLASS}
               >
-                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                Переключить на {theme === 'dark' ? 'светлую' : 'тёмную'} тему
+                <span className="flex items-center gap-2.5">
+                  {theme === 'dark' ? (
+                    <Sun className="h-4 w-4 shrink-0" />
+                  ) : (
+                    <Moon className="h-4 w-4 shrink-0" />
+                  )}
+                  <span>Переключить на {theme === 'dark' ? 'светлую' : 'тёмную'} тему</span>
+                </span>
               </Command.Item>
             </Command.Group>
 
             {boardActions.length > 0 && (
-              <Command.Group heading="Команды доски" className="mt-1 px-1.5 py-1 text-xs font-medium text-muted-foreground">
-                {boardActions.map((act) => (
-                  <Command.Item
-                    key={act.id}
-                    value={`${act.label} ${act.keywords || ''}`}
-                    onSelect={() => {
-                      setOpen(false)
-                      act.onSelect()
-                    }}
-                    className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground aria-selected:bg-accent"
-                  >
-                    <span className="flex items-center gap-2 truncate">
-                      <Sparkles className="h-4 w-4 shrink-0 text-primary" />
-                      <span className="truncate">{act.label}</span>
-                    </span>
-                    {act.shortcut && (
-                      <kbd className="shrink-0 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                        {act.shortcut}
-                      </kbd>
-                    )}
-                  </Command.Item>
-                ))}
-              </Command.Group>
+              <>
+                <Command.Separator className="mx-3 my-1.5 h-px bg-border/60" />
+                <Command.Group heading="Команды доски">
+                  {boardActions.map((act) => (
+                    <Command.Item
+                      key={act.id}
+                      value={`${act.label} ${act.keywords || ''}`}
+                      onSelect={() => {
+                        setOpen(false)
+                        act.onSelect()
+                      }}
+                      className={COMMAND_ITEM_CLASS}
+                    >
+                      <span className="flex min-w-0 items-center gap-2.5 truncate">
+                        <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+                        <span className="truncate">{act.label}</span>
+                      </span>
+                      {act.shortcut && (
+                        <kbd className="shrink-0 rounded border border-border/70 bg-muted/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                          {act.shortcut}
+                        </kbd>
+                      )}
+                    </Command.Item>
+                  ))}
+                </Command.Group>
+              </>
             )}
 
             {searchableCards.length > 0 && (
-              <Command.Group heading="Карточки доски" className="mt-1 px-1.5 py-1 text-xs font-medium text-muted-foreground">
-                {searchableCards.map((c) => (
-                  <Command.Item
-                    key={c.id}
-                    value={`card ${c.text} ${c.columnTitle}`}
-                    onSelect={() => {
-                      setOpen(false)
-                      c.onSelect()
-                    }}
-                    className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground aria-selected:bg-accent"
-                  >
-                    <span className="min-w-0 flex-1 truncate">
-                      <span className="font-medium text-foreground">{c.text}</span>
-                      <span className="ml-2 text-xs text-muted-foreground">· {c.columnTitle}</span>
-                    </span>
-                    {c.likesCount > 0 && (
-                      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
-                        <ThumbsUp className="h-3 w-3" />
-                        {c.likesCount}
+              <>
+                <Command.Separator className="mx-3 my-1.5 h-px bg-border/60" />
+                <Command.Group heading="Карточки доски">
+                  {searchableCards.map((c) => (
+                    <Command.Item
+                      key={c.id}
+                      value={`card ${c.text} ${c.columnTitle}`}
+                      onSelect={() => {
+                        setOpen(false)
+                        c.onSelect()
+                      }}
+                      className={COMMAND_ITEM_CLASS}
+                    >
+                      <span className="min-w-0 flex-1 truncate">
+                        <span className="font-medium text-foreground">{c.text}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          · {c.columnTitle}
+                        </span>
                       </span>
-                    )}
-                  </Command.Item>
-                ))}
-              </Command.Group>
+                      {c.likesCount > 0 && (
+                        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
+                          <ThumbsUp className="h-3 w-3" />
+                          {c.likesCount}
+                        </span>
+                      )}
+                    </Command.Item>
+                  ))}
+                </Command.Group>
+              </>
             )}
 
             {boards.length > 0 && (
-              <Command.Group heading="Доски" className="mt-1 px-1.5 py-1 text-xs font-medium text-muted-foreground">
-                {boards.map((board) => (
-                  <Command.Item
-                    key={board.id}
-                    value={`${board.name} ${board.slug || ''}`}
-                    onSelect={() => {
-                      setOpen(false)
-                      onSelectBoard(board)
-                    }}
-                    className="flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm text-foreground aria-selected:bg-accent"
-                  >
-                    <span className="flex items-center gap-2 truncate">
-                      <LayoutGrid className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{board.name}</span>
-                    </span>
-                    {board.action_items_open > 0 && (
-                      <span className="text-xs text-muted-foreground">
-                        {board.action_items_open} задач
+              <>
+                <Command.Separator className="mx-3 my-1.5 h-px bg-border/60" />
+                <Command.Group heading="Доски">
+                  {boards.map((board) => (
+                    <Command.Item
+                      key={board.id}
+                      value={`${board.name} ${board.slug || ''}`}
+                      onSelect={() => {
+                        setOpen(false)
+                        onSelectBoard(board)
+                      }}
+                      className={COMMAND_ITEM_CLASS}
+                    >
+                      <span className="flex min-w-0 items-center gap-2.5 truncate">
+                        <LayoutGrid className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{board.name}</span>
                       </span>
-                    )}
-                  </Command.Item>
-                ))}
-              </Command.Group>
+                      {board.action_items_open > 0 && (
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {board.action_items_open} задач
+                        </span>
+                      )}
+                    </Command.Item>
+                  ))}
+                </Command.Group>
+              </>
             )}
           </Command.List>
+          <div className="flex shrink-0 items-center justify-between border-t border-border/70 bg-muted/25 px-4 py-2 text-[11px] text-muted-foreground">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center gap-1">
+                <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px]">
+                  ↑↓
+                </kbd>
+                выбор
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px]">
+                  ↵
+                </kbd>
+                открыть
+              </span>
+            </div>
+            <span className="inline-flex items-center gap-1">
+              <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px]">
+                Esc
+              </kbd>
+              закрыть
+            </span>
+          </div>
         </Command>
       </DialogContent>
     </Dialog>

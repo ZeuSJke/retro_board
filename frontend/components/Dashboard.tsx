@@ -567,7 +567,7 @@ export default function Dashboard() {
               data-testid={`kanban-drag-handle-${item.id}`}
               title="Перетащить задачу в другую колонку"
               aria-hidden="true"
-              className="mt-0.5 flex h-4 w-4 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/45 transition-colors group-hover:text-muted-foreground active:cursor-grabbing"
+              className="mt-0.5 flex h-4 w-4 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/55 transition-colors hover:bg-foreground/10 hover:text-foreground group-hover:text-muted-foreground active:cursor-grabbing dark:hover:bg-white/15"
             >
               <GripVertical className="h-3.5 w-3.5" />
             </span>
@@ -611,6 +611,7 @@ export default function Dashboard() {
 
             {editingDescId === item.id ? (
               <Textarea
+                autoResize
                 value={editDesc}
                 onChange={(e) => setEditDesc(e.target.value)}
                 onBlur={() => saveDesc(item.id)}
@@ -619,8 +620,7 @@ export default function Dashboard() {
                   if (e.key === 'Escape') setEditingDescId(null)
                 }}
                 autoFocus
-                rows={2}
-                className="min-h-[54px] resize-none text-xs"
+                className="min-h-[54px] text-xs"
               />
             ) : (
               <p

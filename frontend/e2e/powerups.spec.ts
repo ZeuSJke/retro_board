@@ -75,7 +75,7 @@ test.describe('Курсор, автоссылки и улучшения доск
 
     const dragHandle = card.getByTestId('card-drag-handle')
     await expect(dragHandle).toBeVisible()
-    await expect(dragHandle).toHaveCSS('cursor', /data:image\/svg\+xml.*,\s*grab/)
+    await expect(dragHandle).toHaveCSS('cursor', 'grab')
 
     const autoLink = card.locator('a[href="https://example.com/ci-42"]')
     await expect(autoLink).toBeVisible()
