@@ -64,6 +64,18 @@ backend-tests:
     - ruff check .
     - pytest -v
 
+# ── Зависимости: известные уязвимости ────────────────────────────────────────
+# Не блокирует пайплайн: джобе нужен доступ к базе уязвимостей PyPI и реестру npm,
+# а новая запись в базе не должна останавливать не связанный с ней MR.
+# Красная джоба — повод обновить пакет (backend: правка requirements.in + make lock).
+deps-audit:
+  stage: test
+  allow_failure: true
+  script:
+    - uvx pip-audit --require-hashes --disable-pip -r backend/requirements.txt
+    - cd frontend
+    - npm audit --omit=dev
+
 # ── Фронтенд: сборка + линт ──────────────────────────────────────────────────
 frontend-lint:
   stage: test
@@ -237,6 +249,7 @@ image-smoke:
         - backend/.dockerignore
         - backend/entrypoint.sh
         - backend/requirements.txt
+        - backend/requirements.in
         - frontend/Dockerfile
         - frontend/.dockerignore
         - frontend/next.config.mjs

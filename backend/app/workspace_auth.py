@@ -2,8 +2,9 @@ from datetime import datetime, timedelta, UTC
 import logging
 
 from fastapi import Depends, HTTPException, Request
-from jose import JWTError, jwt
 import bcrypt
+import jwt
+from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -59,7 +60,7 @@ def decode_workspace_token(token: str) -> dict:
     """Декодировать JWT токен workspace."""
     try:
         return jwt.decode(token, settings.workspace_jwt_secret, algorithms=[ALGORITHM])
-    except JWTError as err:
+    except InvalidTokenError as err:
         raise HTTPException(
             status_code=401, detail="Invalid or expired workspace token"
         ) from err
@@ -94,7 +95,7 @@ def verify_admin_token(token: str) -> bool:
     try:
         payload = jwt.decode(token, settings.admin_jwt_secret, algorithms=[ALGORITHM])
         return payload.get("sub") == "admin"
-    except JWTError:
+    except InvalidTokenError:
         return False
 
 

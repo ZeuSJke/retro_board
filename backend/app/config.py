@@ -105,6 +105,21 @@ class Settings(BaseSettings):
         return bool(self.ai_base_url)
 
     @property
+    def sqlalchemy_database_url(self) -> str:
+        """DATABASE_URL с явным драйвером psycopg 3.
+
+        В окружениях строка подключения задана как `postgresql://…` (чарт, CI,
+        `.env`): без имени драйвера SQLAlchemy выбрал бы psycopg2, которого в
+        образе больше нет. Приводим схему в одном месте, чтобы не менять её
+        в каждом окружении; строки с явным драйвером и другие СУБД не трогаем.
+        """
+        url = self.database_url
+        for prefix in ("postgresql://", "postgres://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url[len(prefix):]
+        return url
+
+    @property
     def cors_origins_list(self) -> list[str]:
         return [
             origin.strip() for origin in self.cors_origins.split(",") if origin.strip()

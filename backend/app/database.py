@@ -27,7 +27,10 @@ def _engine_options(database_url: str) -> dict:
     return options
 
 
-engine = create_engine(settings.database_url, **_engine_options(settings.database_url))
+engine = create_engine(
+    settings.sqlalchemy_database_url,
+    **_engine_options(settings.sqlalchemy_database_url),
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

@@ -8,11 +8,13 @@ BACKEND_PYTEST = $(shell [ -x backend/.venv/bin/pytest ] && echo .venv/bin/pytes
 BACKEND_RUFF = $(shell [ -x backend/.venv/bin/ruff ] && echo .venv/bin/ruff || echo ruff)
 BACKEND_ALEMBIC = $(shell [ -x backend/.venv/bin/alembic ] && echo .venv/bin/alembic || echo alembic)
 
-.PHONY: help setup install helm-lint lint lint-backend lint-frontend test-backend test-frontend verify dev-images dev-secrets dev-deploy dev
+.PHONY: help setup install lock audit helm-lint lint lint-backend lint-frontend test-backend test-frontend verify dev-images dev-secrets dev-deploy dev
 
 help:
 	@echo "Targets:"
 	@echo "  setup / install - init local worktree (backend/.venv + frontend/node_modules)"
+	@echo "  lock            - recompile backend lock files from requirements*.in (needs uv)"
+	@echo "  audit           - check backend and frontend dependencies for known vulnerabilities"
 	@echo "  helm-lint       - helm lint + kubeconform + render guard gates"
 	@echo "  lint-backend    - backend ruff check"
 	@echo "  lint-frontend   - frontend next build + tsc + next lint"
@@ -29,10 +31,10 @@ setup:
 	@echo "── Setting up backend/.venv"
 	@cd backend && if command -v uv >/dev/null 2>&1; then \
 	  [ -d .venv ] || env -u VIRTUAL_ENV uv venv; \
-	  env -u VIRTUAL_ENV uv pip install --python .venv/bin/python -r requirements-dev.txt; \
+	  env -u VIRTUAL_ENV uv pip sync --python .venv/bin/python requirements-dev.txt; \
 	else \
 	  [ -d .venv ] || python3 -m venv .venv; \
-	  .venv/bin/pip install -r requirements-dev.txt; \
+	  .venv/bin/pip install --require-hashes -r requirements-dev.txt; \
 	fi
 	@echo "── Setting up frontend/node_modules"
 	@cd frontend && npm ci --prefer-offline
@@ -42,6 +44,18 @@ setup:
 	done
 
 install: setup
+
+# Lock-файлы собираются из requirements*.in и содержат полный набор пакетов с хешами.
+# Версию Python держим равной образу backend/Dockerfile.
+lock:
+	cd backend && uv pip compile requirements.in --python-version 3.12 --generate-hashes \
+	  --custom-compile-command "make lock" -q -o requirements.txt
+	cd backend && uv pip compile requirements-dev.in --python-version 3.12 --generate-hashes \
+	  --custom-compile-command "make lock" -c requirements.txt -q -o requirements-dev.txt
+
+audit:
+	uvx pip-audit --require-hashes --disable-pip -r backend/requirements.txt
+	cd frontend && npm audit --omit=dev
 
 helm-lint:
 	helm lint $(CHART) -f $(CHART)/values-dev.yaml

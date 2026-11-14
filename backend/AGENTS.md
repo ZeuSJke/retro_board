@@ -17,6 +17,8 @@ TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::te
 .venv/bin/uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+- **Зависимости**: прямые — в `requirements.in` и `requirements-dev.in`, полный набор с хешами — в `requirements.txt` и `requirements-dev.txt`. Lock-файлы руками не правим: меняем `.in` и запускаем `make lock` в корне (нужен `uv`), затем `make setup`. Проверка уязвимостей — `make audit`.
+- **PostgreSQL локально без Docker**: пакет `pgserver` из PyPI поднимает встроенный сервер (`pgserver.get_server(<каталог>)`, подключение по unix-сокету из `get_uri()`); годится для проверки миграций и поведения, которого нет в SQLite (блокировки, длины строк, типы). Ставь его во временное окружение, не в `requirements*.in`.
 - Конфигурация `ruff` лежит в [pyproject.toml](pyproject.toml) (`select = ["E4", "E7", "E9", "F", "B"]`, `B008` игнорируется для FastAPI `Depends`, `alembic/versions` исключены).
 - Для локального запуска без `TESTING=true` нужен `backend/.env` на базе [backend/.env.example](.env.example) с валидными секретами (`Settings` проверяет длину и запрещает дефолты).
 
@@ -25,11 +27,12 @@ TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::te
 - **Иерархия** (`app/models.py`): `Workspace` → `Board` → `Column` → `CardGroup` / `Card`, плюс `ActionItem`, `BoardSummary`, `BoardMood`.
 - **Soft delete и блокировка доски**: доски удаляются через `Board.deleted_at`. Во всех хендлерах досок и дочерних сущностей используйте `require_live_board()` и `require_unlocked_board()` из `app/utils.py` (`tests/test_audit_guards.py` проверяет `404` для удалённых досок и disambiguation slug, `tests/test_v3_features.py` — `423` для заблокированных досок).
 - **Уникальность**: у `Board` составные ограничения `uq_board_workspace_name` и `uq_board_workspace_slug`; коллизия slug при разных именах должна разрешаться суффиксом, а не 500.
+- **Драйвер PostgreSQL** — psycopg 3. `DATABASE_URL` в окружениях задан как `postgresql://…`; драйвер подставляет `settings.sqlalchemy_database_url` — в движке и в `alembic/env.py` используйте его, а не `settings.database_url`.
 - **SQLite в тестах и Alembic**: `tests/conftest.py` подменяет `ARRAY` на `JSONEncodedList` и сбрасывает `ws_manager` между тестами. Любое изменение `models.py` требует миграции в `alembic/versions/` без неэкранированного Postgres-only DDL, ломающего SQLite-тесты.
 
 ## Auth, CSRF, Rate Limiting и WebSocket
 
-- **Auth**: workspace JWT (`app/workspace_auth.py`) принимается из `X-Workspace-Token` или `httpOnly` cookie `workspace_token`; `/api/admin/*` использует отдельную cookie `admin_token`.
+- **Auth**: workspace JWT (`app/workspace_auth.py`, библиотека PyJWT, HS256) принимается из `X-Workspace-Token` или `httpOnly` cookie `workspace_token`; `/api/admin/*` использует отдельную cookie `admin_token`.
 - **CSRF** (`CSRFMiddleware` в `main.py`): небезопасные методы (кроме `/ws/*`, `/api/admin/login`, `/api/workspaces/login`, `/health`, `/api/health`) проверяют совпадение cookie `csrf_token` и `X-CSRF-Token`. Отключается только при `CSRF_ENABLED=false`; для HTTP используйте `SECURE_COOKIES=false`.
 - **Rate Limiting** (`app/limiter.py`): `slowapi` включён всегда, кроме `TESTING=true` (логика лимитов тестируется в `tests/test_rate_limiting.py`). Квоты считаются по IP, а команда обычно сидит за одним адресом, поэтому для совместной работы с доской используйте `TEAM_WRITE_LIMIT` / `TEAM_READ_LIMIT`; строгие собственные лимиты — только для редких действий, входа и запросов к AI.
 - **Размер запросов**: `BodySizeLimitMiddleware` (`app/body_limit.py`) отвечает `413` на тело больше `MAX_REQUEST_BODY_BYTES` до CSRF и разбора; размер WebSocket-кадра ограничивает `--ws-max-size` в `entrypoint.sh`.

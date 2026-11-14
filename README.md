@@ -95,6 +95,8 @@ make lint           # backend (ruff check .) + frontend (next build && typecheck
 make test-backend   # alembic heads --verbose + pytest -v (SQLite in-memory)
 make test-frontend  # vitest run
 make helm-lint      # helm lint + kubeconform + render-гарды чарта
+make lock           # пересобрать backend/requirements*.txt из requirements*.in (нужен uv)
+make audit          # известные уязвимости в зависимостях бэкенда и фронтенда
 ```
 
 Для запуска сквозных Playwright E2E-тестов (`cd frontend && npx playwright install chromium && npx playwright test`) требуется запущенный за прокси стек (`http://localhost:3080` → `:3000` / `:8000`, образец конфига — [ci/e2e-nginx.conf](ci/e2e-nginx.conf)) с `TESTING=true` на бэкенде и корневым `.env` на базе `.env.example` (замените плейсхолдеры `ADMIN_LOGIN`/`ADMIN_PASSWORD` на реальные учётные данные бэкенда).
@@ -170,8 +172,10 @@ retro_board/
 │   ├── Dockerfile                   # python:3.12-slim, не-root пользователь
 │   ├── entrypoint.sh                # alembic upgrade head (при SKIP_MIGRATIONS != true) + uvicorn
 │   ├── pyproject.toml               # Конфигурация ruff
-│   ├── requirements.txt
-│   ├── requirements-dev.txt         # pytest + ruff
+│   ├── requirements.in              # Прямые зависимости (правятся руками)
+│   ├── requirements.txt             # Полный lock с хешами (make lock)
+│   ├── requirements-dev.in          # Зависимости разработки: pytest, ruff, httpx2
+│   ├── requirements-dev.txt         # Полный lock для разработки и тестов
 │   ├── .env.example
 │   ├── main.py                      # FastAPI app, lifespan, GlobalErrorMiddleware, CSRFMiddleware, лимит тела запроса, CORS
 │   ├── alembic.ini
@@ -365,7 +369,7 @@ retro_board/
 
 | Переменная | Обязательна | Описание |
 |---|---|---|
-| `DATABASE_URL` | Да | Строка подключения PostgreSQL (`postgresql://...`) |
+| `DATABASE_URL` | Да | Строка подключения PostgreSQL (`postgresql://...`; драйвер psycopg 3 подставляется автоматически) |
 | `CORS_ORIGINS` | Для prod / Helm | Разрешённые origin'ы через запятую (локальный дефолт: `http://localhost:3000,http://localhost:5173`; в Helm запрещены пустое значение, `*` и `null`) |
 | `ADMIN_LOGIN` | Да | Логин администратора (`/admin`, `>= 3` символов, не `"admin"`) |
 | `ADMIN_PASSWORD` | Да | Пароль администратора (`>= 8` символов, не `"changeme"`) |

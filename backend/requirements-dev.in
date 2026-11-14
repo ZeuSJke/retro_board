@@ -1,0 +1,6 @@
+# Зависимости разработки и тестов поверх боевых. После правки: make lock
+-r requirements.in
+pytest==9.2.0
+# starlette.testclient работает через httpx2; с httpx он выдаёт предупреждение об устаревании
+httpx2==2.16.0
+ruff==0.17.5
