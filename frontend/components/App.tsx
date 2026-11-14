@@ -97,7 +97,7 @@ export default function App({ boardId }: AppProps) {
       setLoading(false)
       return
     }
-    loadWorkspaceBoard()
+    void loadWorkspaceBoard()
   }, [hasHydrated, needsAuth, loadWorkspaceBoard])
 
   if (!hasHydrated) {

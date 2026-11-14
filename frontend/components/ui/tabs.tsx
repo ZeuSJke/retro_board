@@ -13,7 +13,7 @@ interface TabsMotionContextValue {
 const TabsMotionContext = React.createContext<TabsMotionContextValue | null>(null)
 
 export const Tabs = React.forwardRef<
-  React.ElementRef<typeof RadixTabs.Root>,
+  React.ComponentRef<typeof RadixTabs.Root>,
   React.ComponentPropsWithoutRef<typeof RadixTabs.Root>
 >(function Tabs({ value, defaultValue, onValueChange, ...props }, ref) {
   const [uncontrolled, setUncontrolled] = React.useState(defaultValue)
@@ -39,7 +39,7 @@ export const Tabs = React.forwardRef<
 })
 
 export const TabsList = React.forwardRef<
-  React.ElementRef<typeof RadixTabs.List>,
+  React.ComponentRef<typeof RadixTabs.List>,
   React.ComponentPropsWithoutRef<typeof RadixTabs.List>
 >(function TabsList({ className, ...props }, ref) {
   return (
@@ -55,7 +55,7 @@ export const TabsList = React.forwardRef<
 })
 
 export const TabsTrigger = React.forwardRef<
-  React.ElementRef<typeof RadixTabs.Trigger>,
+  React.ComponentRef<typeof RadixTabs.Trigger>,
   React.ComponentPropsWithoutRef<typeof RadixTabs.Trigger>
 >(function TabsTrigger({ className, children, value, ...props }, ref) {
   const ctx = React.useContext(TabsMotionContext)
@@ -67,8 +67,8 @@ export const TabsTrigger = React.forwardRef<
       ref={ref}
       value={value}
       className={cn(
-        'relative inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=active]:text-foreground',
-        !hasMotionTracking && 'data-[state=active]:bg-background data-[state=active]:shadow-sm',
+        'relative inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1 text-sm font-medium transition-colors outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=active]:text-foreground',
+        !hasMotionTracking && 'data-[state=active]:bg-background data-[state=active]:shadow-xs',
         className,
       )}
       {...props}
@@ -77,7 +77,7 @@ export const TabsTrigger = React.forwardRef<
         <motion.span
           layoutId={`tabs-pill-${ctx.layoutId}`}
           transition={{ type: 'spring', stiffness: 450, damping: 34 }}
-          className="pointer-events-none absolute inset-0 -z-10 rounded-lg bg-background shadow-sm"
+          className="pointer-events-none absolute inset-0 -z-10 rounded-lg bg-background shadow-xs"
           aria-hidden="true"
         />
       )}
@@ -87,14 +87,14 @@ export const TabsTrigger = React.forwardRef<
 })
 
 export const TabsContent = React.forwardRef<
-  React.ElementRef<typeof RadixTabs.Content>,
+  React.ComponentRef<typeof RadixTabs.Content>,
   React.ComponentPropsWithoutRef<typeof RadixTabs.Content>
 >(function TabsContent({ className, ...props }, ref) {
   return (
     <RadixTabs.Content
       ref={ref}
       className={cn(
-        'mt-3 outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=inactive]:hidden',
+        'mt-3 outline-hidden focus-visible:ring-2 focus-visible:ring-ring data-[state=inactive]:hidden',
         className,
       )}
       {...props}

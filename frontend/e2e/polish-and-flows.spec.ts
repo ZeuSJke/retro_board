@@ -259,18 +259,14 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     })
 
     const colId = board.columns[0].id
-    const cardA = await (
-      await request.post(`${API}/cards/`, {
-        headers,
-        data: { column_id: colId, text: 'Карточка для голоса А', author: 'Иван', color: '#E8F5E9' },
-      })
-    ).json()
-    const cardB = await (
-      await request.post(`${API}/cards/`, {
-        headers,
-        data: { column_id: colId, text: 'Карточка для голоса Б', author: 'Мария', color: '#E3F2FD' },
-      })
-    ).json()
+    await request.post(`${API}/cards/`, {
+      headers,
+      data: { column_id: colId, text: 'Карточка для голоса А', author: 'Иван', color: '#E8F5E9' },
+    })
+    await request.post(`${API}/cards/`, {
+      headers,
+      data: { column_id: colId, text: 'Карточка для голоса Б', author: 'Мария', color: '#E3F2FD' },
+    })
 
     // Navigate first to dashboard, then return to the board
     await page.goto('/dashboard')

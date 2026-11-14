@@ -82,7 +82,7 @@ export function useWebSocket(
 
       ws.onmessage = (e) => {
         try {
-          const msg = JSON.parse(e.data) as WsMessage
+          const msg = JSON.parse(e.data as string) as WsMessage
           onMessageRef.current(msg)
         } catch { /* ignore malformed messages */ }
       }

@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { type AxiosError } from 'axios'
 import { getCsrfToken, handleCommonHttpError } from './index'
 
 const adminApi = axios.create({
@@ -17,7 +17,7 @@ adminApi.interceptors.request.use((config) => {
 
 adminApi.interceptors.response.use(
   (r) => r,
-  (error) => {
+  (error: AxiosError<{ detail?: string }>) => {
     const status = error.response?.status
     const detail = error.response?.data?.detail || ''
 
@@ -53,13 +53,13 @@ export const adminLogout = () =>
   adminApi.post('/logout')
 
 export const getAdminWorkspaces = (): Promise<WorkspaceListItem[]> =>
-  adminApi.get('/workspaces').then((r) => r.data)
+  adminApi.get<WorkspaceListItem[]>('/workspaces').then((r) => r.data)
 
 export const createAdminWorkspace = (data: { slug: string; name: string; access_key: string }): Promise<AdminWorkspaceResponse> =>
-  adminApi.post('/workspaces', data).then((r) => r.data)
+  adminApi.post<AdminWorkspaceResponse>('/workspaces', data).then((r) => r.data)
 
 export const updateAdminWorkspace = (id: string, data: { name?: string; access_key?: string }): Promise<AdminWorkspaceResponse> =>
-  adminApi.patch(`/workspaces/${id}`, data).then((r) => r.data)
+  adminApi.patch<AdminWorkspaceResponse>(`/workspaces/${id}`, data).then((r) => r.data)
 
 export const deleteAdminWorkspace = (id: string) =>
   adminApi.delete(`/workspaces/${id}`)

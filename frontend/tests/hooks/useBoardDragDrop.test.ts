@@ -85,17 +85,19 @@ describe('useBoardDragDrop', () => {
     vi.clearAllMocks()
     mockMoveCard.mockResolvedValue({})
     mockCreateGroup.mockResolvedValue({ id: 'g-new', column_id: 'col-1', title: 'Группа', position: 1 })
-    mockAddCardToGroup.mockImplementation(async (groupId: string, cardId: string) => ({
-      id: cardId,
-      column_id: 'col-1',
-      group_id: groupId,
-      text: `Card ${cardId}`,
-      author: 'Alice',
-      color: '#FFFFFF',
-      position: 0,
-      likes: [],
-      created_at: '2024-01-01T00:00:00Z',
-    }))
+    mockAddCardToGroup.mockImplementation((groupId: string, cardId: string) =>
+      Promise.resolve({
+        id: cardId,
+        column_id: 'col-1',
+        group_id: groupId,
+        text: `Card ${cardId}`,
+        author: 'Alice',
+        color: '#FFFFFF',
+        position: 0,
+        likes: [],
+        created_at: '2024-01-01T00:00:00Z',
+      }),
+    )
     mockRemoveCardFromGroup.mockResolvedValue({})
     mockMoveGroup.mockResolvedValue({})
   })

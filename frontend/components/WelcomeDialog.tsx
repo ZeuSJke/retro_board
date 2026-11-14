@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 
 interface WelcomeDialogProps {
   onConfirm: (name: string) => void
@@ -103,7 +102,7 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
           </div>
 
           <div
-            className={`flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br text-xl font-bold text-white shadow-lg transition-all ${
+            className={`flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br/srgb text-xl font-bold text-white shadow-lg transition-all ${
               trimmedName ? getUserAvatarGradient(trimmedName) : 'from-zinc-400 to-zinc-500'
             }`}
           >

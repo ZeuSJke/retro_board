@@ -140,7 +140,7 @@ export default function MoodDialog({
                     <div key={m.id} className="flex items-start justify-between gap-2 text-xs">
                       <div className="flex items-center gap-2 min-w-0">
                         <span
-                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-[10px] font-semibold text-white ${getUserAvatarGradient(
+                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-linear-to-br/srgb text-[10px] font-semibold text-white ${getUserAvatarGradient(
                             m.author,
                           )}`}
                         >

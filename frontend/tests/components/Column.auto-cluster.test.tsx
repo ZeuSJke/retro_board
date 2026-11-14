@@ -66,8 +66,6 @@ vi.mock('../../api', () => ({
 
 // Mock theme
 vi.mock('../../utils/theme', () => ({
-  CARD_COLORS: ['#FFFFFF'],
-  isLight: () => true,
   userColor: () => '#6750A4',
   initials: (name: string) => name.slice(0, 2),
 }))

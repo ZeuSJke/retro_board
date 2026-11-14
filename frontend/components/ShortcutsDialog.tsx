@@ -49,7 +49,7 @@ export default function ShortcutsDialog({ open, onOpenChange }: ShortcutsDialogP
                     {idx > 0 && item.keys.length === 2 && k === '/' ? (
                       <span className="text-xs text-muted-foreground">или</span>
                     ) : null}
-                    <kbd className="rounded-md border bg-muted px-2 py-0.5 font-mono text-xs font-medium text-foreground shadow-xs">
+                    <kbd className="rounded-md border bg-muted px-2 py-0.5 font-mono text-xs font-medium text-foreground">
                       {k}
                     </kbd>
                   </span>

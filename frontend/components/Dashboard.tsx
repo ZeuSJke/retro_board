@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { motion } from 'motion/react'
@@ -73,9 +74,7 @@ import type {
 } from '../types'
 import CarryForwardDialog from './CarryForwardDialog'
 import CreateBoardDialog from './CreateBoardDialog'
-import MoodTrendChart from './MoodTrendChart'
 import SummaryModal from './SummaryModal'
-import TrendChart from './TrendChart'
 import WelcomeDialog from './WelcomeDialog'
 import WorkspaceInsightsCard from './WorkspaceInsightsCard'
 import {
@@ -103,6 +102,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { RichCardText } from './RichCardText'
+
+// Графики тянут recharts — самую тяжёлую зависимость дашборда. Грузим их отдельным чанком
+// и только когда есть что рисовать; заглушка держит высоту, чтобы карточка не прыгала.
+function ChartPlaceholder() {
+  return <div className="h-[260px] w-full" aria-hidden="true" />
+}
+const TrendChart = dynamic(() => import('./TrendChart'), { ssr: false, loading: ChartPlaceholder })
+const MoodTrendChart = dynamic(() => import('./MoodTrendChart'), {
+  ssr: false,
+  loading: ChartPlaceholder,
+})
 
 const KANBAN_VISIBLE_LIMIT = 6
 
@@ -167,7 +177,7 @@ function KanbanColumnDropzone({
       data-testid={`kanban-column-${status}`}
       className={cn(
         'flex flex-col rounded-2xl border bg-muted/30 p-3 transition-colors',
-        isOver && 'border-primary/70 bg-primary/[0.05] ring-2 ring-primary/15',
+        isOver && 'border-primary/70 bg-primary/5 ring-2 ring-primary/15',
       )}
     >
       <div className="mb-3 flex items-center justify-between gap-2 px-1">
@@ -323,7 +333,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!hasHydrated) return
-    loadData()
+    void loadData()
   }, [hasHydrated, loadData])
 
   const handleWorkspaceWs = useCallback((msg: WsMessage) => {
@@ -555,7 +565,7 @@ export default function Dashboard() {
         {...(drag && !isEditing ? drag.attributes : {})}
         {...(drag && !isEditing ? drag.listeners : {})}
         className={cn(
-          'group rounded-xl border bg-card p-3.5 shadow-sm transition-all hover:shadow-md',
+          'group rounded-xl border bg-card p-3.5 shadow-xs transition-all hover:shadow-md',
           isDone && 'opacity-75',
           drag?.isDragging && 'opacity-35 ring-1 ring-primary/40',
           isOverlay && 'rotate-1 scale-[1.02] shadow-2xl opacity-95 border-primary/40',
@@ -590,7 +600,7 @@ export default function Dashboard() {
                 onChange={(e) => setEditTitle(e.target.value)}
                 onBlur={() => saveTitle(item.id)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveTitle(item.id)
+                  if (e.key === 'Enter') void saveTitle(item.id)
                   if (e.key === 'Escape') setEditingTitleId(null)
                 }}
                 autoFocus
@@ -616,7 +626,7 @@ export default function Dashboard() {
                 onChange={(e) => setEditDesc(e.target.value)}
                 onBlur={() => saveDesc(item.id)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && e.ctrlKey) saveDesc(item.id)
+                  if (e.key === 'Enter' && e.ctrlKey) void saveDesc(item.id)
                   if (e.key === 'Escape') setEditingDescId(null)
                 }}
                 autoFocus
@@ -629,7 +639,7 @@ export default function Dashboard() {
                   setEditDesc(item.text)
                 }}
                 title="Двойной клик — редактировать описание"
-                className="cursor-text whitespace-pre-wrap break-words text-xs text-muted-foreground"
+                className="cursor-text whitespace-pre-wrap wrap-break-word text-xs text-muted-foreground"
               >
                 <RichCardText text={item.text} />
               </p>
@@ -657,7 +667,7 @@ export default function Dashboard() {
                 onChange={(e) => setEditAssignee(e.target.value)}
                 onBlur={() => saveAssignee(item.id)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveAssignee(item.id)
+                  if (e.key === 'Enter') void saveAssignee(item.id)
                   if (e.key === 'Escape') setEditAssigneeId(null)
                 }}
                 placeholder="Ответственный"
@@ -677,7 +687,7 @@ export default function Dashboard() {
                 {item.assignee ? (
                   <>
                     <span
-                      className={`flex h-4 w-4 items-center justify-center rounded-full bg-gradient-to-br text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
+                      className={`flex h-4 w-4 items-center justify-center rounded-full bg-linear-to-br/srgb text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
                     >
                       {getUserInitials(item.assignee)}
                     </span>
@@ -750,7 +760,7 @@ export default function Dashboard() {
       <WelcomeDialog
         onConfirm={(name) => {
           setUsername(name)
-          loadData()
+          void loadData()
         }}
       />
     )
@@ -1037,7 +1047,7 @@ export default function Dashboard() {
                         <motion.span
                           layoutId="dashboard-view-pill"
                           transition={{ type: 'spring', stiffness: 450, damping: 34 }}
-                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-sm"
+                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-xs"
                           aria-hidden="true"
                         />
                       )}
@@ -1058,7 +1068,7 @@ export default function Dashboard() {
                         <motion.span
                           layoutId="dashboard-view-pill"
                           transition={{ type: 'spring', stiffness: 450, damping: 34 }}
-                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-sm"
+                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-xs"
                           aria-hidden="true"
                         />
                       )}

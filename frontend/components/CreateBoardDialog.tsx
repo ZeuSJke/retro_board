@@ -373,7 +373,7 @@ export default function CreateBoardDialog({
                           ),
                         )
                       }
-                      className="h-7 w-7 shrink-0 rounded-lg border shadow-sm transition-transform hover:scale-105"
+                      className="h-7 w-7 shrink-0 rounded-lg border shadow-xs transition-transform hover:scale-105"
                       style={{ backgroundColor: col.color }}
                     />
                     <Input

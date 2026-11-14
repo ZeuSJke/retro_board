@@ -147,7 +147,7 @@ export default function CardGroupWidget({
         ref={setNodeRef}
         style={style}
         className={cn(
-          'rounded-xl border border-primary/25 bg-primary/[0.04] p-2 transition-all dark:bg-primary/[0.07]',
+          'rounded-xl border border-primary/25 bg-primary/4 p-2 transition-all dark:bg-primary/[0.07]',
           isDragging && 'opacity-45',
         )}
       >
@@ -192,7 +192,7 @@ export default function CardGroupWidget({
                 className="h-6 px-2 text-xs font-semibold"
                 onBlur={saveTitle}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveTitle()
+                  if (e.key === 'Enter') void saveTitle()
                   if (e.key === 'Escape') {
                     setTitleDraft(group.title)
                     setEditingTitle(false)

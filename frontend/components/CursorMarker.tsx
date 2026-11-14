@@ -78,7 +78,7 @@ export default memo(function CursorMarker({ username, posRef }: CursorMarkerProp
           height="24"
           viewBox="0 0 20 24"
           fill="none"
-          className="block origin-top-left drop-shadow-sm"
+          className="block origin-top-left drop-shadow-xs"
         >
           <path
             d="M2 2L2 18L6.5 13L11 22L13.5 20.8L9 12L15 12L2 2Z"

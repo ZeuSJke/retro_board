@@ -28,11 +28,8 @@ vi.mock('../../store', () => ({
 
 // Mock theme utils
 vi.mock('../../utils/theme', () => ({
-  isLight: () => true,
   userColor: () => '#6750A4',
   initials: (name: string) => name.slice(0, 2),
-  applyTheme: vi.fn(),
-  CARD_COLORS: ['#FFFFFF'],
 }))
 
 // Mock API

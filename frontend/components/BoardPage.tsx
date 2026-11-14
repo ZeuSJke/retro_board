@@ -33,10 +33,8 @@ import { useFacilitator } from '../hooks/useFacilitator'
 import { useTimer } from '../hooks/useTimer'
 import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown'
 import { getCardColorPreset } from '@/lib/board-themes'
-import { exportBoardToPDF } from '../utils/exportPDF'
 import { getApiErrorMessage } from '../utils/apiError'
 import type {
-  ActionItem,
   AutoClusterPreviewResult,
   Board,
   BoardListItem,
@@ -55,10 +53,8 @@ import BoardsPanel from './BoardsPanel'
 import BulkActionsBar from './BulkActionsBar'
 import Column from './Column'
 import { RichCardText } from './RichCardText'
-import CommandPalette, {
-  type CommandBoardAction,
-  type CommandSearchCard,
-} from './CommandPalette'
+import type { CommandBoardAction, CommandSearchCard } from './CommandPalette'
+import CommandPalette from './CommandPaletteLazy'
 import CursorMarker from './CursorMarker'
 import MasterColumn from './MasterColumn'
 import MoodDialog from './MoodDialog'
@@ -104,7 +100,7 @@ function triggerConfetti() {
   if (typeof window === 'undefined') return
   import('canvas-confetti')
     .then((mod) => {
-      mod.default?.({
+      void mod.default?.({
         particleCount: 70,
         spread: 65,
         origin: { y: 0.65 },
@@ -271,7 +267,7 @@ export default function BoardPage({
 
   const handleSummaryGenerated = useCallback(() => {
     setSummaryOpen(true)
-    loadSummary()
+    void loadSummary()
     triggerConfetti()
   }, [loadSummary])
 
@@ -539,7 +535,7 @@ export default function BoardPage({
             activeCard.author,
           )
         }
-        onDragEnd({ ...event, over: null } as DragEndEvent)
+        void onDragEnd({ ...event, over: null })
         return
       }
 
@@ -555,11 +551,11 @@ export default function BoardPage({
             groupCards[0]?.author ?? null,
           )
         }
-        onDragEnd({ ...event, over: null } as DragEndEvent)
+        void onDragEnd({ ...event, over: null })
         return
       }
 
-      onDragEnd(event)
+      void onDragEnd(event)
     },
     [activeCard, activeGroup, columns, createActionItemFromCards, onDragEnd, readOnly],
   )
@@ -1129,7 +1125,7 @@ export default function BoardPage({
         id: 'reset-votes',
         label: 'Сбросить все мои голоса',
         keywords: 'reset votes лайки',
-        onSelect: handleResetMyVotes,
+        onSelect: () => void handleResetMyVotes(),
       })
     }
     list.push(
@@ -1145,7 +1141,7 @@ export default function BoardPage({
         keywords: 'summary итоги отчет',
         onSelect: () => {
           setSummaryOpen(true)
-          loadSummary()
+          void loadSummary()
         },
       },
       {
@@ -1280,7 +1276,10 @@ export default function BoardPage({
   }
 
   const handleExportPDF = () => {
-    exportBoardToPDF(board, columns, actionItems, summary)
+    // Генератор отчёта (~700 строк шаблона) грузится отдельным чанком по первому клику.
+    import('../utils/exportPDF')
+      .then(({ exportBoardToPDF }) => exportBoardToPDF(board, columns, actionItems, summary))
+      .catch(() => showToast('Не удалось подготовить отчёт для печати', 'error'))
   }
 
   const remoteCursors = Object.keys(cursorsRef.current).filter(
@@ -1306,7 +1305,7 @@ export default function BoardPage({
         onOpenMood={() => setMoodOpen(true)}
         onOpenSummary={() => {
           setSummaryOpen(true)
-          loadSummary()
+          void loadSummary()
         }}
         onExportMarkdown={handleExportMarkdown}
         onExportPDF={handleExportPDF}
@@ -1388,7 +1387,7 @@ export default function BoardPage({
                 type="button"
                 onClick={() => scrollCanvasBy(-340)}
                 aria-label="Прокрутить колонки влево"
-                className="no-print absolute left-2 top-1/2 z-20 hidden -translate-y-1/2 sm:flex h-9 w-9 items-center justify-center rounded-full border bg-background/90 text-foreground shadow-md backdrop-blur-sm transition-all hover:scale-105 hover:bg-background"
+                className="no-print absolute left-2 top-1/2 z-20 hidden -translate-y-1/2 sm:flex h-9 w-9 items-center justify-center rounded-full border bg-background/90 text-foreground shadow-md backdrop-blur-xs transition-all hover:scale-105 hover:bg-background"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
@@ -1400,7 +1399,7 @@ export default function BoardPage({
                 type="button"
                 onClick={() => scrollCanvasBy(340)}
                 aria-label="Прокрутить колонки вправо"
-                className="no-print absolute right-2 top-1/2 z-20 hidden -translate-y-1/2 sm:flex h-9 w-9 items-center justify-center rounded-full border bg-background/90 text-foreground shadow-md backdrop-blur-sm transition-all hover:scale-105 hover:bg-background"
+                className="no-print absolute right-2 top-1/2 z-20 hidden -translate-y-1/2 sm:flex h-9 w-9 items-center justify-center rounded-full border bg-background/90 text-foreground shadow-md backdrop-blur-xs transition-all hover:scale-105 hover:bg-background"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
@@ -1485,7 +1484,7 @@ export default function BoardPage({
                 : '0px',
             }}
             className={cn(
-              'relative hidden shrink-0 overflow-hidden bg-background/90 backdrop-blur-sm lg:flex',
+              'relative hidden shrink-0 overflow-hidden bg-background/90 backdrop-blur-xs lg:flex',
               !resizingMaster && 'transition-[width,opacity,border-width] duration-200 ease-out',
               masterOpen ? 'border-l opacity-100' : 'pointer-events-none invisible border-l-0 opacity-0',
             )}
@@ -1593,7 +1592,7 @@ export default function BoardPage({
             >
               <span className="text-4xl drop-shadow-md">{r.emoji}</span>
               {r.username && (
-                <span className="rounded-full border border-border/60 bg-background/90 px-2 py-0.5 text-[10px] font-medium shadow-sm backdrop-blur-sm">
+                <span className="rounded-full border border-border/60 bg-background/90 px-2 py-0.5 text-[10px] font-medium shadow-xs backdrop-blur-xs">
                   {r.username}
                 </span>
               )}

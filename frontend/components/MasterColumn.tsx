@@ -410,7 +410,7 @@ export default function MasterColumn({
                   prevItems.map((prevItem) => (
                     <div
                       key={prevItem.id}
-                      className="rounded-lg border bg-card p-2 text-xs shadow-2xs"
+                      className="rounded-lg border bg-card p-2 text-xs"
                     >
                       <div className="mb-1 flex items-center justify-between gap-1.5 text-[10px] text-muted-foreground">
                         <span className="truncate font-medium">{prevItem.board_name}</span>
@@ -542,7 +542,7 @@ export default function MasterColumn({
                   exit={{ opacity: 0, scale: 0.94, height: 0, marginTop: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
                   transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                   className={cn(
-                    'group/ai overflow-hidden rounded-xl border bg-card p-3 shadow-sm transition-colors hover:border-border',
+                    'group/ai overflow-hidden rounded-xl border bg-card p-3 shadow-xs transition-colors hover:border-border',
                     isDone && 'opacity-70',
                   )}
                 >
@@ -577,7 +577,7 @@ export default function MasterColumn({
                         className="h-7 px-2 text-xs font-semibold"
                         onBlur={() => saveTitle(item.id)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveTitle(item.id)
+                          if (e.key === 'Enter') void saveTitle(item.id)
                           if (e.key === 'Escape') setEditingTitleId(null)
                         }}
                       />
@@ -614,7 +614,7 @@ export default function MasterColumn({
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault()
-                            saveDesc(item.id)
+                            void saveDesc(item.id)
                           } else if (e.key === 'Escape') {
                             setEditingDescId(null)
                           }
@@ -629,7 +629,7 @@ export default function MasterColumn({
                           }
                         }}
                         className={cn(
-                          'whitespace-pre-wrap break-words text-xs text-muted-foreground',
+                          'whitespace-pre-wrap wrap-break-word text-xs text-muted-foreground',
                           !readOnly && 'cursor-text hover:text-foreground',
                         )}
                       >
@@ -658,7 +658,7 @@ export default function MasterColumn({
                             {item.assignee ? (
                               <>
                                 <span
-                                  className={`flex h-4 w-4 items-center justify-center rounded-full bg-gradient-to-br text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
+                                  className={`flex h-4 w-4 items-center justify-center rounded-full bg-linear-to-br/srgb text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
                                 >
                                   {getUserInitials(item.assignee)}
                                 </span>
@@ -682,7 +682,7 @@ export default function MasterColumn({
                               className="h-8 text-xs"
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
-                                  saveAssignee(item.id, assigneeDraft.trim() || null)
+                                  void saveAssignee(item.id, assigneeDraft.trim() || null)
                                 }
                               }}
                             />

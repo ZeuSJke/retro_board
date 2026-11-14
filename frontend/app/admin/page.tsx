@@ -99,7 +99,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
+    void (async () => {
       try {
         const data = await getAdminWorkspaces()
         if (!cancelled) {
@@ -414,7 +414,7 @@ export default function AdminPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
+          <div className="overflow-hidden rounded-2xl border bg-card shadow-xs">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="border-b bg-muted/40 text-xs uppercase text-muted-foreground">

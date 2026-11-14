@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { getWorkspaceBySlug, updateWorkspaceName, deleteWorkspace, getAdminCookie } from './helpers'
+import { getWorkspaceBySlug, updateWorkspaceName, deleteWorkspace } from './helpers'
 
 const ADMIN_URL = '/admin'
 const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'admin'
@@ -43,7 +43,7 @@ test.describe('Admin — управление пространствами', () 
     await expect(page.getByRole('button', { name: /Создать workspace/i })).toBeVisible()
   })
 
-  test('создание нового пространства', async ({ page, request }) => {
+  test('создание нового пространства', async ({ page }) => {
     await page.goto(ADMIN_URL)
     await page.getByPlaceholder(/логин/i).fill(ADMIN_LOGIN)
     await page.getByPlaceholder(/пароль/i).fill(ADMIN_PASSWORD)
