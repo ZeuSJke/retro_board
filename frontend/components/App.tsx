@@ -5,11 +5,11 @@ import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { useAppStore } from '../store'
 import {
-  checkWorkspaceSession,
   createBoard,
   getBoard,
   getBoardBySlug,
   getBoards,
+  refreshWorkspaceSession,
 } from '../api'
 import { boardToBoardListItem } from '../utils/boardMapper'
 import { getApiErrorMessage } from '../utils/apiError'
@@ -26,26 +26,35 @@ interface AppProps {
 
 export default function App({ boardId }: AppProps) {
   const router = useRouter()
-  const username = useAppStore((s) => s.username)
-  const setUsername = useAppStore((s) => s.setUsername)
   const setCurrentBoard = useAppStore((s) => s.setCurrentBoard)
-  const workspace = useAppStore((s) => s.workspace)
+  const workspaceName = useAppStore((s) => s.workspace?.workspaceName)
+  const hasWorkspace = useAppStore((s) => Boolean(s.workspace))
+  const participantId = useAppStore((s) => s.participant?.id ?? null)
   const hasHydrated = useAppStore((s) => s._hasHydrated ?? true)
 
   const [boards, setBoards] = useState<BoardListItem[]>([])
-  const [board, setBoard] = useState<Board | null>(null)
+  // Доска хранится вместе с участником, для которого её отдал сервер: карточки и голоса
+  // собираются под получателя, показывать их другому участнику (повторный вход) нельзя
+  const [loaded, setLoaded] = useState<{ board: Board; participantId: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
-  const needsAuth = !workspace || !username || username === 'Аноним'
+  // Сессия — это команда и участник; имя для входа необязательно
+  const needsAuth = !hasWorkspace || !participantId
+  const board = loaded && loaded.participantId === participantId ? loaded.board : null
+  const setBoard = useCallback((next: Board | null) => {
+    const owner = useAppStore.getState().participant?.id
+    setLoaded(next && owner ? { board: next, participantId: owner } : null)
+  }, [])
 
   const loadWorkspaceBoard = useCallback(async () => {
-    if (!hasHydrated || !workspace) return
+    if (!hasHydrated || !participantId) return
     setLoading(true)
     setError(null)
     try {
-      await checkWorkspaceSession()
+      // Источник правды о сессии — сервер: участник, команда и признак ai_enabled
+      await refreshWorkspaceSession()
       let list = await getBoards()
       if (list.length === 0) {
         const created = await createBoard('Моя первая ретро-доска')
@@ -81,7 +90,8 @@ export default function App({ boardId }: AppProps) {
       }
     } catch (err) {
       const status = (err as { response?: { status?: number } })?.response?.status
-      if (status === 401 || !useAppStore.getState().workspace) {
+      // 401: перехватчик уже сбросил сессию — показываем вход без экрана ошибки
+      if (status === 401 || !useAppStore.getState().participant) {
         setBoard(null)
         return
       }
@@ -89,7 +99,7 @@ export default function App({ boardId }: AppProps) {
     } finally {
       setLoading(false)
     }
-  }, [hasHydrated, workspace, boardId, router, setCurrentBoard])
+  }, [hasHydrated, participantId, boardId, router, setCurrentBoard, setBoard])
 
   useEffect(() => {
     if (!hasHydrated) return
@@ -109,13 +119,8 @@ export default function App({ boardId }: AppProps) {
   }
 
   if (needsAuth) {
-    return (
-      <WelcomeDialog
-        onConfirm={(name) => {
-          setUsername(name)
-        }}
-      />
-    )
+    // Вход сам записывает сессию в стор — после этого эффект выше загрузит доску
+    return <WelcomeDialog onConfirm={() => {}} />
   }
 
   if (loading && !board) {
@@ -147,10 +152,10 @@ export default function App({ boardId }: AppProps) {
   return (
     <>
       <BoardPage
-        key={board.id}
+        key={`${board.id}:${participantId}`}
         board={board}
         boards={boards}
-        workspaceName={workspace?.workspaceName || 'Команда'}
+        workspaceName={workspaceName || 'Команда'}
         onBoardUpdated={(updated) => {
           setBoard(updated)
           setBoards((prev) =>

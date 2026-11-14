@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, getCsrfHeaders, ensureE2EWorkspace, loginWorkspace } from './helpers'
+import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, getCsrfHeaders, ensureE2EWorkspace, loginWorkspace, API } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
   const wsData = await ensureE2EWorkspace(request)
@@ -31,19 +31,19 @@ test.describe('Drag and Drop', () => {
     const headers = { ...csrf, 'X-Workspace-Token': wsData.token }
 
     // Create two columns
-    const col1Res = await request.post('http://localhost:8000/api/columns/', {
+    const col1Res = await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Колонка А' },
       headers,
     })
     const col1 = await col1Res.json()
 
-    await request.post('http://localhost:8000/api/columns/', {
+    await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Колонка Б' },
       headers,
     })
 
     // Create a card in column A (owned by current test user so it stays visible during brainstorm)
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: col1.id, text: 'Перетащи меня', author: 'E2E Тестер' },
       headers,
     })
@@ -66,7 +66,7 @@ test.describe('Drag and Drop', () => {
     await page.waitForTimeout(1000)
 
     // Verify the card moved to column B via API
-    const boardRes = await request.get(`http://localhost:8000/api/boards/${board.id}`, {
+    const boardRes = await request.get(`${API}/boards/${board.id}`, {
       headers: { 'X-Workspace-Token': wsData.token },
     })
     const boardData = await boardRes.json()
