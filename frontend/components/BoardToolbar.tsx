@@ -32,7 +32,7 @@ interface BoardToolbarProps {
   hasGroups?: boolean
   allGroupsCollapsed?: boolean
   onToggleCollapseAllGroups?: () => void
-  searchInputRef?: React.RefObject<HTMLInputElement>
+  searchInputRef?: React.RefObject<HTMLInputElement | null>
   readOnly?: boolean
   masterOpen: boolean
   onToggleMaster: () => void
