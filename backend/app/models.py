@@ -345,3 +345,35 @@ class BoardTheme(Base):
     )
     # Порядок темы в итогах доски (как в BoardSummary.key_themes)
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+# ── Health check команды ─────────────────────────────────────────────────────
+
+
+class BoardHealthAnswer(Base):
+    """Ответ участника на вопрос health check или оценку встречи на доске.
+
+    Одна строка — один ответ участника на один вопрос. Команде показывается
+    только сводка; кто как ответил, наружу не отдаётся.
+    """
+
+    __tablename__ = "board_health_answers"
+    __table_args__ = (
+        UniqueConstraint(
+            "board_id", "participant_id", "question", name="uq_health_board_participant_question"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    board_id: Mapped[str] = mapped_column(
+        String, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    participant_id: Mapped[str] = mapped_column(
+        String, ForeignKey("participants.id", ondelete="CASCADE"), nullable=False
+    )
+    # Ключ вопроса из app/health.py (или "roti" — оценка встречи)
+    question: Mapped[str] = mapped_column(String(40), nullable=False)
+    value: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=now_utc
+    )

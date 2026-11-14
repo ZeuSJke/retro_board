@@ -274,6 +274,12 @@ retro_board/
 | `DELETE` | `/api/boards/{board_id}` | Удалить доску (soft delete через `deleted_at`); доступно создателю доски или ведущему |
 | `POST` | `/api/boards/{board_id}/reveal` | Раскрыть карточки скрытого сбора вне сессии ведущего (создатель доски) |
 | `POST` | `/api/boards/{board_id}/mood` | Сохранить / обновить оценку настроения участника сессии |
+| `GET` | `/api/boards/health/questions` | Вопросы health check (фиксированный набор: темп, качество, процесс, атмосфера, ясность целей) |
+| `GET` | `/api/boards/{board_id}/health` | Сводка health check по доске и собственные ответы участника |
+| `POST` | `/api/boards/{board_id}/health` | Ответить на вопросы: `answers` — ключ вопроса → `1` (красный), `2` (жёлтый), `3` (зелёный) |
+| `POST` | `/api/boards/{board_id}/roti` | Оценить встречу одним числом от `1` до `5` |
+| `GET` | `/api/boards/health-trends` | Средние по вопросам и оценка встречи по доскам команды |
+| `GET` | `/api/boards/themes` | Темы команды с числом досок и длиной текущей серии повторов |
 | `GET` | `/api/boards/{board_id}/summary` | Получить последнее AI-резюме доски |
 | `POST` | `/api/boards/{board_id}/summary/regenerate` | Перегенерировать AI-резюме доски |
 | `POST` | `/api/boards/{board_id}/reset-votes` | Сбросить собственные голоса участника на доске |
@@ -345,6 +351,7 @@ retro_board/
 | `facilitator_start` / `facilitator_stop` | Старт / завершение сессии фасилитации (опционально блокировка доски при стопе) |
 | `facilitator_transfer` | Ведущий передаёт роль участнику на доске (`participant_id`); фаза и таймер сохраняются |
 | `facilitator_takeover` | Участник забирает роль, если ведущий не в сети дольше 15 секунд |
+| `health_check_start` | Запустить health check у всех участников (в сессии — только ведущий) |
 | `phase_change` | Смена фазы (`brainstorm`, `reveal`, `discuss`, `vote`, `summary`) |
 | `timer_start` / `timer_pause` / `timer_reset` | Управление таймером (в активной сессии — только фасилитатор) |
 | `group_collapse` | Свернуть / развернуть группу |
@@ -360,6 +367,8 @@ retro_board/
 | `presence_update` | Участники на доске: `users` (имена) и `participants` (`id` + `name`; тёзки — разные участники) |
 | `facilitator_update` | Текущий ведущий (`facilitator`, `facilitator_id`, `facilitator_online`), фаза и `session_id` |
 | `participant_renamed` | Участник сменил имя (`participant_id`, `name`) |
+| `health_check_requested` / `health_updated` | Запрос пройти health check и обновлённая сводка по доске (без личных ответов) |
+| `roti_requested` | Сессия завершена — запрос оценить встречу |
 | `cards_visibility_changed` | Изменилась видимость чужих карточек (начало / конец «Штурма», раскрытие скрытого сбора) — клиент перечитывает доску |
 | `phase_update` | Смена фазы ретро |
 | `cursor_move` / `cursor_leave` | Позиции курсоров других участников |

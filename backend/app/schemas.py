@@ -735,3 +735,70 @@ class WorkspaceThemeOut(BaseModel):
     streak: int
     # Последняя доска, в итогах которой тема названа
     last_board: ThemeBoardRef
+
+
+# ── Health check команды ─────────────────────────────────────────────────────
+
+
+class HealthQuestion(BaseModel):
+    key: str
+    title: str
+    hint: str
+
+
+class HealthAnswersIn(BaseModel):
+    """Ответы участника: ключ вопроса → 1 (красный), 2 (жёлтый) или 3 (зелёный).
+
+    Можно прислать часть вопросов; повторный ответ заменяет прежний.
+    """
+
+    answers: dict[str, int] = Field(..., min_length=1, max_length=10)
+
+    @field_validator("answers")
+    @classmethod
+    def validate_answers(cls, v: dict[str, int]) -> dict[str, int]:
+        from app.health import GREEN, QUESTION_KEYS, RED
+
+        for key, value in v.items():
+            if key not in QUESTION_KEYS:
+                raise ValueError(f"Неизвестный вопрос: {key[:40]}")
+            if isinstance(value, bool) or not (RED <= value <= GREEN):
+                raise ValueError("Ответ — 1 (красный), 2 (жёлтый) или 3 (зелёный)")
+        return v
+
+
+class RotiIn(BaseModel):
+    """Оценка встречи: от 1 (зря потраченное время) до 5 (очень полезно)."""
+
+    value: int = Field(..., ge=1, le=5)
+
+
+class HealthQuestionSummary(HealthQuestion):
+    red: int = 0
+    yellow: int = 0
+    green: int = 0
+    answers: int = 0
+    average: Optional[float] = None
+
+
+class HealthRotiSummary(BaseModel):
+    average: Optional[float] = None
+    answers: int = 0
+
+
+class HealthSummaryOut(BaseModel):
+    board_id: str
+    # Сколько участников ответили хотя бы на один вопрос
+    participants: int = 0
+    questions: list[HealthQuestionSummary] = []
+    roti: HealthRotiSummary = HealthRotiSummary()
+    # Ответы текущего участника: ключ вопроса (или "roti") → значение
+    mine: dict[str, int] = {}
+
+
+class HealthTrendPoint(BaseModel):
+    board_id: str
+    board_name: str
+    created_at: datetime
+    averages: dict[str, float] = {}
+    roti_average: Optional[float] = None

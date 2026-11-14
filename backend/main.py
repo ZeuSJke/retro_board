@@ -13,6 +13,7 @@ from app.routers import (
     cards,
     columns,
     groups,
+    health,
     websocket,
     workspaces,
     admin,
@@ -150,6 +151,8 @@ app.add_middleware(
 
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+# Раньше досок: статические пути health check не должен перехватить /{board_id}
+app.include_router(health.router, prefix="/api/boards", tags=["health"])
 app.include_router(boards.router, prefix="/api/boards", tags=["boards"])
 app.include_router(columns.router, prefix="/api/columns", tags=["columns"])
 app.include_router(cards.router, prefix="/api/cards", tags=["cards"])

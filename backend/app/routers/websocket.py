@@ -53,6 +53,7 @@ KNOWN_EVENTS = frozenset(
         "spotlight_card",
         "reaction",
         "card_typing",
+        "health_check_start",
     }
 )
 
@@ -517,6 +518,8 @@ async def websocket_endpoint(
                     )
                     await _broadcast_session_reset(board_id, had_ready, had_spot)
                     await manager.broadcast(board_id, "cards_visibility_changed", {})
+                    # Встреча закончилась — самое время спросить, была ли она полезной
+                    await manager.broadcast(board_id, "roti_requested", {})
                     if board_payload:
                         await manager.broadcast(board_id, "board_updated", board_payload)
                         await manager.broadcast_workspace(
@@ -626,6 +629,16 @@ async def websocket_endpoint(
                             "username": peer.name,
                             "participant_id": peer.id,
                         },
+                    )
+
+                elif event == "health_check_start":
+                    # Запустить health check у всех: в сессии — ведущий, вне её — любой
+                    if facilitator_id and not is_facilitator:
+                        continue
+                    await manager.broadcast(
+                        board_id,
+                        "health_check_requested",
+                        {"requested_by": peer.name, "participant_id": peer.id},
                     )
 
                 elif event == "card_typing":
