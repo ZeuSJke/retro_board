@@ -186,10 +186,8 @@ export default function SessionBar({
             <div className="flex flex-wrap items-center gap-2.5 min-w-0">
               <Badge variant="secondary" className="gap-1.5" data-testid="facilitator-badge">
                 <Crown className="h-3.5 w-3.5 text-amber-500" />
-                <span className="max-w-[120px] truncate">
-                  {facilitator.name || 'Ведущий'}
-                  {isFacilitator ? ' (вы)' : ''}
-                </span>
+                <span className="max-w-[120px] truncate">{facilitator.name || 'Ведущий'}</span>
+                {isFacilitator && <span className="-ml-0.5 shrink-0"> (вы)</span>}
               </Badge>
 
               {facilitatorAway && (

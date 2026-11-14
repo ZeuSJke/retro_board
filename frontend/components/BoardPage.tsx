@@ -310,37 +310,6 @@ export default function BoardPage({
   const boardRef = useRef(board)
   boardRef.current = board
 
-  const handleWsBoardUpdated = useCallback(
-    (data: WsBoardUpdatedData) => {
-      onBoardsListUpdated(data)
-      const current = boardRef.current
-      if (data.id === current.id) {
-        onBoardUpdated({
-          ...current,
-          name: data.name ?? current.name,
-          slug: data.slug ?? current.slug,
-          max_votes: data.max_votes ?? current.max_votes,
-          template: data.template ?? current.template,
-          is_locked: data.is_locked ?? current.is_locked,
-          hide_cards_until_reveal:
-            data.hide_cards_until_reveal ?? current.hide_cards_until_reveal,
-          anonymous_votes: data.anonymous_votes ?? current.anonymous_votes,
-          allow_multiple_votes_per_card:
-            data.allow_multiple_votes_per_card ?? current.allow_multiple_votes_per_card,
-          created_by_id:
-            data.created_by_id !== undefined ? data.created_by_id : current.created_by_id,
-          cards_revealed: data.cards_revealed ?? current.cards_revealed,
-          cards_hidden: data.cards_hidden ?? current.cards_hidden,
-        })
-      }
-    },
-    [onBoardUpdated, onBoardsListUpdated],
-  )
-
-  const handleWsMoodUpdated = useCallback((mood: BoardMood) => {
-    setMoods((prev) => applyMoodUpdated(prev, mood))
-  }, [])
-
   // Перечитать доску с сервера. Что показывать участнику, решает сервер: при смене
   // видимости (начало штурма, раскрытие) он присылает cards_visibility_changed,
   // и карточки заново приходят уже в нужном виде — скрытые или раскрытые.
@@ -363,9 +332,65 @@ export default function BoardPage({
     }
   }, [onBoardUpdated])
 
+  const handleWsBoardUpdated = useCallback(
+    (data: WsBoardUpdatedData) => {
+      onBoardsListUpdated(data)
+      const current = boardRef.current
+      if (data.id === current.id) {
+        // Анонимный режим переключили: авторов и голоса сервер теперь отдаёт иначе,
+        // а отдельного события о видимости при этом нет — перечитываем доску
+        const anonymityChanged =
+          data.anonymous_votes !== undefined &&
+          Boolean(data.anonymous_votes) !== Boolean(current.anonymous_votes)
+        if (anonymityChanged) void reloadBoard()
+        onBoardUpdated({
+          ...current,
+          name: data.name ?? current.name,
+          slug: data.slug ?? current.slug,
+          max_votes: data.max_votes ?? current.max_votes,
+          template: data.template ?? current.template,
+          is_locked: data.is_locked ?? current.is_locked,
+          hide_cards_until_reveal:
+            data.hide_cards_until_reveal ?? current.hide_cards_until_reveal,
+          anonymous_votes: data.anonymous_votes ?? current.anonymous_votes,
+          allow_multiple_votes_per_card:
+            data.allow_multiple_votes_per_card ?? current.allow_multiple_votes_per_card,
+          created_by_id:
+            data.created_by_id !== undefined ? data.created_by_id : current.created_by_id,
+          cards_revealed: data.cards_revealed ?? current.cards_revealed,
+          cards_hidden: data.cards_hidden ?? current.cards_hidden,
+        })
+      }
+    },
+    [onBoardUpdated, onBoardsListUpdated, reloadBoard],
+  )
+
+  const handleWsMoodUpdated = useCallback((mood: BoardMood) => {
+    setMoods((prev) => applyMoodUpdated(prev, mood))
+  }, [])
+
   const handleCardsVisibilityChanged = useCallback(() => {
     void reloadBoard()
   }, [reloadBoard])
+
+  // Настройки сохранены этим участником. Ответ сервера — доска в его виде: если изменился
+  // скрытый сбор или анонимный режим, карточки и оценки в ответе уже собраны по-новому.
+  const handleSettingsSaved = useCallback(
+    (updated: Board) => {
+      const current = boardRef.current
+      const viewChanged =
+        Boolean(updated.cards_hidden) !== Boolean(current.cards_hidden) ||
+        Boolean(updated.anonymous_votes) !== Boolean(current.anonymous_votes)
+      if (viewChanged) {
+        // Не даём более раннему запросу перечитывания затереть этот ответ
+        reloadSeqRef.current += 1
+        setColumnsRef.current(updated.columns || [])
+        setMoods(updated.moods || [])
+      }
+      onBoardUpdated({ ...current, ...updated })
+    },
+    [onBoardUpdated],
+  )
 
   const handleParticipantRenamed = useCallback((participantId: string, name: string) => {
     setMoods((prev) => applyParticipantRenamedToMoods(prev, participantId, name))
@@ -955,7 +980,10 @@ export default function BoardPage({
   const handleToggleSelectCard = useCallback(
     (cardId: string, shiftKey = false) => {
       if (readOnly) return
-      const orderedIds = columns.flatMap((c) => c.cards.map((card) => card.id))
+      // Скрытые до раскрытия чужие карточки в диапазон не попадают: выбрать их нельзя
+      const orderedIds = columns.flatMap((c) =>
+        c.cards.filter((card) => !card.masked).map((card) => card.id),
+      )
       setSelectedCardIds((prev) => {
         const next = new Set(prev)
         if (shiftKey && lastSelectedCardIdRef.current) {
@@ -1772,7 +1800,7 @@ export default function BoardPage({
         onOpenChange={setBoardSettingsOpen}
         board={board}
         canModerate={isModerator}
-        onBoardUpdated={onBoardUpdated}
+        onBoardUpdated={handleSettingsSaved}
         onBoardDeleted={onBoardDeleted}
       />
 

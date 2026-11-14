@@ -33,33 +33,36 @@ export default function HiddenCollectBanner({
     <div
       role="status"
       data-testid="hidden-collect-banner"
-      className="no-print flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b bg-primary/5 px-3 py-2 text-xs sm:px-4"
+      className="no-print flex flex-col gap-1.5 border-b bg-primary/5 px-3 py-2 text-xs sm:flex-row sm:items-center sm:gap-3 sm:px-4"
     >
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+      <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
           <EyeOff className="h-3.5 w-3.5" />
         </span>
-        <span className="font-medium text-foreground">
-          {inSession ? 'Идёт штурм' : 'Скрытый сбор идёт'} — вы видите только свои карточки
-        </span>
-        <Badge
-          variant="secondary"
-          className="h-5 shrink-0 px-2 text-[11px] font-medium"
-          data-testid="hidden-cards-count"
-        >
-          {maskedCount > 0 ? `Скрыто чужих: ${maskedCount}` : 'Чужих карточек пока нет'}
-        </Badge>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-medium text-foreground">
+            {inSession ? 'Идёт штурм' : 'Скрытый сбор идёт'} — вы видите только свои карточки
+          </span>
+          <Badge
+            variant="secondary"
+            className="h-5 shrink-0 px-2 text-[11px] font-medium"
+            data-testid="hidden-cards-count"
+          >
+            {maskedCount > 0 ? `Скрыто чужих: ${maskedCount}` : 'Чужих карточек пока нет'}
+          </Badge>
+        </div>
       </div>
 
+      {/* На узком экране действие встаёт отдельной строкой под текстом */}
       {inSession ? (
-        <span className="text-muted-foreground">
+        <span className="pl-8 text-muted-foreground sm:shrink-0 sm:pl-0">
           Карточки откроются всем на этапе «Раскрытие»
         </span>
       ) : canReveal ? (
         <Button
           type="button"
           size="sm"
-          className="h-7 gap-1.5 px-2.5 text-xs"
+          className="ml-8 h-7 gap-1.5 self-start px-2.5 text-xs sm:ml-0 sm:shrink-0 sm:self-auto"
           disabled={revealing || locked}
           title={
             locked
@@ -77,7 +80,9 @@ export default function HiddenCollectBanner({
           Раскрыть карточки
         </Button>
       ) : (
-        <span className="text-muted-foreground">Раскрыть может создатель доски</span>
+        <span className="pl-8 text-muted-foreground sm:shrink-0 sm:pl-0">
+          Раскрыть может создатель доски
+        </span>
       )}
     </div>
   )
