@@ -25,6 +25,10 @@ import {
   deleteBoard,
   createCard,
   toggleLike,
+  resetBoardVotes,
+  revealBoardCards,
+  submitBoardMood,
+  autoClusterPreview,
 } from '../../api'
 
 const api = axios.create()
@@ -73,18 +77,47 @@ describe('API client', () => {
   })
 
   it('createCard calls POST /cards/', async () => {
-    const card = { id: '1', column_id: 'c1', text: 'Test', author: 'A', color: '#FFF', position: 0, likes: [], created_at: '', group_id: null }
+    const card = { id: '1', column_id: 'c1', text: 'Test', author: 'A', author_id: 'p-1', color: '#FFF', position: 0, likes: [], masked: false, created_at: '', group_id: null }
     ;(api.post as ReturnType<typeof vi.fn>).mockResolvedValue({ data: card })
     const result = await createCard({ column_id: 'c1', text: 'Test' })
     expect(api.post).toHaveBeenCalledWith('/cards/', { column_id: 'c1', text: 'Test' })
     expect(result).toEqual(card)
   })
 
-  it('toggleLike calls POST /cards/:id/like with username param', async () => {
-    const card = { id: '1', column_id: 'c1', text: 'Test', author: 'A', color: '#FFF', position: 0, likes: ['Alice'], created_at: '', group_id: null }
+  it('toggleLike голосует от имени сессии: ни имени, ни идентификатора в запросе нет', async () => {
+    const card = { id: '1', column_id: 'c1', text: 'Test', author: 'A', author_id: 'p-1', color: '#FFF', position: 0, likes: ['p-2'], masked: false, created_at: '', group_id: null }
     ;(api.post as ReturnType<typeof vi.fn>).mockResolvedValue({ data: card })
-    const result = await toggleLike('1', 'Alice')
-    expect(api.post).toHaveBeenCalledWith('/cards/1/like', null, { params: { username: 'Alice' } })
+
+    const result = await toggleLike('1')
+    expect(api.post).toHaveBeenCalledWith('/cards/1/like', null, undefined)
     expect(result).toEqual(card)
+
+    await toggleLike('1', 'remove')
+    expect(api.post).toHaveBeenLastCalledWith('/cards/1/like', null, { params: { action: 'remove' } })
+  })
+
+  it('resetBoardVotes и submitBoardMood не передают автора', async () => {
+    ;(api.post as ReturnType<typeof vi.fn>).mockResolvedValue({ data: {} })
+
+    await resetBoardVotes('b-1')
+    expect(api.post).toHaveBeenLastCalledWith('/boards/b-1/reset-votes')
+
+    await submitBoardMood('b-1', { score: 4, note: null })
+    expect(api.post).toHaveBeenLastCalledWith('/boards/b-1/mood', { score: 4, note: null })
+  })
+
+  it('revealBoardCards вызывает POST /boards/:id/reveal', async () => {
+    const board = { id: 'b-1', name: 'Test', slug: 'test', max_votes: 5, created_at: '', columns: [], cards_hidden: false }
+    ;(api.post as ReturnType<typeof vi.fn>).mockResolvedValue({ data: board })
+
+    const result = await revealBoardCards('b-1')
+    expect(api.post).toHaveBeenCalledWith('/boards/b-1/reveal')
+    expect(result).toEqual(board)
+  })
+
+  it('autoClusterPreview отправляет только колонку', async () => {
+    ;(api.post as ReturnType<typeof vi.fn>).mockResolvedValue({ data: { column_id: 'c1', groups: [] } })
+    await autoClusterPreview('c1')
+    expect(api.post).toHaveBeenCalledWith('/groups/auto-cluster-preview', { column_id: 'c1' })
   })
 })

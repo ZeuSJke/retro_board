@@ -7,13 +7,16 @@ import { userColor } from '@/utils/theme'
 import type { CursorPos } from '@/hooks/useBoardWebSocket'
 
 interface CursorMarkerProps {
+  /** Идентификатор участника: ключ курсора в `posRef` и зерно цвета (у тёзок цвета разные). */
+  cursorId: string
+  /** Подпись курсора — имя участника. */
   username: string
   posRef: React.RefObject<Record<string, CursorPos>>
 }
 
-export default memo(function CursorMarker({ username, posRef }: CursorMarkerProps) {
-  const color = userColor(username)
-  const gradient = getUserAvatarGradient(username)
+export default memo(function CursorMarker({ cursorId, username, posRef }: CursorMarkerProps) {
+  const color = userColor(cursorId)
+  const gradient = getUserAvatarGradient(cursorId)
   const nodeRef = useRef<HTMLDivElement>(null)
   const arrowRef = useRef<SVGSVGElement>(null)
   const smoothRef = useRef<{ x: number; y: number; initialized: boolean; tilt: number }>({
@@ -29,7 +32,7 @@ export default memo(function CursorMarker({ username, posRef }: CursorMarkerProp
 
     function tick() {
       if (!running) return
-      const pos = posRef.current?.[username]
+      const pos = posRef.current?.[cursorId]
       const el = nodeRef.current
       if (el && pos) {
         const s = smoothRef.current
@@ -59,7 +62,7 @@ export default memo(function CursorMarker({ username, posRef }: CursorMarkerProp
       running = false
       cancelAnimationFrame(rafRef.current)
     }
-  }, [username, posRef])
+  }, [cursorId, posRef])
 
   return (
     <div

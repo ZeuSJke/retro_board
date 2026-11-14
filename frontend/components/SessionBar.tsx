@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
 import {
   ArrowRight,
@@ -11,9 +11,11 @@ import {
   SmilePlus,
   Square,
   Vote,
+  WifiOff,
 } from 'lucide-react'
+import { FACILITATOR_TAKEOVER_SECONDS } from '@/hooks/useFacilitator'
 import { QUICK_REACTIONS } from '@/lib/board-themes'
-import type { TimerState } from '@/types'
+import type { FacilitatorInfo, TimerState } from '@/types'
 import PhaseProgress from './PhaseProgress'
 import TimerWidget from './TimerWidget'
 import {
@@ -33,11 +35,17 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 
 interface SessionBarProps {
-  facilitator: string | null
+  /** Ведущий сессии: роль привязана к участнику (`id`), имя — подпись. */
+  facilitator: FacilitatorInfo
   phase: string | null
-  username: string
-  activeUsers: string[]
-  readyUsers: string[]
+  /** Идентификатор текущего участника. */
+  myId: string
+  /** Сколько участников сейчас на доске. */
+  onlineCount: number
+  /** Идентификаторы участников, отметивших готовность. */
+  readyIds: string[]
+  /** Забрать роль у ведущего, который пропал из сети. */
+  onFacilitatorTakeover?: () => void
   isLocked: boolean
   usedVotes: number
   maxVotes: number
@@ -63,12 +71,56 @@ interface SessionBarProps {
   onSendReaction: (emoji: string) => void
 }
 
+/**
+ * Кнопка «Забрать роль». Монтируется, когда клиент узнал, что ведущий не в сети, и отсчитывает
+ * порог с этого момента. Сервер считает с момента отключения — то есть не позже, — поэтому
+ * к концу отсчёта он роль уже отдаст. Фаза и таймер сессии при этом сохраняются.
+ */
+function FacilitatorTakeover({ onTakeover }: { onTakeover: () => void }) {
+  const [secondsLeft, setSecondsLeft] = useState(FACILITATOR_TAKEOVER_SECONDS)
+
+  useEffect(() => {
+    const startedAt = Date.now()
+    const timer = setInterval(() => {
+      const left = Math.max(
+        0,
+        FACILITATOR_TAKEOVER_SECONDS - Math.floor((Date.now() - startedAt) / 1000),
+      )
+      setSecondsLeft(left)
+      if (left === 0) clearInterval(timer)
+    }, 500)
+    return () => clearInterval(timer)
+  }, [])
+
+  const ready = secondsLeft === 0
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      disabled={!ready}
+      onClick={onTakeover}
+      className="h-7 gap-1.5 px-2.5 text-xs"
+      title={
+        ready
+          ? 'Стать ведущим вместо отсутствующего: фаза и таймер сохранятся'
+          : 'Роль можно забрать, если ведущий не вернётся'
+      }
+      data-testid="takeover-facilitator-btn"
+    >
+      <Crown className="h-3.5 w-3.5 text-amber-500" />
+      {ready ? 'Забрать роль' : `Забрать роль через ${secondsLeft} с`}
+    </Button>
+  )
+}
+
 export default function SessionBar({
   facilitator,
   phase,
-  username,
-  activeUsers,
-  readyUsers,
+  myId,
+  onlineCount,
+  readyIds,
+  onFacilitatorTakeover,
   isLocked,
   usedVotes,
   maxVotes,
@@ -96,16 +148,19 @@ export default function SessionBar({
   const [stopDialogOpen, setStopDialogOpen] = useState(false)
   const [lockOnStop, setLockOnStop] = useState(false)
 
-  const isFacilitator = Boolean(facilitator && facilitator === username)
-  const amIReady = readyUsers.includes(username)
-  const totalOnline = Math.max(activeUsers.length, 1)
-  const canControlTimer = !facilitator || isFacilitator
+  const hasSession = Boolean(facilitator.id)
+  // Ведущий — участник с этим идентификатором; тёзка ведущего ведущим не считается
+  const isFacilitator = hasSession && Boolean(myId) && facilitator.id === myId
+  const amIReady = Boolean(myId) && readyIds.includes(myId)
+  const totalOnline = Math.max(onlineCount, 1)
+  const canControlTimer = !hasSession || isFacilitator
+  const facilitatorAway = hasSession && !facilitator.online && !isFacilitator
 
   return (
     <>
       <div className="no-print border-b bg-muted/35 backdrop-blur-xs">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
-          {!facilitator ? (
+          {!hasSession ? (
             <div className="flex flex-wrap items-center gap-2.5">
               <Badge variant="outline" className="gap-1.5 bg-background font-normal">
                 <span
@@ -129,10 +184,32 @@ export default function SessionBar({
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2.5 min-w-0">
-              <Badge variant="secondary" className="gap-1.5">
+              <Badge variant="secondary" className="gap-1.5" data-testid="facilitator-badge">
                 <Crown className="h-3.5 w-3.5 text-amber-500" />
-                <span className="max-w-[120px] truncate">{facilitator}</span>
+                <span className="max-w-[120px] truncate">
+                  {facilitator.name || 'Ведущий'}
+                  {isFacilitator ? ' (вы)' : ''}
+                </span>
               </Badge>
+
+              {facilitatorAway && (
+                <>
+                  <Badge
+                    variant="outline"
+                    className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                    data-testid="facilitator-offline-badge"
+                  >
+                    <WifiOff className="h-3 w-3" />
+                    Ведущий не в сети
+                  </Badge>
+                  {onFacilitatorTakeover && (
+                    <FacilitatorTakeover
+                      key={facilitator.id ?? 'none'}
+                      onTakeover={onFacilitatorTakeover}
+                    />
+                  )}
+                </>
+              )}
 
               <PhaseProgress
                 phase={phase}
@@ -143,7 +220,7 @@ export default function SessionBar({
           )}
 
           <div className="flex flex-wrap items-center gap-2 ml-auto">
-            {facilitator && isLocked && (
+            {hasSession && isLocked && (
               <Badge
                 variant="outline"
                 className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
@@ -215,7 +292,7 @@ export default function SessionBar({
               )
             })()}
 
-            {facilitator && phase === 'vote' && votedParticipantsCount !== undefined && (
+            {hasSession && phase === 'vote' && votedParticipantsCount !== undefined && (
               <Badge
                 variant="secondary"
                 className="h-7 rounded-full px-2.5 text-xs font-normal"
@@ -225,7 +302,7 @@ export default function SessionBar({
               </Badge>
             )}
 
-            {facilitator && (
+            {hasSession && (
               <Button
                 type="button"
                 size="sm"
@@ -239,9 +316,9 @@ export default function SessionBar({
               >
                 <Check className="h-3.5 w-3.5" />
                 {amIReady ? 'Готов(а)' : 'Я закончил(а)'}
-                {readyUsers.length > 0 && (
+                {readyIds.length > 0 && (
                   <span className="ml-0.5 font-mono opacity-85">
-                    {readyUsers.length}/{totalOnline}
+                    {readyIds.length}/{totalOnline}
                   </span>
                 )}
               </Button>

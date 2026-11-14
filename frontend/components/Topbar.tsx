@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes'
 import {
   BarChart3,
   Check,
+  Crown,
   Download,
   FileText,
   HeartPulse,
@@ -21,7 +22,8 @@ import {
 } from 'lucide-react'
 import { BrandMark } from '@/components/BrandLogo'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
-import type { Board } from '@/types'
+import { avatarSeed } from '@/lib/participants'
+import type { Board, Participant } from '@/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -37,10 +39,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 interface TopbarProps {
   board: Board | null
   workspaceName: string
+  /** Имя текущего участника (подпись). */
   username: string
-  activeUsers: string[]
-  readyUsers: string[]
-  facilitator: string | null
+  /** Идентификатор текущего участника: по нему определяется «вы» в списке. */
+  myId: string
+  /** Участники, подключённые к доске. Тёзки — разные записи с разными `id`. */
+  participants: Participant[]
+  /** Идентификаторы участников, отметивших готовность. */
+  readyIds: string[]
+  /** Идентификатор участника-ведущего. */
+  facilitatorId: string | null
+  /** Передать роль ведущего участнику; задаётся, только когда ведущий — текущий участник. */
+  onTransferFacilitator?: (participantId: string) => void
   connected: boolean
   openActionItemsCount: number
   onOpenBoardsDrawer: () => void
@@ -58,9 +68,11 @@ export default function Topbar({
   board,
   workspaceName,
   username,
-  activeUsers,
-  readyUsers,
-  facilitator,
+  myId,
+  participants,
+  readyIds,
+  facilitatorId,
+  onTransferFacilitator,
   connected,
   openActionItemsCount,
   onOpenBoardsDrawer,
@@ -80,7 +92,13 @@ export default function Topbar({
       ? (board.moods.reduce((s, m) => s + m.score, 0) / board.moods.length).toFixed(1)
       : null
 
-  const onlineList = activeUsers.length > 0 ? activeUsers : connected && username ? [username] : []
+  // Пока сервер не прислал состав доски, показываем хотя бы себя
+  const onlineList: Participant[] =
+    participants.length > 0
+      ? participants
+      : connected && myId
+        ? [{ id: myId, name: username }]
+        : []
 
   return (
     <header className="no-print sticky top-0 z-30 flex h-14 items-center justify-between gap-2 sm:gap-3 border-b bg-background/85 px-2.5 sm:px-4 backdrop-blur-md">
@@ -156,22 +174,22 @@ export default function Topbar({
                 title={connected ? 'Подключено (Live)' : 'Переподключение...'}
               />
               <div className="hidden sm:flex -space-x-1.5">
-                {onlineList.slice(0, 4).map((u) => (
+                {onlineList.slice(0, 4).map((p) => (
                   <span
-                    key={u}
-                    title={u}
+                    key={p.id}
+                    title={p.name}
                     className={`flex h-6 w-6 items-center justify-center rounded-full border-2 border-background bg-linear-to-br/srgb text-[10px] font-bold text-white ${getUserAvatarGradient(
-                      u,
+                      avatarSeed(p.id, p.name),
                     )}`}
                   >
-                    {getUserInitials(u)}
+                    {getUserInitials(p.name)}
                   </span>
                 ))}
               </div>
               <span className="font-mono font-medium text-foreground">{onlineList.length}</span>
             </button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-64 space-y-2 p-3">
+          <PopoverContent align="end" className="w-72 max-w-[calc(100vw-1.5rem)] space-y-2 p-3">
             <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <Users className="h-3.5 w-3.5" />
@@ -180,22 +198,26 @@ export default function Topbar({
               <span>{connected ? 'Live' : 'Офлайн'}</span>
             </div>
             <div className="max-h-48 space-y-1.5 overflow-y-auto">
-              {onlineList.map((u) => {
-                const isMe = u === username
-                const isFac = u === facilitator
-                const isReady = readyUsers.includes(u)
+              {onlineList.map((p) => {
+                const isMe = p.id === myId
+                const isFac = Boolean(facilitatorId) && p.id === facilitatorId
+                const isReady = readyIds.includes(p.id)
                 return (
-                  <div key={u} className="flex items-center justify-between gap-2 text-xs py-1">
+                  <div
+                    key={p.id}
+                    data-testid="presence-row"
+                    className="flex items-center justify-between gap-2 text-xs py-1"
+                  >
                     <div className="flex items-center gap-2 min-w-0">
                       <span
                         className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-linear-to-br/srgb text-[10px] font-bold text-white ${getUserAvatarGradient(
-                          u,
+                          avatarSeed(p.id, p.name),
                         )}`}
                       >
-                        {getUserInitials(u)}
+                        {getUserInitials(p.name)}
                       </span>
                       <span className="truncate font-medium">
-                        {u} {isMe ? '(вы)' : ''}
+                        {p.name} {isMe ? '(вы)' : ''}
                       </span>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
@@ -205,11 +227,30 @@ export default function Topbar({
                           <Check className="h-3 w-3" />
                         </span>
                       )}
+                      {onTransferFacilitator && !isMe && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 gap-1 px-1.5 text-[11px]"
+                          title={`Передать роль ведущего участнику ${p.name}`}
+                          onClick={() => onTransferFacilitator(p.id)}
+                          data-testid="transfer-facilitator-btn"
+                        >
+                          <Crown className="h-3 w-3 text-amber-500" />
+                          Передать роль
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )
               })}
             </div>
+            {onTransferFacilitator && onlineList.length < 2 && (
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Роль ведущего можно передать участнику, который сейчас на доске.
+              </p>
+            )}
           </PopoverContent>
         </Popover>
 
@@ -337,7 +378,7 @@ export default function Topbar({
               aria-label="Профиль и настройки"
               data-testid="user-settings-btn"
               className={`flex h-8 w-8 items-center justify-center rounded-full bg-linear-to-br/srgb text-xs font-bold text-white shadow-xs ring-offset-background transition-transform hover:scale-105 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${getUserAvatarGradient(
-                username,
+                avatarSeed(myId, username),
               )}`}
             >
               {getUserInitials(username)}

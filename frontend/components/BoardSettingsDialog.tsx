@@ -5,6 +5,7 @@ import { EyeOff, Loader2, Lock, Shield, Trash2 } from 'lucide-react'
 import { deleteBoard, updateBoard } from '@/api'
 import { showToast } from '@/store/toastStore'
 import { getApiErrorMessage } from '@/utils/apiError'
+import { CANNOT_DELETE_BOARD_HINT } from '@/lib/participants'
 import type { Board } from '@/types'
 import {
   AlertDialog,
@@ -33,6 +34,8 @@ interface BoardSettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   board: Board
+  /** Текущий участник — модератор доски (создатель или ведущий): может её удалить. */
+  canModerate?: boolean
   onBoardUpdated: (board: Board) => void
   onBoardDeleted: (boardId: string) => void
 }
@@ -41,6 +44,7 @@ export default function BoardSettingsDialog({
   open,
   onOpenChange,
   board,
+  canModerate = true,
   onBoardUpdated,
   onBoardDeleted,
 }: BoardSettingsDialogProps) {
@@ -154,26 +158,45 @@ export default function BoardSettingsDialog({
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-1.5 text-sm font-medium">
                     <EyeOff className="h-4 w-4 text-muted-foreground" />
-                    Скрывать карточки в штурме
+                    Скрытый сбор
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Участники не видят чужие стикеры до этапа раскрытия
+                    Каждый видит только свои карточки, пока создатель доски не нажмёт «Раскрыть».
+                    В сессии ведущего карточки откроет этап «Раскрытие».
                   </p>
+                  {hideCards && Boolean(board.hide_cards_until_reveal) && (
+                    <p className="text-xs font-medium text-foreground/80" data-testid="hidden-collect-state">
+                      {board.cards_revealed
+                        ? 'Сейчас: карточки раскрыты. Чтобы начать новый сбор, выключите режим, сохраните и включите снова.'
+                        : 'Сейчас: сбор идёт, чужие карточки скрыты.'}
+                    </p>
+                  )}
                 </div>
-                <Switch checked={hideCards} onCheckedChange={setHideCards} />
+                <Switch
+                  checked={hideCards}
+                  onCheckedChange={setHideCards}
+                  aria-label="Скрытый сбор"
+                  data-testid="hide-cards-switch"
+                />
               </div>
 
               <div className="flex items-center justify-between gap-3">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-1.5 text-sm font-medium">
                     <Shield className="h-4 w-4 text-muted-foreground" />
-                    Анонимные карточки
+                    Анонимный режим
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Скрывать имена авторов карточек от других участников
+                    Авторы карточек, голосовавшие и авторы оценок настроения скрыты от других
+                    участников
                   </p>
                 </div>
-                <Switch checked={anonymousVotes} onCheckedChange={setAnonymousVotes} />
+                <Switch
+                  checked={anonymousVotes}
+                  onCheckedChange={setAnonymousVotes}
+                  aria-label="Анонимный режим"
+                  data-testid="anonymous-switch"
+                />
               </div>
 
               <div className="flex items-center justify-between gap-3">
@@ -191,16 +214,25 @@ export default function BoardSettingsDialog({
             </div>
 
             <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-between">
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                onClick={() => setConfirmDeleteOpen(true)}
-              >
-                <Trash2 className="h-4 w-4" />
-                Удалить доску
-              </Button>
-              <div className="flex gap-2">
+              <div className="flex flex-col items-start gap-1">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={!canModerate}
+                  onClick={() => setConfirmDeleteOpen(true)}
+                  data-testid="delete-board-btn"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Удалить доску
+                </Button>
+                {!canModerate && (
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    {CANNOT_DELETE_BOARD_HINT}
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-2 self-end">
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                   Отмена
                 </Button>

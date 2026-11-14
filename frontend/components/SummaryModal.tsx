@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { regenerateBoardSummary } from '@/api'
 import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown'
+import { useAppStore } from '@/store'
 import { showToast } from '@/store/toastStore'
 import { getApiErrorMessage } from '@/utils/apiError'
 import type { ActionItem, Board, BoardSummary } from '@/types'
@@ -49,9 +50,19 @@ export default function SummaryModal({
   error,
   onSummaryUpdated,
 }: SummaryModalProps) {
+  const aiEnabled = useAppStore((s) => s.aiEnabled)
   const [regenerating, setRegenerating] = useState(false)
   const [copied, setCopied] = useState(false)
   const [exportTab, setExportTab] = useState<'summary' | 'markdown'>('summary')
+
+  // Почему AI-резюме сейчас недоступно: сервер ответил бы 503 (AI не настроен)
+  // или 409 (карточки скрыты), поэтому кнопку не показываем, а объясняем причину
+  const aiBlockedReason =
+    aiEnabled === false
+      ? 'AI на этом сервере не настроен, поэтому AI-резюме недоступно. Карточки, голоса и задачи есть на вкладке «Markdown и Slack».'
+      : board.cards_hidden
+        ? 'Карточки ещё скрыты: AI-резюме можно будет создать после их раскрытия.'
+        : null
 
   const fullMarkdown = useMemo(
     () => formatBoardMarkdown(board, actionItems, summary),
@@ -89,7 +100,7 @@ export default function SummaryModal({
   }
 
   const handleRegenerate = async () => {
-    if (regenerating) return
+    if (regenerating || aiBlockedReason) return
     setRegenerating(true)
     try {
       const fresh = await regenerateBoardSummary(board.id)
@@ -143,14 +154,27 @@ export default function SummaryModal({
 
               {!loading && !regenerating && !error && !summary && (
                 <div className="flex min-h-[260px] flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 text-center">
-                  <p className="max-w-md text-sm text-muted-foreground">
-                    AI-резюме для этой доски ещё не создано. Переведите сессию на этап «Итоги» или
-                    сгенерируйте его вручную.
-                  </p>
-                  <Button variant="outline" size="sm" onClick={handleRegenerate}>
-                    <Sparkles className="h-4 w-4 text-primary" />
-                    Сгенерировать AI-резюме
-                  </Button>
+                  {aiBlockedReason ? (
+                    <p className="max-w-md text-sm text-muted-foreground" data-testid="ai-unavailable-note">
+                      {aiBlockedReason}
+                    </p>
+                  ) : (
+                    <>
+                      <p className="max-w-md text-sm text-muted-foreground">
+                        AI-резюме для этой доски ещё не создано. Переведите сессию на этап «Итоги»
+                        или сгенерируйте его вручную.
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleRegenerate}
+                        data-testid="generate-summary-btn"
+                      >
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        Сгенерировать AI-резюме
+                      </Button>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -263,15 +287,23 @@ export default function SummaryModal({
         </Tabs>
 
         <DialogFooter className="sm:justify-between">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleRegenerate}
-            disabled={regenerating}
-          >
-            <RefreshCw className={`h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
-            Перегенерировать
-          </Button>
+          {/* Перегенерировать можно только готовое резюме и только когда AI доступен:
+              для первого создания есть кнопка «Сгенерировать» выше */}
+          {summary && exportTab === 'summary' && aiEnabled !== false ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleRegenerate}
+              disabled={regenerating || Boolean(aiBlockedReason)}
+              title={aiBlockedReason ?? undefined}
+              data-testid="regenerate-summary-btn"
+            >
+              <RefreshCw className={`h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
+              Перегенерировать
+            </Button>
+          ) : (
+            <span />
+          )}
           <Button type="button" onClick={() => onOpenChange(false)}>
             Готово
           </Button>

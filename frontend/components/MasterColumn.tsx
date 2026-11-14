@@ -27,6 +27,7 @@ import {
   updateActionItem,
 } from '../api'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage } from '../utils/apiError'
 import type {
@@ -63,6 +64,8 @@ interface MasterColumnProps {
   onDeleted: (id: string) => void
   dropDisabled?: boolean
   readOnly?: boolean
+  /** Сервер сейчас скрывает чужие карточки: AI-подбор задач недоступен до раскрытия. */
+  cardsHidden?: boolean
 }
 
 const NEXT_STATUS: Record<ActionItemStatus, ActionItemStatus> = {
@@ -101,7 +104,9 @@ export default function MasterColumn({
   onDeleted,
   dropDisabled = false,
   readOnly = false,
+  cardsHidden = false,
 }: MasterColumnProps) {
+  const aiEnabled = useAppStore((s) => s.aiEnabled)
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editingDescId, setEditingDescId] = useState<string | null>(null)
@@ -181,7 +186,7 @@ export default function MasterColumn({
   }
 
   const handleOpenAiSuggest = async () => {
-    if (readOnly) return
+    if (readOnly || cardsHidden) return
     setSuggestDialogOpen(true)
     setSuggestLoading(true)
     setSuggestions([])
@@ -189,6 +194,8 @@ export default function MasterColumn({
       const res = await suggestActionItems(boardId)
       setSuggestions(res.suggestions)
     } catch (err) {
+      // Ошибка — не «AI не нашёл данных»: закрываем окно и показываем одну причину
+      setSuggestDialogOpen(false)
       showToast(getApiErrorMessage(err, 'Не удалось получить предложения AI'), 'error')
     } finally {
       setSuggestLoading(false)
@@ -337,18 +344,26 @@ export default function MasterColumn({
 
         {!readOnly && (
           <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1 px-2 text-xs"
-              onClick={handleOpenAiSuggest}
-              title="AI: предложить задачи на основе карточек"
-              data-testid="ai-suggest-action-items-btn"
-            >
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              <span className="hidden sm:inline">AI</span>
-            </Button>
+            {/* Без настроенного AI кнопки нет; пока карточки скрыты — отключена с пояснением */}
+            {aiEnabled !== false && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs"
+                onClick={handleOpenAiSuggest}
+                disabled={cardsHidden}
+                title={
+                  cardsHidden
+                    ? 'AI-подбор задач станет доступен после раскрытия карточек'
+                    : 'AI: предложить задачи на основе карточек'
+                }
+                data-testid="ai-suggest-action-items-btn"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                <span className="hidden sm:inline">AI</span>
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"

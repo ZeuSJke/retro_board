@@ -10,7 +10,7 @@ import {
   type DropAnimation,
 } from '@dnd-kit/core'
 import { AnimatePresence } from 'motion/react'
-import { ChevronLeft, ChevronRight, Layers, Sparkles } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Layers } from 'lucide-react'
 import {
   applyAutoClusters,
   autoClusterPreview,
@@ -19,21 +19,35 @@ import {
   createActionItem,
   createColumn,
   generateActionItemTitle,
+  getBoard,
   getBoardSummary,
   mergeCards,
   resetBoardVotes,
+  revealBoardCards,
   toggleLike,
   updateActionItem,
 } from '../api'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { useBoardDragDrop } from '../hooks/useBoardDragDrop'
-import { useBoardWebSocket } from '../hooks/useBoardWebSocket'
+import { NO_FACILITATOR, useBoardWebSocket } from '../hooks/useBoardWebSocket'
 import { useFacilitator } from '../hooks/useFacilitator'
 import { useTimer } from '../hooks/useTimer'
 import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown'
 import { getCardColorPreset } from '@/lib/board-themes'
-import { getApiErrorMessage } from '../utils/apiError'
+import {
+  applyColumnUpdated,
+  applyMoodUpdated,
+  applyParticipantRenamedToMoods,
+  countMaskedCards,
+} from '@/lib/board-events'
+import {
+  canDeleteCard,
+  canModerateBoard,
+  countMyVotes,
+  countMyVotesOnBoard,
+} from '@/lib/participants'
+import { getApiErrorMessage, getApiErrorStatus } from '../utils/apiError'
 import type {
   AutoClusterPreviewResult,
   Board,
@@ -43,6 +57,7 @@ import type {
   Card,
   CardGroup,
   Column as ColumnType,
+  FacilitatorInfo,
   WsBoardUpdatedData,
   WsMessage,
 } from '../types'
@@ -56,6 +71,7 @@ import { RichCardText } from './RichCardText'
 import type { CommandBoardAction, CommandSearchCard } from './CommandPalette'
 import CommandPalette from './CommandPaletteLazy'
 import CursorMarker from './CursorMarker'
+import HiddenCollectBanner from './HiddenCollectBanner'
 import MasterColumn from './MasterColumn'
 import MoodDialog from './MoodDialog'
 import SessionBar from './SessionBar'
@@ -122,7 +138,13 @@ export default function BoardPage({
   onBoardsListDeleted,
 }: BoardPageProps) {
   const router = useRouter()
-  const username = useAppStore((s) => s.username)
+  // «Я» на доске — участник сессии: свои карточки, голоса и роль ведущего определяются
+  // по его идентификатору, имя — только подпись
+  const participant = useAppStore((s) => s.participant)
+  const savedName = useAppStore((s) => s.username)
+  const aiEnabled = useAppStore((s) => s.aiEnabled)
+  const myId = participant?.id ?? ''
+  const username = participant?.name ?? savedName
   const dotGrid = useAppStore((s) => s.dotGrid)
 
   const [boardsPanelOpen, setBoardsPanelOpen] = useState(false)
@@ -159,6 +181,7 @@ export default function BoardPage({
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [reactionsPopoverOpen, setReactionsPopoverOpen] = useState(false)
   const [resettingVotes, setResettingVotes] = useState(false)
+  const [revealing, setRevealing] = useState(false)
   const [spotlightQueueMode, setSpotlightQueueMode] = useState<'all' | 'top_votes'>('all')
   const [clusterPreviewState, setClusterPreviewState] = useState<{
     column: ColumnType
@@ -246,6 +269,8 @@ export default function BoardPage({
     phase,
     handleFacilitatorStart,
     handleFacilitatorStop,
+    handleFacilitatorTransfer,
+    handleFacilitatorTakeover,
     handlePhaseChange,
     handleNextPhase,
     handleFacilitatorChanged,
@@ -273,6 +298,11 @@ export default function BoardPage({
 
   const handleSummaryFailed = useCallback((msg?: string) => {
     setSummaryLoading(false)
+    // Без настроенного AI это не сбой, а ожидаемое состояние: причина написана в окне итогов
+    if (useAppStore.getState().aiEnabled === false) {
+      showToast('AI не настроен: итоги ретро доступны без AI-резюме', 'info')
+      return
+    }
     setSummaryError(msg || 'Ошибка генерации AI-итогов')
     showToast(msg || 'Не удалось сгенерировать AI-итоги', 'error')
   }, [])
@@ -297,6 +327,10 @@ export default function BoardPage({
           anonymous_votes: data.anonymous_votes ?? current.anonymous_votes,
           allow_multiple_votes_per_card:
             data.allow_multiple_votes_per_card ?? current.allow_multiple_votes_per_card,
+          created_by_id:
+            data.created_by_id !== undefined ? data.created_by_id : current.created_by_id,
+          cards_revealed: data.cards_revealed ?? current.cards_revealed,
+          cards_hidden: data.cards_hidden ?? current.cards_hidden,
         })
       }
     },
@@ -304,12 +338,42 @@ export default function BoardPage({
   )
 
   const handleWsMoodUpdated = useCallback((mood: BoardMood) => {
-    setMoods((prev) => {
-      const exists = prev.some((m) => m.author === mood.author)
-      return exists
-        ? prev.map((m) => (m.author === mood.author ? mood : m))
-        : [...prev, mood]
-    })
+    setMoods((prev) => applyMoodUpdated(prev, mood))
+  }, [])
+
+  // Перечитать доску с сервера. Что показывать участнику, решает сервер: при смене
+  // видимости (начало штурма, раскрытие) он присылает cards_visibility_changed,
+  // и карточки заново приходят уже в нужном виде — скрытые или раскрытые.
+  const setColumnsRef = useRef<(cols: ColumnType[]) => void>(() => {})
+  const reloadSeqRef = useRef(0)
+  const reloadBoard = useCallback(async () => {
+    const seq = ++reloadSeqRef.current
+    const boardId = boardRef.current.id
+    try {
+      const fresh = await getBoard(boardId)
+      // Применяем только ответ на последний запрос: более ранний снимок мог устареть
+      if (seq !== reloadSeqRef.current || boardRef.current.id !== boardId) return
+      setColumnsRef.current(fresh.columns || [])
+      setMoods(fresh.moods || [])
+      onBoardUpdated({ ...boardRef.current, ...fresh })
+    } catch (err) {
+      // 401: сессия сброшена, приложение само покажет экран входа
+      if (getApiErrorStatus(err) === 401) return
+      showToast(getApiErrorMessage(err, 'Не удалось обновить доску'), 'error')
+    }
+  }, [onBoardUpdated])
+
+  const handleCardsVisibilityChanged = useCallback(() => {
+    void reloadBoard()
+  }, [reloadBoard])
+
+  const handleParticipantRenamed = useCallback((participantId: string, name: string) => {
+    setMoods((prev) => applyParticipantRenamedToMoods(prev, participantId, name))
+    // Имя сменили в другой вкладке или на другом устройстве с той же сессией
+    const store = useAppStore.getState()
+    if (store.participant?.id === participantId && store.participant.name !== name) {
+      store.setParticipant({ id: participantId, name })
+    }
   }, [])
 
   const {
@@ -319,8 +383,9 @@ export default function BoardPage({
     subscribeCursors,
     collapsedGroups,
     setCollapsedGroups,
-    activeUsers,
-    readyUsers,
+    participants: onlineParticipants,
+    knownNames,
+    readyIds,
     spotlightCardId,
     typingUsers,
     reactions,
@@ -342,11 +407,17 @@ export default function BoardPage({
     onBoardUpdated: handleWsBoardUpdated,
     onBoardDeleted: onBoardsListDeleted,
     onMoodUpdated: handleWsMoodUpdated,
+    onCardsVisibilityChanged: handleCardsVisibilityChanged,
+    onParticipantRenamed: handleParticipantRenamed,
   })
 
   useEffect(() => {
     sendMessageRef.current = sendMessage
   }, [sendMessage])
+
+  useEffect(() => {
+    setColumnsRef.current = setColumns
+  }, [setColumns])
 
   useEffect(() => {
     const el = canvasRef.current
@@ -376,7 +447,13 @@ export default function BoardPage({
     typingStateRef.current = {}
     restoreTimer(board.id)
     handleFacilitatorChanged(
-      initialBoard.active_facilitator ?? null,
+      initialBoard.active_facilitator_id
+        ? {
+            id: initialBoard.active_facilitator_id,
+            name: initialBoard.active_facilitator ?? null,
+            online: true,
+          }
+        : null,
       initialBoard.active_phase ?? null,
     )
     if (initialBoard.has_summary) {
@@ -402,12 +479,13 @@ export default function BoardPage({
       prev > 0 &&
       timer.remaining === 0 &&
       autoAdvance &&
-      facilitator === username &&
+      Boolean(myId) &&
+      facilitator.id === myId &&
       phase
     ) {
       handleNextPhase()
     }
-  }, [timer.remaining, autoAdvance, facilitator, username, phase, handleNextPhase])
+  }, [timer.remaining, autoAdvance, facilitator.id, myId, phase, handleNextPhase])
 
   const {
     sensors,
@@ -421,54 +499,69 @@ export default function BoardPage({
   } = useBoardDragDrop({ columns, setColumns })
 
   const boardLocked = Boolean(board.is_locked)
-  const effectiveFacilitator = sessionSynced
-    ? facilitator
-    : board.active_facilitator ?? null
+  // До первого facilitator_update от сокета сессию берём из снимка доски
+  const snapshotFacilitatorId = board.active_facilitator_id ?? null
+  const snapshotFacilitatorName = board.active_facilitator ?? null
+  const effectiveFacilitator = useMemo<FacilitatorInfo>(() => {
+    if (sessionSynced) return facilitator
+    return snapshotFacilitatorId
+      ? { id: snapshotFacilitatorId, name: snapshotFacilitatorName, online: true }
+      : NO_FACILITATOR
+  }, [sessionSynced, facilitator, snapshotFacilitatorId, snapshotFacilitatorName])
   const effectivePhase = sessionSynced ? phase : board.active_phase ?? null
-  const hideOtherCards =
-    effectivePhase === 'brainstorm' ||
-    (Boolean(board.hide_cards_until_reveal) &&
-      (!effectivePhase || effectivePhase === 'brainstorm'))
+  const isFacilitator = Boolean(myId) && effectiveFacilitator.id === myId
+  // Вне сессии таймером и фокусом управляет любой, в сессии — только ведущий
+  const canControlSession = !effectiveFacilitator.id || isFacilitator
+  // Модератор: создатель доски или ведущий (у доски без создателя — любой участник)
+  const isModerator = canModerateBoard(board, effectiveFacilitator.id, myId)
+  // Скрыты ли чужие карточки, решает сервер: карточки приходят уже с признаком masked
+  const cardsHidden = Boolean(board.cards_hidden)
+  const maskedCardsCount = useMemo(() => countMaskedCards(columns), [columns])
   const anonymousMode = Boolean(board.anonymous_votes)
   const readOnly = boardLocked
 
-  const userTotalVotes = useMemo(
-    () =>
-      columns.reduce(
-        (sum, col) =>
-          sum +
-          col.cards.reduce(
-            (cardSum, c) =>
-              cardSum + (c.likes || []).filter((u) => u === username).length,
-            0,
-          ),
-        0,
-      ),
-    [columns, username],
-  )
+  const userTotalVotes = useMemo(() => countMyVotesOnBoard(columns, myId), [columns, myId])
 
+  // Имена для подсказок при назначении ответственного
   const participants = useMemo(() => {
-    const set = new Set<string>(activeUsers)
-    columns.forEach((c) => c.cards.forEach((card) => set.add(card.author)))
+    const set = new Set<string>(onlineParticipants.map((p) => p.name))
+    // В анонимном режиме авторы чужих карточек скрыты — подсказывать нечего
+    if (!anonymousMode) {
+      columns.forEach((c) =>
+        c.cards.forEach((card) => {
+          if (!card.masked) set.add(card.author)
+        }),
+      )
+    }
     return Array.from(set).filter((name) => name && name !== 'Аноним')
-  }, [activeUsers, columns])
+  }, [anonymousMode, onlineParticipants, columns])
 
+  // Имена участников по идентификатору — для подписи голосов: кто сейчас на доске,
+  // кого мы видели раньше и авторы карточек
+  const voterNames = useMemo(() => {
+    const names: Record<string, string> = { ...knownNames }
+    for (const col of columns) {
+      for (const card of col.cards) {
+        if (card.author_id && card.author) names[card.author_id] = card.author
+      }
+    }
+    return names
+  }, [knownNames, columns])
+
+  // В анонимном режиме чужие голоса обезличены ("anon"): посчитать проголосовавших нельзя
   const votedParticipantsCount = useMemo(() => {
+    if (anonymousMode) return undefined
     const voters = new Set<string>()
     for (const col of columns) {
       for (const card of col.cards) {
-        for (const u of card.likes || []) {
-          if (u) voters.add(u)
+        for (const voterId of card.likes || []) {
+          if (voterId) voters.add(voterId)
         }
       }
     }
-    const onlineSet = new Set(activeUsers.length > 0 ? activeUsers : [username])
-    let count = 0
-    voters.forEach((v) => {
-      if (onlineSet.has(v)) count += 1
-    })
-    return count
-  }, [activeUsers, columns, username])
+    const onlineIds = onlineParticipants.length > 0 ? onlineParticipants.map((p) => p.id) : [myId]
+    return onlineIds.filter((id) => voters.has(id)).length
+  }, [anonymousMode, onlineParticipants, columns, myId])
 
   const allCardsMap = useMemo(() => {
     const map = new Map<string, Card>()
@@ -560,11 +653,9 @@ export default function BoardPage({
     [activeCard, activeGroup, columns, createActionItemFromCards, onDragEnd, readOnly],
   )
 
+  // Обновляются только свойства колонки: карточки и группы могли измениться, пока шёл запрос
   const handleColumnUpdate = useCallback(
-    (updated: ColumnType) =>
-      setColumns((prev) =>
-        prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)),
-      ),
+    (updated: ColumnType) => setColumns((prev) => applyColumnUpdated(prev, updated)),
     [setColumns],
   )
 
@@ -709,7 +800,8 @@ export default function BoardPage({
     if (!spotlightCardId) return null
     for (const col of columns) {
       const card = col.cards.find((c) => c.id === spotlightCardId)
-      if (card) return { card, column: col }
+      // Чужая карточка до раскрытия: показывать в фокусе нечего
+      if (card) return card.masked ? null : { card, column: col }
     }
     return null
   }, [spotlightCardId, columns])
@@ -721,7 +813,7 @@ export default function BoardPage({
         (a, b) => (a.position ?? 0) - (b.position ?? 0),
       )
       for (const card of sortedColCards) {
-        if (hideOtherCards && card.author !== username) continue
+        if (card.masked) continue
         items.push({ card, columnTitle: col.title })
       }
     }
@@ -731,7 +823,7 @@ export default function BoardPage({
       )
     }
     return items
-  }, [columns, hideOtherCards, spotlightQueueMode, username])
+  }, [columns, spotlightQueueMode])
 
   const handleToggleMaster = useCallback(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) {
@@ -772,17 +864,16 @@ export default function BoardPage({
     })
   }, [allGroupIds, allGroupsCollapsed, hasGroups, sendMessage, setCollapsedGroups])
 
+  // Кто печатает в колонке, кроме меня. Запись на участника, а не на имя: тёзки — двое
   const typingByColumn = useMemo(() => {
     const map: Record<string, string[]> = {}
     for (const t of typingUsers) {
-      if (!t.column_id || !t.username || t.username === username) continue
+      if (!t.column_id || !t.participant_id || t.participant_id === myId) continue
       if (!map[t.column_id]) map[t.column_id] = []
-      if (!map[t.column_id].includes(t.username)) {
-        map[t.column_id].push(t.username)
-      }
+      map[t.column_id].push(t.username || 'Участник')
     }
     return map
-  }, [typingUsers, username])
+  }, [typingUsers, myId])
 
   const handleTypingChange = useCallback(
     (columnId: string, isTyping: boolean) => {
@@ -824,13 +915,13 @@ export default function BoardPage({
     if (readOnly || resettingVotes || userTotalVotes <= 0) return
     setResettingVotes(true)
     try {
-      await resetBoardVotes(board.id, username)
+      await resetBoardVotes(board.id)
       setColumns((prev) =>
         prev.map((col) => ({
           ...col,
           cards: col.cards.map((card) =>
-            (card.likes || []).includes(username)
-              ? { ...card, likes: card.likes.filter((u) => u !== username) }
+            countMyVotes(card, myId) > 0
+              ? { ...card, likes: card.likes.filter((voterId) => voterId !== myId) }
               : card,
           ),
         })),
@@ -841,7 +932,25 @@ export default function BoardPage({
     } finally {
       setResettingVotes(false)
     }
-  }, [board.id, readOnly, resettingVotes, setColumns, userTotalVotes, username])
+  }, [board.id, readOnly, resettingVotes, setColumns, userTotalVotes, myId])
+
+  // Раскрыть скрытый сбор вне сессии. В сессии карточки раскрывает переход ведущего
+  // из фазы «Штурм». Остальные участники узнают о раскрытии по cards_visibility_changed.
+  const handleRevealCards = useCallback(async () => {
+    if (revealing) return
+    setRevealing(true)
+    try {
+      const fresh = await revealBoardCards(board.id)
+      setColumns(fresh.columns || [])
+      setMoods(fresh.moods || [])
+      onBoardUpdated({ ...boardRef.current, ...fresh })
+      showToast('Карточки раскрыты для всей команды', 'success')
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось раскрыть карточки'), 'error')
+    } finally {
+      setRevealing(false)
+    }
+  }, [board.id, onBoardUpdated, revealing, setColumns])
 
   const handleToggleSelectCard = useCallback(
     (cardId: string, shiftKey = false) => {
@@ -1020,25 +1129,19 @@ export default function BoardPage({
     async (col: ColumnType) => {
       if (readOnly) return
       try {
-        const preview = await autoClusterPreview(col.id, username)
+        const preview = await autoClusterPreview(col.id)
         if (!preview.groups || preview.groups.length === 0) {
           showToast('AI не нашёл похожих карточек для группировки', 'info')
           return
         }
         setClusterPreviewState({ column: col, preview })
       } catch (err: unknown) {
-        const status = (err as { response?: { status?: number } })?.response?.status
-        if (status === 503) {
-          showToast('AI-сервис временно недоступен', 'error')
-        } else {
-          showToast(
-            getApiErrorMessage(err, 'Не удалось выполнить AI-кластеризацию'),
-            'error',
-          )
-        }
+        // Одно сообщение по делу: причину («AI не настроен», «временно недоступен»,
+        // «карточки ещё скрыты») сообщает сервер
+        showToast(getApiErrorMessage(err, 'Не удалось выполнить AI-кластеризацию'), 'error')
       }
     },
-    [readOnly, username],
+    [readOnly],
   )
 
   const handleApplyClusterPreview = useCallback(
@@ -1050,7 +1153,6 @@ export default function BoardPage({
         const result = await applyAutoClusters({
           column_id: colId,
           groups: groupsToApply,
-          username,
         })
         for (const entry of result.created_groups || []) {
           if (entry?.group) {
@@ -1068,7 +1170,7 @@ export default function BoardPage({
         setApplyingClusters(false)
       }
     },
-    [applyingClusters, clusterPreviewState, handleGroupCreated, readOnly, username],
+    [applyingClusters, clusterPreviewState, handleGroupCreated, readOnly],
   )
 
   const commandBoardActions = useMemo<CommandBoardAction[]>(() => {
@@ -1137,7 +1239,7 @@ export default function BoardPage({
       },
       {
         id: 'ai-summary',
-        label: 'AI-резюме спринта',
+        label: aiEnabled === false ? 'Итоги ретро и экспорт' : 'AI-резюме спринта',
         keywords: 'summary итоги отчет',
         onSelect: () => {
           setSummaryOpen(true)
@@ -1160,6 +1262,7 @@ export default function BoardPage({
     )
     return list
   }, [
+    aiEnabled,
     allGroupsCollapsed,
     handleResetMyVotes,
     handleToggleCollapseAllGroups,
@@ -1175,7 +1278,7 @@ export default function BoardPage({
     const items: CommandSearchCard[] = []
     for (const col of columns) {
       for (const card of col.cards) {
-        if (hideOtherCards && card.author !== username) continue
+        if (card.masked) continue
         items.push({
           id: card.id,
           text: card.text,
@@ -1184,7 +1287,7 @@ export default function BoardPage({
           onSelect: () => {
             const el = document.querySelector<HTMLElement>(`[data-card-id="${card.id}"]`)
             el?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
-            if (!effectiveFacilitator || effectiveFacilitator === username) {
+            if (canControlSession) {
               handleSpotlight(card.id)
             }
           },
@@ -1192,7 +1295,7 @@ export default function BoardPage({
       }
     }
     return items
-  }, [columns, effectiveFacilitator, handleSpotlight, hideOtherCards, username])
+  }, [columns, canControlSession, handleSpotlight])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1282,8 +1385,12 @@ export default function BoardPage({
       .catch(() => showToast('Не удалось подготовить отчёт для печати', 'error'))
   }
 
-  const remoteCursors = Object.keys(cursorsRef.current).filter(
-    (name) => name !== username,
+  // Курсоры других участников; свой (из второй вкладки той же сессии) не показываем
+  const remoteCursors = Object.entries(cursorsRef.current).filter(([id]) => id !== myId)
+
+  // Удалять выбранные карточки можно, если каждая из них своя, либо я модератор
+  const canDeleteSelection = selectedCards.every((card) =>
+    canDeleteCard(card, myId, { anonymous: anonymousMode, moderator: isModerator }),
   )
 
   return (
@@ -1292,9 +1399,11 @@ export default function BoardPage({
         board={{ ...board, moods }}
         workspaceName={workspaceName}
         username={username}
-        activeUsers={activeUsers}
-        readyUsers={readyUsers}
-        facilitator={effectiveFacilitator}
+        myId={myId}
+        participants={onlineParticipants}
+        readyIds={readyIds}
+        facilitatorId={effectiveFacilitator.id}
+        onTransferFacilitator={isFacilitator ? handleFacilitatorTransfer : undefined}
         connected={connected}
         openActionItemsCount={actionItems.filter((i) => i.status !== 'done').length}
         onOpenBoardsDrawer={() => setBoardsPanelOpen(true)}
@@ -1314,9 +1423,10 @@ export default function BoardPage({
       <SessionBar
         facilitator={effectiveFacilitator}
         phase={effectivePhase}
-        username={username}
-        activeUsers={activeUsers}
-        readyUsers={readyUsers}
+        myId={myId}
+        onlineCount={onlineParticipants.length}
+        readyIds={readyIds}
+        onFacilitatorTakeover={handleFacilitatorTakeover}
         isLocked={boardLocked}
         usedVotes={userTotalVotes}
         maxVotes={board.max_votes}
@@ -1363,6 +1473,17 @@ export default function BoardPage({
         actionItemsCount={actionItems.length}
         onAddColumn={handleAddColumn}
       />
+
+      {cardsHidden && (
+        <HiddenCollectBanner
+          inSession={Boolean(effectivePhase)}
+          maskedCount={maskedCardsCount}
+          canReveal={isModerator}
+          locked={boardLocked}
+          revealing={revealing}
+          onReveal={handleRevealCards}
+        />
+      )}
 
       {/* Board workspace */}
       <DndContext
@@ -1424,7 +1545,9 @@ export default function BoardPage({
                   column={col}
                   maxVotes={board.max_votes}
                   userTotalVotes={userTotalVotes}
-                  currentUser={username}
+                  currentUserId={myId}
+                  isModerator={isModerator}
+                  voterNames={voterNames}
                   onUpdate={handleColumnUpdate}
                   onDelete={handleColumnDelete}
                   onCardCreated={(card) => handleCardCreated(col.id, card)}
@@ -1438,7 +1561,7 @@ export default function BoardPage({
                   groupTargetId={groupTargetId}
                   collapsedGroups={collapsedGroups}
                   onToggleCollapse={handleToggleCollapse}
-                  hideOtherCards={hideOtherCards}
+                  cardsHidden={cardsHidden}
                   anonymous={anonymousMode}
                   readOnly={readOnly}
                   cardCreationDisabled={readOnly}
@@ -1466,8 +1589,13 @@ export default function BoardPage({
 
               {/* Multiplayer cursors layer */}
               <AnimatePresence>
-                {remoteCursors.map((name) => (
-                  <CursorMarker key={name} username={name} posRef={cursorsRef} />
+                {remoteCursors.map(([id, cursor]) => (
+                  <CursorMarker
+                    key={id}
+                    cursorId={id}
+                    username={cursor.name || 'Участник'}
+                    posRef={cursorsRef}
+                  />
                 ))}
               </AnimatePresence>
             </div>
@@ -1522,6 +1650,7 @@ export default function BoardPage({
                 }
                 dropDisabled={readOnly}
                 readOnly={readOnly}
+                cardsHidden={cardsHidden}
               />
             </div>
           </aside>
@@ -1573,6 +1702,7 @@ export default function BoardPage({
             }
             dropDisabled
             readOnly={readOnly}
+            cardsHidden={cardsHidden}
           />
         </SheetContent>
       </Sheet>
@@ -1622,6 +1752,7 @@ export default function BoardPage({
         onBulkMove={handleBulkMove}
         onBulkCreateActionItem={handleBulkCreateActionItem}
         onBulkDelete={handleBulkDelete}
+        canDelete={canDeleteSelection}
         onMergeCards={handleMergeCards}
       />
 
@@ -1640,6 +1771,7 @@ export default function BoardPage({
         open={boardSettingsOpen}
         onOpenChange={setBoardSettingsOpen}
         board={board}
+        canModerate={isModerator}
         onBoardUpdated={onBoardUpdated}
         onBoardDeleted={onBoardDeleted}
       />
@@ -1653,7 +1785,7 @@ export default function BoardPage({
         open={moodOpen}
         onOpenChange={setMoodOpen}
         boardId={board.id}
-        username={username}
+        anonymous={anonymousMode}
         moods={moods}
         onMoodSubmitted={handleWsMoodUpdated}
       />
@@ -1690,8 +1822,8 @@ export default function BoardPage({
         card={spotlightData?.card || null}
         column={spotlightData?.column}
         anonymous={anonymousMode}
-        isFacilitator={!effectiveFacilitator || effectiveFacilitator === username}
-        currentUser={username}
+        isFacilitator={canControlSession}
+        currentUserId={myId}
         readOnly={readOnly}
         maxVotes={board.max_votes}
         userTotalVotes={userTotalVotes}
@@ -1701,7 +1833,7 @@ export default function BoardPage({
         onQueueModeChange={setSpotlightQueueMode}
         onSelectCard={handleSelectSpotlightCard}
         onClose={() => {
-          if (!effectiveFacilitator || effectiveFacilitator === username) {
+          if (canControlSession) {
             sendMessage({ event: 'spotlight_card', data: { card_id: null } })
           }
         }}
@@ -1713,27 +1845,18 @@ export default function BoardPage({
           const targetCard = spotlightData.card
           const targetColId = spotlightData.column.id
           const allowMulti = Boolean(board.allow_multiple_votes_per_card)
-          const alreadyLiked = (targetCard.likes || []).includes(username)
+          const alreadyLiked = countMyVotes(targetCard, myId) > 0
           const adding = allowMulti || !alreadyLiked
           if (adding && board.max_votes > 0 && userTotalVotes >= board.max_votes) {
             showToast(`Лимит голосов исчерпан (${userTotalVotes}/${board.max_votes})`, 'info')
             return
           }
-          toggleLike(targetCard.id, username, allowMulti ? 'add' : 'toggle')
+          toggleLike(targetCard.id, allowMulti ? 'add' : 'toggle')
             .then((updated) => handleCardUpdated(targetColId, updated))
             .catch((err) => showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error'))
         }}
       />
 
-      {/* Quick hint pill in brainstorm */}
-      {effectivePhase === 'brainstorm' && (
-        <div className="pointer-events-none fixed bottom-4 left-1/2 z-30 -translate-x-1/2">
-          <div className="flex items-center gap-2 rounded-full border bg-background/95 px-4 py-1.5 text-xs font-medium shadow-lg backdrop-blur-md">
-            <Sparkles className="h-3.5 w-3.5 text-primary" />
-            <span>Слепой режим: карточки других участников скрыты до фазы раскрытия</span>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

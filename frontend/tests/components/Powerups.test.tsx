@@ -32,6 +32,8 @@ vi.mock('../../store', () => ({
   useAppStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({
       username: 'TestUser',
+      participant: { id: 'p-me', name: 'TestUser' },
+      aiEnabled: null,
       theme: { primary: '#6750A4', dark: false },
       setUsername: vi.fn(),
       setCurrentBoard: vi.fn(),
@@ -51,9 +53,11 @@ vi.mock('../../api', () => ({
     group_id: null,
     text: 'Card',
     author: 'Alice',
+    author_id: 'p-alice',
+    masked: false,
     color: '#FFFFFF',
     position: 0,
-    likes: ['TestUser', 'TestUser'],
+    likes: ['p-me', 'p-me'],
     created_at: '2026-01-01T00:00:00Z',
   }),
   deleteCard: vi.fn().mockResolvedValue(undefined),
@@ -63,6 +67,8 @@ vi.mock('../../api', () => ({
     group_id: null,
     text: 'Card',
     author: 'Alice',
+    author_id: 'p-alice',
+    masked: false,
     color: '#FFFFFF',
     position: 0,
     likes: [],
@@ -91,9 +97,11 @@ const baseCard: Card = {
   group_id: null,
   text: 'Сделать **релиз** по задаче `RETRO-12` https://example.com/issue/12',
   author: 'Alice',
+  author_id: 'p-alice',
+  masked: false,
   color: '#FFFFFF',
   position: 0,
-  likes: ['TestUser'],
+  likes: ['p-me'],
   created_at: '2026-01-01T00:00:00Z',
 }
 
@@ -153,7 +161,7 @@ describe('Polished dialogs, collapsed group & PDF export', () => {
         cards={cards}
         collapsed
         onToggleCollapse={vi.fn()}
-        currentUser="TestUser"
+        currentUserId="p-me"
         maxVotes={5}
         userTotalVotes={0}
         onUpdated={vi.fn()}
@@ -281,7 +289,7 @@ describe('Polished dialogs, collapsed group & PDF export', () => {
         card={baseCard}
         anonymous={false}
         isFacilitator
-        currentUser="Alice"
+        currentUserId="p-alice"
         queueCards={[
           { card: baseCard, columnTitle: 'Идеи' },
           { card: { ...baseCard, id: 'c2', text: 'Вторая карточка' }, columnTitle: 'Идеи' },
@@ -382,7 +390,7 @@ describe('CardWidget cursor & powerups', () => {
 
   it('supports dot voting + / - controls and ×N counter', async () => {
     const user = userEvent.setup()
-    const dotCard: Card = { ...baseCard, likes: ['TestUser', 'TestUser'] }
+    const dotCard: Card = { ...baseCard, likes: ['p-me', 'p-me'] }
     render(
       <CardWidget
         card={dotCard}
@@ -397,10 +405,10 @@ describe('CardWidget cursor & powerups', () => {
     expect(screen.getByText('×2')).toBeInTheDocument()
     await user.click(screen.getByTitle('Убрать голос'))
     const { toggleLike } = await import('../../api')
-    expect(toggleLike).toHaveBeenCalledWith('c1', 'TestUser', 'remove')
+    expect(toggleLike).toHaveBeenCalledWith('c1', 'remove')
 
     await user.click(screen.getByTitle('Лайк'))
-    expect(toggleLike).toHaveBeenCalledWith('c1', 'TestUser', 'add')
+    expect(toggleLike).toHaveBeenCalledWith('c1', 'add')
   })
 
   it('supports Shift+click card selection and column move submenu', async () => {
@@ -428,7 +436,7 @@ describe('CardWidget cursor & powerups', () => {
 describe('SpotlightModal navigation', () => {
   it('navigates between cards via buttons, keyboard arrows, queue toggle, and create+next', async () => {
     const user = userEvent.setup()
-    const card2: Card = { ...baseCard, id: 'c2', text: 'Вторая карточка', likes: ['Alice', 'Bob'] }
+    const card2: Card = { ...baseCard, id: 'c2', text: 'Вторая карточка', likes: ['p-alice', 'p-bob'] }
     const onSelectCard = vi.fn()
     const onQueueModeChange = vi.fn()
     const onCreateActionItem = vi.fn()
@@ -439,7 +447,7 @@ describe('SpotlightModal navigation', () => {
         column={{ id: 'col1', board_id: 'b1', title: 'Что хорошо', color: '#10B981', position: 0, cards: [baseCard, card2], groups: [] }}
         anonymous={false}
         isFacilitator
-        currentUser="TestUser"
+        currentUserId="p-me"
         queueCards={[
           { card: baseCard, columnTitle: 'Что хорошо' },
           { card: card2, columnTitle: 'Что хорошо' },

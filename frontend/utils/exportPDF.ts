@@ -113,15 +113,23 @@ function cardHTML(card: Card, anonymousVotes: boolean, accentHex: string): strin
 function columnHTML(col: Column, anonymousVotes: boolean, accentHex: string): string {
   if (!col) return ''
   const colColor = col.color || accentHex
-  const ungrouped = col.cards.filter((c) => !c.group_id)
+  // Чужие карточки до раскрытия приходят с сервера без текста и автора:
+  // в отчёт попадает только их количество
+  const visibleCards = col.cards.filter((c) => !c.masked)
+  const maskedCount = col.cards.length - visibleCards.length
+  const ungrouped = visibleCards.filter((c) => !c.group_id)
   const groups = (col.groups || [])
     .map((g) => ({
       ...g,
-      cards: col.cards.filter((c) => c.group_id === g.id),
+      cards: visibleCards.filter((c) => c.group_id === g.id),
     }))
     .filter((g) => g.cards.length > 0)
 
   const hasContent = ungrouped.length > 0 || groups.length > 0
+  const maskedNote =
+    maskedCount > 0
+      ? `<div class="empty-box">Скрыто до раскрытия карточек других участников: ${maskedCount}</div>`
+      : ''
 
   const groupsHTML = groups
     .map(
@@ -155,8 +163,11 @@ function columnHTML(col: Column, anonymousVotes: boolean, accentHex: string): st
       ${
         hasContent
           ? `<div class="cards-grid">${groupsHTML}${ungroupedHTML}</div>`
-          : '<div class="empty-box">В этой колонке пока нет карточек</div>'
+          : maskedCount > 0
+            ? ''
+            : '<div class="empty-box">В этой колонке пока нет карточек</div>'
       }
+      ${maskedNote}
     </section>`
 }
 

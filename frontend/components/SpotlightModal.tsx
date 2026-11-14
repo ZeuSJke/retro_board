@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { motion } from 'motion/react'
 import { ChevronLeft, ChevronRight, ListTodo, Sparkles, ThumbsUp, User } from 'lucide-react'
 import { getCardColorPreset, getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import { avatarSeed, countMyVotes, isOwnCard } from '@/lib/participants'
 import type { Card, Column } from '@/types'
 import { RichCardText } from './RichCardText'
 import { Badge } from '@/components/ui/badge'
@@ -28,7 +29,8 @@ interface SpotlightModalProps {
   column?: Column
   anonymous: boolean
   isFacilitator: boolean
-  currentUser: string
+  /** Идентификатор текущего участника: по нему считаются «мои» голоса и «моя» карточка. */
+  currentUserId: string
   readOnly?: boolean
   maxVotes?: number
   userTotalVotes?: number
@@ -47,7 +49,7 @@ export default function SpotlightModal({
   column,
   anonymous,
   isFacilitator,
-  currentUser,
+  currentUserId,
   readOnly = false,
   maxVotes = 0,
   userTotalVotes = 0,
@@ -96,12 +98,12 @@ export default function SpotlightModal({
 
   if (!card) return null
   const preset = getCardColorPreset(card.color)
-  const myVotes = card.likes.filter((u) => u === currentUser).length
+  const myVotes = countMyVotes(card, currentUserId)
   const liked = myVotes > 0
   const canAddMore = !(maxVotes > 0 && userTotalVotes >= maxVotes)
   const limitReached = allowMultipleVotes ? !canAddMore : !liked && !canAddMore
   const voteDisabled = readOnly || limitReached
-  const showAuthor = !anonymous || card.author === currentUser
+  const showAuthor = !anonymous || isOwnCard(card, currentUserId)
 
   return (
     <Dialog open={Boolean(card)} onOpenChange={(open) => !open && onClose()}>
@@ -224,7 +226,7 @@ export default function SpotlightModal({
                   {showAuthor ? (
                     <>
                       <span
-                        className={`flex h-6 w-6 items-center justify-center rounded-full bg-linear-to-br/srgb text-[10px] font-bold text-white ${getUserAvatarGradient(card.author)}`}
+                        className={`flex h-6 w-6 items-center justify-center rounded-full bg-linear-to-br/srgb text-[10px] font-bold text-white ${getUserAvatarGradient(avatarSeed(card.author_id, card.author))}`}
                       >
                         {getUserInitials(card.author)}
                       </span>

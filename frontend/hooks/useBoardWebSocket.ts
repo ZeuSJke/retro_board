@@ -6,21 +6,32 @@ import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { getActionItems } from '../api'
 import { asCard, asColumn, asGroup, asActionItem } from '../utils/wsData'
+import {
+  applyCardCreated,
+  applyCardDeleted,
+  applyCardMoved,
+  applyCardUpdated,
+  applyColumnCreated,
+  applyColumnDeleted,
+  applyColumnUpdated,
+  applyGroupCreated,
+  applyGroupDeleted,
+  applyGroupMoved,
+  applyGroupUpdated,
+  applyParticipantRenamed,
+} from '../lib/board-events'
 import type {
   ActionItem,
   BoardListItem,
   BoardMood,
   Column,
+  FacilitatorInfo,
+  Participant,
   ReactionBubble,
   TypingUser,
   WsMessage,
-  WsCursorMoveData,
-  WsCursorLeaveData,
-  WsPresenceData,
-  WsFacilitatorData,
-  WsPhaseData,
-  WsGroupCollapseData,
   WsCardMovedData,
+  WsGroupCollapseData,
   WsGroupMovedData,
   WsDeletedData,
   WsGroupDeletedData,
@@ -31,12 +42,16 @@ import type {
 export interface CursorPos {
   x: number
   y: number
+  /** Подпись курсора — имя участника; сам курсор хранится по `participant_id`. */
+  name?: string
 }
+
+export const NO_FACILITATOR: FacilitatorInfo = { id: null, name: null, online: false }
 
 interface UseBoardWebSocketParams {
   boardId: string
   onTimerWsEvent?: (event: string, data: Record<string, unknown>) => void
-  onFacilitatorChanged?: (facilitator: string | null, phase: string | null) => void
+  onFacilitatorChanged?: (facilitator: FacilitatorInfo, phase: string | null) => void
   onPhaseChanged?: (phase: string) => void
   onSummaryGenerated?: () => void
   onSummaryFailed?: (message?: string) => void
@@ -44,6 +59,24 @@ interface UseBoardWebSocketParams {
   onBoardUpdated?: (board: WsBoardUpdatedData) => void
   onBoardDeleted?: (id: string) => void
   onMoodUpdated?: (mood: BoardMood) => void
+  /** Сервер изменил видимость карточек (раскрытие, начало штурма): доску нужно перечитать. */
+  onCardsVisibilityChanged?: () => void
+  /** Участник сменил имя. Подписи карточек хук обновляет сам. */
+  onParticipantRenamed?: (participantId: string, name: string) => void
+}
+
+function isParticipant(value: unknown): value is Participant {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Participant).id === 'string' &&
+    (value as Participant).id.length > 0 &&
+    typeof (value as Participant).name === 'string'
+  )
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
 }
 
 export function useBoardWebSocket({
@@ -57,18 +90,25 @@ export function useBoardWebSocket({
   onBoardUpdated,
   onBoardDeleted,
   onMoodUpdated,
+  onCardsVisibilityChanged,
+  onParticipantRenamed,
 }: UseBoardWebSocketParams) {
-  const username = useAppStore((s) => s.username)
+  // Личность — участник сессии; имя нужно только для подписи в уведомлениях
+  const myId = useAppStore((s) => s.participant?.id ?? '')
+  const myName = useAppStore((s) => s.participant?.name ?? s.username)
   const [columns, setColumns] = useState<Column[]>([])
+  // Курсоры хранятся по идентификатору участника: у тёзок они разные
   const cursorsRef = useRef<Record<string, CursorPos>>({})
   const cursorListenersRef = useRef<Set<() => void>>(new Set())
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
-  const [activeUsers, setActiveUsers] = useState<string[]>([])
-  const [readyUsers, setReadyUsers] = useState<string[]>([])
+  const [participants, setParticipants] = useState<Participant[]>([])
+  // Имена всех, кого мы видели на доске: по ним подписываются голоса ушедших участников
+  const [knownNames, setKnownNames] = useState<Record<string, string>>({})
+  const [readyIds, setReadyIds] = useState<string[]>([])
   const [spotlightCardId, setSpotlightCardId] = useState<string | null>(null)
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([])
   const [reactions, setReactions] = useState<ReactionBubble[]>([])
-  const [facilitator, setFacilitator] = useState<string | null>(null)
+  const [facilitator, setFacilitator] = useState<FacilitatorInfo>(NO_FACILITATOR)
   const [phase, setPhase] = useState<string | null>(null)
   const [sessionSynced, setSessionSynced] = useState(false)
   const [actionItems, setActionItems] = useState<ActionItem[]>([])
@@ -78,13 +118,14 @@ export function useBoardWebSocket({
   const lastCursorSentAtRef = useRef<number>(0)
   const lastCursorSentPosRef = useRef<CursorPos | null>(null)
   const sendMessageRef = useRef<((msg: WsMessage) => void) | null>(null)
-  const prevUsernameRef = useRef(username)
 
   useEffect(() => {
     setSessionSynced(false)
-    setFacilitator(null)
+    setFacilitator(NO_FACILITATOR)
     setPhase(null)
-    setReadyUsers([])
+    setParticipants([])
+    setKnownNames({})
+    setReadyIds([])
     setSpotlightCardId(null)
     setTypingUsers([])
     setReactions([])
@@ -124,6 +165,33 @@ export function useBoardWebSocket({
       .catch((err) => console.error('Failed to load action items:', err))
   }, [boardId])
 
+  const rememberNames = useCallback((people: Participant[]) => {
+    setKnownNames((prev) => {
+      let next = prev
+      for (const person of people) {
+        if (person.name && next[person.id] !== person.name) {
+          if (next === prev) next = { ...prev }
+          next[person.id] = person.name
+        }
+      }
+      return next
+    })
+  }, [])
+
+  const removeCursor = useCallback(
+    (id: string) => {
+      clearTimeout(cursorTimeouts.current[id])
+      delete cursorTimeouts.current[id]
+      if (id in cursorsRef.current) {
+        const next = { ...cursorsRef.current }
+        delete next[id]
+        cursorsRef.current = next
+        notifyCursorListeners()
+      }
+    },
+    [notifyCursorListeners],
+  )
+
   const handleWsMessage = useCallback(
     (msg: WsMessage) => {
       const { event, data } = msg
@@ -135,39 +203,26 @@ export function useBoardWebSocket({
       }
 
       if (event === 'cursor_move') {
-        const { username: u, x, y } = data as unknown as WsCursorMoveData
-        if (!u) return
-        const isNewCursor = !(u in cursorsRef.current)
-        cursorsRef.current = { ...cursorsRef.current, [u]: { x, y } }
-        // Only trigger a React tree re-render when a peer cursor appears for the first time;
-        // CursorMarker already animates x/y directly via requestAnimationFrame.
-        if (isNewCursor) {
+        const id = typeof data.participant_id === 'string' ? data.participant_id : ''
+        const x = typeof data.x === 'number' ? data.x : null
+        const y = typeof data.y === 'number' ? data.y : null
+        if (!id || x === null || y === null) return
+        const name = typeof data.username === 'string' ? data.username : ''
+        const prevCursor = cursorsRef.current[id]
+        cursorsRef.current = { ...cursorsRef.current, [id]: { x, y, name } }
+        // Only trigger a React tree re-render when a peer cursor appears for the first time
+        // (or its label changes); CursorMarker animates x/y directly via requestAnimationFrame.
+        if (!prevCursor || prevCursor.name !== name) {
           notifyCursorListeners()
         }
-        clearTimeout(cursorTimeouts.current[u])
-        cursorTimeouts.current[u] = setTimeout(() => {
-          if (u in cursorsRef.current) {
-            const n = { ...cursorsRef.current }
-            delete n[u]
-            cursorsRef.current = n
-            notifyCursorListeners()
-          }
-          delete cursorTimeouts.current[u]
-        }, 6000)
+        clearTimeout(cursorTimeouts.current[id])
+        cursorTimeouts.current[id] = setTimeout(() => removeCursor(id), 6000)
         return
       }
 
       if (event === 'cursor_leave') {
-        const { username: u } = data as unknown as WsCursorLeaveData
-        if (!u) return
-        clearTimeout(cursorTimeouts.current[u])
-        delete cursorTimeouts.current[u]
-        if (u in cursorsRef.current) {
-          const n = { ...cursorsRef.current }
-          delete n[u]
-          cursorsRef.current = n
-          notifyCursorListeners()
-        }
+        const id = typeof data.participant_id === 'string' ? data.participant_id : ''
+        if (id) removeCursor(id)
         return
       }
 
@@ -177,16 +232,14 @@ export function useBoardWebSocket({
       }
 
       if (event === 'presence_update') {
-        const { users } = data as unknown as WsPresenceData
-        setActiveUsers(users)
+        const list = Array.isArray(data.participants) ? data.participants.filter(isParticipant) : []
+        setParticipants(list)
+        rememberNames(list)
         return
       }
 
       if (event === 'ready_update') {
-        const users = Array.isArray(data.ready_users)
-          ? (data.ready_users.filter((u): u is string => typeof u === 'string'))
-          : []
-        setReadyUsers(users)
+        setReadyIds(stringList(data.ready_ids))
         return
       }
 
@@ -202,6 +255,7 @@ export function useBoardWebSocket({
               (item): item is TypingUser =>
                 typeof item === 'object' &&
                 item !== null &&
+                typeof (item as TypingUser).participant_id === 'string' &&
                 typeof (item as TypingUser).username === 'string' &&
                 typeof (item as TypingUser).column_id === 'string',
             )
@@ -213,13 +267,17 @@ export function useBoardWebSocket({
       if (event === 'reaction') {
         const emoji = typeof data.emoji === 'string' ? data.emoji : ''
         const sender = typeof data.username === 'string' ? data.username : ''
+        const participantId = typeof data.participant_id === 'string' ? data.participant_id : undefined
         const id =
           typeof data.id === 'string'
             ? data.id
             : `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         if (!emoji) return
         const xOffset = 8 + Math.floor(Math.random() * 84)
-        setReactions((prev) => [...prev.slice(-23), { id, emoji, username: sender, xOffset }])
+        setReactions((prev) => [
+          ...prev.slice(-23),
+          { id, emoji, username: sender, participantId, xOffset },
+        ])
         reactionTimeouts.current[id] = setTimeout(() => {
           setReactions((prev) => prev.filter((r) => r.id !== id))
           delete reactionTimeouts.current[id]
@@ -235,24 +293,65 @@ export function useBoardWebSocket({
       }
 
       if (event === 'facilitator_update') {
-        const { facilitator: f, phase: p } = data as unknown as WsFacilitatorData
-        setFacilitator(f)
+        const id = typeof data.facilitator_id === 'string' && data.facilitator_id ? data.facilitator_id : null
+        const next: FacilitatorInfo = id
+          ? {
+              id,
+              name: typeof data.facilitator === 'string' ? data.facilitator : null,
+              online: data.facilitator_online !== false,
+            }
+          : NO_FACILITATOR
+        const p = typeof data.phase === 'string' ? data.phase : null
+        setFacilitator(next)
         setPhase(p)
         setSessionSynced(true)
-        if (!f) {
-          setReadyUsers([])
+        if (next.id && next.name) rememberNames([{ id: next.id, name: next.name }])
+        if (!next.id) {
+          setReadyIds([])
           setSpotlightCardId(null)
         }
-        onFacilitatorChanged?.(f, p)
+        onFacilitatorChanged?.(next, p)
         return
       }
 
       if (event === 'phase_update') {
-        const { phase: p } = data as unknown as WsPhaseData
+        const p = typeof data.phase === 'string' ? data.phase : null
+        if (!p) return
         setPhase(p)
-        setReadyUsers([])
+        setReadyIds([])
         setSpotlightCardId(null)
         onPhaseChanged?.(p)
+        return
+      }
+
+      if (event === 'cards_visibility_changed') {
+        onCardsVisibilityChanged?.()
+        return
+      }
+
+      if (event === 'participant_renamed') {
+        const id = typeof data.participant_id === 'string' ? data.participant_id : ''
+        const name = typeof data.name === 'string' ? data.name : ''
+        if (!id || !name) return
+        setColumns((prev) => applyParticipantRenamed(prev, id, name))
+        setParticipants((prev) =>
+          prev.some((p) => p.id === id && p.name !== name)
+            ? prev.map((p) => (p.id === id ? { ...p, name } : p))
+            : prev,
+        )
+        setKnownNames((prev) => (prev[id] === name ? prev : { ...prev, [id]: name }))
+        setFacilitator((prev) => (prev.id === id && prev.name !== name ? { ...prev, name } : prev))
+        setTypingUsers((prev) =>
+          prev.some((t) => t.participant_id === id && t.username !== name)
+            ? prev.map((t) => (t.participant_id === id ? { ...t, username: name } : t))
+            : prev,
+        )
+        const cursor = cursorsRef.current[id]
+        if (cursor && cursor.name !== name) {
+          cursorsRef.current = { ...cursorsRef.current, [id]: { ...cursor, name } }
+          notifyCursorListeners()
+        }
+        onParticipantRenamed?.(id, name)
         return
       }
 
@@ -283,8 +382,9 @@ export function useBoardWebSocket({
       }
 
       if (event === 'auto_cluster_completed') {
-        const u = data.username as string | undefined
-        if (u && u !== username) {
+        // В событии только имя инициатора (идентификатора участника нет): себя узнаём по имени
+        const u = typeof data.username === 'string' ? data.username : ''
+        if (u && u !== myName) {
           showToast(`${u} сгруппировал(а) карточки`, 'info')
         }
         return
@@ -324,145 +424,61 @@ export function useBoardWebSocket({
         switch (event) {
           case 'column_created': {
             const col = asColumn(data)
-            updater = (prev) =>
-              prev.find((c) => c.id === col.id) ? prev : [...prev, { ...col, cards: [], groups: [] }]
+            updater = (prev) => applyColumnCreated(prev, col)
             break
           }
           case 'column_updated': {
             const col = asColumn(data)
-            updater = (prev) => prev.map((c) => (c.id === col.id ? { ...c, ...col } : c))
+            updater = (prev) => applyColumnUpdated(prev, col)
             break
           }
           case 'column_deleted': {
             const deletedId = (data as unknown as WsDeletedData)?.id
-            if (deletedId) {
-              updater = (prev) => prev.filter((c) => c.id !== deletedId)
-            }
+            if (deletedId) updater = (prev) => applyColumnDeleted(prev, deletedId)
             break
           }
           case 'card_created': {
             const card = asCard(data)
-            updater = (prev) =>
-              prev.map((c) =>
-                c.id === card.column_id
-                  ? {
-                      ...c,
-                      cards: [...c.cards.filter((x) => x.id !== card.id), card].sort(
-                        (a, b) => a.position - b.position,
-                      ),
-                    }
-                  : c,
-              )
+            updater = (prev) => applyCardCreated(prev, card)
             break
           }
           case 'card_updated': {
             const card = asCard(data)
-            updater = (prev) =>
-              prev.map((c) => ({
-                ...c,
-                cards: c.cards.map((x) => (x.id === card.id ? card : x)),
-              }))
+            updater = (prev) => applyCardUpdated(prev, card)
             break
           }
           case 'card_moved': {
             const moved = data as unknown as WsCardMovedData
             if (!moved?.card || !moved.old_column_id) break
-            const { card, old_column_id } = moved
-            updater = (prev) =>
-              prev.map((c) => {
-                if (c.id === old_column_id && c.id === card.column_id) {
-                  const cards = [...c.cards.filter((x) => x.id !== card.id), card].sort(
-                    (a, b) => a.position - b.position,
-                  )
-                  return { ...c, cards }
-                }
-                if (c.id === old_column_id) {
-                  return { ...c, cards: c.cards.filter((x) => x.id !== card.id) }
-                }
-                if (c.id === card.column_id) {
-                  const cards = [...c.cards.filter((x) => x.id !== card.id), card].sort(
-                    (a, b) => a.position - b.position,
-                  )
-                  return { ...c, cards }
-                }
-                return c
-              })
+            const payload: WsCardMovedData = { ...moved, card: asCard(moved.card as unknown as Record<string, unknown>) }
+            updater = (prev) => applyCardMoved(prev, payload)
             break
           }
           case 'card_deleted': {
             const deletedId = (data as unknown as WsDeletedData)?.id
-            if (deletedId) {
-              updater = (prev) =>
-                prev.map((c) => ({
-                  ...c,
-                  cards: c.cards.filter((x) => x.id !== deletedId),
-                }))
-            }
+            if (deletedId) updater = (prev) => applyCardDeleted(prev, deletedId)
             break
           }
           case 'group_created': {
             const g = asGroup(data)
-            updater = (prev) =>
-              prev.map((c) =>
-                c.id === g.column_id
-                  ? { ...c, groups: [...(c.groups || []).filter((x) => x.id !== g.id), g] }
-                  : c,
-              )
+            updater = (prev) => applyGroupCreated(prev, g)
             break
           }
           case 'group_updated': {
             const g = asGroup(data)
-            updater = (prev) =>
-              prev.map((c) => ({
-                ...c,
-                groups: (c.groups || []).map((x) => (x.id === g.id ? g : x)),
-              }))
+            updater = (prev) => applyGroupUpdated(prev, g)
             break
           }
           case 'group_deleted': {
             const del = data as unknown as WsGroupDeletedData
             if (!del?.id || !del.column_id) break
-            const { id, column_id, card_ids } = del
-            updater = (prev) =>
-              prev.map((c) =>
-                c.id === column_id
-                  ? {
-                      ...c,
-                      groups: (c.groups || []).filter((x) => x.id !== id),
-                      cards: c.cards.map((card) =>
-                        (card_ids || []).includes(card.id) ? { ...card, group_id: null } : card,
-                      ),
-                    }
-                  : c,
-              )
+            updater = (prev) => applyGroupDeleted(prev, del)
             break
           }
           case 'group_moved': {
             const moved = data as unknown as WsGroupMovedData
             if (!moved?.group || !moved.old_column_id || !Array.isArray(moved.cards)) break
-            const { group, old_column_id, cards } = moved
-            const movedCardIds = cards.map((c) => c.id)
-            updater = (prev) =>
-              prev.map((c) => {
-                if (c.id === old_column_id) {
-                  return {
-                    ...c,
-                    groups: (c.groups || []).filter((x) => x.id !== group.id),
-                    cards: c.cards.filter((card) => !movedCardIds.includes(card.id)),
-                  }
-                }
-                if (c.id === group.column_id) {
-                  return {
-                    ...c,
-                    groups: [...(c.groups || []).filter((x) => x.id !== group.id), group],
-                    cards: [
-                      ...c.cards.filter((card) => !movedCardIds.includes(card.id)),
-                      ...cards,
-                    ],
-                  }
-                }
-                return c
-              })
+            updater = (prev) => applyGroupMoved(prev, moved)
             break
           }
           default:
@@ -483,8 +499,12 @@ export function useBoardWebSocket({
       onBoardUpdated,
       onBoardDeleted,
       onMoodUpdated,
+      onCardsVisibilityChanged,
+      onParticipantRenamed,
       notifyCursorListeners,
-      username,
+      rememberNames,
+      removeCursor,
+      myName,
     ],
   )
 
@@ -492,32 +512,19 @@ export function useBoardWebSocket({
     boardId,
     handleWsMessage,
     useCallback(() => {
-      sendMessageRef.current?.({
-        event: 'identify',
-        data: { username },
-      })
+      // Личность сокета сервер берёт из сессии. `identify` — запрос состава доски
+      // и состояния сессии ведущего (ответ: presence_update и facilitator_update).
+      sendMessageRef.current?.({ event: 'identify', data: {} })
       const pos = lastCursorRef.current
       if (pos) {
-        sendMessageRef.current?.({
-          event: 'cursor_move',
-          data: { username, ...pos },
-        })
+        sendMessageRef.current?.({ event: 'cursor_move', data: { x: pos.x, y: pos.y } })
       }
-    }, [username]),
+    }, []),
   )
 
   useEffect(() => {
     sendMessageRef.current = sendMessage
   }, [sendMessage])
-
-  useEffect(() => {
-    if (prevUsernameRef.current !== username) {
-      prevUsernameRef.current = username
-      if (connected && username) {
-        sendMessage({ event: 'identify', data: { username } })
-      }
-    }
-  }, [connected, username, sendMessage])
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent, boardEl: HTMLDivElement | null) => {
@@ -535,14 +542,14 @@ export function useBoardWebSocket({
       if (!movedEnough || now - lastCursorSentAtRef.current < 50) return
       lastCursorSentAtRef.current = now
       lastCursorSentPosRef.current = pos
-      sendMessage({ event: 'cursor_move', data: { username, ...pos } })
+      sendMessage({ event: 'cursor_move', data: pos })
     },
-    [username, sendMessage],
+    [sendMessage],
   )
 
   const handleMouseLeave = useCallback(() => {
-    sendMessage({ event: 'cursor_leave', data: { username } })
-  }, [username, sendMessage])
+    sendMessage({ event: 'cursor_leave', data: {} })
+  }, [sendMessage])
 
   return {
     columns,
@@ -551,8 +558,14 @@ export function useBoardWebSocket({
     subscribeCursors,
     collapsedGroups,
     setCollapsedGroups,
-    activeUsers,
-    readyUsers,
+    /** Идентификатор текущего участника (пустая строка, пока сессии нет). */
+    myId,
+    /** Участники, подключённые к доске сейчас. */
+    participants,
+    /** Имена всех, кого клиент видел на доске: `participant_id → имя`. */
+    knownNames,
+    /** Идентификаторы участников, отметивших готовность. */
+    readyIds,
     spotlightCardId,
     typingUsers,
     reactions,

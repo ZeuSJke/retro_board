@@ -4,18 +4,29 @@ import { useBoardWebSocket } from '../../hooks/useBoardWebSocket'
 
 // Capture the message handler passed to useWebSocket
 let wsMessageHandler: ((msg: { event: string; data: unknown }) => void) | null = null
+let wsOpenHandler: (() => void) | null = null
 const mockSendMessage = vi.fn()
 
 vi.mock('../../hooks/useWebSocket', () => ({
-  useWebSocket: (_boardId: string, onMessage: (msg: { event: string; data: unknown }) => void) => {
+  useWebSocket: (
+    _boardId: string,
+    onMessage: (msg: { event: string; data: unknown }) => void,
+    onOpen?: () => void,
+  ) => {
     wsMessageHandler = onMessage
+    wsOpenHandler = onOpen ?? null
     return { sendMessage: mockSendMessage }
   },
 }))
 
+// Текущий участник — p-me по имени TestUser
 vi.mock('../../store', () => ({
   useAppStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ username: 'TestUser', theme: { primary: '#6750A4', dark: false }, setUsername: vi.fn(), setCurrentBoard: vi.fn(), setTheme: vi.fn(), currentBoardId: null }),
+    selector({ username: 'TestUser', participant: { id: 'p-me', name: 'TestUser' }, aiEnabled: null, theme: { primary: '#6750A4', dark: false }, setUsername: vi.fn(), setCurrentBoard: vi.fn(), setTheme: vi.fn(), currentBoardId: null }),
+}))
+
+vi.mock('../../store/toastStore', () => ({
+  showToast: vi.fn(),
 }))
 
 vi.mock('../../api', () => ({
@@ -29,11 +40,39 @@ vi.mock('../../utils/wsData', () => ({
   asActionItem: (d: unknown) => d,
 }))
 
+import { showToast } from '../../store/toastStore'
+
+const COLUMN = { id: 'col-1', board_id: 'board-1', title: 'Good', color: '#6750A4', position: 0 }
+
+function card(id: string, position: number, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    column_id: 'col-1',
+    group_id: null,
+    text: `Card ${id}`,
+    author: 'Alice',
+    author_id: 'p-alice',
+    color: '#fff',
+    position,
+    likes: [],
+    masked: false,
+    created_at: '2026-01-01T00:00:00Z',
+    ...extra,
+  }
+}
+
 describe('useBoardWebSocket', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     wsMessageHandler = null
+    wsOpenHandler = null
   })
+
+  function emit(event: string, data: unknown) {
+    act(() => {
+      wsMessageHandler?.({ event, data })
+    })
+  }
 
   function setup(params?: Partial<Parameters<typeof useBoardWebSocket>[0]>) {
     return renderHook(() =>
@@ -48,9 +87,11 @@ describe('useBoardWebSocket', () => {
     const { result } = setup()
     expect(result.current.columns).toEqual([])
     expect(result.current.actionItems).toEqual([])
-    expect(result.current.activeUsers).toEqual([])
-    expect(result.current.facilitator).toBeNull()
+    expect(result.current.participants).toEqual([])
+    expect(result.current.readyIds).toEqual([])
+    expect(result.current.facilitator).toEqual({ id: null, name: null, online: false })
     expect(result.current.phase).toBeNull()
+    expect(result.current.myId).toBe('p-me')
   })
 
   it('handles column_created event', () => {
@@ -178,33 +219,121 @@ describe('useBoardWebSocket', () => {
     expect(result.current.columns[0].cards).toHaveLength(0)
   })
 
-  it('handles presence_update event', () => {
+  it('presence_update: участники с идентификаторами, тёзки — разные записи', () => {
     const { result } = setup()
 
-    act(() => {
-      wsMessageHandler?.({
-        event: 'presence_update',
-        data: { users: ['Alice', 'Bob'] },
-      })
+    emit('presence_update', {
+      users: ['Анна', 'Анна', 'Bob'],
+      participants: [
+        { id: 'p-1', name: 'Анна' },
+        { id: 'p-2', name: 'Анна' },
+        { id: 'p-3', name: 'Bob' },
+      ],
     })
 
-    expect(result.current.activeUsers).toEqual(['Alice', 'Bob'])
+    expect(result.current.participants).toEqual([
+      { id: 'p-1', name: 'Анна' },
+      { id: 'p-2', name: 'Анна' },
+      { id: 'p-3', name: 'Bob' },
+    ])
+    expect(result.current.knownNames).toEqual({ 'p-1': 'Анна', 'p-2': 'Анна', 'p-3': 'Bob' })
   })
 
-  it('handles facilitator_update event', () => {
+  it('имена ушедших участников остаются известны — ими подписываются голоса', () => {
+    const { result } = setup()
+
+    emit('presence_update', { users: ['Анна'], participants: [{ id: 'p-1', name: 'Анна' }] })
+    emit('presence_update', { users: [], participants: [] })
+
+    expect(result.current.participants).toEqual([])
+    expect(result.current.knownNames).toEqual({ 'p-1': 'Анна' })
+  })
+
+  it('facilitator_update: ведущий — участник с идентификатором и признаком «в сети»', () => {
     const onFacilitatorChanged = vi.fn()
     const { result } = setup({ onFacilitatorChanged })
 
-    act(() => {
-      wsMessageHandler?.({
-        event: 'facilitator_update',
-        data: { facilitator: 'Alice', phase: 'brainstorm' },
-      })
+    emit('facilitator_update', {
+      facilitator: 'Alice',
+      facilitator_id: 'p-alice',
+      facilitator_online: true,
+      phase: 'brainstorm',
+      session_id: 1,
     })
 
-    expect(result.current.facilitator).toBe('Alice')
+    expect(result.current.facilitator).toEqual({ id: 'p-alice', name: 'Alice', online: true })
     expect(result.current.phase).toBe('brainstorm')
-    expect(onFacilitatorChanged).toHaveBeenCalledWith('Alice', 'brainstorm')
+    expect(onFacilitatorChanged).toHaveBeenCalledWith(
+      { id: 'p-alice', name: 'Alice', online: true },
+      'brainstorm',
+    )
+
+    // Ведущий пропал из сети: сессия продолжается, роль можно забрать
+    emit('facilitator_update', {
+      facilitator: 'Alice',
+      facilitator_id: 'p-alice',
+      facilitator_online: false,
+      phase: 'brainstorm',
+      session_id: 1,
+    })
+    expect(result.current.facilitator).toEqual({ id: 'p-alice', name: 'Alice', online: false })
+  })
+
+  it('facilitator_update без ведущего завершает сессию и чистит готовность с фокусом', () => {
+    const { result } = setup()
+
+    emit('ready_update', { ready_users: ['Bob'], ready_ids: ['p-bob'] })
+    emit('spotlight_update', { card_id: 'card-1' })
+    emit('facilitator_update', {
+      facilitator: null,
+      facilitator_id: null,
+      facilitator_online: false,
+      phase: null,
+      session_id: null,
+    })
+
+    expect(result.current.facilitator.id).toBeNull()
+    expect(result.current.readyIds).toEqual([])
+    expect(result.current.spotlightCardId).toBeNull()
+  })
+
+  it('ready_update: готовность считается по идентификаторам участников', () => {
+    const { result } = setup()
+
+    emit('ready_update', { ready_users: ['Анна', 'Анна'], ready_ids: ['p-1', 'p-2'] })
+
+    expect(result.current.readyIds).toEqual(['p-1', 'p-2'])
+  })
+
+  it('typing_update: печатающие различаются по participant_id', () => {
+    const { result } = setup()
+
+    emit('typing_update', {
+      typing: [
+        { participant_id: 'p-1', username: 'Анна', column_id: 'col-1' },
+        { participant_id: 'p-2', username: 'Анна', column_id: 'col-1' },
+        { username: 'Без участника', column_id: 'col-1' },
+      ],
+    })
+
+    expect(result.current.typingUsers).toEqual([
+      { participant_id: 'p-1', username: 'Анна', column_id: 'col-1' },
+      { participant_id: 'p-2', username: 'Анна', column_id: 'col-1' },
+    ])
+  })
+
+  it('reaction: в пузыре имя и идентификатор отправителя', () => {
+    const { result } = setup()
+
+    emit('reaction', { id: 'r-1', emoji: '🔥', username: 'Анна', participant_id: 'p-1' })
+
+    expect(result.current.reactions).toHaveLength(1)
+    expect(result.current.reactions[0]).toMatchObject({
+      id: 'r-1',
+      emoji: '🔥',
+      username: 'Анна',
+      participantId: 'p-1',
+    })
   })
 
   it('handles phase_update event', () => {
@@ -288,34 +417,33 @@ describe('useBoardWebSocket', () => {
     expect(result.current.actionItems).toHaveLength(0)
   })
 
-  it('handles cursor_move event', () => {
+  it('cursor_move: курсоры хранятся по участнику — у тёзок они разные', () => {
     const { result } = setup()
 
-    act(() => {
-      wsMessageHandler?.({
-        event: 'cursor_move',
-        data: { username: 'Alice', x: 100, y: 200 },
-      })
-    })
+    emit('cursor_move', { participant_id: 'p-1', username: 'Анна', x: 100, y: 200 })
+    emit('cursor_move', { participant_id: 'p-2', username: 'Анна', x: 300, y: 400 })
 
-    expect(result.current.cursorsRef.current['Alice']).toEqual({ x: 100, y: 200 })
+    expect(result.current.cursorsRef.current).toEqual({
+      'p-1': { x: 100, y: 200, name: 'Анна' },
+      'p-2': { x: 300, y: 400, name: 'Анна' },
+    })
   })
 
-  it('handles cursor_leave event', () => {
+  it('cursor_move без участника игнорируется', () => {
+    const { result } = setup()
+    emit('cursor_move', { username: 'Alice', x: 100, y: 200 })
+    expect(result.current.cursorsRef.current).toEqual({})
+  })
+
+  it('cursor_leave убирает курсор только этого участника', () => {
     const { result } = setup()
 
-    act(() => {
-      wsMessageHandler?.({
-        event: 'cursor_move',
-        data: { username: 'Alice', x: 100, y: 200 },
-      })
-    })
+    emit('cursor_move', { participant_id: 'p-1', username: 'Анна', x: 100, y: 200 })
+    emit('cursor_move', { participant_id: 'p-2', username: 'Анна', x: 300, y: 400 })
+    emit('cursor_leave', { participant_id: 'p-1', username: 'Анна' })
 
-    act(() => {
-      wsMessageHandler?.({ event: 'cursor_leave', data: { username: 'Alice' } })
-    })
-
-    expect(result.current.cursorsRef.current['Alice']).toBeUndefined()
+    expect(result.current.cursorsRef.current['p-1']).toBeUndefined()
+    expect(result.current.cursorsRef.current['p-2']).toEqual({ x: 300, y: 400, name: 'Анна' })
   })
 
   it('handles group_collapse event', () => {
@@ -428,7 +556,7 @@ describe('useBoardWebSocket', () => {
     act(() => {
       wsMessageHandler?.({
         event: 'facilitator_update',
-        data: { facilitator: null, phase: null },
+        data: { facilitator: null, facilitator_id: null, facilitator_online: false, phase: null },
       })
     })
 
@@ -477,5 +605,182 @@ describe('useBoardWebSocket', () => {
     expect(onBoardUpdated).toHaveBeenCalledWith({ id: 'b-2', name: 'Renamed', slug: 'renamed', max_votes: 3 })
     expect(onBoardDeleted).toHaveBeenCalledWith('b-2')
     expect(onSummaryFailed).toHaveBeenCalledWith('AI timeout')
+  })
+
+  // ── новый контракт: порядок, видимость, переименование ─────────────────────
+
+  function setupWithCards(ids: string[], params?: Partial<Parameters<typeof useBoardWebSocket>[0]>) {
+    const hook = setup(params)
+    emit('column_created', COLUMN)
+    ids.forEach((id, idx) => emit('card_created', card(id, idx)))
+    return hook
+  }
+
+  const cardIds = (result: { current: ReturnType<typeof useBoardWebSocket> }, columnIdx = 0) =>
+    result.current.columns[columnIdx].cards.map((c) => c.id)
+
+  it('card_moved: порядок берётся из column_card_ids, а не из устаревших позиций', () => {
+    const { result } = setupWithCards(['A', 'B', 'C', 'D'])
+
+    // Сервер поставил D на второе место и перенумеровал соседей: A, D, B, C.
+    // В событии только сама карточка — у B и C локально остались позиции 1 и 2.
+    emit('card_moved', {
+      card: card('D', 1),
+      old_column_id: 'col-1',
+      column_card_ids: ['A', 'D', 'B', 'C'],
+      old_column_card_ids: ['A', 'D', 'B', 'C'],
+    })
+
+    expect(cardIds(result)).toEqual(['A', 'D', 'B', 'C'])
+    // Позиции приведены к присланному порядку — сортировка по ним даёт тот же результат
+    expect(result.current.columns[0].cards.map((c) => c.position)).toEqual([0, 1, 2, 3])
+  })
+
+  it('card_moved между колонками: обе колонки получают итоговый порядок', () => {
+    const { result } = setupWithCards(['A', 'B', 'C'])
+    emit('column_created', { ...COLUMN, id: 'col-2', title: 'Bad', position: 1 })
+    emit('card_created', card('X', 0, { column_id: 'col-2' }))
+    emit('card_created', card('Y', 1, { column_id: 'col-2' }))
+
+    emit('card_moved', {
+      card: card('B', 1, { column_id: 'col-2' }),
+      old_column_id: 'col-1',
+      column_card_ids: ['X', 'B', 'Y'],
+      old_column_card_ids: ['A', 'C'],
+    })
+
+    expect(cardIds(result, 0)).toEqual(['A', 'C'])
+    expect(result.current.columns[0].cards.map((c) => c.position)).toEqual([0, 1])
+    expect(cardIds(result, 1)).toEqual(['X', 'B', 'Y'])
+    expect(result.current.columns[1].cards.map((c) => c.position)).toEqual([0, 1, 2])
+  })
+
+  it('column_updated без cards и groups не затирает содержимое колонки', () => {
+    const { result } = setupWithCards(['A', 'B'])
+    emit('group_created', { id: 'g-1', column_id: 'col-1', title: 'Group', position: 0 })
+
+    emit('column_updated', { id: 'col-1', board_id: 'board-1', title: 'Great', color: '#006E1C', position: 0 })
+
+    expect(result.current.columns[0].title).toBe('Great')
+    expect(cardIds(result)).toEqual(['A', 'B'])
+    expect(result.current.columns[0].groups).toHaveLength(1)
+  })
+
+  it('column_updated игнорирует cards и groups, даже если они есть в событии', () => {
+    const { result } = setupWithCards(['A', 'B'])
+
+    emit('column_updated', { id: 'col-1', title: 'Great', cards: [], groups: [] })
+
+    expect(cardIds(result)).toEqual(['A', 'B'])
+  })
+
+  it('masked-карточка кладётся как есть: клиент её не раскрывает и не прячет', () => {
+    const { result } = setupWithCards([])
+
+    emit('card_created', card('hidden', 0, { text: '', author: '', author_id: null, masked: true }))
+    emit('card_created', card('mine', 1, { author: 'TestUser', author_id: 'p-me' }))
+
+    const cards = result.current.columns[0].cards
+    expect(cards[0]).toMatchObject({ id: 'hidden', masked: true, text: '', author_id: null })
+    expect(cards[1]).toMatchObject({ id: 'mine', masked: false, author_id: 'p-me' })
+
+    // После раскрытия сервер присылает ту же карточку уже с содержимым
+    emit('card_updated', card('hidden', 0, { text: 'Секрет', author: 'Alice' }))
+    expect(result.current.columns[0].cards[0]).toMatchObject({ masked: false, text: 'Секрет' })
+  })
+
+  it('cards_visibility_changed просит перечитать доску', () => {
+    const onCardsVisibilityChanged = vi.fn()
+    setup({ onCardsVisibilityChanged })
+
+    emit('cards_visibility_changed', {})
+
+    expect(onCardsVisibilityChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('participant_renamed обновляет имя у карточек этого участника, в составе доски и у ведущего', () => {
+    const onParticipantRenamed = vi.fn()
+    const { result } = setupWithCards([], { onParticipantRenamed })
+    emit('card_created', card('c1', 0, { author: 'Анна', author_id: 'p-1' }))
+    emit('card_created', card('c2', 1, { author: 'Анна', author_id: 'p-2' }))
+    emit('card_created', card('c3', 2, { author: 'Участник', author_id: null }))
+    emit('presence_update', {
+      users: ['Анна', 'Анна'],
+      participants: [
+        { id: 'p-1', name: 'Анна' },
+        { id: 'p-2', name: 'Анна' },
+      ],
+    })
+    emit('facilitator_update', {
+      facilitator: 'Анна',
+      facilitator_id: 'p-1',
+      facilitator_online: true,
+      phase: 'discuss',
+    })
+    emit('cursor_move', { participant_id: 'p-1', username: 'Анна', x: 1, y: 2 })
+    emit('typing_update', { typing: [{ participant_id: 'p-1', username: 'Анна', column_id: 'col-1' }] })
+
+    emit('participant_renamed', { participant_id: 'p-1', name: 'Анна Петрова' })
+
+    const authors = result.current.columns[0].cards.map((c) => c.author)
+    // Тёзка (p-2) и анонимная карточка не затронуты
+    expect(authors).toEqual(['Анна Петрова', 'Анна', 'Участник'])
+    expect(result.current.participants).toEqual([
+      { id: 'p-1', name: 'Анна Петрова' },
+      { id: 'p-2', name: 'Анна' },
+    ])
+    expect(result.current.knownNames['p-1']).toBe('Анна Петрова')
+    expect(result.current.facilitator).toEqual({ id: 'p-1', name: 'Анна Петрова', online: true })
+    expect(result.current.cursorsRef.current['p-1'].name).toBe('Анна Петрова')
+    expect(result.current.typingUsers[0].username).toBe('Анна Петрова')
+    expect(onParticipantRenamed).toHaveBeenCalledWith('p-1', 'Анна Петрова')
+  })
+
+  it('auto_cluster_completed: чужая группировка — уведомление, своя — без него', () => {
+    setup()
+
+    emit('auto_cluster_completed', { column_id: 'col-1', groups_count: 2, username: 'Alice' })
+    expect(showToast).toHaveBeenCalledWith('Alice сгруппировал(а) карточки', 'info')
+
+    vi.mocked(showToast).mockClear()
+    emit('auto_cluster_completed', { column_id: 'col-1', groups_count: 2, username: 'TestUser' })
+    expect(showToast).not.toHaveBeenCalled()
+  })
+
+  it('при подключении запрашивает состав доски, не называя себя: личность задаёт сессия', () => {
+    setup()
+
+    act(() => {
+      wsOpenHandler?.()
+    })
+
+    expect(mockSendMessage).toHaveBeenCalledWith({ event: 'identify', data: {} })
+  })
+
+  it('курсор и уход с доски отправляются без имени', () => {
+    const { result } = setup()
+    const boardEl = {
+      getBoundingClientRect: () => ({ left: 0, top: 0 }),
+      scrollLeft: 0,
+      scrollTop: 0,
+    } as unknown as HTMLDivElement
+
+    act(() => {
+      result.current.handleMouseMove({ clientX: 40, clientY: 60 } as React.MouseEvent, boardEl)
+      result.current.handleMouseLeave()
+    })
+
+    expect(mockSendMessage).toHaveBeenCalledWith({ event: 'cursor_move', data: { x: 40, y: 60 } })
+    expect(mockSendMessage).toHaveBeenCalledWith({ event: 'cursor_leave', data: {} })
+  })
+
+  it('неизвестные события (seq/epoch, health check и т. п.) не ломают состояние', () => {
+    const { result } = setupWithCards(['A'])
+
+    emit('health_check_requested', { requested_by: 'Alice', participant_id: 'p-alice' })
+    emit('roti_requested', {})
+    emit('pong', {})
+
+    expect(cardIds(result)).toEqual(['A'])
   })
 })
