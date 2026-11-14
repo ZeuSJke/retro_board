@@ -312,14 +312,14 @@ export default function CardWidget({
         data-card-id={card.id}
         {...(!editing && !readOnly ? { ...attributes, ...listeners } : {})}
         className={cn(
-          'group/card relative rounded-xl border p-3.5 shadow-sm transition-[border-color,box-shadow,background-color,opacity] duration-150',
+          'group/card relative rounded-xl border p-3.5 shadow-xs transition-[border-color,box-shadow,background-color,opacity] duration-150',
           preset.cardClass,
           !editing && !readOnly && 'cursor-default hover:border-primary/40 hover:shadow-md',
           selected && 'ring-2 ring-primary/60 border-primary',
           isDragging && 'z-30 opacity-45 scale-[0.98]',
           isGroupTarget && 'ring-2 ring-primary bg-primary/5',
           isSpotlighted && 'ring-2 ring-primary shadow-md shadow-primary/15',
-          isNew && '[animation:card-enter_0.32s_cubic-bezier(0.22,1,0.36,1)_both,card-glow_1.3s_ease-out_forwards]',
+          isNew && 'animate-[card-enter_0.32s_cubic-bezier(0.22,1,0.36,1)_both,card-glow_1.3s_ease-out_forwards]',
           !isNew && justRevealed && 'animate-card-reveal',
         )}
       >
@@ -362,7 +362,7 @@ export default function CardWidget({
               ) : (
                 <span
                   className={cn(
-                    `flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br text-[9px] font-bold text-white transition-opacity duration-150 ${getUserAvatarGradient(card.author)}`,
+                    `flex h-5 w-5 items-center justify-center rounded-full bg-linear-to-br/srgb text-[9px] font-bold text-white transition-opacity duration-150 ${getUserAvatarGradient(card.author)}`,
                     onToggleSelect &&
                       !readOnly &&
                       (selected
@@ -388,11 +388,11 @@ export default function CardWidget({
                   className={cn(
                     'absolute inset-0 flex h-5 w-5 items-center justify-center rounded-full border transition-all duration-150',
                     selected
-                      ? 'border-primary bg-primary text-primary-foreground opacity-100 shadow-xs'
+                      ? 'border-primary bg-primary text-primary-foreground opacity-100'
                       : 'border-muted-foreground/50 bg-background/90 text-transparent opacity-0 group-hover/card:opacity-100 focus:opacity-100 hover:border-primary',
                   )}
                 >
-                  <Check className="h-2.5 w-2.5 stroke-[3]" />
+                  <Check className="h-2.5 w-2.5 stroke-3" />
                 </button>
               )}
             </div>
@@ -496,7 +496,7 @@ export default function CardWidget({
                                 setMenuOpen(false)
                               }}
                               className={cn(
-                                'flex h-5 w-5 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                                'flex h-5 w-5 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
                                 c.swatchClass,
                                 isActive && 'ring-2 ring-primary ring-offset-1 ring-offset-popover',
                               )}
@@ -630,7 +630,7 @@ export default function CardWidget({
         ) : (
           <p
             onDoubleClick={startEdit}
-            className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-foreground"
+            className="whitespace-pre-wrap wrap-break-word text-[13.5px] leading-relaxed text-foreground"
           >
             <RichCardText text={card.text} />
           </p>

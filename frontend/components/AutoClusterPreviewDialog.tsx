@@ -126,7 +126,7 @@ export default function AutoClusterPreviewDialog({
                     <div
                       key={idx}
                       className={cn(
-                        'rounded-xl border bg-card p-3.5 shadow-xs transition-all',
+                        'rounded-xl border bg-card p-3.5 transition-all',
                         isActive
                           ? 'border-primary/35 ring-1 ring-primary/10'
                           : 'border-border/70 bg-muted/40 opacity-70',
@@ -165,7 +165,7 @@ export default function AutoClusterPreviewDialog({
                               key={cid}
                               className="flex items-start justify-between gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs"
                             >
-                              <span className="break-words leading-relaxed text-foreground">
+                              <span className="wrap-break-word leading-relaxed text-foreground">
                                 {card ? <RichCardText text={card.text} /> : cid}
                               </span>
                               <button

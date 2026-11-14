@@ -144,7 +144,7 @@ export default function SpotlightModal({
                     className={cn(
                       'rounded-md px-2.5 py-1 font-medium transition-colors',
                       queueMode === 'all'
-                        ? 'bg-background text-foreground shadow-xs'
+                        ? 'bg-background text-foreground'
                         : 'text-muted-foreground hover:text-foreground',
                     )}
                   >
@@ -156,7 +156,7 @@ export default function SpotlightModal({
                     className={cn(
                       'rounded-md px-2.5 py-1 font-medium transition-colors',
                       queueMode === 'top_votes'
-                        ? 'bg-background text-foreground shadow-xs'
+                        ? 'bg-background text-foreground'
                         : 'text-muted-foreground hover:text-foreground',
                     )}
                   >
@@ -197,7 +197,7 @@ export default function SpotlightModal({
 
         {/* Фиксированная высота сцены исключает прыжки кнопок навигации и футера при смене карточки */}
         <DialogBody className="flex-none overflow-visible py-5">
-          <div className={cn('relative flex h-[280px] sm:h-[300px] flex-col rounded-2xl border p-5 shadow-xs transition-colors', preset.cardClass)}>
+          <div className={cn('relative flex h-[280px] sm:h-[300px] flex-col rounded-2xl border p-5 transition-colors', preset.cardClass)}>
             {preset.id !== 'default' && (
               <div
                 className="absolute bottom-4 left-0 top-4 w-1 rounded-r-full"
@@ -214,7 +214,7 @@ export default function SpotlightModal({
               className="flex min-h-0 flex-1 flex-col justify-between"
             >
               <div className="min-h-0 flex-1 overflow-y-auto scrollbar-subtle pr-1">
-                <p className="whitespace-pre-wrap break-words text-base font-medium leading-relaxed text-foreground sm:text-lg">
+                <p className="whitespace-pre-wrap wrap-break-word text-base font-medium leading-relaxed text-foreground sm:text-lg">
                   <RichCardText text={card.text} />
                 </p>
               </div>
@@ -224,7 +224,7 @@ export default function SpotlightModal({
                   {showAuthor ? (
                     <>
                       <span
-                        className={`flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br text-[10px] font-bold text-white ${getUserAvatarGradient(card.author)}`}
+                        className={`flex h-6 w-6 items-center justify-center rounded-full bg-linear-to-br/srgb text-[10px] font-bold text-white ${getUserAvatarGradient(card.author)}`}
                       >
                         {getUserInitials(card.author)}
                       </span>

@@ -160,7 +160,7 @@ export default function Topbar({
                   <span
                     key={u}
                     title={u}
-                    className={`flex h-6 w-6 items-center justify-center rounded-full border-2 border-background bg-gradient-to-br text-[10px] font-bold text-white ${getUserAvatarGradient(
+                    className={`flex h-6 w-6 items-center justify-center rounded-full border-2 border-background bg-linear-to-br/srgb text-[10px] font-bold text-white ${getUserAvatarGradient(
                       u,
                     )}`}
                   >
@@ -188,7 +188,7 @@ export default function Topbar({
                   <div key={u} className="flex items-center justify-between gap-2 text-xs py-1">
                     <div className="flex items-center gap-2 min-w-0">
                       <span
-                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-[10px] font-bold text-white ${getUserAvatarGradient(
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-linear-to-br/srgb text-[10px] font-bold text-white ${getUserAvatarGradient(
                           u,
                         )}`}
                       >
@@ -336,7 +336,7 @@ export default function Topbar({
               onClick={onOpenUserSettings}
               aria-label="Профиль и настройки"
               data-testid="user-settings-btn"
-              className={`flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br text-xs font-bold text-white shadow-sm ring-offset-background transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${getUserAvatarGradient(
+              className={`flex h-8 w-8 items-center justify-center rounded-full bg-linear-to-br/srgb text-xs font-bold text-white shadow-xs ring-offset-background transition-transform hover:scale-105 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${getUserAvatarGradient(
                 username,
               )}`}
             >

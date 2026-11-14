@@ -147,7 +147,7 @@ export default function CardGroupWidget({
         ref={setNodeRef}
         style={style}
         className={cn(
-          'rounded-xl border border-primary/25 bg-primary/[0.04] p-2 transition-all dark:bg-primary/[0.07]',
+          'rounded-xl border border-primary/25 bg-primary/4 p-2 transition-all dark:bg-primary/[0.07]',
           isDragging && 'opacity-45',
         )}
       >

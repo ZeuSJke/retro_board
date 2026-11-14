@@ -102,7 +102,7 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
           </div>
 
           <div
-            className={`flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br text-xl font-bold text-white shadow-lg transition-all ${
+            className={`flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br/srgb text-xl font-bold text-white shadow-lg transition-all ${
               trimmedName ? getUserAvatarGradient(trimmedName) : 'from-zinc-400 to-zinc-500'
             }`}
           >

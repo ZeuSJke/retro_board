@@ -103,7 +103,7 @@ export default function SessionBar({
 
   return (
     <>
-      <div className="no-print border-b bg-muted/35 backdrop-blur-sm">
+      <div className="no-print border-b bg-muted/35 backdrop-blur-xs">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
           {!facilitator ? (
             <div className="flex flex-wrap items-center gap-2.5">

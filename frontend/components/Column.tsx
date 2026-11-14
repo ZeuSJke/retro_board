@@ -422,7 +422,7 @@ export default function Column({
         data-testid="board-column"
         data-column-id={column.id}
         className={cn(
-          'flex max-h-full w-[86vw] max-w-[380px] shrink-0 snap-center flex-col overflow-hidden rounded-2xl border bg-card/85 shadow-sm backdrop-blur-sm transition-[border-color,box-shadow] md:w-auto md:min-w-[280px] md:max-w-[580px] md:flex-1 md:shrink-0 md:snap-none',
+          'flex max-h-full w-[86vw] max-w-[380px] shrink-0 snap-center flex-col overflow-hidden rounded-2xl border bg-card/85 shadow-xs backdrop-blur-xs transition-[border-color,box-shadow] md:w-auto md:min-w-[280px] md:max-w-[580px] md:flex-1 md:shrink-0 md:snap-none',
           isOver && 'border-primary/70 ring-2 ring-primary/20 shadow-md',
           className,
         )}
@@ -653,7 +653,7 @@ export default function Column({
           {hasMoreBelow && (
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-card/90 to-transparent"
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-linear-to-t/srgb from-card/90 to-transparent"
             />
           )}
         </div>
@@ -668,7 +668,7 @@ export default function Column({
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 4, scale: 0.98 }}
                 transition={{ duration: 0.16, ease: 'easeOut' }}
-                className="space-y-2 rounded-xl border bg-background p-2.5 shadow-sm"
+                className="space-y-2 rounded-xl border bg-background p-2.5 shadow-xs"
               >
                 <Textarea
                   ref={textareaRef}

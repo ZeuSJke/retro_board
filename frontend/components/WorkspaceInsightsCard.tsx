@@ -18,7 +18,7 @@ export default function WorkspaceInsightsCard({
   onRefresh,
 }: WorkspaceInsightsCardProps) {
   return (
-    <Card className="border-primary/20 bg-gradient-to-br from-primary/[0.04] via-card to-card">
+    <Card className="border-primary/20 bg-transparent bg-linear-to-br/srgb from-primary/4 via-card to-card">
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 pb-3">
         <div className="space-y-1">
           <CardTitle className="flex items-center gap-2 text-base">

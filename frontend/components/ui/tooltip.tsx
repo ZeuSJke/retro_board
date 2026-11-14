@@ -35,7 +35,7 @@ function Tooltip({
 const TooltipTrigger = TooltipPrimitive.Trigger
 
 const TooltipContent = React.forwardRef<
-  React.ElementRef<typeof TooltipPrimitive.Content>,
+  React.ComponentRef<typeof TooltipPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
 >(({ className, sideOffset = 6, collisionPadding = 12, ...props }, ref) => (
   <TooltipPrimitive.Portal>
@@ -44,7 +44,7 @@ const TooltipContent = React.forwardRef<
       sideOffset={sideOffset}
       collisionPadding={collisionPadding}
       className={cn(
-        'z-50 max-w-[260px] whitespace-normal break-words overflow-hidden rounded-lg bg-foreground px-2.5 py-1.5 text-left text-xs leading-snug text-background shadow-md animate-in fade-in-0 zoom-in-95',
+        'z-50 max-w-[260px] whitespace-normal wrap-break-word overflow-hidden rounded-lg bg-foreground px-2.5 py-1.5 text-left text-xs leading-snug text-background shadow-md animate-in fade-in-0 zoom-in-95',
         className,
       )}
       {...props}

@@ -119,7 +119,7 @@ export default function SuggestActionItemsDialog({
                   <div
                     key={idx}
                     className={cn(
-                      'flex items-start gap-3 rounded-xl border bg-card p-3.5 shadow-xs transition-all',
+                      'flex items-start gap-3 rounded-xl border bg-card p-3.5 transition-all',
                       item.checked
                         ? 'border-primary/35 ring-1 ring-primary/10'
                         : 'border-border/70 bg-muted/40 opacity-65',

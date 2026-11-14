@@ -167,7 +167,7 @@ function KanbanColumnDropzone({
       data-testid={`kanban-column-${status}`}
       className={cn(
         'flex flex-col rounded-2xl border bg-muted/30 p-3 transition-colors',
-        isOver && 'border-primary/70 bg-primary/[0.05] ring-2 ring-primary/15',
+        isOver && 'border-primary/70 bg-primary/5 ring-2 ring-primary/15',
       )}
     >
       <div className="mb-3 flex items-center justify-between gap-2 px-1">
@@ -555,7 +555,7 @@ export default function Dashboard() {
         {...(drag && !isEditing ? drag.attributes : {})}
         {...(drag && !isEditing ? drag.listeners : {})}
         className={cn(
-          'group rounded-xl border bg-card p-3.5 shadow-sm transition-all hover:shadow-md',
+          'group rounded-xl border bg-card p-3.5 shadow-xs transition-all hover:shadow-md',
           isDone && 'opacity-75',
           drag?.isDragging && 'opacity-35 ring-1 ring-primary/40',
           isOverlay && 'rotate-1 scale-[1.02] shadow-2xl opacity-95 border-primary/40',
@@ -629,7 +629,7 @@ export default function Dashboard() {
                   setEditDesc(item.text)
                 }}
                 title="Двойной клик — редактировать описание"
-                className="cursor-text whitespace-pre-wrap break-words text-xs text-muted-foreground"
+                className="cursor-text whitespace-pre-wrap wrap-break-word text-xs text-muted-foreground"
               >
                 <RichCardText text={item.text} />
               </p>
@@ -677,7 +677,7 @@ export default function Dashboard() {
                 {item.assignee ? (
                   <>
                     <span
-                      className={`flex h-4 w-4 items-center justify-center rounded-full bg-gradient-to-br text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
+                      className={`flex h-4 w-4 items-center justify-center rounded-full bg-linear-to-br/srgb text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
                     >
                       {getUserInitials(item.assignee)}
                     </span>
@@ -1037,7 +1037,7 @@ export default function Dashboard() {
                         <motion.span
                           layoutId="dashboard-view-pill"
                           transition={{ type: 'spring', stiffness: 450, damping: 34 }}
-                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-sm"
+                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-xs"
                           aria-hidden="true"
                         />
                       )}
@@ -1058,7 +1058,7 @@ export default function Dashboard() {
                         <motion.span
                           layoutId="dashboard-view-pill"
                           transition={{ type: 'spring', stiffness: 450, damping: 34 }}
-                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-sm"
+                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-xs"
                           aria-hidden="true"
                         />
                       )}

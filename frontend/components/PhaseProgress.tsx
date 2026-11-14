@@ -59,7 +59,7 @@ export default function PhaseProgress({
               <motion.span
                 layoutId="phase-active-pill"
                 transition={{ type: 'spring', stiffness: 430, damping: 32 }}
-                className="pointer-events-none absolute inset-0 -z-10 rounded-full bg-primary shadow-sm"
+                className="pointer-events-none absolute inset-0 -z-10 rounded-full bg-primary shadow-xs"
                 aria-hidden="true"
               />
             )}
