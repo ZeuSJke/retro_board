@@ -2,6 +2,8 @@ import axios from 'axios'
 import type {
   ActionItem,
   ActionItemStatus,
+  ActionItemSuggestion,
+  AutoClusterPreviewResult,
   Board,
   BoardCreatePayload,
   BoardListItem,
@@ -90,6 +92,11 @@ export const submitBoardMood = (
   boardId: string,
   data: { author: string; score: number; note?: string | null },
 ): Promise<BoardMood> => api.post(`/boards/${boardId}/mood`, data).then((r) => r.data)
+export const resetBoardVotes = (
+  boardId: string,
+  username: string,
+): Promise<{ board_id: string; username: string; updated_cards: number }> =>
+  api.post(`/boards/${boardId}/reset-votes`, null, { params: { username } }).then((r) => r.data)
 
 // ── Columns ─────────────────────────────────────────────────────────────────
 export const createColumn = (data: { board_id: string; title: string; color?: string }): Promise<Column> =>
@@ -111,9 +118,33 @@ export const updateCard = (id: string, data: { text?: string; color?: string }):
   api.patch(`/cards/${id}`, data).then((r) => r.data)
 export const moveCard = (id: string, data: { column_id: string; position: number }): Promise<Card> =>
   api.post(`/cards/${id}/move`, data).then((r) => r.data)
-export const toggleLike = (id: string, username: string): Promise<Card> =>
-  api.post(`/cards/${id}/like`, null, { params: { username } }).then((r) => r.data)
+export const toggleLike = (
+  id: string,
+  username: string,
+  action?: 'toggle' | 'add' | 'remove',
+): Promise<Card> =>
+  api
+    .post(`/cards/${id}/like`, null, {
+      params: action ? { username, action } : { username },
+    })
+    .then((r) => r.data)
 export const deleteCard = (id: string): Promise<void> => api.delete(`/cards/${id}`)
+export const bulkUpdateCards = (data: {
+  card_ids: string[]
+  column_id?: string
+  group_id?: string | null
+  group_title?: string
+  color?: string
+}): Promise<Card[]> => api.post('/cards/bulk-update', data).then((r) => r.data)
+export const bulkDeleteCards = (cardIds: string[]): Promise<{ deleted: number }> =>
+  api.post('/cards/bulk-delete', { card_ids: cardIds }).then((r) => r.data)
+export const mergeCards = (cardIds: string[], targetText?: string): Promise<Card> =>
+  api
+    .post('/cards/merge', {
+      card_ids: cardIds,
+      ...(targetText !== undefined ? { target_text: targetText } : {}),
+    })
+    .then((r) => r.data)
 
 // ── Groups ───────────────────────────────────────────────────────────────────
 export const createGroup = (data: { column_id: string; title?: string }): Promise<CardGroup> =>
@@ -129,6 +160,21 @@ export const moveGroup = (id: string, data: { column_id: string }): Promise<Card
   api.patch(`/groups/${id}/move`, data).then((r) => r.data)
 export const autoClusterColumn = (columnId: string, username: string) =>
   api.post('/groups/auto-cluster', { column_id: columnId, username }).then((r) => r.data)
+export const autoClusterPreview = (
+  columnId: string,
+  username?: string,
+): Promise<AutoClusterPreviewResult> =>
+  api
+    .post('/groups/auto-cluster-preview', { column_id: columnId, username })
+    .then((r) => r.data)
+export const applyAutoClusters = (data: {
+  column_id: string
+  groups: { title: string; card_ids: string[] }[]
+  username?: string
+}): Promise<{
+  created_groups: { group: CardGroup; card_ids: string[] }[]
+  ungrouped_card_ids: string[]
+}> => api.post('/groups/apply-clusters', data).then((r) => r.data)
 
 // ── Action Items & Dashboard Analytics ──────────────────────────────────────
 export const getActionItems = (boardId: string): Promise<ActionItem[]> =>
@@ -161,6 +207,10 @@ export const carryForward = (data: CarryForwardRequest): Promise<ActionItem[]> =
   api.post('/action-items/carry-forward', data).then((r) => r.data)
 export const generateActionItemTitle = (text: string): Promise<string> =>
   api.post('/action-items/generate-title', { text }).then((r) => r.data.title)
+export const suggestActionItems = (
+  boardId: string,
+): Promise<{ board_id: string; suggestions: ActionItemSuggestion[] }> =>
+  api.post('/action-items/suggest', { board_id: boardId }).then((r) => r.data)
 
 // ── Summary ─────────────────────────────────────────────────────────────────
 export const getBoardSummary = (boardId: string): Promise<BoardSummary | null> =>

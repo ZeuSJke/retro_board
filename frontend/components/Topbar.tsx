@@ -8,6 +8,7 @@ import {
   Download,
   FileText,
   HeartPulse,
+  Keyboard,
   Lock,
   Moon,
   PanelLeft,
@@ -46,6 +47,7 @@ interface TopbarProps {
   onOpenCommandPalette?: () => void
   onOpenBoardSettings: () => void
   onOpenUserSettings: () => void
+  onOpenShortcuts?: () => void
   onOpenMood: () => void
   onOpenSummary: () => void
   onExportMarkdown: () => void
@@ -65,6 +67,7 @@ export default function Topbar({
   onOpenCommandPalette,
   onOpenBoardSettings,
   onOpenUserSettings,
+  onOpenShortcuts,
   onOpenMood,
   onOpenSummary,
   onExportMarkdown,
@@ -289,6 +292,24 @@ export default function Topbar({
               </Button>
             </TooltipTrigger>
             <TooltipContent>Настройки доски</TooltipContent>
+          </Tooltip>
+        )}
+
+        {onOpenShortcuts && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={onOpenShortcuts}
+                aria-label="Горячие клавиши"
+                data-testid="shortcuts-btn"
+              >
+                <Keyboard className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Горячие клавиши (?)</TooltipContent>
           </Tooltip>
         )}
 

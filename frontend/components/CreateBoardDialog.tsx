@@ -122,6 +122,7 @@ export default function CreateBoardDialog({
   const [carryForward, setCarryForward] = useState(false)
   const [hideCards, setHideCards] = useState(false)
   const [anonymousVotes, setAnonymousVotes] = useState(false)
+  const [allowMultipleVotes, setAllowMultipleVotes] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
@@ -143,6 +144,7 @@ export default function CreateBoardDialog({
     setCarryForward(false)
     setHideCards(false)
     setAnonymousVotes(false)
+    setAllowMultipleVotes(false)
     setSourceBoardId(existingBoards[0]?.id ?? '')
   }, [open, existingBoards])
 
@@ -182,6 +184,7 @@ export default function CreateBoardDialog({
         carry_forward_items: carryForward,
         hide_cards_until_reveal: hideCards,
         anonymous_votes: anonymousVotes,
+        allow_multiple_votes_per_card: allowMultipleVotes,
       })
       showToast('Доска создана', 'success')
       onOpenChange(false)
@@ -424,6 +427,19 @@ export default function CreateBoardDialog({
                 </p>
               </div>
               <Switch checked={anonymousVotes} onCheckedChange={setAnonymousVotes} />
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-1.5 text-sm font-medium">
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  Несколько голосов в одну карточку (Dot Voting)
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Участники смогут отдавать несколько голосов одной важной карточке
+                </p>
+              </div>
+              <Switch checked={allowMultipleVotes} onCheckedChange={setAllowMultipleVotes} />
             </div>
 
             {existingBoards.length > 0 && (

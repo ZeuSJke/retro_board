@@ -7,6 +7,7 @@ import {
   Check,
   Crown,
   Lock,
+  RotateCcw,
   SmilePlus,
   Square,
   Vote,
@@ -40,6 +41,11 @@ interface SessionBarProps {
   isLocked: boolean
   usedVotes: number
   maxVotes: number
+  votedParticipantsCount?: number
+  onResetMyVotes?: () => void
+  resettingVotes?: boolean
+  reactionsOpen?: boolean
+  onReactionsOpenChange?: (open: boolean) => void
   timer: TimerState
   autoAdvance: boolean
   soundMuted: boolean
@@ -66,6 +72,11 @@ export default function SessionBar({
   isLocked,
   usedVotes,
   maxVotes,
+  votedParticipantsCount,
+  onResetMyVotes,
+  resettingVotes = false,
+  reactionsOpen,
+  onReactionsOpenChange,
   timer,
   autoAdvance,
   soundMuted,
@@ -186,9 +197,33 @@ export default function SessionBar({
                     {Math.max(0, maxVotes - usedVotes)}/{maxVotes}
                     {limitReached ? ' · лимит' : ''}
                   </span>
+                  {!isLocked && usedVotes > 0 && onResetMyVotes && (
+                    <button
+                      type="button"
+                      disabled={resettingVotes}
+                      onClick={onResetMyVotes}
+                      title="Сбросить все мои голоса"
+                      aria-label="Сбросить все мои голоса"
+                      data-testid="reset-votes-btn"
+                      className="ml-1 inline-flex h-5 items-center gap-1 rounded-full bg-muted px-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive disabled:opacity-50"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      <span className="hidden xl:inline">Сброс</span>
+                    </button>
+                  )}
                 </div>
               )
             })()}
+
+            {facilitator && phase === 'vote' && votedParticipantsCount !== undefined && (
+              <Badge
+                variant="secondary"
+                className="h-7 rounded-full px-2.5 text-xs font-normal"
+                title="Участники онлайн, поставившие хотя бы один голос"
+              >
+                Проголосовали {votedParticipantsCount}/{totalOnline}
+              </Badge>
+            )}
 
             {facilitator && (
               <Button
@@ -225,7 +260,7 @@ export default function SessionBar({
               onAddTime={onAddTime}
             />
 
-            <Popover>
+            <Popover open={reactionsOpen} onOpenChange={onReactionsOpenChange}>
               <PopoverTrigger asChild>
                 <Button
                   type="button"

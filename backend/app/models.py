@@ -63,6 +63,7 @@ class Board(Base):
     is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     hide_cards_until_reveal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     anonymous_votes: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    allow_multiple_votes_per_card: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     active_facilitator: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
     active_phase: Mapped[str | None] = mapped_column(String(30), nullable=True, default=None)
     active_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

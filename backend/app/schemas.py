@@ -284,6 +284,7 @@ class BoardCreate(BoardBase):
     carry_forward_items: bool = False
     hide_cards_until_reveal: bool = False
     anonymous_votes: bool = False
+    allow_multiple_votes_per_card: bool = False
 
 
 class BoardUpdate(BaseModel):
@@ -292,6 +293,7 @@ class BoardUpdate(BaseModel):
     is_locked: Optional[bool] = None
     hide_cards_until_reveal: Optional[bool] = None
     anonymous_votes: Optional[bool] = None
+    allow_multiple_votes_per_card: Optional[bool] = None
 
     @field_validator("name")
     @classmethod
@@ -314,6 +316,7 @@ class BoardOut(BoardBase):
     is_locked: bool = False
     hide_cards_until_reveal: bool = False
     anonymous_votes: bool = False
+    allow_multiple_votes_per_card: bool = False
     active_facilitator: Optional[str] = None
     active_phase: Optional[str] = None
     active_session_id: Optional[int] = None
@@ -498,3 +501,64 @@ class WorkspaceInsightsOut(BaseModel):
     summary_text: str
     boards_analyzed: int = 0
     generated_by_ai: bool = False
+
+
+class BulkCardsUpdateRequest(BaseModel):
+    card_ids: list[str] = Field(..., min_length=1, max_length=100)
+    column_id: Optional[str] = None
+    group_id: Optional[str] = None
+    group_title: Optional[str] = Field(default=None, max_length=200)
+    color: Optional[str] = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+
+
+class BulkCardsDeleteRequest(BaseModel):
+    card_ids: list[str] = Field(..., min_length=1, max_length=100)
+
+
+class MergeCardsRequest(BaseModel):
+    card_ids: list[str] = Field(..., min_length=2, max_length=20)
+    target_text: Optional[str] = Field(default=None, max_length=2000)
+
+
+class ActionItemSuggestRequest(BaseModel):
+    board_id: str
+
+
+class ActionItemSuggestion(BaseModel):
+    title: str
+    text: str
+    assignee_hint: Optional[str] = None
+    source_card_ids: list[str] = []
+
+
+class ActionItemSuggestResponse(BaseModel):
+    board_id: str
+    suggestions: list[ActionItemSuggestion]
+
+
+class ClusterPreviewGroup(BaseModel):
+    title: str
+    card_ids: list[str]
+
+
+class ClusterPreviewResult(BaseModel):
+    column_id: str
+    groups: list[ClusterPreviewGroup]
+    ungrouped_card_ids: list[str] = []
+
+
+class ApplyClusterGroup(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    card_ids: list[str] = Field(..., min_length=2, max_length=100)
+
+
+class ApplyClustersRequest(BaseModel):
+    column_id: str
+    groups: list[ApplyClusterGroup] = Field(default_factory=list, max_length=50)
+    username: Optional[str] = None
+
+
+class BoardVotesResetOut(BaseModel):
+    board_id: str
+    username: str
+    updated_cards: int

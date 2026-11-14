@@ -37,6 +37,7 @@ class ConnectionManager:
         self.session_ids: dict[str, int] = {}  # board_id → session_id (timestamp)
         self.ready_users: dict[str, set[str]] = defaultdict(set)  # board_id → set[username]
         self.spotlights: dict[str, str] = {}  # board_id → card_id
+        self.typing_users: dict[str, dict[str, str]] = defaultdict(dict)  # board_id → {username: column_id}
         self.facilitator_grace_tasks: dict[str, asyncio.Task] = {}
         self.on_session_cleared = None  # Optional callback(board_id)
 
@@ -56,6 +57,7 @@ class ConnectionManager:
         self.session_ids.clear()
         self.ready_users.clear()
         self.spotlights.clear()
+        self.typing_users.clear()
 
     async def connect(
         self, board_id: str, ws: WebSocket, workspace_id: str | None = None
@@ -167,6 +169,26 @@ class ConnectionManager:
             and self.facilitators.get(board_id) == username
         )
         return username, still_present, fac_disconnected
+
+    def set_typing(self, board_id: str, username: str, column_id: str | None) -> bool:
+        """Update active typing column for username; return True if state changed."""
+        board_typing = self.typing_users[board_id]
+        if column_id:
+            if board_typing.get(username) == column_id:
+                return False
+            board_typing[username] = column_id
+            return True
+        if username in board_typing:
+            board_typing.pop(username, None)
+            return True
+        return False
+
+    def get_typing(self, board_id: str) -> list[dict[str, str]]:
+        """Return list of {username, column_id} currently typing on a board."""
+        return [
+            {"username": uname, "column_id": col_id}
+            for uname, col_id in self.typing_users.get(board_id, {}).items()
+        ]
 
     def set_facilitator(self, board_id: str, username: str) -> tuple[bool, bool]:
         self.cancel_facilitator_grace(board_id)
@@ -313,12 +335,19 @@ class ConnectionManager:
                 left_users.append(uname)
             if fac_disconnected and uname:
                 self.schedule_facilitator_grace(board_id, uname)
-        if left_users and event not in ("cursor_leave", "presence_update"):
+        if left_users and event not in ("cursor_leave", "presence_update", "typing_update"):
+            typing_changed = False
             for uname in left_users:
+                if self.set_typing(board_id, uname, None):
+                    typing_changed = True
                 await self.broadcast(board_id, "cursor_leave", {"username": uname})
             await self.broadcast(
                 board_id, "presence_update", {"users": self.get_users(board_id)}
             )
+            if typing_changed:
+                await self.broadcast(
+                    board_id, "typing_update", {"typing": self.get_typing(board_id)}
+                )
 
     async def broadcast_workspace(
         self,
@@ -357,11 +386,18 @@ class ConnectionManager:
                 if fac_disconnected and uname:
                     self.schedule_facilitator_grace(b_id, uname)
             for b_id, users in by_board.items():
+                typing_changed = False
                 for uname in users:
+                    if self.set_typing(b_id, uname, None):
+                        typing_changed = True
                     await self.broadcast(b_id, "cursor_leave", {"username": uname})
                 await self.broadcast(
                     b_id, "presence_update", {"users": self.get_users(b_id)}
                 )
+                if typing_changed:
+                    await self.broadcast(
+                        b_id, "typing_update", {"typing": self.get_typing(b_id)}
+                    )
 
 
 manager = ConnectionManager()
