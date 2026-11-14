@@ -65,6 +65,7 @@ import { showToast } from '../store/toastStore'
 import { getApiErrorMessage, markApiErrorReported } from '../utils/apiError'
 import { boardToBoardListItem } from '../utils/boardMapper'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import { avatarSeed } from '@/lib/participants'
 import type {
   ActionItemStatus,
   Board,
@@ -980,7 +981,7 @@ export default function Dashboard() {
                   aria-label="Профиль и настройки"
                   data-testid="user-settings-btn"
                   className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br/srgb text-xs font-bold text-white shadow-xs ring-offset-background transition-transform hover:scale-105 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${getUserAvatarGradient(
-                    username,
+                    avatarSeed(participant?.id, username),
                   )}`}
                 >
                   {getUserInitials(username)}

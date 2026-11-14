@@ -28,7 +28,8 @@ import { showToast } from '../store/toastStore'
 import { useAppStore } from '../store'
 import { isApiErrorReported, RATE_LIMIT_MESSAGE } from '../utils/apiError'
 
-const api = axios.create({ baseURL: '/api' })
+/** Общий HTTP-клиент команды: CSRF-заголовок, сброс сессии по 401, запасной тост об ошибке. */
+export const api = axios.create({ baseURL: '/api' })
 
 export function getCsrfToken(): string {
   if (typeof document === 'undefined') return ''
@@ -239,14 +240,14 @@ export const regenerateBoardSummary = (boardId: string): Promise<BoardSummary> =
   api.post<BoardSummary>(`/boards/${boardId}/summary/regenerate`).then((r) => r.data)
 
 // ── Сессия: команда и участник ──────────────────────────────────────────────
-interface SessionResponse {
+export interface SessionResponse {
   workspace_id: string
   workspace_slug: string
   workspace_name: string
   participant: Participant
 }
 
-const toSessionInfo = (data: SessionResponse): SessionInfo => ({
+export const toSessionInfo = (data: SessionResponse): SessionInfo => ({
   workspace: {
     workspaceId: data.workspace_id,
     workspaceSlug: data.workspace_slug,
