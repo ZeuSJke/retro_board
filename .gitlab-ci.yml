@@ -213,7 +213,9 @@ e2e-tests:
 helm:
   stage: test
   script:
-    - make helm-lint
+    - helm lint k8s/helm/retro-board -f k8s/helm/retro-board/values-dev.yaml
+    - helm lint k8s/helm/retro-board -f k8s/helm/retro-board/values-staging.yaml --set image.allowMutableTag=true
+    - bash scripts/helm-render-checks.sh
 
 # ── Общая заготовка для buildctl в CI ────────────────────────────────────────
 .buildctl-login:
