@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import time
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,6 +24,34 @@ def assert_single_worker() -> None:
         raise RuntimeError(
             f"ws_manager requires a single worker, got WEB_CONCURRENCY={workers}"
         )
+
+
+# События, меняющие данные доски. Каждое получает порядковый номер `seq`:
+# клиент, увидев пропуск в номерах, понимает, что потерял событие, и
+# перечитывает доску. Курсоры, набор текста и реакции в счёт не идут —
+# их потеря ничего не портит.
+SEQUENCED_EVENTS = frozenset(
+    {
+        "card_created",
+        "card_updated",
+        "card_moved",
+        "card_deleted",
+        "group_created",
+        "group_updated",
+        "group_moved",
+        "group_deleted",
+        "column_created",
+        "column_updated",
+        "column_deleted",
+        "action_item_created",
+        "action_item_updated",
+        "action_item_deleted",
+        "board_updated",
+        "mood_updated",
+        "health_updated",
+        "cards_visibility_changed",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +88,11 @@ class ConnectionManager:
         self.names: dict[str, str] = {}  # participant_id → последнее известное имя
         self.facilitator_grace_tasks: dict[str, asyncio.Task] = {}
         self.on_session_cleared = None  # Optional callback(board_id)
+        # Номера событий живут в памяти процесса; `epoch` меняется при рестарте,
+        # и клиент понимает, что прежняя нумерация недействительна.
+        self.epoch: str = uuid.uuid4().hex[:12]
+        self.seq: dict[str, int] = defaultdict(int)  # board_id → номер последнего события
+        self.restored: set[str] = set()  # доски, чьё состояние уже поднято из БД
 
     def reset(self) -> None:
         """Сбросить всё in-memory состояние (для изоляции тестов)."""
@@ -80,6 +114,9 @@ class ConnectionManager:
         self.spotlights.clear()
         self.typing_users.clear()
         self.names.clear()
+        self.seq.clear()
+        self.restored.clear()
+        self.epoch = uuid.uuid4().hex[:12]
 
     # ── Подключения ──────────────────────────────────────────────────────────
 
@@ -242,8 +279,9 @@ class ConnectionManager:
         self.facilitators[board_id] = peer.id
         self.facilitator_names[board_id] = peer.name
         self.phases[board_id] = "brainstorm"
-        # Generate new session_id when facilitator starts
-        self.session_ids[board_id] = int(time.time())
+        # Номер сессии — время начала в миллисекундах: секундная точность давала
+        # одинаковый номер при быстром перезапуске сессии
+        self.session_ids[board_id] = int(time.time() * 1000)
         had_ready = bool(self.ready_users.pop(board_id, None))
         had_spot = bool(self.spotlights.pop(board_id, None))
         return had_ready, had_spot
@@ -434,6 +472,86 @@ class ConnectionManager:
     def get_timer(self, board_id: str) -> dict | None:
         return self.timers.get(board_id)
 
+    # ── Состояние, переживающее рестарт ──────────────────────────────────────
+
+    def export_state(self, board_id: str) -> dict | None:
+        """Таймер и карточка в фокусе в виде, пригодном для хранения в БД.
+
+        Идущий таймер сохраняется моментом окончания, а не остатком: остаток
+        устарел бы за время, пока под перезапускается.
+        """
+        state: dict = {}
+        timer = self.timers.get(board_id)
+        if timer:
+            if timer.get("running"):
+                state["timer"] = {
+                    "running": True,
+                    "duration": timer["duration"],
+                    "ends_at_ms": timer["ts"] + timer["remaining"] * 1000,
+                }
+            else:
+                state["timer"] = {
+                    "running": False,
+                    "duration": timer["duration"],
+                    "remaining": timer["remaining"],
+                }
+        spotlight = self.spotlights.get(board_id)
+        if spotlight:
+            state["spotlight"] = spotlight
+        return state or None
+
+    def restore_state(self, board_id: str, state: object) -> None:
+        """Поднять таймер и фокус из БД один раз за жизнь процесса.
+
+        Данные читаются недоверчиво: повреждённая запись просто игнорируется.
+        """
+        if board_id in self.restored:
+            return
+        self.restored.add(board_id)
+        if not isinstance(state, dict):
+            return
+
+        def number(value: object) -> float | None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                return None
+            return value
+
+        timer = state.get("timer")
+        if isinstance(timer, dict) and board_id not in self.timers:
+            duration = number(timer.get("duration"))
+            now_ms = time.time() * 1000
+            if timer.get("running"):
+                ends_at = number(timer.get("ends_at_ms"))
+                if duration is not None and ends_at is not None and ends_at > now_ms:
+                    self.timers[board_id] = {
+                        "running": True,
+                        "duration": duration,
+                        "remaining": (ends_at - now_ms) / 1000,
+                        "ts": now_ms,
+                    }
+            else:
+                remaining = number(timer.get("remaining"))
+                if duration is not None and remaining is not None:
+                    self.timers[board_id] = {
+                        "running": False,
+                        "duration": duration,
+                        "remaining": remaining,
+                        "ts": 0,
+                    }
+        spotlight = state.get("spotlight")
+        if isinstance(spotlight, str) and spotlight and board_id not in self.spotlights:
+            self.spotlights[board_id] = spotlight
+
+    def current_seq(self, board_id: str) -> int:
+        return self.seq.get(board_id, 0)
+
+    def _envelope(self, board_id: str, event: str) -> dict:
+        """Конверт события: у событий данных — номер и поколение нумерации."""
+        if event not in SEQUENCED_EVENTS:
+            return {"event": event}
+        self.seq[board_id] += 1
+        return {"event": event, "seq": self.seq[board_id], "epoch": self.epoch}
+
     # ── Рассылка ─────────────────────────────────────────────────────────────
 
     async def broadcast(
@@ -443,7 +561,7 @@ class ConnectionManager:
         data: dict,
         exclude: WebSocket | None = None,
     ):
-        message = json.dumps({"event": event, "data": data}, default=str)
+        message = json.dumps({**self._envelope(board_id, event), "data": data}, default=str)
         await self._send_to_room(board_id, event, lambda ws: message, exclude)
 
     async def broadcast_each(
@@ -461,6 +579,8 @@ class ConnectionManager:
         раскрытия карточки, анонимные авторы.
         """
         cache: dict[str | None, str | None] = {}
+        # Номер один на событие, а не на получателя: у всех клиентов общая нумерация
+        envelope = self._envelope(board_id, event)
 
         def render(ws: WebSocket) -> str | None:
             peer = self.peers.get(id(ws))
@@ -468,9 +588,7 @@ class ConnectionManager:
             if viewer not in cache:
                 data = build(viewer)
                 cache[viewer] = (
-                    None
-                    if data is None
-                    else json.dumps({"event": event, "data": data}, default=str)
+                    None if data is None else json.dumps({**envelope, "data": data}, default=str)
                 )
             return cache[viewer]
 

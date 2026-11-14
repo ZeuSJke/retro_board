@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     ARRAY,
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -110,7 +111,10 @@ class Board(Base):
         String, ForeignKey("participants.id", ondelete="SET NULL"), nullable=True, default=None
     )
     active_phase: Mapped[str | None] = mapped_column(String(30), nullable=True, default=None)
-    active_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Номер сессии — время её начала в миллисекундах (в int4 не помещается)
+    active_session_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
+    # Таймер и карточка в фокусе (JSON): переживают рестарт пода вместе с сессией
+    session_state: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
     )
@@ -131,7 +135,7 @@ class Board(Base):
         "Column",
         back_populates="board",
         cascade="all, delete-orphan",
-        order_by="Column.position",
+        order_by="(Column.position, Column.id)",
     )
     action_items: Mapped[list["ActionItem"]] = relationship(
         "ActionItem",
@@ -169,13 +173,13 @@ class Column(Base):
         "Card",
         back_populates="column",
         cascade="all, delete-orphan",
-        order_by="Card.position",
+        order_by="(Card.position, Card.created_at, Card.id)",
     )
     groups: Mapped[list["CardGroup"]] = relationship(
         "CardGroup",
         back_populates="column",
         cascade="all, delete-orphan",
-        order_by="CardGroup.position",
+        order_by="(CardGroup.position, CardGroup.id)",
     )
 
 
@@ -267,7 +271,7 @@ class BoardSummary(Base):
     board_id: Mapped[str] = mapped_column(
         String, ForeignKey("boards.id", ondelete="CASCADE"), index=True
     )
-    session_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    session_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     summary_text: Mapped[str] = mapped_column(Text, nullable=False)
     key_themes: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     recommendations: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)

@@ -115,6 +115,10 @@ def board_view(board: models.Board, viewer_id: str | None) -> dict:
         "created_by_id": board.created_by_id,
         "cards_revealed": board.cards_revealed,
         "cards_hidden": hidden,
+        # Номер последнего события доски на момент ответа: события с номером не
+        # больше этого в снимок уже вошли, пропуск в номерах — повод перечитать доску
+        "event_seq": manager.current_seq(board.id),
+        "event_epoch": manager.epoch,
         "columns": [
             {
                 "id": col.id,

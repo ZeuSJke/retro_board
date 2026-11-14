@@ -46,6 +46,7 @@ TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::te
   - `_authenticate_ws` проверяет `Origin` по `CORS_ORIGINS` и JWT (`workspace_token` cookie в приоритете, query-параметр только для совместимости);
   - `assert_single_worker()` вызывается только в `lifespan` (не на уровне импорта);
   - личность сокета — `Peer(id, name)` участника из сессии, фиксируется при подключении; `identify` её не меняет. Ведущий хранится по `participant_id`: роль переживает переподключение, передаётся (`facilitator_transfer`) и перехватывается у пропавшего ведущего (`facilitator_takeover`, порог `FACILITATOR_TAKEOVER_SECONDS`); сессия без ведущего завершается через `FACILITATOR_GRACE_SECONDS`, в том числе восстановленная из БД после рестарта;
+  - события, меняющие данные доски, получают номер `seq` (список — `SEQUENCED_EVENTS` в `app/ws_manager.py`): новое событие с данными доски добавляйте в этот список, иначе клиент не заметит его потерю. Таймер и фокус сохраняются в `Board.session_state` (`_persist_session_state`) и поднимаются `manager.restore_state` один раз после рестарта;
   - рассылка событий — `await manager.broadcast(board_id, "event_name", data_dict)`; если разным получателям положены разные данные — `manager.broadcast_each`. В `finally` grace-таймер фасилитатора планируется синхронно до любых `await`;
   - всё, что прислал клиент, недоверенное: новые входящие события очищайте функцией из `app/ws_payloads.py` и рассылайте/сохраняйте в `ConnectionManager` только очищенный словарь с известными полями, а не исходный `data`.
 

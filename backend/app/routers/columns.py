@@ -24,12 +24,13 @@ async def create_column(
 ):
     board = get_or_404(db, models.Board, body.board_id, "Board not found")
     require_unlocked_board(board, workspace.id)
-    pos = (
-        db.query(func.count(models.Column.id))
+    max_pos = (
+        db.query(func.max(models.Column.position))
         .filter(models.Column.board_id == body.board_id)
         .scalar()
-        or 0
     )
+    # После последней, а не по количеству: счёт по количеству давал дубли после удалений
+    pos = (max_pos if max_pos is not None else -1) + 1
     col = models.Column(
         id=str(uuid.uuid4()),
         board_id=body.board_id,

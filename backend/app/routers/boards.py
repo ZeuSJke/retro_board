@@ -752,7 +752,7 @@ def _generate_summary_internal(
 
     session_id = manager.get_session_id(board_id)
     if not session_id:
-        session_id = int(datetime.now(UTC).timestamp())
+        session_id = int(datetime.now(UTC).timestamp() * 1000)
         manager.set_session_id(board_id, session_id)
         logger.info("Created new session ID: %s", session_id)
 
@@ -964,7 +964,7 @@ async def regenerate_summary(
     session_id = (
         manager.get_session_id(board.id)
         or board.active_session_id
-        or int(datetime.now(UTC).timestamp())
+        or int(datetime.now(UTC).timestamp() * 1000)
     )
 
     # Перегенерация заменяет набор тем доски; пишется той же транзакцией

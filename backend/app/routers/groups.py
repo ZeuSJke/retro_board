@@ -30,12 +30,17 @@ async def create_group(
 ):
     col = get_or_404(db, models.Column, body.column_id, "Column not found")
     require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Column not found")
-    pos = db.query(func.count(models.CardGroup.id)).filter(models.CardGroup.column_id == body.column_id).scalar() or 0
+    max_pos = (
+        db.query(func.max(models.CardGroup.position))
+        .filter(models.CardGroup.column_id == body.column_id)
+        .scalar()
+    )
     group = models.CardGroup(
         id=str(uuid.uuid4()),
         column_id=body.column_id,
         title=body.title,
-        position=pos,
+        # После последней, а не по количеству: счёт по количеству давал дубли после удалений
+        position=(max_pos if max_pos is not None else -1) + 1,
     )
     db.add(group)
     db.commit()
@@ -269,12 +274,12 @@ async def _apply_groups_to_column(
     board_id = col.board_id
     assigned_ids: set[str] = set()
 
-    group_pos = (
-        db.query(func.count(models.CardGroup.id))
+    max_group_pos = (
+        db.query(func.max(models.CardGroup.position))
         .filter(models.CardGroup.column_id == col.id)
         .scalar()
-        or 0
     )
+    group_pos = (max_group_pos if max_group_pos is not None else -1) + 1
 
     for g in groups_spec:
         candidate_cards = [

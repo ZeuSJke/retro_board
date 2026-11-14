@@ -98,6 +98,7 @@ def _sync_board_session_db(
         board.active_facilitator_id = facilitator.id if facilitator else None
         board.active_phase = phase
         board.active_session_id = session_id
+        board.session_state = _dump_state(board_id)
         if reveal:
             board.cards_revealed = True
         if lock_board:
@@ -109,6 +110,30 @@ def _sync_board_session_db(
     except Exception:
         logger.warning("Failed to persist session state for board %s", board_id, exc_info=True)
         return None
+    finally:
+        try:
+            next(db_gen)
+        except StopIteration:
+            pass
+
+
+def _dump_state(board_id: str) -> str | None:
+    state = manager.export_state(board_id)
+    return json.dumps(state) if state else None
+
+
+def _persist_session_state(websocket: WebSocket, board_id: str, workspace_id: str) -> None:
+    """Сохранить таймер и фокус в строке доски, чтобы рестарт пода их не обнулил."""
+    db_gen = _open_ws_db(websocket)
+    try:
+        db = next(db_gen)
+        board = db.get(models.Board, board_id)
+        if board is None or board.deleted_at is not None or board.workspace_id != workspace_id:
+            return
+        board.session_state = _dump_state(board_id)
+        db.commit()
+    except Exception:
+        logger.warning("Failed to persist timer state for board %s", board_id, exc_info=True)
     finally:
         try:
             next(db_gen)
@@ -343,6 +368,13 @@ async def websocket_endpoint(
             ):
                 await websocket.close(code=1008, reason="Board not found")
                 return
+        if board is not None and board.deleted_at is None and board.workspace_id == workspace_id:
+            # Таймер и фокус поднимаются из БД один раз после рестарта процесса
+            try:
+                saved_state = json.loads(board.session_state) if board.session_state else None
+            except ValueError:
+                saved_state = None
+            manager.restore_state(board_id, saved_state)
         if (
             board is not None
             and board.deleted_at is None
@@ -397,6 +429,8 @@ async def websocket_endpoint(
             data = await websocket.receive_text()
 
             if data == "ping":
+                # Ответ нужен клиенту, чтобы отличить живое соединение от зависшего
+                await _send(websocket, "pong", {})
                 continue
             if len(data) > MAX_WS_MESSAGE_CHARS:
                 continue
@@ -476,6 +510,7 @@ async def websocket_endpoint(
                     if timer_data is None:
                         continue
                     manager.set_timer(board_id, event, timer_data)
+                    _persist_session_state(websocket, board_id, workspace_id)
                     await manager.broadcast(board_id, event, timer_data)
 
                 elif event == "facilitator_start":
@@ -607,6 +642,7 @@ async def websocket_endpoint(
                     if card_id is not None and short_str(card_id, MAX_ID_LENGTH) is None:
                         continue
                     manager.set_spotlight(board_id, card_id)
+                    _persist_session_state(websocket, board_id, workspace_id)
                     await manager.broadcast(
                         board_id, "spotlight_update", {"card_id": card_id}
                     )

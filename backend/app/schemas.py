@@ -451,6 +451,9 @@ class BoardOut(BoardBase):
     # Скрытый сбор: раскрыты ли карточки и скрыты ли они сейчас для получателя
     cards_revealed: bool = False
     cards_hidden: bool = False
+    # Синхронизация: номер последнего события доски и поколение нумерации
+    event_seq: int = 0
+    event_epoch: str = ""
     columns: list[ColumnOut] = []
     moods: list[BoardMoodOut] = []
 

@@ -12,5 +12,8 @@ exec uvicorn main:app \
   --port 8000 \
   --ws websockets-sansio \
   --ws-max-size "${WS_MAX_SIZE:-65536}" \
+  --ws-ping-interval "${WS_PING_INTERVAL:-20}" \
+  --ws-ping-timeout "${WS_PING_TIMEOUT:-20}" \
+  --timeout-graceful-shutdown "${GRACEFUL_SHUTDOWN_TIMEOUT:-10}" \
   --proxy-headers \
   --forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-*}"
