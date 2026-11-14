@@ -205,6 +205,54 @@ async def generate_action_item_title(
         return schemas.GenerateTitleResponse(title=body.text[:50])
 
 
+@router.post("/suggest", response_model=schemas.ActionItemSuggestResponse)
+@limiter.limit("10/minute")
+async def suggest_action_items(
+    request: Request,
+    body: schemas.ActionItemSuggestRequest,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Suggest concrete action items from board cards using AI."""
+    from app.ai.prompts.action_item_suggestions import suggest_action_items_from_cards
+    from app.config import settings
+
+    board = get_or_404(db, models.Board, body.board_id, "Board not found")
+    require_live_board(board, workspace.id)
+    if not settings.ai_configured:
+        raise HTTPException(503, "AI сервис не настроен")
+
+    rows = (
+        db.query(models.Card, models.Column.title)
+        .join(models.Column, models.Card.column_id == models.Column.id)
+        .filter(models.Column.board_id == board.id)
+        .all()
+    )
+    if not rows:
+        return schemas.ActionItemSuggestResponse(board_id=board.id, suggestions=[])
+
+    cards_snapshot = [
+        {
+            "id": card.id,
+            "column": col_title,
+            "text": card.text,
+            "author": card.author,
+            "likes_count": len(card.likes or []),
+        }
+        for card, col_title in rows
+    ]
+    try:
+        raw_suggestions = await asyncio.to_thread(suggest_action_items_from_cards, cards_snapshot)
+    except RuntimeError as exc:
+        logger.warning("AI action item suggestion failed: %s", exc)
+        raise HTTPException(503, "Не удалось получить предложения от AI") from exc
+
+    return schemas.ActionItemSuggestResponse(
+        board_id=board.id,
+        suggestions=[schemas.ActionItemSuggestion(**item) for item in raw_suggestions],
+    )
+
+
 @router.post("/", response_model=schemas.ActionItemOut, status_code=201)
 @limiter.limit("30/minute")
 async def create_action_item(

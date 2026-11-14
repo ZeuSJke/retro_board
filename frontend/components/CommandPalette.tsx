@@ -8,11 +8,29 @@ import {
   Moon,
   Plus,
   Search,
+  Sparkles,
   Sun,
+  ThumbsUp,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import type { BoardListItem } from '@/types'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+
+export interface CommandBoardAction {
+  id: string
+  label: string
+  keywords?: string
+  shortcut?: string
+  onSelect: () => void
+}
+
+export interface CommandSearchCard {
+  id: string
+  text: string
+  columnTitle: string
+  likesCount: number
+  onSelect: () => void
+}
 
 interface CommandPaletteProps {
   boards: BoardListItem[]
@@ -21,6 +39,8 @@ interface CommandPaletteProps {
   onSelectBoard: (board: BoardListItem) => void
   onCreateBoard: () => void
   onNavigateDashboard: () => void
+  boardActions?: CommandBoardAction[]
+  searchableCards?: CommandSearchCard[]
 }
 
 export default function CommandPalette({
@@ -30,6 +50,8 @@ export default function CommandPalette({
   onSelectBoard,
   onCreateBoard,
   onNavigateDashboard,
+  boardActions = [],
+  searchableCards = [],
 }: CommandPaletteProps) {
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
@@ -44,7 +66,7 @@ export default function CommandPalette({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'k' || e.code === 'KeyK')) {
         e.preventDefault()
         setOpen(!open)
       }
@@ -104,6 +126,59 @@ export default function CommandPalette({
                 Переключить на {theme === 'dark' ? 'светлую' : 'тёмную'} тему
               </Command.Item>
             </Command.Group>
+
+            {boardActions.length > 0 && (
+              <Command.Group heading="Команды доски" className="mt-1 px-1.5 py-1 text-xs font-medium text-muted-foreground">
+                {boardActions.map((act) => (
+                  <Command.Item
+                    key={act.id}
+                    value={`${act.label} ${act.keywords || ''}`}
+                    onSelect={() => {
+                      setOpen(false)
+                      act.onSelect()
+                    }}
+                    className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground aria-selected:bg-accent"
+                  >
+                    <span className="flex items-center gap-2 truncate">
+                      <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+                      <span className="truncate">{act.label}</span>
+                    </span>
+                    {act.shortcut && (
+                      <kbd className="shrink-0 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                        {act.shortcut}
+                      </kbd>
+                    )}
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            )}
+
+            {searchableCards.length > 0 && (
+              <Command.Group heading="Карточки доски" className="mt-1 px-1.5 py-1 text-xs font-medium text-muted-foreground">
+                {searchableCards.map((c) => (
+                  <Command.Item
+                    key={c.id}
+                    value={`card ${c.text} ${c.columnTitle}`}
+                    onSelect={() => {
+                      setOpen(false)
+                      c.onSelect()
+                    }}
+                    className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground aria-selected:bg-accent"
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-medium text-foreground">{c.text}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">· {c.columnTitle}</span>
+                    </span>
+                    {c.likesCount > 0 && (
+                      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
+                        <ThumbsUp className="h-3 w-3" />
+                        {c.likesCount}
+                      </span>
+                    )}
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            )}
 
             {boards.length > 0 && (
               <Command.Group heading="Доски" className="mt-1 px-1.5 py-1 text-xs font-medium text-muted-foreground">

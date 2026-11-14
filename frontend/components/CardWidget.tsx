@@ -5,9 +5,12 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { motion } from 'motion/react'
 import {
+  ArrowRightLeft,
   Check,
   EyeOff,
+  GripVertical,
   ListTodo,
+  Minus,
   MoreHorizontal,
   Palette,
   Pencil,
@@ -18,7 +21,7 @@ import {
   User,
   X,
 } from 'lucide-react'
-import { deleteCard, toggleLike, updateCard } from '../api'
+import { deleteCard, moveCard, toggleLike, updateCard } from '../api'
 import {
   CARD_COLOR_PRESETS,
   getCardColorPreset,
@@ -45,8 +48,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { RichCardText } from './RichCardText'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -74,6 +81,11 @@ interface CardWidgetProps {
   onSpotlight?: (cardId: string) => void
   onCreateActionItem?: (card: Card) => void
   onRemoveFromGroup?: () => void
+  allowMultipleVotes?: boolean
+  selected?: boolean
+  onToggleSelect?: (cardId: string, shiftKey?: boolean) => void
+  otherColumns?: { id: string; title: string; color: string }[]
+  onMoved?: (card: Card, targetColumnId: string) => void
 }
 
 export default function CardWidget({
@@ -99,6 +111,11 @@ export default function CardWidget({
   onSpotlight,
   onCreateActionItem,
   onRemoveFromGroup,
+  allowMultipleVotes = false,
+  selected = false,
+  onToggleSelect,
+  otherColumns,
+  onMoved,
 }: CardWidgetProps) {
   const storeUser = useAppStore((s) => s.username)
   const resolvedUser = currentUser ?? storeUser
@@ -150,14 +167,18 @@ export default function CardWidget({
 
   const preset = getCardColorPreset(card.color)
   const likes = card.likes || []
-  const liked = likes.includes(resolvedUser)
-  const limitReached = !liked && (!canVote || (maxVotes > 0 && userTotalVotes >= maxVotes))
-  const voteDisabled = limitReached || readOnly || liking
+  const myVotesOnCard = likes.filter((u) => u === resolvedUser).length
+  const liked = myVotesOnCard > 0
+  const canAddVote = canVote && !(maxVotes > 0 && userTotalVotes >= maxVotes)
+  const limitReached = allowMultipleVotes ? !canAddVote : !liked && !canAddVote
+  const voteDisabled = allowMultipleVotes
+    ? (!canAddVote && myVotesOnCard === 0) || readOnly || liking
+    : limitReached || readOnly || liking
   const voteTitle = readOnly
     ? 'Доска заблокирована для правок'
     : limitReached
       ? 'Лимит голосов исчерпан'
-      : liked
+      : liked && !allowMultipleVotes
         ? 'Убрать лайк'
         : 'Лайк'
   const voteBlockedReason = readOnly
@@ -168,6 +189,7 @@ export default function CardWidget({
         : 'Голосование недоступно'
       : null
   const showAccentBar = preset.id !== 'default'
+  const moveTargets = (otherColumns || []).filter((c) => c.id !== card.column_id)
 
   const startEdit = () => {
     if (readOnly) return
@@ -207,8 +229,35 @@ export default function CardWidget({
     }
   }
 
-  const handleToggleLike = async (e: React.MouseEvent) => {
+  const handleToggleLike = async (e: React.MouseEvent, dotAction?: 'add' | 'remove') => {
     e.stopPropagation()
+    if (allowMultipleVotes) {
+      if (readOnly || liking) return
+      const act = dotAction || 'add'
+      if (act === 'add' && !canAddVote) return
+      if (act === 'remove' && myVotesOnCard <= 0) return
+      setLiking(true)
+      if (act === 'add') setVoteBurstKey((k) => k + 1)
+      let optimisticLikes: string[]
+      if (act === 'add') {
+        optimisticLikes = [...likes, resolvedUser]
+      } else {
+        const idx = likes.indexOf(resolvedUser)
+        optimisticLikes = idx >= 0 ? [...likes.slice(0, idx), ...likes.slice(idx + 1)] : likes
+      }
+      emitUpdated({ ...card, likes: optimisticLikes })
+      try {
+        const updated = await toggleLike(card.id, resolvedUser, act)
+        emitUpdated(updated)
+      } catch (err) {
+        emitUpdated(card)
+        showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error')
+      } finally {
+        setLiking(false)
+      }
+      return
+    }
+
     if (voteDisabled) return
     setLiking(true)
     if (!liked) {
@@ -226,6 +275,21 @@ export default function CardWidget({
       showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error')
     } finally {
       setLiking(false)
+    }
+  }
+
+  const handleMoveToColumn = async (targetColumnId: string) => {
+    if (readOnly || targetColumnId === card.column_id) return
+    try {
+      const updated = await moveCard(card.id, { column_id: targetColumnId, position: 0 })
+      if (onMoved) {
+        onMoved(updated, targetColumnId)
+      } else {
+        emitUpdated(updated)
+      }
+      showToast('Карточка перемещена', 'success')
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось переместить карточку'), 'error')
     }
   }
 
@@ -250,7 +314,8 @@ export default function CardWidget({
         className={cn(
           'group/card relative rounded-xl border p-3.5 shadow-sm transition-all duration-150',
           preset.cardClass,
-          !editing && !readOnly && 'cursor-grab active:cursor-grabbing hover:-translate-y-0.5 hover:shadow-md',
+          !editing && !readOnly && 'cursor-default hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md',
+          selected && 'ring-2 ring-primary/60 border-primary',
           isDragging && 'z-30 opacity-45 scale-[0.98]',
           isGroupTarget && 'ring-2 ring-primary bg-primary/5',
           isSpotlighted && 'ring-2 ring-primary shadow-md shadow-primary/15',
@@ -269,6 +334,37 @@ export default function CardWidget({
         {/* Header: author + quick hover actions */}
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
+            {onToggleSelect && !readOnly && (
+              <button
+                type="button"
+                data-testid={`card-select-${card.id}`}
+                aria-label={selected ? 'Снять выделение' : 'Выбрать карточку'}
+                aria-pressed={selected}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleSelect(card.id, e.shiftKey)
+                }}
+                className={cn(
+                  'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all',
+                  selected
+                    ? 'border-primary bg-primary text-primary-foreground opacity-100'
+                    : 'border-muted-foreground/45 bg-background/80 text-transparent opacity-0 group-hover/card:opacity-100 focus:opacity-100 hover:border-primary',
+                )}
+              >
+                <Check className="h-2.5 w-2.5 stroke-[3]" />
+              </button>
+            )}
+            {!editing && !readOnly && !dragDisabled && (
+              <span
+                data-testid="card-drag-handle"
+                aria-hidden="true"
+                title="Перетащить карточку"
+                className="flex h-5 w-4 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/45 transition-colors hover:bg-muted/80 hover:text-foreground active:cursor-grabbing group-hover/card:text-muted-foreground"
+              >
+                <GripVertical className="h-3.5 w-3.5" />
+              </span>
+            )}
             {anonymous ? (
               <>
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -403,6 +499,34 @@ export default function CardWidget({
                       </div>
                     </div>
                     <DropdownMenuSeparator />
+                    {moveTargets.length > 0 && (
+                      <>
+                        <DropdownMenuSub>
+                          <DropdownMenuSubTrigger>
+                            <ArrowRightLeft className="mr-2 h-3.5 w-3.5" />
+                            <span>Переместить в колонку</span>
+                          </DropdownMenuSubTrigger>
+                          <DropdownMenuSubContent>
+                            {moveTargets.map((targetCol) => (
+                              <DropdownMenuItem
+                                key={targetCol.id}
+                                onClick={() => {
+                                  handleMoveToColumn(targetCol.id)
+                                  setMenuOpen(false)
+                                }}
+                              >
+                                <span
+                                  className="h-2 w-2 shrink-0 rounded-full"
+                                  style={{ backgroundColor: targetCol.color }}
+                                />
+                                <span className="truncate">{targetCol.title}</span>
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                        <DropdownMenuSeparator />
+                      </>
+                    )}
                     {inGroup && onRemoveFromGroup && (
                       <DropdownMenuItem onClick={onRemoveFromGroup}>
                         <Unlink className="mr-2 h-3.5 w-3.5" />
@@ -494,7 +618,7 @@ export default function CardWidget({
             onDoubleClick={startEdit}
             className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-foreground"
           >
-            {card.text}
+            <RichCardText text={card.text} />
           </p>
         )}
 
@@ -513,42 +637,86 @@ export default function CardWidget({
             </div>
 
             {(() => {
-              const voteButton = (
-                <button
-                  type="button"
-                  title={voteTitle}
-                  disabled={voteDisabled}
-                  onClick={handleToggleLike}
-                  className={cn(
-                    'relative inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-medium transition-all active:scale-95',
-                    liked
-                      ? 'border-primary/40 bg-primary/15 text-primary'
-                      : 'border-border/80 bg-background/70 text-muted-foreground hover:border-primary/40 hover:text-foreground',
-                    voteDisabled && 'pointer-events-none',
-                    voteDisabled && !liked && 'opacity-50',
-                  )}
-                >
-                  {voteBurstKey > 0 && (
-                    <span
-                      key={voteBurstKey}
-                      aria-hidden="true"
-                      className="animate-vote-pop pointer-events-none absolute -top-2 left-1/2 font-mono text-[11px] font-bold text-primary"
-                    >
-                      +1
-                    </span>
-                  )}
-                  <motion.span
-                    key={liked ? 'liked' : 'idle'}
-                    initial={liked ? { scale: 1.35, rotate: -14 } : false}
-                    animate={{ scale: 1, rotate: 0 }}
-                    transition={{ type: 'spring', stiffness: 520, damping: 18 }}
-                    className="inline-flex"
+              const voteButton =
+                allowMultipleVotes && myVotesOnCard > 0 ? (
+                  <div
+                    className={cn(
+                      'relative inline-flex h-6 items-center overflow-hidden rounded-full border border-primary/40 bg-primary/15 text-xs font-medium text-primary transition-all',
+                      liking && 'opacity-70',
+                    )}
                   >
-                    <ThumbsUp className={cn('h-3 w-3', liked && 'fill-current')} />
-                  </motion.span>
-                  <span className="tabular-nums">{likes.length}</span>
-                </button>
-              )
+                    {voteBurstKey > 0 && (
+                      <span
+                        key={voteBurstKey}
+                        aria-hidden="true"
+                        className="animate-vote-pop pointer-events-none absolute -top-2 left-1/2 font-mono text-[11px] font-bold text-primary"
+                      >
+                        +1
+                      </span>
+                    )}
+                    {!readOnly && (
+                      <button
+                        type="button"
+                        title="Убрать голос"
+                        disabled={liking}
+                        onClick={(e) => handleToggleLike(e, 'remove')}
+                        className="flex h-full items-center px-1.5 hover:bg-primary/20 active:scale-95"
+                        aria-label="Убрать один голос"
+                      >
+                        <Minus className="h-2.5 w-2.5" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      title={voteTitle}
+                      disabled={readOnly || liking || limitReached}
+                      onClick={(e) => handleToggleLike(e, 'add')}
+                      className={cn(
+                        'inline-flex h-full items-center gap-1 px-1.5 hover:bg-primary/20 active:scale-95',
+                        (readOnly || limitReached) && 'pointer-events-none opacity-60',
+                      )}
+                    >
+                      <ThumbsUp className="h-3 w-3 fill-current" />
+                      <span className="tabular-nums">{likes.length}</span>
+                      <span className="text-[10px] font-semibold opacity-80">×{myVotesOnCard}</span>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    title={voteTitle}
+                    disabled={voteDisabled}
+                    onClick={(e) => handleToggleLike(e, allowMultipleVotes ? 'add' : undefined)}
+                    className={cn(
+                      'relative inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-medium transition-all active:scale-95',
+                      liked
+                        ? 'border-primary/40 bg-primary/15 text-primary'
+                        : 'border-border/80 bg-background/70 text-muted-foreground hover:border-primary/40 hover:text-foreground',
+                      voteDisabled && 'pointer-events-none',
+                      voteDisabled && !liked && 'opacity-50',
+                    )}
+                  >
+                    {voteBurstKey > 0 && (
+                      <span
+                        key={voteBurstKey}
+                        aria-hidden="true"
+                        className="animate-vote-pop pointer-events-none absolute -top-2 left-1/2 font-mono text-[11px] font-bold text-primary"
+                      >
+                        +1
+                      </span>
+                    )}
+                    <motion.span
+                      key={liked ? 'liked' : 'idle'}
+                      initial={liked ? { scale: 1.35, rotate: -14 } : false}
+                      animate={{ scale: 1, rotate: 0 }}
+                      transition={{ type: 'spring', stiffness: 520, damping: 18 }}
+                      className="inline-flex"
+                    >
+                      <ThumbsUp className={cn('h-3 w-3', liked && 'fill-current')} />
+                    </motion.span>
+                    <span className="tabular-nums">{likes.length}</span>
+                  </button>
+                )
 
               if (likes.length === 0 && !voteBlockedReason) {
                 return voteButton

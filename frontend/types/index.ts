@@ -28,6 +28,7 @@ export interface Board {
   is_locked?: boolean
   hide_cards_until_reveal?: boolean
   anonymous_votes?: boolean
+  allow_multiple_votes_per_card?: boolean
   active_facilitator?: string | null
   active_phase?: string | null
   active_session_id?: number | null
@@ -46,6 +47,7 @@ export interface BoardCreatePayload {
   carry_forward_items?: boolean
   hide_cards_until_reveal?: boolean
   anonymous_votes?: boolean
+  allow_multiple_votes_per_card?: boolean
 }
 
 export interface BoardUpdatePayload {
@@ -54,6 +56,7 @@ export interface BoardUpdatePayload {
   is_locked?: boolean
   hide_cards_until_reveal?: boolean
   anonymous_votes?: boolean
+  allow_multiple_votes_per_card?: boolean
 }
 
 export interface BoardListItem {
@@ -248,6 +251,7 @@ export interface WsBoardUpdatedData {
   is_locked?: boolean
   hide_cards_until_reveal?: boolean
   anonymous_votes?: boolean
+  allow_multiple_votes_per_card?: boolean
 }
 
 export interface TimerState {
@@ -291,4 +295,27 @@ export interface AppStore {
   setDotGrid: (enabled: boolean) => void
   setWorkspace: (ws: WorkspaceSession | null) => void
   setHasHydrated?: (hydrated: boolean) => void
+}
+
+export interface TypingUser {
+  username: string
+  column_id: string
+}
+
+export interface ActionItemSuggestion {
+  title: string
+  text: string
+  assignee_hint?: string | null
+  source_card_ids: string[]
+}
+
+export interface AutoClusterPreviewGroup {
+  title: string
+  card_ids: string[]
+}
+
+export interface AutoClusterPreviewResult {
+  column_id: string
+  groups: AutoClusterPreviewGroup[]
+  ungrouped_card_ids: string[]
 }

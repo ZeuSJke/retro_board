@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import {
   Check,
   ChevronDown,
+  GripVertical,
   Layers,
   Pencil,
   ThumbsUp,
@@ -55,6 +56,11 @@ interface CardGroupWidgetProps {
   revealDelayMap?: Record<string, number>
   onSpotlight?: (cardId: string) => void
   onCreateActionItem?: (card: Card) => void
+  allowMultipleVotes?: boolean
+  selectedCardIds?: Set<string>
+  onToggleSelectCard?: (cardId: string, shiftKey?: boolean) => void
+  otherColumns?: { id: string; title: string; color: string }[]
+  onCardMoved?: (card: Card, targetColumnId: string) => void
 }
 
 export default function CardGroupWidget({
@@ -80,6 +86,11 @@ export default function CardGroupWidget({
   revealDelayMap,
   onSpotlight,
   onCreateActionItem,
+  allowMultipleVotes = false,
+  selectedCardIds,
+  onToggleSelectCard,
+  otherColumns,
+  onCardMoved,
 }: CardGroupWidgetProps) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(group.title)
@@ -142,11 +153,16 @@ export default function CardGroupWidget({
       >
         <div
           {...(!editingTitle && !readOnly ? { ...attributes, ...listeners } : {})}
-          className={cn(
-            'group/hdr flex items-center gap-1.5 px-1 py-1',
-            !editingTitle && !readOnly && 'cursor-grab active:cursor-grabbing',
-          )}
+          className="group/hdr flex cursor-default items-center gap-1.5 px-1 py-1"
         >
+          {!editingTitle && !readOnly && (
+            <span
+              className="flex h-5 w-4 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground active:cursor-grabbing"
+              title="Перетащить группу"
+            >
+              <GripVertical className="h-3.5 w-3.5" />
+            </span>
+          )}
           <button
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
@@ -292,6 +308,11 @@ export default function CardGroupWidget({
                     revealDelayMs={revealDelayMap?.[card.id] ?? 0}
                     onSpotlight={onSpotlight}
                     onCreateActionItem={onCreateActionItem}
+                    allowMultipleVotes={allowMultipleVotes}
+                    selected={selectedCardIds?.has(card.id) ?? false}
+                    onToggleSelect={onToggleSelectCard}
+                    otherColumns={otherColumns}
+                    onMoved={onCardMoved}
                     onRemoveFromGroup={() => handleRemoveCard(card)}
                   />
                 ))}

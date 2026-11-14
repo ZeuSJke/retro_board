@@ -1,8 +1,19 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowDownWideNarrow, ArrowUpDown, PanelRight, Plus, Search, User, X } from 'lucide-react'
-import { COLUMN_COLOR_PALETTE } from '@/lib/board-themes'
+import {
+  ArrowDownWideNarrow,
+  ArrowUpDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Palette,
+  PanelRight,
+  Plus,
+  Search,
+  User,
+  X,
+} from 'lucide-react'
+import { CARD_COLOR_PRESETS, COLUMN_COLOR_PALETTE } from '@/lib/board-themes'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,6 +27,12 @@ interface BoardToolbarProps {
   onOnlyMineChange: (v: boolean) => void
   sortBy: 'order' | 'votes'
   onSortByChange: (s: 'order' | 'votes') => void
+  colorFilter?: string | null
+  onColorFilterChange?: (colorId: string | null) => void
+  hasGroups?: boolean
+  allGroupsCollapsed?: boolean
+  onToggleCollapseAllGroups?: () => void
+  searchInputRef?: React.RefObject<HTMLInputElement>
   readOnly?: boolean
   masterOpen: boolean
   onToggleMaster: () => void
@@ -30,6 +47,12 @@ export default function BoardToolbar({
   onOnlyMineChange,
   sortBy,
   onSortByChange,
+  colorFilter = null,
+  onColorFilterChange,
+  hasGroups = false,
+  allGroupsCollapsed = false,
+  onToggleCollapseAllGroups,
+  searchInputRef,
   readOnly = false,
   masterOpen,
   onToggleMaster,
@@ -60,6 +83,8 @@ export default function BoardToolbar({
         <div className="relative min-w-[140px] flex-1 sm:w-56 sm:flex-none">
           <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
+            ref={searchInputRef}
+            data-board-search-input="true"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Поиск карточек..."
@@ -103,6 +128,97 @@ export default function BoardToolbar({
           )}
           {sortBy === 'votes' ? 'По голосам' : 'По порядку'}
         </Button>
+
+        {onColorFilterChange && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant={colorFilter ? 'secondary' : 'outline'}
+                size="sm"
+                className="h-8 gap-1.5 text-xs transition-transform active:scale-95"
+                title="Фильтр по цвету стикеров"
+              >
+                {colorFilter ? (
+                  <span
+                    className="h-2.5 w-2.5 rounded-full border border-border"
+                    style={{
+                      backgroundColor:
+                        CARD_COLOR_PRESETS.find((c) => c.id === colorFilter)?.accentDot ||
+                        'transparent',
+                    }}
+                  />
+                ) : (
+                  <Palette className="h-3.5 w-3.5" />
+                )}
+                <span className="hidden md:inline">Цвет</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-auto p-2">
+              <div className="mb-1.5 text-[11px] font-semibold text-muted-foreground">
+                Фильтр по цвету
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onColorFilterChange(null)}
+                  className={cn(
+                    'rounded-md border px-2 py-1 text-xs transition-colors',
+                    !colorFilter
+                      ? 'border-primary bg-primary/10 font-medium text-primary'
+                      : 'hover:bg-muted',
+                  )}
+                >
+                  Все
+                </button>
+                {CARD_COLOR_PRESETS.map((c) => {
+                  const active = colorFilter === c.id
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      title={c.name}
+                      aria-label={`Фильтр по цвету: ${c.name}`}
+                      onClick={() => onColorFilterChange(active ? null : c.id)}
+                      className={cn(
+                        'flex h-6 w-6 items-center justify-center rounded-full border transition-transform hover:scale-110',
+                        c.swatchClass,
+                        active && 'ring-2 ring-primary ring-offset-2',
+                      )}
+                    >
+                      {c.id !== 'default' && (
+                        <span
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: c.accentDot }}
+                        />
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+
+        {hasGroups && onToggleCollapseAllGroups && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs transition-transform active:scale-95"
+            onClick={onToggleCollapseAllGroups}
+            title={allGroupsCollapsed ? 'Развернуть все группы' : 'Свернуть все группы'}
+          >
+            {allGroupsCollapsed ? (
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronsDownUp className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden lg:inline">
+              {allGroupsCollapsed ? 'Развернуть группы' : 'Свернуть группы'}
+            </span>
+          </Button>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">

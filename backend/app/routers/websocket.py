@@ -41,6 +41,7 @@ KNOWN_EVENTS = frozenset(
         "ready_toggle",
         "spotlight_card",
         "reaction",
+        "card_typing",
     }
 )
 
@@ -88,6 +89,7 @@ def _sync_board_session_db(
                 "is_locked": board.is_locked,
                 "hide_cards_until_reveal": board.hide_cards_until_reveal,
                 "anonymous_votes": board.anonymous_votes,
+        "allow_multiple_votes_per_card": board.allow_multiple_votes_per_card,
                 "workspace_id": board.workspace_id,
             }
         return None
@@ -291,6 +293,16 @@ async def websocket_endpoint(
                     {
                         "event": "spotlight_update",
                         "data": {"card_id": spotlight_id},
+                    }
+                )
+            )
+        typing_users = manager.get_typing(board_id)
+        if typing_users:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "event": "typing_update",
+                        "data": {"typing": typing_users},
                     }
                 )
             )
@@ -646,6 +658,31 @@ async def websocket_endpoint(
                         },
                     )
 
+                elif event == "card_typing":
+                    username = manager.get_username(websocket)
+                    if not username:
+                        continue
+                    column_id = (
+                        payload.get("column_id") if isinstance(payload, dict) else None
+                    )
+                    is_typing = (
+                        bool(payload.get("is_typing"))
+                        if isinstance(payload, dict)
+                        else False
+                    )
+                    if is_typing:
+                        if not isinstance(column_id, str) or not (1 <= len(column_id) <= 100):
+                            continue
+                        changed = manager.set_typing(board_id, username, column_id)
+                    else:
+                        changed = manager.set_typing(board_id, username, None)
+                    if changed:
+                        await manager.broadcast(
+                            board_id,
+                            "typing_update",
+                            {"typing": manager.get_typing(board_id)},
+                        )
+
             except (json.JSONDecodeError, KeyError):
                 pass
 
@@ -661,6 +698,7 @@ async def websocket_endpoint(
             manager.schedule_facilitator_grace(board_id, username)
         if username and not still_present:
             ready_changed = manager.remove_ready_user(board_id, username)
+            typing_changed = manager.set_typing(board_id, username, None)
             try:
                 # Защищаем рассылку о выходе от CancelledError при закрытии сокета (Starlette TestClient / cancel),
                 # иначе cursor_leave / presence_update обрываются на await и клиенты не получают обновление.
@@ -679,6 +717,12 @@ async def websocket_endpoint(
                                 board_id,
                                 "ready_update",
                                 {"ready_users": manager.get_ready_users(board_id)},
+                            )
+                        if typing_changed:
+                            await manager.broadcast(
+                                board_id,
+                                "typing_update",
+                                {"typing": manager.get_typing(board_id)},
                             )
             except Exception:
                 pass

@@ -12,6 +12,7 @@ import type {
   BoardMood,
   Column,
   ReactionBubble,
+  TypingUser,
   WsMessage,
   WsCursorMoveData,
   WsCursorLeaveData,
@@ -65,6 +66,7 @@ export function useBoardWebSocket({
   const [activeUsers, setActiveUsers] = useState<string[]>([])
   const [readyUsers, setReadyUsers] = useState<string[]>([])
   const [spotlightCardId, setSpotlightCardId] = useState<string | null>(null)
+  const [typingUsers, setTypingUsers] = useState<TypingUser[]>([])
   const [reactions, setReactions] = useState<ReactionBubble[]>([])
   const [facilitator, setFacilitator] = useState<string | null>(null)
   const [phase, setPhase] = useState<string | null>(null)
@@ -84,6 +86,7 @@ export function useBoardWebSocket({
     setPhase(null)
     setReadyUsers([])
     setSpotlightCardId(null)
+    setTypingUsers([])
     setReactions([])
     Object.values(cursorTimeouts.current).forEach(clearTimeout)
     cursorTimeouts.current = {}
@@ -190,6 +193,20 @@ export function useBoardWebSocket({
       if (event === 'spotlight_update') {
         const cardId = typeof data.card_id === 'string' ? data.card_id : null
         setSpotlightCardId(cardId)
+        return
+      }
+
+      if (event === 'typing_update') {
+        const list = Array.isArray(data.typing)
+          ? data.typing.filter(
+              (item): item is TypingUser =>
+                typeof item === 'object' &&
+                item !== null &&
+                typeof (item as TypingUser).username === 'string' &&
+                typeof (item as TypingUser).column_id === 'string',
+            )
+          : []
+        setTypingUsers(list)
         return
       }
 
@@ -533,9 +550,11 @@ export function useBoardWebSocket({
     cursorsRef,
     subscribeCursors,
     collapsedGroups,
+    setCollapsedGroups,
     activeUsers,
     readyUsers,
     spotlightCardId,
+    typingUsers,
     reactions,
     facilitator,
     phase,

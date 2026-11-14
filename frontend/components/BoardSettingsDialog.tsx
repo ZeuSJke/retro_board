@@ -49,6 +49,9 @@ export default function BoardSettingsDialog({
   const [isLocked, setIsLocked] = useState(Boolean(board.is_locked))
   const [hideCards, setHideCards] = useState(Boolean(board.hide_cards_until_reveal))
   const [anonymousVotes, setAnonymousVotes] = useState(Boolean(board.anonymous_votes))
+  const [allowMultipleVotes, setAllowMultipleVotes] = useState(
+    Boolean(board.allow_multiple_votes_per_card),
+  )
   const [saving, setSaving] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
 
@@ -59,6 +62,7 @@ export default function BoardSettingsDialog({
     setIsLocked(Boolean(board.is_locked))
     setHideCards(Boolean(board.hide_cards_until_reveal))
     setAnonymousVotes(Boolean(board.anonymous_votes))
+    setAllowMultipleVotes(Boolean(board.allow_multiple_votes_per_card))
   }, [open, board])
 
   const handleSave = async (e: React.FormEvent) => {
@@ -73,6 +77,7 @@ export default function BoardSettingsDialog({
         is_locked: isLocked,
         hide_cards_until_reveal: hideCards,
         anonymous_votes: anonymousVotes,
+        allow_multiple_votes_per_card: allowMultipleVotes,
       })
       onBoardUpdated(updated)
       showToast('Настройки доски сохранены', 'success')
@@ -169,6 +174,19 @@ export default function BoardSettingsDialog({
                   </p>
                 </div>
                 <Switch checked={anonymousVotes} onCheckedChange={setAnonymousVotes} />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5 text-sm font-medium">
+                    <Shield className="h-4 w-4 text-primary" />
+                    Несколько голосов в одну карточку (Dot Voting)
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Участники смогут отдавать несколько своих голосов одной важной карточке
+                  </p>
+                </div>
+                <Switch checked={allowMultipleVotes} onCheckedChange={setAllowMultipleVotes} />
               </div>
             </div>
 

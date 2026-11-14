@@ -193,28 +193,22 @@ async def remove_card_from_group(
     return out
 
 
-@router.post("/auto-cluster", response_model=schemas.AutoClusterResult)
-@limiter.limit("5/minute")
-async def auto_cluster(
-    request: Request,
-    body: schemas.AutoClusterRequest,
-    db: Session = Depends(get_db),
-    workspace: models.Workspace = Depends(get_current_workspace),
-):
-    """AI-кластеризация негруппированных карточек в колонке."""
-    # Check AI configured
+async def _compute_column_clusters(
+    column_id: str,
+    db: Session,
+    workspace_id: str,
+) -> tuple[models.Column, dict]:
+    """Validate column, check AI config, and compute clustering suggestions without persisting."""
     if not settings.ai_configured:
         raise HTTPException(503, "AI-сервис не настроен")
 
-    # Load column, verify workspace ownership
-    col = get_or_404(db, models.Column, body.column_id, "Колонка не найдена")
-    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Колонка не найдена")
+    col = get_or_404(db, models.Column, column_id, "Колонка не найдена")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace_id, "Колонка не найдена")
 
-    # Get ungrouped cards in column
     ungrouped_cards = (
         db.query(models.Card)
         .filter(
-            models.Card.column_id == body.column_id,
+            models.Card.column_id == column_id,
             models.Card.group_id.is_(None),
         )
         .all()
@@ -230,52 +224,69 @@ async def auto_cluster(
             f"Максимум {MAX_CARDS_FOR_CLUSTERING} для автоматической кластеризации.",
         )
 
-    # Prepare card data for AI (text sanitized inside cluster_cards)
     cards_data = [{"id": c.id, "text": c.text} for c in ungrouped_cards]
-
-    # Call AI in a thread to avoid blocking the event loop
     try:
         result = await asyncio.to_thread(cluster_cards, cards_data)
     except Exception as e:
-        logger.error("AI clustering failed for column %s: %s", body.column_id, type(e).__name__)
+        logger.error("AI clustering failed for column %s: %s", column_id, type(e).__name__)
         raise HTTPException(503, "AI-сервис временно недоступен")
+    return col, result
 
-    # Create groups and update cards in DB
+
+async def _apply_groups_to_column(
+    col: models.Column,
+    groups_spec: list[dict],
+    ungrouped_ids: list[str],
+    username: str | None,
+    db: Session,
+) -> schemas.AutoClusterResult:
+    """Persist proposed cluster groups into DB and broadcast WS updates."""
     created_groups: list[schemas.ClusterGroupInfo] = []
     board_id = col.board_id
+    assigned_ids: set[str] = set()
 
     group_pos = (
         db.query(func.count(models.CardGroup.id))
-        .filter(models.CardGroup.column_id == body.column_id)
+        .filter(models.CardGroup.column_id == col.id)
         .scalar()
         or 0
     )
 
-    for g in result["groups"]:
+    for g in groups_spec:
+        candidate_cards = [
+            card
+            for cid in g["card_ids"]
+            if cid not in assigned_ids
+            and (card := db.get(models.Card, cid)) is not None
+            and card.column_id == col.id
+            and card.group_id is None
+        ]
+        if len(candidate_cards) < 2:
+            continue
+
         group = models.CardGroup(
             id=str(uuid.uuid4()),
-            column_id=body.column_id,
-            title=g["title"],
+            column_id=col.id,
+            title=g["title"].strip() or "Группа",
             position=group_pos,
         )
         db.add(group)
         db.flush()
         group_pos += 1
 
-        # Update cards' group_id
-        for card_id in g["card_ids"]:
-            card = db.get(models.Card, card_id)
-            if card and card.column_id == body.column_id and card.group_id is None:
-                card.group_id = group.id
+        valid_card_ids: list[str] = []
+        for card in candidate_cards:
+            card.group_id = group.id
+            assigned_ids.add(card.id)
+            valid_card_ids.append(card.id)
 
         group_out = schemas.CardGroupOut.model_validate(group)
         created_groups.append(
-            schemas.ClusterGroupInfo(group=group_out, card_ids=g["card_ids"])
+            schemas.ClusterGroupInfo(group=group_out, card_ids=valid_card_ids)
         )
 
     db.commit()
 
-    # Broadcast WS events
     for cg in created_groups:
         await manager.broadcast(
             board_id, "group_created", cg.group.model_dump(mode="json")
@@ -293,13 +304,81 @@ async def auto_cluster(
         board_id,
         "auto_cluster_completed",
         {
-            "column_id": body.column_id,
+            "column_id": col.id,
             "groups_count": len(created_groups),
-            "username": body.username,
+            "username": username,
         },
     )
 
     return schemas.AutoClusterResult(
         created_groups=created_groups,
+        ungrouped_card_ids=ungrouped_ids,
+    )
+
+
+@router.post("/auto-cluster", response_model=schemas.AutoClusterResult)
+@limiter.limit("5/minute")
+async def auto_cluster(
+    request: Request,
+    body: schemas.AutoClusterRequest,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """AI-кластеризация негруппированных карточек в колонке."""
+    col, result = await _compute_column_clusters(body.column_id, db, workspace.id)
+    return await _apply_groups_to_column(
+        col=col,
+        groups_spec=result["groups"],
+        ungrouped_ids=result["ungrouped"],
+        username=body.username,
+        db=db,
+    )
+
+
+@router.post("/auto-cluster-preview", response_model=schemas.ClusterPreviewResult)
+@limiter.limit("5/minute")
+async def auto_cluster_preview(
+    request: Request,
+    body: schemas.AutoClusterRequest,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Preview AI clustering groups for a column without writing to DB."""
+    col, result = await _compute_column_clusters(body.column_id, db, workspace.id)
+    return schemas.ClusterPreviewResult(
+        column_id=col.id,
+        groups=[
+            schemas.ClusterPreviewGroup(title=g["title"], card_ids=g["card_ids"])
+            for g in result["groups"]
+        ],
         ungrouped_card_ids=result["ungrouped"],
+    )
+
+
+@router.post("/apply-clusters", response_model=schemas.AutoClusterResult)
+@limiter.limit("15/minute")
+async def apply_clusters(
+    request: Request,
+    body: schemas.ApplyClustersRequest,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Persist user-reviewed AI cluster groups for a column."""
+    col = get_or_404(db, models.Column, body.column_id, "Колонка не найдена")
+    require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Колонка не найдена")
+    all_ungrouped = (
+        db.query(models.Card.id)
+        .filter(models.Card.column_id == col.id, models.Card.group_id.is_(None))
+        .all()
+    )
+    ungrouped_pool = {row[0] for row in all_ungrouped}
+    grouped_requested = {cid for g in body.groups for cid in g.card_ids}
+    remaining = sorted(ungrouped_pool - grouped_requested)
+    groups_spec = [{"title": g.title, "card_ids": g.card_ids} for g in body.groups]
+    return await _apply_groups_to_column(
+        col=col,
+        groups_spec=groups_spec,
+        ungrouped_ids=remaining,
+        username=body.username,
+        db=db,
     )

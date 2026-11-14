@@ -17,7 +17,7 @@ from app import models, schemas
 from app.limiter import limiter
 from app.models import now_utc
 from app.routers.action_items import copy_unresolved_action_items
-from app.utils import get_or_404, require_live_board
+from app.utils import get_or_404, require_live_board, require_unlocked_board
 from app.workspace_auth import get_current_workspace
 from app.ws_manager import manager
 
@@ -413,6 +413,7 @@ async def create_board(
         template=body.template,
         hide_cards_until_reveal=body.hide_cards_until_reveal,
         anonymous_votes=body.anonymous_votes,
+        allow_multiple_votes_per_card=body.allow_multiple_votes_per_card,
         workspace_id=workspace.id,
     )
     db.add(board)
@@ -554,6 +555,8 @@ async def update_board(
         board.hide_cards_until_reveal = body.hide_cards_until_reveal
     if body.anonymous_votes is not None:
         board.anonymous_votes = body.anonymous_votes
+    if body.allow_multiple_votes_per_card is not None:
+        board.allow_multiple_votes_per_card = body.allow_multiple_votes_per_card
     try:
         db.commit()
     except IntegrityError:
@@ -569,6 +572,7 @@ async def update_board(
         "is_locked": board.is_locked,
         "hide_cards_until_reveal": board.hide_cards_until_reveal,
         "anonymous_votes": board.anonymous_votes,
+        "allow_multiple_votes_per_card": board.allow_multiple_votes_per_card,
         "workspace_id": board.workspace_id,
     }
     await manager.broadcast_workspace(workspace.id, "board_updated", payload)
@@ -902,3 +906,42 @@ async def regenerate_summary(
         {"summary": out.model_dump(mode="json"), "board_id": board.id},
     )
     return out
+
+
+@router.post("/{board_id}/reset-votes", response_model=schemas.BoardVotesResetOut)
+@limiter.limit("30/minute")
+async def reset_user_votes(
+    request: Request,
+    board_id: str,
+    username: str,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Remove all votes placed by username on the specified board."""
+    clean_user = username.strip()
+    if not clean_user or len(clean_user) > 60:
+        raise HTTPException(400, "Invalid username")
+    board = require_unlocked_board(db.get(models.Board, board_id), workspace.id, "Board not found")
+    cards = (
+        db.query(models.Card)
+        .join(models.Column, models.Card.column_id == models.Column.id)
+        .filter(models.Column.board_id == board.id)
+        .all()
+    )
+    changed_cards: list[models.Card] = []
+    for card in cards:
+        likes = list(card.likes or [])
+        if clean_user in likes:
+            card.likes = [u for u in likes if u != clean_user]
+            changed_cards.append(card)
+    if changed_cards:
+        db.commit()
+        for card in changed_cards:
+            db.refresh(card)
+            out = schemas.CardOut.model_validate(card)
+            await manager.broadcast(board.id, "card_updated", out.model_dump(mode="json"))
+    return schemas.BoardVotesResetOut(
+        board_id=board.id,
+        username=clean_user,
+        updated_cards=len(changed_cards),
+    )

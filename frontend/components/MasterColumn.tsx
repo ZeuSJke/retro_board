@@ -1,24 +1,42 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { AnimatePresence, motion } from 'motion/react'
 import {
+  ArrowDownToLine,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Circle,
   Clock,
+  History,
   ListTodo,
   Loader2,
   Plus,
+  Sparkles,
   Trash2,
   UserPlus,
   X,
 } from 'lucide-react'
-import { createActionItem, deleteActionItem, updateActionItem } from '../api'
+import {
+  createActionItem,
+  deleteActionItem,
+  getAllActionItems,
+  suggestActionItems,
+  updateActionItem,
+} from '../api'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage } from '../utils/apiError'
-import type { ActionItem, ActionItemStatus } from '../types'
+import type {
+  ActionItem,
+  ActionItemStatus,
+  ActionItemSuggestion,
+  DashboardActionItem,
+} from '../types'
+import { RichCardText } from './RichCardText'
+import SuggestActionItemsDialog from './SuggestActionItemsDialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -97,6 +115,110 @@ export default function MasterColumn({
   const [newText, setNewText] = useState('')
   const [newAssignee, setNewAssignee] = useState('')
   const [creating, setCreating] = useState(false)
+
+  const [prevOpenExpanded, setPrevOpenExpanded] = useState(false)
+  const [prevItems, setPrevItems] = useState<DashboardActionItem[]>([])
+  const [loadingPrev, setLoadingPrev] = useState(false)
+  const [prevLoaded, setPrevLoaded] = useState(false)
+
+  const [suggestDialogOpen, setSuggestDialogOpen] = useState(false)
+  const [suggestLoading, setSuggestLoading] = useState(false)
+  const [suggestCreating, setSuggestCreating] = useState(false)
+  const [suggestions, setSuggestions] = useState<ActionItemSuggestion[]>([])
+
+  useEffect(() => {
+    setPrevLoaded(false)
+    setPrevItems([])
+  }, [boardId])
+
+  const loadPreviousOpenItems = async () => {
+    if (loadingPrev) return
+    setLoadingPrev(true)
+    try {
+      const all = await getAllActionItems()
+      const filtered = all.filter((i) => i.board_id !== boardId && i.status !== 'done')
+      setPrevItems(filtered)
+      setPrevLoaded(true)
+    } catch {
+      /* silent */
+    } finally {
+      setLoadingPrev(false)
+    }
+  }
+
+  const handleTogglePrevSection = () => {
+    const next = !prevOpenExpanded
+    setPrevOpenExpanded(next)
+    if (next && !prevLoaded) {
+      void loadPreviousOpenItems()
+    }
+  }
+
+  const handleCompletePrevItem = async (item: DashboardActionItem) => {
+    try {
+      await updateActionItem(item.id, { status: 'done' })
+      setPrevItems((prev) => prev.filter((x) => x.id !== item.id))
+      showToast('Прошлая задача отмечена выполненной', 'success')
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось обновить задачу'), 'error')
+    }
+  }
+
+  const handlePullPrevItemToBoard = async (item: DashboardActionItem) => {
+    if (readOnly) return
+    try {
+      const created = await createActionItem({
+        board_id: boardId,
+        title: item.title || undefined,
+        text: item.text,
+        assignee: item.assignee || undefined,
+      })
+      onCreated?.(created)
+      showToast('Задача добавлена на текущую доску', 'success')
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось перенести задачу'), 'error')
+    }
+  }
+
+  const handleOpenAiSuggest = async () => {
+    if (readOnly) return
+    setSuggestDialogOpen(true)
+    setSuggestLoading(true)
+    setSuggestions([])
+    try {
+      const res = await suggestActionItems(boardId)
+      setSuggestions(res.suggestions)
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось получить предложения AI'), 'error')
+    } finally {
+      setSuggestLoading(false)
+    }
+  }
+
+  const handleCreateSuggestedItems = async (
+    itemsToCreate: { title: string; text: string; assignee: string | null; source_card_ids: string[] }[],
+  ) => {
+    if (itemsToCreate.length === 0 || readOnly) return
+    setSuggestCreating(true)
+    try {
+      for (const s of itemsToCreate) {
+        const created = await createActionItem({
+          board_id: boardId,
+          title: s.title,
+          text: s.text,
+          assignee: s.assignee || undefined,
+          source_card_ids: s.source_card_ids,
+        })
+        onCreated?.(created)
+      }
+      showToast(`Добавлено задач: ${itemsToCreate.length}`, 'success')
+      setSuggestDialogOpen(false)
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось создать часть задач'), 'error')
+    } finally {
+      setSuggestCreating(false)
+    }
+  }
 
   const { setNodeRef, isOver } = useDroppable({
     id: 'master-col',
@@ -214,17 +336,126 @@ export default function MasterColumn({
         </div>
 
         {!readOnly && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1 px-2 text-xs"
-            onClick={() => setAddingNew((prev) => !prev)}
-          >
-            {addingNew ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-            {addingNew ? 'Закрыть' : 'Добавить'}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-xs"
+              onClick={handleOpenAiSuggest}
+              title="AI: предложить Action Items на основе карточек"
+              data-testid="ai-suggest-action-items-btn"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <span className="hidden sm:inline">AI</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-xs"
+              onClick={() => setAddingNew((prev) => !prev)}
+            >
+              {addingNew ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+              {addingNew ? 'Закрыть' : 'Добавить'}
+            </Button>
+          </div>
         )}
+      </div>
+
+      {/* Previous retro open items accordion */}
+      <div className="border-b bg-muted/20">
+        <button
+          type="button"
+          onClick={handleTogglePrevSection}
+          className="flex w-full items-center justify-between px-4 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+        >
+          <span className="flex items-center gap-1.5">
+            <History className="h-3.5 w-3.5 text-amber-500" />
+            <span>Открытые с прошлых ретро</span>
+            {prevLoaded && prevItems.length > 0 && (
+              <Badge variant="warning" className="h-4 px-1.5 text-[10px]">
+                {prevItems.length}
+              </Badge>
+            )}
+          </span>
+          <ChevronDown
+            className={cn(
+              'h-3.5 w-3.5 transition-transform',
+              prevOpenExpanded && 'rotate-180',
+            )}
+          />
+        </button>
+
+        <AnimatePresence initial={false}>
+          {prevOpenExpanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.18 }}
+              className="overflow-hidden border-t bg-background/60"
+            >
+              <div className="max-h-52 space-y-1.5 overflow-y-auto p-2.5">
+                {loadingPrev ? (
+                  <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Загрузка задач...
+                  </div>
+                ) : prevItems.length === 0 ? (
+                  <div className="py-3 text-center text-[11px] text-muted-foreground">
+                    Все задачи с прошлых ретро закрыты.
+                  </div>
+                ) : (
+                  prevItems.map((prevItem) => (
+                    <div
+                      key={prevItem.id}
+                      className="rounded-lg border bg-card p-2 text-xs shadow-2xs"
+                    >
+                      <div className="mb-1 flex items-center justify-between gap-1.5 text-[10px] text-muted-foreground">
+                        <span className="truncate font-medium">{prevItem.board_name}</span>
+                        {prevItem.assignee && (
+                          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5">
+                            {prevItem.assignee}
+                          </span>
+                        )}
+                      </div>
+                      <p className="line-clamp-2 font-medium leading-snug text-foreground">
+                        {prevItem.title || prevItem.text}
+                      </p>
+                      <div className="mt-1.5 flex items-center justify-end gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 gap-1 px-2 text-[11px] text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-700"
+                          onClick={() => handleCompletePrevItem(prevItem)}
+                          title="Отметить выполненной"
+                        >
+                          <Check className="h-3 w-3" />
+                          Готово
+                        </Button>
+                        {!readOnly && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 gap-1 px-2 text-[11px]"
+                            onClick={() => handlePullPrevItemToBoard(prevItem)}
+                            title="Перенести задачу на текущую доску"
+                          >
+                            <ArrowDownToLine className="h-3 w-3" />
+                            На доску
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Inline create form */}
@@ -402,7 +633,7 @@ export default function MasterColumn({
                           !readOnly && 'cursor-text hover:text-foreground',
                         )}
                       >
-                        {item.text}
+                        <RichCardText text={item.text} />
                       </p>
                     )}
 
@@ -535,6 +766,15 @@ export default function MasterColumn({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <SuggestActionItemsDialog
+        open={suggestDialogOpen}
+        onOpenChange={setSuggestDialogOpen}
+        loading={suggestLoading}
+        submitting={suggestCreating}
+        suggestions={suggestions}
+        onCreateSelected={handleCreateSuggestedItems}
+      />
     </div>
   )
 }

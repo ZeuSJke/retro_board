@@ -6,7 +6,7 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { AnimatePresence, motion } from 'motion/react'
 import { Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { autoClusterColumn, createCard, deleteColumn, updateColumn } from '../api'
-import { CARD_COLOR_PRESETS, COLUMN_COLOR_PALETTE } from '@/lib/board-themes'
+import { CARD_COLOR_PRESETS, COLUMN_COLOR_PALETTE, getCardColorPreset } from '@/lib/board-themes'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage } from '../utils/apiError'
@@ -61,6 +61,15 @@ interface ColumnProps {
   className?: string
   onSpotlight?: (cardId: string) => void
   onCreateActionItem?: (card: Card) => void
+  onPreviewAutoCluster?: (column: ColumnType) => Promise<void> | void
+  allowMultipleVotes?: boolean
+  selectedCardIds?: Set<string>
+  onToggleSelectCard?: (cardId: string, shiftKey?: boolean) => void
+  otherColumns?: { id: string; title: string; color: string }[]
+  onCardMoved?: (card: Card, targetColumnId: string) => void
+  colorFilter?: string | null
+  typingUsernames?: string[]
+  onTypingChange?: (columnId: string, isTyping: boolean) => void
 }
 
 export default function Column({
@@ -93,6 +102,15 @@ export default function Column({
   className,
   onSpotlight,
   onCreateActionItem,
+  onPreviewAutoCluster,
+  allowMultipleVotes = false,
+  selectedCardIds,
+  onToggleSelectCard,
+  otherColumns,
+  onCardMoved,
+  colorFilter = null,
+  typingUsernames = [],
+  onTypingChange,
 }: ColumnProps) {
   const storeUser = useAppStore((s) => s.username)
   const resolvedUser = currentUser ?? storeUser
@@ -109,6 +127,28 @@ export default function Column({
   const [draftColor, setDraftColor] = useState<string>('#FFFFFF')
   const [creating, setCreating] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const emitTyping = (active: boolean) => {
+    if (!onTypingChange) return
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current)
+      typingTimerRef.current = null
+    }
+    onTypingChange(column.id, active)
+    if (active) {
+      typingTimerRef.current = setTimeout(() => {
+        onTypingChange(column.id, false)
+      }, 3500)
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current)
+      onTypingChange?.(column.id, false)
+    }
+  }, [column.id, onTypingChange])
 
   // Отслеживаем свежесозданные/прилетевшие по WS карточки и эффект проявки при Reveal
   const initializedCardsRef = useRef(false)
@@ -195,6 +235,10 @@ export default function Column({
     const filtered = (column.cards || []).filter((card) => {
       const isHidden = effectiveHide && card.author !== resolvedUser
       if (onlyMine && card.author !== resolvedUser) return false
+      if (colorFilter) {
+        if (isHidden) return false
+        if (getCardColorPreset(card.color).id !== colorFilter) return false
+      }
       if (q) {
         if (isHidden) return false
         const matchText = card.text.toLowerCase().includes(q)
@@ -211,7 +255,9 @@ export default function Column({
       }
       return (a.position ?? 0) - (b.position ?? 0)
     })
-  }, [column.cards, searchQuery, onlyMine, sortBy, effectiveHide, resolvedUser, anonymous])
+  }, [column.cards, searchQuery, onlyMine, colorFilter, sortBy, effectiveHide, resolvedUser, anonymous])
+
+  const otherTypingUsers = typingUsernames.filter((u) => u !== resolvedUser)
 
   const groups = column.groups || []
   const groupIds = new Set(groups.map((g) => g.id))
@@ -259,6 +305,16 @@ export default function Column({
   }
 
   const handleAutoCluster = async () => {
+    if (onPreviewAutoCluster) {
+      if (clustering || readOnly) return
+      setClustering(true)
+      try {
+        await onPreviewAutoCluster(column)
+      } finally {
+        setClustering(false)
+      }
+      return
+    }
     if (clustering || readOnly) return
     setClustering(true)
     try {
@@ -460,7 +516,7 @@ export default function Column({
           >
             {groups.map((group) => {
               const groupCards = filteredAndSortedCards.filter((c) => c.group_id === group.id)
-              if (groupCards.length === 0 && (searchQuery.trim() || onlyMine)) return null
+              if (groupCards.length === 0 && (searchQuery.trim() || onlyMine || Boolean(colorFilter))) return null
               return (
                 <CardGroupWidget
                   key={group.id}
@@ -486,6 +542,11 @@ export default function Column({
                   revealDelayMap={revealDelayMap}
                   onSpotlight={onSpotlight}
                   onCreateActionItem={onCreateActionItem}
+                  allowMultipleVotes={allowMultipleVotes}
+                  selectedCardIds={selectedCardIds}
+                  onToggleSelectCard={onToggleSelectCard}
+                  otherColumns={otherColumns}
+                  onCardMoved={onCardMoved}
                 />
               )
             })}
@@ -510,6 +571,11 @@ export default function Column({
                 revealDelayMs={revealDelayMap[card.id] ?? 0}
                 onSpotlight={onSpotlight}
                 onCreateActionItem={onCreateActionItem}
+                allowMultipleVotes={allowMultipleVotes}
+                selected={selectedCardIds?.has(card.id) ?? false}
+                onToggleSelect={onToggleSelectCard}
+                otherColumns={otherColumns}
+                onMoved={onCardMoved}
               />
             ))}
           </SortableContext>
@@ -517,6 +583,24 @@ export default function Column({
           {filteredAndSortedCards.length === 0 && !composerOpen && (
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-xs text-muted-foreground">
               <span>Пока нет карточек</span>
+            </div>
+          )}
+
+          {otherTypingUsers.length > 0 && (
+            <div
+              data-testid={`column-typing-${column.id}`}
+              className="flex items-center gap-1.5 px-1.5 py-1 text-[11px] text-muted-foreground"
+            >
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+              <span className="truncate">
+                {effectiveHide || anonymous
+                  ? otherTypingUsers.length > 1
+                    ? 'Несколько участников пишут...'
+                    : 'Кто-то пишет...'
+                  : otherTypingUsers.length === 1
+                    ? `${otherTypingUsers[0]} пишет...`
+                    : `${otherTypingUsers.slice(0, 2).join(', ')} пишут...`}
+              </span>
             </div>
           )}
         </div>
@@ -536,7 +620,12 @@ export default function Column({
                 <Textarea
                   ref={textareaRef}
                   value={draftText}
-                  onChange={(e) => setDraftText(e.target.value)}
+                  onChange={(e) => {
+                    const nextVal = e.target.value
+                    setDraftText(nextVal)
+                    emitTyping(nextVal.trim().length > 0)
+                  }}
+                  onBlur={() => emitTyping(false)}
                   rows={2}
                   autoFocus
                   placeholder="Опишите мысль... (Enter — добавить)"
@@ -544,8 +633,10 @@ export default function Column({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
+                      emitTyping(false)
                       handleAddCard()
                     } else if (e.key === 'Escape') {
+                      emitTyping(false)
                       setComposerOpen(false)
                     }
                   }}
@@ -580,7 +671,10 @@ export default function Column({
                       variant="ghost"
                       size="icon-sm"
                       className="h-7 w-7"
-                      onClick={() => setComposerOpen(false)}
+                      onClick={() => {
+                        emitTyping(false)
+                        setComposerOpen(false)
+                      }}
                       aria-label="Отменить"
                     >
                       <X className="h-3.5 w-3.5" />
@@ -590,7 +684,10 @@ export default function Column({
                       size="sm"
                       className="h-7 px-3 text-xs"
                       disabled={!draftText.trim() || creating}
-                      onClick={handleAddCard}
+                      onClick={() => {
+                        emitTyping(false)
+                        handleAddCard()
+                      }}
                     >
                       {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                       Добавить
@@ -603,6 +700,7 @@ export default function Column({
                 key="composer-btn"
                 type="button"
                 variant="ghost"
+                data-column-add-btn="true"
                 disabled={!canCreateCard}
                 onClick={() => setComposerOpen(true)}
                 className="w-full justify-start gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"

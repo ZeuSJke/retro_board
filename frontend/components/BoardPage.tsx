@@ -12,10 +12,17 @@ import {
 import { AnimatePresence } from 'motion/react'
 import { ChevronLeft, ChevronRight, Layers, Sparkles } from 'lucide-react'
 import {
+  applyAutoClusters,
+  autoClusterPreview,
+  bulkDeleteCards,
+  bulkUpdateCards,
   createActionItem,
   createColumn,
   generateActionItemTitle,
   getBoardSummary,
+  mergeCards,
+  resetBoardVotes,
+  toggleLike,
   updateActionItem,
 } from '../api'
 import { useAppStore } from '../store'
@@ -30,6 +37,7 @@ import { exportBoardToPDF } from '../utils/exportPDF'
 import { getApiErrorMessage } from '../utils/apiError'
 import type {
   ActionItem,
+  AutoClusterPreviewResult,
   Board,
   BoardListItem,
   BoardMood,
@@ -40,16 +48,22 @@ import type {
   WsBoardUpdatedData,
   WsMessage,
 } from '../types'
+import AutoClusterPreviewDialog from './AutoClusterPreviewDialog'
 import BoardSettingsDialog from './BoardSettingsDialog'
 import BoardToolbar from './BoardToolbar'
 import BoardsPanel from './BoardsPanel'
+import BulkActionsBar from './BulkActionsBar'
 import Column from './Column'
-import CommandPalette from './CommandPalette'
+import CommandPalette, {
+  type CommandBoardAction,
+  type CommandSearchCard,
+} from './CommandPalette'
 import CursorMarker from './CursorMarker'
 import MasterColumn from './MasterColumn'
 import MoodDialog from './MoodDialog'
 import SessionBar from './SessionBar'
-import SpotlightModal from './SpotlightModal'
+import ShortcutsDialog from './ShortcutsDialog'
+import SpotlightModal, { type SpotlightQueueItem } from './SpotlightModal'
 import SummaryModal from './SummaryModal'
 import Topbar from './Topbar'
 import UserSettingsDialog from './UserSettingsDialog'
@@ -141,6 +155,19 @@ export default function BoardPage({
   const [searchQuery, setSearchQuery] = useState('')
   const [onlyMine, setOnlyMine] = useState(false)
   const [sortBy, setSortBy] = useState<'order' | 'votes'>('order')
+  const [colorFilter, setColorFilter] = useState<string | null>(null)
+  const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(() => new Set())
+  const lastSelectedCardIdRef = useRef<string | null>(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [reactionsPopoverOpen, setReactionsPopoverOpen] = useState(false)
+  const [resettingVotes, setResettingVotes] = useState(false)
+  const [spotlightQueueMode, setSpotlightQueueMode] = useState<'all' | 'top_votes'>('all')
+  const [clusterPreviewState, setClusterPreviewState] = useState<{
+    column: ColumnType
+    preview: AutoClusterPreviewResult
+  } | null>(null)
+  const [applyingClusters, setApplyingClusters] = useState(false)
 
   const [moods, setMoods] = useState<BoardMood[]>(board.moods || [])
   const [summary, setSummary] = useState<BoardSummary | null>(null)
@@ -148,6 +175,8 @@ export default function BoardPage({
   const [summaryError, setSummaryError] = useState<string | null>(null)
 
   const canvasRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const typingStateRef = useRef<Record<string, boolean>>({})
   const cursorNodeTick = useState(0)
   const forceCursorRender = cursorNodeTick[1]
 
@@ -269,6 +298,8 @@ export default function BoardPage({
           hide_cards_until_reveal:
             data.hide_cards_until_reveal ?? current.hide_cards_until_reveal,
           anonymous_votes: data.anonymous_votes ?? current.anonymous_votes,
+          allow_multiple_votes_per_card:
+            data.allow_multiple_votes_per_card ?? current.allow_multiple_votes_per_card,
         })
       }
     },
@@ -290,9 +321,11 @@ export default function BoardPage({
     cursorsRef,
     subscribeCursors,
     collapsedGroups,
+    setCollapsedGroups,
     activeUsers,
     readyUsers,
     spotlightCardId,
+    typingUsers,
     reactions,
     sessionSynced,
     connected,
@@ -339,6 +372,11 @@ export default function BoardPage({
     setMoods(initialBoard.moods || [])
     setSummary(null)
     setSummaryError(null)
+    setColorFilter(null)
+    setSelectedCardIds(new Set())
+    lastSelectedCardIdRef.current = null
+    setClusterPreviewState(null)
+    typingStateRef.current = {}
     restoreTimer(board.id)
     handleFacilitatorChanged(
       initialBoard.active_facilitator ?? null,
@@ -402,7 +440,11 @@ export default function BoardPage({
       columns.reduce(
         (sum, col) =>
           sum +
-          col.cards.filter((c) => (c.likes || []).includes(username)).length,
+          col.cards.reduce(
+            (cardSum, c) =>
+              cardSum + (c.likes || []).filter((u) => u === username).length,
+            0,
+          ),
         0,
       ),
     [columns, username],
@@ -413,6 +455,43 @@ export default function BoardPage({
     columns.forEach((c) => c.cards.forEach((card) => set.add(card.author)))
     return Array.from(set).filter((name) => name && name !== 'Аноним')
   }, [activeUsers, columns])
+
+  const votedParticipantsCount = useMemo(() => {
+    const voters = new Set<string>()
+    for (const col of columns) {
+      for (const card of col.cards) {
+        for (const u of card.likes || []) {
+          if (u) voters.add(u)
+        }
+      }
+    }
+    const onlineSet = new Set(activeUsers.length > 0 ? activeUsers : [username])
+    let count = 0
+    voters.forEach((v) => {
+      if (onlineSet.has(v)) count += 1
+    })
+    return count
+  }, [activeUsers, columns, username])
+
+  const allCardsMap = useMemo(() => {
+    const map = new Map<string, Card>()
+    columns.forEach((col) => col.cards.forEach((card) => map.set(card.id, card)))
+    return map
+  }, [columns])
+
+  const selectedCards = useMemo(
+    () =>
+      Array.from(selectedCardIds)
+        .map((id) => allCardsMap.get(id))
+        .filter((card): card is Card => Boolean(card)),
+    [selectedCardIds, allCardsMap],
+  )
+
+  useEffect(() => {
+    if (readOnly) {
+      setSelectedCardIds(new Set())
+    }
+  }, [readOnly])
 
   const createActionItemFromCards = useCallback(
     async (text: string, sourceCardIds: string[], authorHint?: string | null) => {
@@ -522,14 +601,21 @@ export default function BoardPage({
   )
 
   const handleCardDeleted = useCallback(
-    (colId: string, cardId: string) =>
+    (colId: string, cardId: string) => {
       setColumns((prev) =>
         prev.map((c) =>
           c.id === colId
             ? { ...c, cards: c.cards.filter((x) => x.id !== cardId) }
             : c,
         ),
-      ),
+      )
+      setSelectedCardIds((prev) => {
+        if (!prev.has(cardId)) return prev
+        const next = new Set(prev)
+        next.delete(cardId)
+        return next
+      })
+    },
     [setColumns],
   )
 
@@ -607,10 +693,20 @@ export default function BoardPage({
     }
   }
 
-  const handleSpotlight = (cardId: string) => {
-    const next = spotlightCardId === cardId ? null : cardId
-    sendMessage({ event: 'spotlight_card', data: { card_id: next } })
-  }
+  const handleSpotlight = useCallback(
+    (cardId: string) => {
+      const next = spotlightCardId === cardId ? null : cardId
+      sendMessage({ event: 'spotlight_card', data: { card_id: next } })
+    },
+    [sendMessage, spotlightCardId],
+  )
+
+  const handleSelectSpotlightCard = useCallback(
+    (cardId: string) => {
+      sendMessage({ event: 'spotlight_card', data: { card_id: cardId } })
+    },
+    [sendMessage],
+  )
 
   const spotlightData = useMemo(() => {
     if (!spotlightCardId) return null
@@ -621,13 +717,555 @@ export default function BoardPage({
     return null
   }, [spotlightCardId, columns])
 
-  const handleToggleMaster = () => {
+  const spotlightQueue = useMemo<SpotlightQueueItem[]>(() => {
+    const items: SpotlightQueueItem[] = []
+    for (const col of columns) {
+      const sortedColCards = [...col.cards].sort(
+        (a, b) => (a.position ?? 0) - (b.position ?? 0),
+      )
+      for (const card of sortedColCards) {
+        if (hideOtherCards && card.author !== username) continue
+        items.push({ card, columnTitle: col.title })
+      }
+    }
+    if (spotlightQueueMode === 'top_votes') {
+      return [...items].sort(
+        (a, b) => (b.card.likes?.length || 0) - (a.card.likes?.length || 0),
+      )
+    }
+    return items
+  }, [columns, hideOtherCards, spotlightQueueMode, username])
+
+  const handleToggleMaster = useCallback(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) {
       setMobileMasterOpen((prev) => !prev)
     } else {
       setMasterOpen((prev) => !prev)
     }
-  }
+  }, [])
+
+  const columnsMeta = useMemo(
+    () => columns.map((c) => ({ id: c.id, title: c.title, color: c.color })),
+    [columns],
+  )
+
+  const allGroupIds = useMemo(
+    () => columns.flatMap((c) => (c.groups || []).map((g) => g.id)),
+    [columns],
+  )
+  const hasGroups = allGroupIds.length > 0
+  const allGroupsCollapsed =
+    hasGroups && allGroupIds.every((id) => Boolean(collapsedGroups[id]))
+
+  const handleToggleCollapseAllGroups = useCallback(() => {
+    if (!hasGroups) return
+    const nextCollapsed = !allGroupsCollapsed
+    setCollapsedGroups((prev) => {
+      const next = { ...prev }
+      allGroupIds.forEach((id) => {
+        next[id] = nextCollapsed
+      })
+      return next
+    })
+    allGroupIds.forEach((id) => {
+      sendMessage({
+        event: 'group_collapse',
+        data: { group_id: id, collapsed: nextCollapsed },
+      })
+    })
+  }, [allGroupIds, allGroupsCollapsed, hasGroups, sendMessage, setCollapsedGroups])
+
+  const typingByColumn = useMemo(() => {
+    const map: Record<string, string[]> = {}
+    for (const t of typingUsers) {
+      if (!t.column_id || !t.username || t.username === username) continue
+      if (!map[t.column_id]) map[t.column_id] = []
+      if (!map[t.column_id].includes(t.username)) {
+        map[t.column_id].push(t.username)
+      }
+    }
+    return map
+  }, [typingUsers, username])
+
+  const handleTypingChange = useCallback(
+    (columnId: string, isTyping: boolean) => {
+      if (typingStateRef.current[columnId] === isTyping) return
+      typingStateRef.current[columnId] = isTyping
+      sendMessage({
+        event: 'card_typing',
+        data: { column_id: columnId, is_typing: isTyping },
+      })
+    },
+    [sendMessage],
+  )
+
+  const handleCardMovedToColumn = useCallback(
+    (sourceColId: string, updatedCard: Card, targetColumnId: string) => {
+      setColumns((prev) =>
+        prev.map((col) => {
+          if (col.id === sourceColId && sourceColId !== targetColumnId) {
+            return {
+              ...col,
+              cards: col.cards.filter((c) => c.id !== updatedCard.id),
+            }
+          }
+          if (col.id === targetColumnId) {
+            const rest = col.cards.filter((c) => c.id !== updatedCard.id)
+            return {
+              ...col,
+              cards: [updatedCard, ...rest],
+            }
+          }
+          return col
+        }),
+      )
+    },
+    [setColumns],
+  )
+
+  const handleResetMyVotes = useCallback(async () => {
+    if (readOnly || resettingVotes || userTotalVotes <= 0) return
+    setResettingVotes(true)
+    try {
+      await resetBoardVotes(board.id, username)
+      setColumns((prev) =>
+        prev.map((col) => ({
+          ...col,
+          cards: col.cards.map((card) =>
+            (card.likes || []).includes(username)
+              ? { ...card, likes: card.likes.filter((u) => u !== username) }
+              : card,
+          ),
+        })),
+      )
+      showToast('Все ваши голоса сброшены', 'success')
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось сбросить голоса'), 'error')
+    } finally {
+      setResettingVotes(false)
+    }
+  }, [board.id, readOnly, resettingVotes, setColumns, userTotalVotes, username])
+
+  const handleToggleSelectCard = useCallback(
+    (cardId: string, shiftKey = false) => {
+      if (readOnly) return
+      const orderedIds = columns.flatMap((c) => c.cards.map((card) => card.id))
+      setSelectedCardIds((prev) => {
+        const next = new Set(prev)
+        if (shiftKey && lastSelectedCardIdRef.current) {
+          const startIdx = orderedIds.indexOf(lastSelectedCardIdRef.current)
+          const endIdx = orderedIds.indexOf(cardId)
+          if (startIdx !== -1 && endIdx !== -1) {
+            const [lo, hi] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx]
+            for (let i = lo; i <= hi; i += 1) {
+              next.add(orderedIds[i])
+            }
+            return next
+          }
+        }
+        if (next.has(cardId)) {
+          next.delete(cardId)
+        } else {
+          next.add(cardId)
+        }
+        return next
+      })
+      lastSelectedCardIdRef.current = cardId
+    },
+    [columns, readOnly],
+  )
+
+  const applyBulkUpdatedCards = useCallback(
+    (updatedCards: Card[], extraGroup?: CardGroup) => {
+      const updatedMap = new Map(updatedCards.map((c) => [c.id, c]))
+      setColumns((prev) =>
+        prev.map((col) => {
+          const retained: Card[] = []
+          for (const existing of col.cards) {
+            const replacement = updatedMap.get(existing.id)
+            if (!replacement) {
+              retained.push(existing)
+            } else if (replacement.column_id === col.id) {
+              retained.push(replacement)
+            }
+          }
+          const incoming = updatedCards.filter(
+            (c) =>
+              c.column_id === col.id &&
+              !col.cards.some((existing) => existing.id === c.id),
+          )
+          const groups =
+            extraGroup &&
+            extraGroup.column_id === col.id &&
+            !(col.groups || []).some((g) => g.id === extraGroup.id)
+              ? [...(col.groups || []), extraGroup]
+              : col.groups
+          return {
+            ...col,
+            groups,
+            cards: [...retained, ...incoming],
+          }
+        }),
+      )
+    },
+    [setColumns],
+  )
+
+  const runBulkAction = useCallback(
+    async (fallbackError: string, fn: (cardIds: string[]) => Promise<void>) => {
+      if (readOnly || bulkBusy || selectedCards.length === 0) return
+      setBulkBusy(true)
+      try {
+        await fn(selectedCards.map((c) => c.id))
+      } catch (err) {
+        showToast(getApiErrorMessage(err, fallbackError), 'error')
+      } finally {
+        setBulkBusy(false)
+      }
+    },
+    [bulkBusy, readOnly, selectedCards],
+  )
+
+  const handleBulkGroup = useCallback(
+    (title: string) =>
+      runBulkAction('Не удалось сгруппировать карточки', async (ids) => {
+        const updated = await bulkUpdateCards({ card_ids: ids, group_title: title })
+        const newGroupId = updated[0]?.group_id
+        const targetColId = updated[0]?.column_id
+        const syntheticGroup: CardGroup | undefined =
+          newGroupId && targetColId
+            ? {
+                id: newGroupId,
+                column_id: targetColId,
+                title: title.trim() || 'Новая группа',
+                position: 999,
+              }
+            : undefined
+        applyBulkUpdatedCards(updated, syntheticGroup)
+        setSelectedCardIds(new Set())
+        showToast('Карточки объединены в группу', 'success')
+      }),
+    [applyBulkUpdatedCards, runBulkAction],
+  )
+
+  const handleBulkColor = useCallback(
+    (hex: string) =>
+      runBulkAction('Не удалось изменить цвет карточек', async (ids) => {
+        const updated = await bulkUpdateCards({ card_ids: ids, color: hex })
+        applyBulkUpdatedCards(updated)
+        setSelectedCardIds(new Set())
+      }),
+    [applyBulkUpdatedCards, runBulkAction],
+  )
+
+  const handleBulkMove = useCallback(
+    (columnId: string) =>
+      runBulkAction('Не удалось переместить карточки', async (ids) => {
+        const updated = await bulkUpdateCards({ card_ids: ids, column_id: columnId })
+        applyBulkUpdatedCards(updated)
+        setSelectedCardIds(new Set())
+        showToast('Карточки перемещены', 'success')
+      }),
+    [applyBulkUpdatedCards, runBulkAction],
+  )
+
+  const handleBulkCreateActionItem = useCallback(
+    () =>
+      runBulkAction('Не удалось создать Action Item', async (ids) => {
+        const combinedText = selectedCards
+          .map((c) => c.text.trim())
+          .filter(Boolean)
+          .join('\n')
+        const firstAuthor = selectedCards[0]?.author ?? null
+        await createActionItemFromCards(combinedText, ids, firstAuthor)
+        setSelectedCardIds(new Set())
+      }),
+    [createActionItemFromCards, runBulkAction, selectedCards],
+  )
+
+  const handleBulkDelete = useCallback(
+    () =>
+      runBulkAction('Не удалось удалить карточки', async (ids) => {
+        await bulkDeleteCards(ids)
+        const idSet = new Set(ids)
+        setColumns((prev) =>
+          prev.map((col) => ({
+            ...col,
+            cards: col.cards.filter((c) => !idSet.has(c.id)),
+          })),
+        )
+        setSelectedCardIds(new Set())
+        showToast(`Удалено карточек: ${ids.length}`, 'success')
+      }),
+    [runBulkAction, setColumns],
+  )
+
+  const handleMergeCards = useCallback(
+    (targetText: string) =>
+      runBulkAction('Не удалось объединить карточки', async (ids) => {
+        const merged = await mergeCards(ids, targetText)
+        const removedSet = new Set(ids.slice(1))
+        setColumns((prev) =>
+          prev.map((col) => ({
+            ...col,
+            cards: col.cards
+              .filter((c) => !removedSet.has(c.id))
+              .map((c) => (c.id === merged.id ? merged : c)),
+          })),
+        )
+        setSelectedCardIds(new Set())
+        showToast('Дубли объединены, голоса суммированы', 'success')
+      }),
+    [runBulkAction, setColumns],
+  )
+
+  const handleOpenClusterPreview = useCallback(
+    async (col: ColumnType) => {
+      if (readOnly) return
+      try {
+        const preview = await autoClusterPreview(col.id, username)
+        if (!preview.groups || preview.groups.length === 0) {
+          showToast('AI не нашёл похожих карточек для группировки', 'info')
+          return
+        }
+        setClusterPreviewState({ column: col, preview })
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status
+        if (status === 503) {
+          showToast('AI-сервис временно недоступен', 'error')
+        } else {
+          showToast(
+            getApiErrorMessage(err, 'Не удалось выполнить AI-кластеризацию'),
+            'error',
+          )
+        }
+      }
+    },
+    [readOnly, username],
+  )
+
+  const handleApplyClusterPreview = useCallback(
+    async (groupsToApply: { title: string; card_ids: string[] }[]) => {
+      if (!clusterPreviewState || applyingClusters || readOnly) return
+      setApplyingClusters(true)
+      try {
+        const colId = clusterPreviewState.column.id
+        const result = await applyAutoClusters({
+          column_id: colId,
+          groups: groupsToApply,
+          username,
+        })
+        for (const entry of result.created_groups || []) {
+          if (entry?.group) {
+            handleGroupCreated(colId, entry.group, entry.card_ids || [])
+          }
+        }
+        setClusterPreviewState(null)
+        showToast(
+          `Создано групп: ${(result.created_groups || []).length}`,
+          'success',
+        )
+      } catch (err) {
+        showToast(getApiErrorMessage(err, 'Не удалось применить группы'), 'error')
+      } finally {
+        setApplyingClusters(false)
+      }
+    },
+    [applyingClusters, clusterPreviewState, handleGroupCreated, readOnly, username],
+  )
+
+  const commandBoardActions = useMemo<CommandBoardAction[]>(() => {
+    const list: CommandBoardAction[] = []
+    if (!readOnly) {
+      list.push({
+        id: 'new-card',
+        label: 'Добавить карточку в первую колонку',
+        keywords: 'создать карточку стикер add card',
+        shortcut: 'N',
+        onSelect: () => {
+          const btn = document.querySelector<HTMLButtonElement>('[data-column-add-btn="true"]')
+          btn?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+          btn?.click()
+        },
+      })
+    }
+    list.push(
+      {
+        id: 'search-cards',
+        label: 'Поиск по карточкам на доске',
+        keywords: 'фильтр найти search',
+        shortcut: 'F',
+        onSelect: () => {
+          searchInputRef.current?.focus()
+          searchInputRef.current?.select()
+        },
+      },
+      {
+        id: 'toggle-master',
+        label: masterOpen ? 'Скрыть панель «Итоги»' : 'Показать панель «Итоги»',
+        keywords: 'action items задачи итоги',
+        shortcut: 'M',
+        onSelect: handleToggleMaster,
+      },
+      {
+        id: 'open-reactions',
+        label: 'Отправить быструю реакцию',
+        keywords: 'эмодзи emoji reaction',
+        shortcut: 'R',
+        onSelect: () => setReactionsPopoverOpen(true),
+      },
+    )
+    if (hasGroups) {
+      list.push({
+        id: 'toggle-groups',
+        label: allGroupsCollapsed ? 'Развернуть все группы' : 'Свернуть все группы',
+        keywords: 'collapse expand groups кластеры',
+        onSelect: handleToggleCollapseAllGroups,
+      })
+    }
+    if (!readOnly && userTotalVotes > 0) {
+      list.push({
+        id: 'reset-votes',
+        label: 'Сбросить все мои голоса',
+        keywords: 'reset votes лайки',
+        onSelect: handleResetMyVotes,
+      })
+    }
+    list.push(
+      {
+        id: 'board-settings',
+        label: 'Настройки доски',
+        keywords: 'settings лимит голосов таймер слепой',
+        onSelect: () => setBoardSettingsOpen(true),
+      },
+      {
+        id: 'ai-summary',
+        label: 'AI-резюме спринта',
+        keywords: 'summary итоги отчет',
+        onSelect: () => {
+          setSummaryOpen(true)
+          loadSummary()
+        },
+      },
+      {
+        id: 'mood-checkin',
+        label: 'Чек-ин настроения',
+        keywords: 'mood оценка',
+        onSelect: () => setMoodOpen(true),
+      },
+      {
+        id: 'shortcuts-help',
+        label: 'Шпаргалка горячих клавиш',
+        keywords: 'keyboard shortcuts help помощь',
+        shortcut: '?',
+        onSelect: () => setShortcutsOpen(true),
+      },
+    )
+    return list
+  }, [
+    allGroupsCollapsed,
+    handleResetMyVotes,
+    handleToggleCollapseAllGroups,
+    handleToggleMaster,
+    hasGroups,
+    loadSummary,
+    masterOpen,
+    readOnly,
+    userTotalVotes,
+  ])
+
+  const commandSearchCards = useMemo<CommandSearchCard[]>(() => {
+    const items: CommandSearchCard[] = []
+    for (const col of columns) {
+      for (const card of col.cards) {
+        if (hideOtherCards && card.author !== username) continue
+        items.push({
+          id: card.id,
+          text: card.text,
+          columnTitle: col.title,
+          likesCount: (card.likes || []).length,
+          onSelect: () => {
+            const el = document.querySelector<HTMLElement>(`[data-card-id="${card.id}"]`)
+            el?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+            if (!effectiveFacilitator || effectiveFacilitator === username) {
+              handleSpotlight(card.id)
+            }
+          },
+        })
+      }
+    }
+    return items
+  }, [columns, effectiveFacilitator, handleSpotlight, hideOtherCards, username])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+
+      if (e.key === 'Escape') {
+        if (selectedCardIds.size > 0) {
+          setSelectedCardIds(new Set())
+        }
+        return
+      }
+
+      if (document.querySelector('[role="dialog"][data-state="open"]')) {
+        return
+      }
+
+      if (e.key === '?') {
+        e.preventDefault()
+        setShortcutsOpen(true)
+        return
+      }
+
+      if (e.code === 'KeyN' && !readOnly) {
+        const firstAddBtn = document.querySelector<HTMLButtonElement>(
+          '[data-column-add-btn="true"]',
+        )
+        if (firstAddBtn) {
+          e.preventDefault()
+          firstAddBtn.scrollIntoView({
+            behavior: 'smooth',
+            block: 'nearest',
+            inline: 'center',
+          })
+          firstAddBtn.click()
+        }
+        return
+      }
+
+      if (e.code === 'KeyF' || e.key === '/') {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+        searchInputRef.current?.select()
+        return
+      }
+
+      if (e.code === 'KeyM') {
+        e.preventDefault()
+        handleToggleMaster()
+        return
+      }
+
+      if (e.code === 'KeyR') {
+        e.preventDefault()
+        setReactionsPopoverOpen((prev) => !prev)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [handleToggleMaster, readOnly, selectedCardIds.size])
 
   const handleExportMarkdown = () => {
     const md = formatBoardMarkdown(
@@ -663,6 +1301,7 @@ export default function BoardPage({
         onOpenCommandPalette={() => setCommandOpen(true)}
         onOpenBoardSettings={() => setBoardSettingsOpen(true)}
         onOpenUserSettings={() => setUserSettingsOpen(true)}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
         onOpenMood={() => setMoodOpen(true)}
         onOpenSummary={() => {
           setSummaryOpen(true)
@@ -681,6 +1320,11 @@ export default function BoardPage({
         isLocked={boardLocked}
         usedVotes={userTotalVotes}
         maxVotes={board.max_votes}
+        votedParticipantsCount={votedParticipantsCount}
+        onResetMyVotes={handleResetMyVotes}
+        resettingVotes={resettingVotes}
+        reactionsOpen={reactionsPopoverOpen}
+        onReactionsOpenChange={setReactionsPopoverOpen}
         timer={timer}
         autoAdvance={autoAdvance}
         soundMuted={soundMuted}
@@ -707,6 +1351,12 @@ export default function BoardPage({
         onOnlyMineChange={setOnlyMine}
         sortBy={sortBy}
         onSortByChange={setSortBy}
+        colorFilter={colorFilter}
+        onColorFilterChange={setColorFilter}
+        hasGroups={hasGroups}
+        allGroupsCollapsed={allGroupsCollapsed}
+        onToggleCollapseAllGroups={handleToggleCollapseAllGroups}
+        searchInputRef={searchInputRef}
         readOnly={readOnly}
         masterOpen={masterOpen}
         onToggleMaster={handleToggleMaster}
@@ -800,6 +1450,17 @@ export default function BoardPage({
                   onCreateActionItem={(card) =>
                     createActionItemFromCards(card.text, [card.id], card.author)
                   }
+                  onPreviewAutoCluster={handleOpenClusterPreview}
+                  allowMultipleVotes={Boolean(board.allow_multiple_votes_per_card)}
+                  selectedCardIds={selectedCardIds}
+                  onToggleSelectCard={handleToggleSelectCard}
+                  otherColumns={columnsMeta.filter((c) => c.id !== col.id)}
+                  onCardMoved={(updatedCard, targetColId) =>
+                    handleCardMovedToColumn(col.id, updatedCard, targetColId)
+                  }
+                  colorFilter={colorFilter}
+                  typingUsernames={typingByColumn[col.id]}
+                  onTypingChange={handleTypingChange}
                 />
               ))}
 
@@ -951,6 +1612,19 @@ export default function BoardPage({
         onNavigateDashboard={() => router.push('/dashboard')}
       />
 
+      <BulkActionsBar
+        selectedCards={readOnly ? [] : selectedCards}
+        columns={columns}
+        busy={bulkBusy}
+        onClear={() => setSelectedCardIds(new Set())}
+        onBulkGroup={handleBulkGroup}
+        onBulkColor={handleBulkColor}
+        onBulkMove={handleBulkMove}
+        onBulkCreateActionItem={handleBulkCreateActionItem}
+        onBulkDelete={handleBulkDelete}
+        onMergeCards={handleMergeCards}
+      />
+
       <CommandPalette
         boards={boards}
         open={commandOpen}
@@ -958,6 +1632,8 @@ export default function BoardPage({
         onSelectBoard={onSelectBoard}
         onCreateBoard={onOpenCreateBoard}
         onNavigateDashboard={() => router.push('/dashboard')}
+        boardActions={commandBoardActions}
+        searchableCards={commandSearchCards}
       />
 
       <BoardSettingsDialog
@@ -996,6 +1672,20 @@ export default function BoardPage({
         }}
       />
 
+      <AutoClusterPreviewDialog
+        open={Boolean(clusterPreviewState)}
+        onOpenChange={(open) => {
+          if (!open) setClusterPreviewState(null)
+        }}
+        columnTitle={clusterPreviewState?.column.title || ''}
+        preview={clusterPreviewState?.preview || null}
+        cards={clusterPreviewState?.column.cards || []}
+        applying={applyingClusters}
+        onApply={handleApplyClusterPreview}
+      />
+
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+
       <SpotlightModal
         card={spotlightData?.card || null}
         column={spotlightData?.column}
@@ -1005,6 +1695,11 @@ export default function BoardPage({
         readOnly={readOnly}
         maxVotes={board.max_votes}
         userTotalVotes={userTotalVotes}
+        allowMultipleVotes={Boolean(board.allow_multiple_votes_per_card)}
+        queueCards={spotlightQueue}
+        queueMode={spotlightQueueMode}
+        onQueueModeChange={setSpotlightQueueMode}
+        onSelectCard={handleSelectSpotlightCard}
         onClose={() => {
           if (!effectiveFacilitator || effectiveFacilitator === username) {
             sendMessage({ event: 'spotlight_card', data: { card_id: null } })
@@ -1017,13 +1712,14 @@ export default function BoardPage({
           if (!spotlightData || readOnly) return
           const targetCard = spotlightData.card
           const targetColId = spotlightData.column.id
+          const allowMulti = Boolean(board.allow_multiple_votes_per_card)
           const alreadyLiked = (targetCard.likes || []).includes(username)
-          if (!alreadyLiked && board.max_votes > 0 && userTotalVotes >= board.max_votes) {
+          const adding = allowMulti || !alreadyLiked
+          if (adding && board.max_votes > 0 && userTotalVotes >= board.max_votes) {
             showToast(`Лимит голосов исчерпан (${userTotalVotes}/${board.max_votes})`, 'info')
             return
           }
-          import('../api')
-            .then(({ toggleLike }) => toggleLike(targetCard.id, username))
+          toggleLike(targetCard.id, username, allowMulti ? 'add' : 'toggle')
             .then((updated) => handleCardUpdated(targetColId, updated))
             .catch((err) => showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error'))
         }}

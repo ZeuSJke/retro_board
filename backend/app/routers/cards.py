@@ -21,7 +21,7 @@ def _count_user_votes(db: Session, board_id: str, username: str) -> int:
         .filter(models.Column.board_id == board_id)
         .all()
     )
-    return sum(1 for (likes,) in cards if username in (likes or []))
+    return sum((likes or []).count(username) for (likes,) in cards)
 
 
 @router.post("/", response_model=schemas.CardOut, status_code=201)
@@ -144,6 +144,7 @@ async def toggle_like(
     request: Request,
     card_id: str,
     username: str = Query(..., min_length=1, max_length=60),
+    action: str = Query("toggle", pattern="^(toggle|add|remove)$"),
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
@@ -161,18 +162,241 @@ async def toggle_like(
     )
     board = require_unlocked_board(board, workspace.id, "Card not found")
     likes = list(card.likes or [])
-    if username in likes:
-        likes.remove(username)
+    if board.allow_multiple_votes_per_card:
+        if action == "remove":
+            if username in likes:
+                likes.remove(username)
+        else:
+            if _count_user_votes(db, col.board_id, username) >= board.max_votes:
+                raise HTTPException(403, "Лимит голосов исчерпан")
+            likes.append(username)
     else:
-        used = _count_user_votes(db, col.board_id, username)
-        if used >= board.max_votes:
-            raise HTTPException(403, "Лимит голосов исчерпан")
-        likes.append(username)
+        if username in likes:
+            if action in ("toggle", "remove"):
+                likes = [u for u in likes if u != username]
+        elif action in ("toggle", "add"):
+            if _count_user_votes(db, col.board_id, username) >= board.max_votes:
+                raise HTTPException(403, "Лимит голосов исчерпан")
+            likes.append(username)
     card.likes = likes
     db.commit()
     db.refresh(card)
     out = schemas.CardOut.model_validate(card)
     await manager.broadcast(col.board_id, "card_updated", out.model_dump(mode="json"))
+    return out
+
+
+def _load_board_cards(
+    db: Session,
+    card_ids: list[str],
+    workspace_id: str,
+) -> tuple[models.Board, list[models.Card], dict[str, models.Column]]:
+    """Load unique cards by ID, verify same unlocked board in workspace."""
+    unique_ids = list(dict.fromkeys(card_ids))
+    cards = db.query(models.Card).filter(models.Card.id.in_(unique_ids)).all()
+    by_id = {c.id: c for c in cards}
+    ordered_cards = [by_id[cid] for cid in unique_ids if cid in by_id]
+    if len(ordered_cards) != len(unique_ids):
+        raise HTTPException(404, "Card not found")
+
+    col_ids = {c.column_id for c in ordered_cards}
+    cols = db.query(models.Column).filter(models.Column.id.in_(col_ids)).all()
+    col_map = {col.id: col for col in cols}
+    board_ids = {col.board_id for col in cols}
+    if len(board_ids) != 1:
+        raise HTTPException(400, "Cards must belong to the same board")
+
+    board_id = next(iter(board_ids))
+    board = require_unlocked_board(db.get(models.Board, board_id), workspace_id, "Card not found")
+    return board, ordered_cards, col_map
+
+
+def _prune_empty_groups(db: Session, group_ids: set[str]) -> list[dict]:
+    """Delete groups that no longer contain any cards and return deleted payloads."""
+    deleted_payloads: list[dict] = []
+    for gid in group_ids:
+        if not gid:
+            continue
+        remaining = db.query(models.Card).filter(models.Card.group_id == gid).count()
+        if remaining == 0:
+            group = db.get(models.CardGroup, gid)
+            if group:
+                col_id = group.column_id
+                db.delete(group)
+                deleted_payloads.append({"id": gid, "column_id": col_id, "card_ids": []})
+    return deleted_payloads
+
+
+@router.post("/bulk-update", response_model=list[schemas.CardOut])
+@limiter.limit("30/minute")
+async def bulk_update_cards(
+    request: Request,
+    payload: schemas.BulkCardsUpdateRequest,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    board, cards, col_map = _load_board_cards(db, payload.card_ids, workspace.id)
+    touched_group_ids: set[str] = set()
+    created_group: models.CardGroup | None = None
+
+    target_col: models.Column | None = None
+    if payload.column_id is not None:
+        target_col = get_or_404(db, models.Column, payload.column_id, "Column not found")
+        if target_col.board_id != board.id:
+            raise HTTPException(400, "Target column belongs to another board")
+        max_pos = (
+            db.query(func.max(models.Card.position))
+            .filter(models.Card.column_id == target_col.id)
+            .scalar()
+        )
+        next_pos = (max_pos if max_pos is not None else -1) + 1
+        for offset, card in enumerate(cards):
+            if card.column_id != target_col.id:
+                if card.group_id:
+                    touched_group_ids.add(card.group_id)
+                card.column_id = target_col.id
+                card.group_id = None
+                card.position = next_pos + offset
+
+    if payload.group_title is not None:
+        effective_cols = {c.column_id for c in cards}
+        if len(effective_cols) != 1:
+            raise HTTPException(400, "Карточки для группировки должны быть в одной колонке")
+        col_id = next(iter(effective_cols))
+        max_gpos = (
+            db.query(func.max(models.CardGroup.position))
+            .filter(models.CardGroup.column_id == col_id)
+            .scalar()
+        )
+        created_group = models.CardGroup(
+            id=str(uuid.uuid4()),
+            column_id=col_id,
+            title=payload.group_title.strip() or "Новая группа",
+            position=(max_gpos if max_gpos is not None else -1) + 1,
+        )
+        db.add(created_group)
+        db.flush()
+        for card in cards:
+            if card.group_id and card.group_id != created_group.id:
+                touched_group_ids.add(card.group_id)
+            card.group_id = created_group.id
+    elif "group_id" in payload.model_fields_set:
+        if payload.group_id:
+            target_group = get_or_404(db, models.CardGroup, payload.group_id, "Group not found")
+            target_group_col = db.get(models.Column, target_group.column_id)
+            if not target_group_col or target_group_col.board_id != board.id:
+                raise HTTPException(400, "Group belongs to another board")
+            if any(c.column_id != target_group.column_id for c in cards):
+                raise HTTPException(400, "Карточки должны находиться в той же колонке, что и группа")
+        for card in cards:
+            if card.group_id and card.group_id != payload.group_id:
+                touched_group_ids.add(card.group_id)
+            card.group_id = payload.group_id or None
+
+    if payload.color is not None:
+        for card in cards:
+            card.color = payload.color
+
+    db.flush()
+    deleted_groups = _prune_empty_groups(db, touched_group_ids)
+    db.commit()
+
+    if created_group is not None:
+        db.refresh(created_group)
+        group_out = schemas.CardGroupOut.model_validate(created_group)
+        await manager.broadcast(board.id, "group_created", group_out.model_dump(mode="json"))
+
+    results: list[schemas.CardOut] = []
+    for card in cards:
+        db.refresh(card)
+        out = schemas.CardOut.model_validate(card)
+        results.append(out)
+        await manager.broadcast(board.id, "card_updated", out.model_dump(mode="json"))
+
+    for deleted_payload in deleted_groups:
+        await manager.broadcast(board.id, "group_deleted", deleted_payload)
+
+    return results
+
+
+@router.post("/bulk-delete", status_code=200)
+@limiter.limit("30/minute")
+async def bulk_delete_cards(
+    request: Request,
+    payload: schemas.BulkCardsDeleteRequest,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    board, cards, _ = _load_board_cards(db, payload.card_ids, workspace.id)
+    touched_group_ids: set[str] = {c.group_id for c in cards if c.group_id}
+    deleted_events = [{"id": c.id, "column_id": c.column_id} for c in cards]
+
+    for card in cards:
+        db.delete(card)
+    db.flush()
+    deleted_groups = _prune_empty_groups(db, touched_group_ids)
+    db.commit()
+
+    for evt in deleted_events:
+        await manager.broadcast(board.id, "card_deleted", evt)
+    for deleted_payload in deleted_groups:
+        await manager.broadcast(board.id, "group_deleted", deleted_payload)
+
+    return {"deleted": len(deleted_events)}
+
+
+@router.post("/merge", response_model=schemas.CardOut)
+@limiter.limit("30/minute")
+async def merge_cards(
+    request: Request,
+    payload: schemas.MergeCardsRequest,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    board, cards, _ = _load_board_cards(db, payload.card_ids, workspace.id)
+    if len(cards) < 2:
+        raise HTTPException(400, "Для объединения выберите минимум 2 карточки")
+
+    primary = cards[0]
+    duplicates = cards[1:]
+
+    if payload.target_text and payload.target_text.strip():
+        merged_text = payload.target_text.strip()
+    else:
+        parts = [c.text.strip() for c in cards if c.text and c.text.strip()]
+        merged_text = "\n".join(dict.fromkeys(parts))[:2000]
+    if not merged_text:
+        raise HTTPException(400, "Card text cannot be empty")
+    primary.text = merged_text
+
+    combined_likes: list[str] = []
+    if board.allow_multiple_votes_per_card:
+        for c in cards:
+            combined_likes.extend(c.likes or [])
+    else:
+        seen_voters: set[str] = set()
+        for c in cards:
+            for voter in c.likes or []:
+                if voter not in seen_voters:
+                    seen_voters.add(voter)
+                    combined_likes.append(voter)
+    primary.likes = combined_likes
+
+    touched_group_ids: set[str] = {d.group_id for d in duplicates if d.group_id}
+    deleted_events = [{"id": d.id, "column_id": d.column_id} for d in duplicates]
+    for dup in duplicates:
+        db.delete(dup)
+    db.flush()
+    deleted_groups = _prune_empty_groups(db, touched_group_ids)
+    db.commit()
+    db.refresh(primary)
+
+    out = schemas.CardOut.model_validate(primary)
+    await manager.broadcast(board.id, "card_updated", out.model_dump(mode="json"))
+    for evt in deleted_events:
+        await manager.broadcast(board.id, "card_deleted", evt)
+    for deleted_payload in deleted_groups:
+        await manager.broadcast(board.id, "group_deleted", deleted_payload)
     return out
 
 
