@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
@@ -19,6 +19,7 @@ import {
 } from '@dnd-kit/core'
 import { BrandMark } from '@/components/BrandLogo'
 import {
+  Activity,
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
@@ -36,6 +37,7 @@ import {
   Loader2,
   Lock,
   Moon,
+  PanelLeft,
   Plus,
   Repeat,
   Search,
@@ -52,12 +54,15 @@ import {
   getBoards,
   getMoodTrends,
   getWorkspaceInsights,
+  refreshWorkspaceSession,
   updateActionItem,
 } from '../api'
+import { getHealthQuestions, getHealthTrends } from '../api/health'
+import { getTeamThemes } from '../api/themes'
 import { useAppStore } from '../store'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { showToast } from '../store/toastStore'
-import { getApiErrorMessage } from '../utils/apiError'
+import { getApiErrorMessage, markApiErrorReported } from '../utils/apiError'
 import { boardToBoardListItem } from '../utils/boardMapper'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import type {
@@ -72,11 +77,16 @@ import type {
   WsBoardUpdatedData,
   WsMessage,
 } from '../types'
+import type { HealthQuestion, HealthTrendPoint } from '../types/health'
+import type { TeamTheme } from '../types/themes'
+import BoardsPanel from './BoardsPanel'
 import CarryForwardDialog from './CarryForwardDialog'
 import CreateBoardDialog from './CreateBoardDialog'
 import SummaryModal from './SummaryModal'
+import UserSettingsDialog from './UserSettingsDialog'
 import WelcomeDialog from './WelcomeDialog'
 import WorkspaceInsightsCard from './WorkspaceInsightsCard'
+import TeamThemesCard from './dashboard/TeamThemesCard'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -100,6 +110,7 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { RichCardText } from './RichCardText'
 
@@ -113,6 +124,21 @@ const MoodTrendChart = dynamic(() => import('./MoodTrendChart'), {
   ssr: false,
   loading: ChartPlaceholder,
 })
+function HealthPlaceholder() {
+  return <div className="h-[220px] w-full" aria-hidden="true" />
+}
+const HealthTrendsChart = dynamic(() => import('./dashboard/HealthTrendsChart'), {
+  ssr: false,
+  loading: HealthPlaceholder,
+})
+
+/** Задача с признаком переноса: оригинал, перенесённый на другую доску, открытым не считается. */
+type CarriedAwareItem = DashboardActionItem & { superseded_by_id?: string | null }
+
+/** Одна реальная задача — одна запись: перенесённые оригиналы представлены своими копиями. */
+function withoutCarriedOriginals(list: CarriedAwareItem[]): DashboardActionItem[] {
+  return list.filter((item) => !item.superseded_by_id)
+}
 
 const KANBAN_VISIBLE_LIMIT = 6
 
@@ -238,27 +264,33 @@ export default function Dashboard() {
   const router = useRouter()
   const { theme, setTheme } = useTheme()
   const workspace = useAppStore((s) => s.workspace)
-  const username = useAppStore((s) => s.username)
+  const participant = useAppStore((s) => s.participant)
+  const savedName = useAppStore((s) => s.username)
+  const currentBoardId = useAppStore((s) => s.currentBoardId)
+  // Настроен ли AI на сервере: приходит из /workspaces/me (см. loadData); null — ещё не знаем
+  const aiEnabled = useAppStore((s) => s.aiEnabled)
   const setUsername = useAppStore((s) => s.setUsername)
   const hasHydrated = useAppStore((s) => s._hasHydrated ?? true)
+  const username = participant?.name ?? savedName
 
   const [boards, setBoards] = useState<BoardListItem[]>([])
   const [items, setItems] = useState<DashboardActionItem[]>([])
   const [trends, setTrends] = useState<TrendPoint[]>([])
   const [moodTrends, setMoodTrends] = useState<MoodTrendPoint[]>([])
+  const [healthTrends, setHealthTrends] = useState<HealthTrendPoint[]>([])
+  const [healthQuestions, setHealthQuestions] = useState<HealthQuestion[]>([])
+  const [themes, setThemes] = useState<TeamTheme[]>([])
+  const [themesError, setThemesError] = useState(false)
   const [insights, setInsights] = useState<WorkspaceInsights | null>(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [needsAuth, setNeedsAuth] = useState(false)
-  const hadWorkspaceRef = useRef(Boolean(workspace))
-
-  useEffect(() => {
-    if (workspace) {
-      hadWorkspaceRef.current = true
-    }
-  }, [workspace])
+  // Была ли на этой странице сессия: если она пропала (выход, ответ 401) — показываем вход.
+  // Значение выводится из стора прямо при рендере, без эффекта.
+  const [hadWorkspace, setHadWorkspace] = useState(Boolean(workspace))
+  if (workspace && !hadWorkspace) setHadWorkspace(true)
 
   const [activeTab, setActiveTab] = useState<'tasks' | 'boards'>('tasks')
   const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list')
@@ -293,32 +325,52 @@ export default function Dashboard() {
 
   const [createBoardOpen, setCreateBoardOpen] = useState(false)
   const [carryOpen, setCarryOpen] = useState(false)
+  const [boardsPanelOpen, setBoardsPanelOpen] = useState(false)
+  const [userSettingsOpen, setUserSettingsOpen] = useState(false)
 
   // Summary modal state
+  const [summaryOpeningId, setSummaryOpeningId] = useState<string | null>(null)
   const [summaryModalBoard, setSummaryModalBoard] = useState<Board | null>(null)
   const [summaryData, setSummaryData] = useState<BoardSummary | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryError, setSummaryError] = useState<string | null>(null)
+
+  // Запросы дашборда: только сеть, состояние не трогают
+  const requestDashboard = useCallback(async () => {
+    // Сверка сессии с сервером: участник, команда и признак ai_enabled попадают в стор.
+    // Данные дашборда её не ждут; при 401 перехватчик сам сбросит сессию.
+    void refreshWorkspaceSession().catch(markApiErrorReported)
+    const [boardsRes, itemsRes, trendsRes, moodRes, themesRes, healthRes, questionsRes] =
+      await Promise.all([
+        getBoards(),
+        getAllActionItems(),
+        getActionItemTrends().catch(() => [] as TrendPoint[]),
+        getMoodTrends().catch(() => [] as MoodTrendPoint[]),
+        // Блок тем сам показывает ошибку и «Повторить» — общий тост не нужен
+        getTeamThemes().catch((err: unknown) => {
+          markApiErrorReported(err)
+          return null
+        }),
+        getHealthTrends().catch(() => [] as HealthTrendPoint[]),
+        getHealthQuestions().catch(() => [] as HealthQuestion[]),
+      ])
+    return { boardsRes, itemsRes, trendsRes, moodRes, themesRes, healthRes, questionsRes }
+  }, [])
 
   const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
     setNeedsAuth(false)
     try {
-      const [boardsRes, itemsRes, trendsRes, moodRes] = await Promise.all([
-        getBoards(),
-        getAllActionItems(),
-        typeof getActionItemTrends === 'function'
-          ? getActionItemTrends().catch(() => [] as TrendPoint[])
-          : Promise.resolve([] as TrendPoint[]),
-        typeof getMoodTrends === 'function'
-          ? getMoodTrends().catch(() => [] as MoodTrendPoint[])
-          : Promise.resolve([] as MoodTrendPoint[]),
-      ])
-      setBoards(boardsRes)
-      setItems(itemsRes)
-      setTrends(trendsRes)
-      setMoodTrends(moodRes)
+      const data = await requestDashboard()
+      setBoards(data.boardsRes)
+      setItems(withoutCarriedOriginals(data.itemsRes))
+      setTrends(data.trendsRes)
+      setMoodTrends(data.moodRes)
+      setThemes(data.themesRes ?? [])
+      setThemesError(data.themesRes === null)
+      setHealthTrends(data.healthRes)
+      setHealthQuestions(data.questionsRes)
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 401 || !useAppStore.getState().workspace) {
@@ -329,7 +381,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [requestDashboard])
 
   useEffect(() => {
     if (!hasHydrated) return
@@ -354,27 +406,59 @@ export default function Dashboard() {
             : b,
         ),
       )
+      const renamed = updated.name
+      if (renamed) {
+        setItems((prev) =>
+          prev.map((i) => (i.board_id === updated.id ? { ...i, board_name: renamed } : i)),
+        )
+      }
     } else if (msg.event === 'board_deleted') {
       const deleted = msg.data as unknown as { id: string }
+      // Вместе с доской уходят её задачи и точки на графиках
       setBoards((prev) => prev.filter((b) => b.id !== deleted.id))
+      setItems((prev) => prev.filter((i) => i.board_id !== deleted.id))
+      setTrends((prev) => prev.filter((t) => t.board_id !== deleted.id))
+      setMoodTrends((prev) => prev.filter((m) => m.board_id !== deleted.id))
+      setHealthTrends((prev) => prev.filter((h) => h.board_id !== deleted.id))
     }
   }, [])
 
   useWebSocket('workspace', handleWorkspaceWs)
 
   const openBoardSummary = async (item: BoardListItem) => {
-    setSummaryLoading(true)
-    setSummaryError(null)
-    setSummaryData(null)
+    if (summaryOpeningId) return
+    setSummaryOpeningId(item.id)
+    let full: Board
     try {
-      const full = await getBoard(item.id)
-      setSummaryModalBoard(full)
+      full = await getBoard(item.id)
+    } catch (err) {
+      // Без доски окно итогов открыть нечем — говорим об этом, а не молчим
+      showToast(
+        `Не удалось открыть итоги доски «${item.name}». ${getApiErrorMessage(
+          err,
+          'Проверьте соединение и попробуйте ещё раз.',
+        )}`,
+        'error',
+      )
+      setSummaryOpeningId(null)
+      return
+    }
+    setSummaryData(null)
+    setSummaryError(null)
+    setSummaryLoading(true)
+    setSummaryModalBoard(full)
+    try {
       const s = await getBoardSummary(item.id)
       setSummaryData(s)
+      if (!s) {
+        // Итогов уже нет (окно это объяснит) — значок у доски больше не нужен
+        setBoards((prev) => prev.map((b) => (b.id === item.id ? { ...b, has_summary: false } : b)))
+      }
     } catch (err) {
-      setSummaryError(getApiErrorMessage(err, 'Не удалось загрузить AI-итоги'))
+      setSummaryError(getApiErrorMessage(err, 'Не удалось загрузить итоги доски'))
     } finally {
       setSummaryLoading(false)
+      setSummaryOpeningId(null)
     }
   }
 
@@ -384,7 +468,13 @@ export default function Dashboard() {
       const res = await getWorkspaceInsights()
       setInsights(res)
     } catch (err) {
-      showToast(getApiErrorMessage(err, 'Не удалось получить инсайты'), 'error')
+      showToast(
+        getApiErrorMessage(
+          err,
+          aiEnabled === false ? 'Не удалось собрать сводку' : 'Не удалось получить инсайты',
+        ),
+        'error',
+      )
     } finally {
       setInsightsLoading(false)
     }
@@ -413,6 +503,31 @@ export default function Dashboard() {
       })
   }, [trends, items, boards])
 
+  // Счётчики задач по доскам считаются из того же списка, что и вкладка «Задачи»:
+  // смена статуса здесь же сразу видна на карточке доски, а перенесённые оригиналы
+  // (их в списке нет) не дают второй «открытой» записи.
+  const boardTaskStats = useMemo(() => {
+    const stats = new Map<string, { total: number; open: number }>()
+    for (const item of items) {
+      const entry = stats.get(item.board_id) ?? { total: 0, open: 0 }
+      entry.total += 1
+      if (item.status !== 'done') entry.open += 1
+      stats.set(item.board_id, entry)
+    }
+    return stats
+  }, [items])
+
+  const boardsWithLiveCounts = useMemo(
+    () =>
+      boards.map((b) => {
+        const open = boardTaskStats.get(b.id)?.open ?? 0
+        return b.action_items_open === open ? b : { ...b, action_items_open: open }
+      }),
+    [boards, boardTaskStats],
+  )
+
+  const hasMoodChart = moodTrends.some((m) => m.mood_avg !== null || m.cards_count > 0)
+
   const kpi = useMemo(() => {
     const open = items.filter((i) => i.status === 'open').length
     const inProgress = items.filter((i) => i.status === 'in_progress').length
@@ -424,7 +539,9 @@ export default function Dashboard() {
         : null
     return {
       boardsCount: boards.length,
-      open,
+      // «Открытая» задача — любая незакрытая, как на карточках досок («N открыт.»):
+      // вместе с выполненными счётчики дают общее число задач
+      active: open + inProgress,
       inProgress,
       done,
       moodAvg,
@@ -523,6 +640,23 @@ export default function Dashboard() {
 
   const navigateToBoard = (b: { id: string; slug?: string | null }) => {
     router.push(`/board/${b.slug || b.id}`)
+  }
+
+  const renderBoardTasksBadge = (b: BoardListItem) => {
+    const stats = boardTaskStats.get(b.id)
+    if (!stats) {
+      // Живых задач нет: либо их не заводили, либо все перенесены на другую доску
+      return (
+        <Badge variant="outline" className="text-xs text-muted-foreground">
+          {b.action_items_total > 0 ? 'Задачи перенесены' : 'Нет задач'}
+        </Badge>
+      )
+    }
+    return (
+      <Badge variant={stats.open > 0 ? 'warning' : 'success'} className="text-xs">
+        {stats.open > 0 ? `${stats.open} открыт.` : 'Все задачи закрыты'}
+      </Badge>
+    )
   }
 
   const activeDragItem = useMemo(
@@ -755,7 +889,7 @@ export default function Dashboard() {
     )
   }
 
-  if (needsAuth || (hadWorkspaceRef.current && !workspace)) {
+  if (needsAuth || (hadWorkspace && !workspace)) {
     return (
       <WelcomeDialog
         onConfirm={(name) => {
@@ -768,36 +902,53 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* Header */}
+      {/* Header: на телефоне подписи кнопок прячутся, чтобы всё уместилось в одну строку */}
       <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4 md:px-6">
-          <div className="flex items-center gap-3">
+        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-2 px-3 sm:gap-3 sm:px-4 md:px-6">
+          <div className="flex min-w-0 items-center gap-1.5 sm:gap-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0"
+                  onClick={() => setBoardsPanelOpen(true)}
+                  aria-label="Список досок"
+                  data-testid="boards-drawer-btn"
+                >
+                  <PanelLeft className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Список досок</TooltipContent>
+            </Tooltip>
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="gap-1.5"
+              className="shrink-0 gap-1.5 px-2 sm:px-3"
               onClick={() => router.push('/')}
+              aria-label="К доске"
+              title="К доске"
             >
               <ArrowLeft className="h-4 w-4" />
-              К доске
+              <span className="hidden sm:inline">К доске</span>
             </Button>
-            <div className="h-4 w-px bg-border" />
-            <div className="flex items-center gap-2.5">
-              <BrandMark size={28} />
-              <span className="font-semibold tracking-tight">Панель управления</span>
+            <div className="hidden h-4 w-px bg-border sm:block" />
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="hidden shrink-0 sm:inline-flex">
+                <BrandMark size={28} />
+              </span>
+              <span className="truncate font-semibold tracking-tight">Панель управления</span>
             </div>
             {workspace && (
-              <Badge variant="outline" className="hidden sm:inline-flex">
+              <Badge variant="outline" className="hidden max-w-[220px] truncate md:inline-flex">
                 {workspace.workspaceName}
               </Badge>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            {username && username !== 'Аноним' && (
-              <span className="hidden text-xs text-muted-foreground sm:inline">{username}</span>
-            )}
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <Button
               type="button"
               variant="ghost"
@@ -812,12 +963,31 @@ export default function Dashboard() {
             <Button
               type="button"
               size="sm"
-              className="gap-1.5"
+              className="gap-1.5 px-2.5 sm:px-3"
               onClick={() => setCreateBoardOpen(true)}
+              aria-label="Новая доска"
+              title="Новая доска"
+              data-testid="dashboard-new-board-btn"
             >
               <Plus className="h-4 w-4" />
-              Новая доска
+              <span className="hidden sm:inline">Новая доска</span>
             </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setUserSettingsOpen(true)}
+                  aria-label="Профиль и настройки"
+                  data-testid="user-settings-btn"
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br/srgb text-xs font-bold text-white shadow-xs ring-offset-background transition-transform hover:scale-105 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${getUserAvatarGradient(
+                    username,
+                  )}`}
+                >
+                  {getUserInitials(username)}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{username}</TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </header>
@@ -845,7 +1015,7 @@ export default function Dashboard() {
                 transition={{ duration: 0.24, delay: 0 }}
               >
                 <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
-                  <CardContent className="flex items-center justify-between p-4">
+                  <CardContent className="flex items-center justify-between gap-2 p-4">
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Доски команды</p>
                       <p className="mt-1 font-mono text-2xl font-bold">{kpi.boardsCount}</p>
@@ -863,11 +1033,21 @@ export default function Dashboard() {
                 transition={{ duration: 0.24, delay: 0.05 }}
               >
                 <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
-                  <CardContent className="flex items-center justify-between p-4">
+                  <CardContent className="flex items-center justify-between gap-2 p-4">
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Открытых задач</p>
-                      <p className="mt-1 font-mono text-2xl font-bold text-amber-600 dark:text-amber-400">
-                        {kpi.open}
+                      <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5">
+                        <span
+                          className="font-mono text-2xl font-bold text-amber-600 dark:text-amber-400"
+                          data-testid="kpi-open-tasks"
+                        >
+                          {kpi.active}
+                        </span>
+                        {kpi.inProgress > 0 && (
+                          <span className="text-[11px] text-muted-foreground">
+                            в работе: {kpi.inProgress}
+                          </span>
+                        )}
                       </p>
                     </div>
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
@@ -883,7 +1063,7 @@ export default function Dashboard() {
                 transition={{ duration: 0.24, delay: 0.1 }}
               >
                 <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
-                  <CardContent className="flex items-center justify-between p-4">
+                  <CardContent className="flex items-center justify-between gap-2 p-4">
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Выполнено задач</p>
                       <p className="mt-1 font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
@@ -903,7 +1083,7 @@ export default function Dashboard() {
                 transition={{ duration: 0.24, delay: 0.15 }}
               >
                 <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
-                  <CardContent className="flex items-center justify-between p-4">
+                  <CardContent className="flex items-center justify-between gap-2 p-4">
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Индекс настроения</p>
                       <p className="mt-1 font-mono text-2xl font-bold">
@@ -918,15 +1098,22 @@ export default function Dashboard() {
               </motion.div>
             </div>
 
-            {/* Cross-sprint AI Insights */}
+            {/* Анализ между спринтами: вывод по доскам и темы команды */}
             <WorkspaceInsightsCard
               insights={insights}
               loading={insightsLoading}
               onRefresh={handleFetchInsights}
+              aiEnabled={aiEnabled}
+            />
+            <TeamThemesCard
+              themes={themes}
+              error={themesError}
+              onRetry={loadData}
+              aiEnabled={aiEnabled}
             />
 
             {/* Charts */}
-            {(computedTrends.length > 0 || moodTrends.some((m) => m.mood_avg !== null)) && (
+            {(computedTrends.length > 0 || hasMoodChart || boards.length > 0) && (
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {computedTrends.length > 0 && (
                   <Card>
@@ -942,7 +1129,7 @@ export default function Dashboard() {
                   </Card>
                 )}
 
-                {moodTrends.some((m) => m.mood_avg !== null || m.cards_count > 0) && (
+                {hasMoodChart && (
                   <Card>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm font-semibold">Настроение команды</CardTitle>
@@ -952,6 +1139,32 @@ export default function Dashboard() {
                     </CardHeader>
                     <CardContent>
                       <MoodTrendChart data={moodTrends} />
+                    </CardContent>
+                  </Card>
+                )}
+
+                {boards.length > 0 && (
+                  <Card className="lg:col-span-2" data-testid="health-trends-card">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                        <Activity className="h-4 w-4 text-primary" aria-hidden="true" />
+                        Health check команды
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        Средний ответ по каждому вопросу от 1 (плохо) до 3 (хорошо) и средняя оценка
+                        встречи от 1 до 5
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {healthTrends.length > 0 ? (
+                        <HealthTrendsChart questions={healthQuestions} points={healthTrends} />
+                      ) : (
+                        <p className="rounded-xl border border-dashed p-3.5 text-sm text-muted-foreground">
+                          Ответов пока нет. Когда команда пройдёт health check на доске — пять
+                          вопросов со светофором и оценка встречи, — здесь появится динамика от
+                          спринта к спринту.
+                        </p>
+                      )}
                     </CardContent>
                   </Card>
                 )}
@@ -1209,6 +1422,7 @@ export default function Dashboard() {
                   {boards.map((b) => (
                     <Card
                       key={b.id}
+                      data-testid={`board-card-${b.id}`}
                       className="group flex flex-col justify-between transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
                     >
                       <CardHeader className="pb-2">
@@ -1226,9 +1440,16 @@ export default function Dashboard() {
                               size="icon-sm"
                               className="h-7 w-7 shrink-0 text-primary"
                               title="AI-итоги"
+                              aria-label={`AI-итоги доски «${b.name}»`}
+                              disabled={summaryOpeningId !== null}
                               onClick={() => openBoardSummary(b)}
+                              data-testid={`board-summary-btn-${b.id}`}
                             >
-                              <Sparkles className="h-4 w-4" />
+                              {summaryOpeningId === b.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Sparkles className="h-4 w-4" />
+                              )}
                             </Button>
                           )}
                         </div>
@@ -1248,14 +1469,7 @@ export default function Dashboard() {
                               {b.cards_count} карт.
                             </Badge>
                           )}
-                          <Badge
-                            variant={b.action_items_open > 0 ? 'warning' : 'success'}
-                            className="text-xs"
-                          >
-                            {b.action_items_open > 0
-                              ? `${b.action_items_open} открыт.`
-                              : 'Все задачи закрыты'}
-                          </Badge>
+                          {renderBoardTasksBadge(b)}
                           {b.mood_avg != null && (
                             <Badge variant="secondary" className="font-mono text-xs">
                               😊 {b.mood_avg.toFixed(1)}/5
@@ -1296,9 +1510,21 @@ export default function Dashboard() {
       <CarryForwardDialog
         open={carryOpen}
         onOpenChange={setCarryOpen}
-        boards={boards}
+        boards={boardsWithLiveCounts}
         onCarried={() => loadData()}
       />
+
+      <BoardsPanel
+        open={boardsPanelOpen}
+        onOpenChange={setBoardsPanelOpen}
+        boards={boardsWithLiveCounts}
+        currentBoardId={currentBoardId}
+        onSelectBoard={navigateToBoard}
+        onOpenCreateBoard={() => setCreateBoardOpen(true)}
+        onNavigateDashboard={() => setBoardsPanelOpen(false)}
+      />
+
+      <UserSettingsDialog open={userSettingsOpen} onOpenChange={setUserSettingsOpen} />
 
       {summaryModalBoard && (
         <SummaryModal
@@ -1309,7 +1535,12 @@ export default function Dashboard() {
           summary={summaryData}
           loading={summaryLoading}
           error={summaryError}
-          onSummaryUpdated={(s) => setSummaryData(s)}
+          onSummaryUpdated={(s) => {
+            setSummaryData(s)
+            setBoards((prev) =>
+              prev.map((b) => (b.id === s.board_id ? { ...b, has_summary: true } : b)),
+            )
+          }}
         />
       )}
 
