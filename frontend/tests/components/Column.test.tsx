@@ -29,7 +29,7 @@ vi.mock('@dnd-kit/utilities', () => ({
 // Mock store
 vi.mock('../../store', () => ({
   useAppStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ username: 'TestUser', theme: { primary: '#6750A4', dark: false }, setUsername: vi.fn(), setCurrentBoard: vi.fn(), setTheme: vi.fn(), currentBoardId: null }),
+    selector({ username: 'TestUser', participant: { id: 'p-me', name: 'TestUser' }, aiEnabled: null, theme: { primary: '#6750A4', dark: false }, setUsername: vi.fn(), setCurrentBoard: vi.fn(), setTheme: vi.fn(), currentBoardId: null }),
 }))
 
 // Mock API
@@ -64,6 +64,8 @@ const baseColumn: ColumnType = {
       group_id: null,
       text: 'Great teamwork',
       author: 'Alice',
+      author_id: 'p-alice',
+      masked: false,
       color: '#FFFFFF',
       position: 0,
       likes: [],
@@ -156,17 +158,20 @@ describe('Column', () => {
     expect(screen.getByText('Добавить карточку')).toBeInTheDocument()
   })
 
-  it('hides auto_awesome AI cluster button and other authors cards during brainstormHidden', () => {
+  it('пока сервер скрывает чужие карточки: masked-карточка без текста, своя видна, AI отключён', () => {
     const col: ColumnType = {
       ...baseColumn,
       cards: [
-        ...baseColumn.cards,
+        // Чужая карточка до раскрытия: сервер прислал её без текста и автора
+        { ...baseColumn.cards[0], text: '', author: '', author_id: null, masked: true },
         {
           id: 'card-2',
           column_id: 'col-1',
           group_id: null,
           text: 'My own thought',
           author: 'TestUser',
+          author_id: 'p-me',
+          masked: false,
           color: '#FFFFFF',
           position: 1,
           likes: [],
@@ -189,14 +194,98 @@ describe('Column', () => {
         groupTargetId={null}
         collapsedGroups={{}}
         onToggleCollapse={noop}
-        currentUser="TestUser"
-        brainstormHidden
+        currentUserId="p-me"
+        cardsHidden
       />,
     )
 
-    expect(screen.queryByTitle('Сгруппировать похожие (AI)')).not.toBeInTheDocument()
+    expect(screen.getByText('Карточка скрыта')).toBeInTheDocument()
     expect(screen.queryByText('Great teamwork')).not.toBeInTheDocument()
     expect(screen.getByText('My own thought')).toBeInTheDocument()
+    // AI-группировка читает тексты всех карточек — до раскрытия кнопка отключена
+    expect(screen.getByTestId('ai-cluster-btn')).toBeDisabled()
+  })
+
+  it('клиент сам ничего не прячет: без masked чужая карточка видна даже при cardsHidden', () => {
+    render(
+      <Column
+        column={baseColumn}
+        onUpdate={noop}
+        onDelete={noop}
+        onCardCreated={noop}
+        onCardUpdated={noop}
+        onCardDeleted={noop}
+        onGroupCreated={noop}
+        onGroupUpdated={noop}
+        onGroupDeleted={noop}
+        groupTargetId={null}
+        collapsedGroups={{}}
+        onToggleCollapse={noop}
+        currentUserId="p-me"
+        cardsHidden
+      />,
+    )
+    expect(screen.getByText('Great teamwork')).toBeInTheDocument()
+  })
+
+  it('колонку с карточками удаляет только модератор; пустую — любой', () => {
+    const props = {
+      onUpdate: noop,
+      onDelete: noop,
+      onCardCreated: noop,
+      onCardUpdated: noop,
+      onCardDeleted: noop,
+      onGroupCreated: noop,
+      onGroupUpdated: noop,
+      onGroupDeleted: noop,
+      groupTargetId: null,
+      collapsedGroups: {},
+      onToggleCollapse: noop,
+      currentUserId: 'p-me',
+    }
+
+    const participantView = render(<Column column={baseColumn} {...props} />)
+    expect(screen.getByTestId('delete-column-btn')).toBeDisabled()
+    participantView.unmount()
+
+    const moderatorView = render(<Column column={baseColumn} {...props} isModerator />)
+    expect(screen.getByTestId('delete-column-btn')).toBeEnabled()
+    moderatorView.unmount()
+
+    render(<Column column={{ ...baseColumn, cards: [] }} {...props} />)
+    expect(screen.getByTestId('delete-column-btn')).toBeEnabled()
+  })
+
+  it('фильтр «Только мои» отбирает по идентификатору участника, а не по имени', () => {
+    const col: ColumnType = {
+      ...baseColumn,
+      cards: [
+        { ...baseColumn.cards[0], id: 'card-namesake', text: 'Карточка тёзки', author: 'TestUser', author_id: 'p-namesake' },
+        { ...baseColumn.cards[0], id: 'card-mine', text: 'Моя карточка', author: 'TestUser', author_id: 'p-me', position: 1 },
+      ],
+    }
+
+    render(
+      <Column
+        column={col}
+        onUpdate={noop}
+        onDelete={noop}
+        onCardCreated={noop}
+        onCardUpdated={noop}
+        onCardDeleted={noop}
+        onGroupCreated={noop}
+        onGroupUpdated={noop}
+        onGroupDeleted={noop}
+        groupTargetId={null}
+        collapsedGroups={{}}
+        onToggleCollapse={noop}
+        currentUserId="p-me"
+        onlyMine
+      />,
+    )
+
+    expect(screen.getByText('Моя карточка')).toBeInTheDocument()
+    expect(screen.queryByText('Карточка тёзки')).not.toBeInTheDocument()
   })
 
   it('disables color dot, title edit prompt, auto-cluster, and delete action when readOnly', () => {
@@ -210,6 +299,8 @@ describe('Column', () => {
           group_id: null,
           text: 'Second card',
           author: 'Bob',
+          author_id: 'p-bob',
+          masked: false,
           color: '#FFFFFF',
           position: 1,
           likes: [],

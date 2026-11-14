@@ -49,6 +49,8 @@ interface BulkActionsBarProps {
   onBulkMove: (columnId: string) => Promise<void>
   onBulkCreateActionItem: () => Promise<void>
   onBulkDelete: () => Promise<void>
+  /** Можно ли удалить выбранное: чужие карточки удаляет только модератор доски. */
+  canDelete?: boolean
   onMergeCards: (targetText: string) => Promise<void>
 }
 
@@ -62,6 +64,7 @@ export default function BulkActionsBar({
   onBulkMove,
   onBulkCreateActionItem,
   onBulkDelete,
+  canDelete = true,
   onMergeCards,
 }: BulkActionsBarProps) {
   const [groupTitle, setGroupTitle] = useState('')
@@ -259,8 +262,14 @@ export default function BulkActionsBar({
               type="button"
               size="sm"
               variant="ghost"
-              disabled={busy}
+              disabled={busy || !canDelete}
               onClick={() => setDeleteConfirmOpen(true)}
+              title={
+                canDelete
+                  ? undefined
+                  : 'Среди выбранных есть чужие карточки: удалить их может создатель доски или ведущий'
+              }
+              data-testid="bulk-delete-btn"
               className="h-8 gap-1 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
             >
               <Trash2 className="h-3.5 w-3.5" />

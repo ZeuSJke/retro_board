@@ -15,6 +15,7 @@ import type {
   CardGroup,
   CarryForwardRequest,
   Column,
+  ColumnInfo,
   DashboardActionItem,
   MoodTrendPoint,
   Participant,
@@ -99,45 +100,47 @@ export const getBoardBySlug = (slug: string): Promise<Board> =>
 export const updateBoard = (id: string, data: BoardUpdatePayload): Promise<Board> =>
   api.patch<Board>(`/boards/${id}`, data).then((r) => r.data)
 export const deleteBoard = (id: string): Promise<void> => api.delete(`/boards/${id}`)
+/** Раскрыть карточки скрытого сбора вне сессии ведущего (модератор доски). */
+export const revealBoardCards = (id: string): Promise<Board> =>
+  api.post<Board>(`/boards/${id}/reveal`).then((r) => r.data)
+/** Оценка настроения текущего участника: автора сервер берёт из сессии. */
 export const submitBoardMood = (
   boardId: string,
-  data: { author: string; score: number; note?: string | null },
+  data: { score: number; note?: string | null },
 ): Promise<BoardMood> => api.post<BoardMood>(`/boards/${boardId}/mood`, data).then((r) => r.data)
+/** Снять все голоса текущего участника на доске. */
 export const resetBoardVotes = (
   boardId: string,
-  username: string,
 ): Promise<{ board_id: string; username: string; updated_cards: number }> =>
-  api.post<{ board_id: string; username: string; updated_cards: number }>(`/boards/${boardId}/reset-votes`, null, { params: { username } }).then((r) => r.data)
+  api
+    .post<{ board_id: string; username: string; updated_cards: number }>(`/boards/${boardId}/reset-votes`)
+    .then((r) => r.data)
 
 // ── Columns ─────────────────────────────────────────────────────────────────
 export const createColumn = (data: { board_id: string; title: string; color?: string }): Promise<Column> =>
   api.post<Column>('/columns/', data).then((r) => r.data)
+/** Ответ — только свойства колонки, без карточек и групп. */
 export const updateColumn = (
   id: string,
   data: { title?: string; color?: string; position?: number },
-): Promise<Column> => api.patch<Column>(`/columns/${id}`, data).then((r) => r.data)
+): Promise<ColumnInfo> => api.patch<ColumnInfo>(`/columns/${id}`, data).then((r) => r.data)
 export const deleteColumn = (id: string): Promise<void> => api.delete(`/columns/${id}`)
 
 // ── Cards ────────────────────────────────────────────────────────────────────
+/** Автор карточки — участник сессии: из запроса сервер его не принимает. */
 export const createCard = (data: {
   column_id: string
   text: string
-  author?: string
   color?: string
 }): Promise<Card> => api.post<Card>('/cards/', data).then((r) => r.data)
 export const updateCard = (id: string, data: { text?: string; color?: string }): Promise<Card> =>
   api.patch<Card>(`/cards/${id}`, data).then((r) => r.data)
 export const moveCard = (id: string, data: { column_id: string; position: number }): Promise<Card> =>
   api.post<Card>(`/cards/${id}/move`, data).then((r) => r.data)
-export const toggleLike = (
-  id: string,
-  username: string,
-  action?: 'toggle' | 'add' | 'remove',
-): Promise<Card> =>
+/** Голос текущего участника: поставить, снять или переключить. */
+export const toggleLike = (id: string, action?: 'toggle' | 'add' | 'remove'): Promise<Card> =>
   api
-    .post<Card>(`/cards/${id}/like`, null, {
-      params: action ? { username, action } : { username },
-    })
+    .post<Card>(`/cards/${id}/like`, null, action ? { params: { action } } : undefined)
     .then((r) => r.data)
 export const deleteCard = (id: string): Promise<void> => api.delete(`/cards/${id}`)
 export const bulkUpdateCards = (data: {
@@ -174,19 +177,15 @@ export const removeCardFromGroup = (groupId: string, cardId: string): Promise<Ca
   api.delete<Card>(`/groups/${groupId}/remove_card/${cardId}`).then((r) => r.data)
 export const moveGroup = (id: string, data: { column_id: string }): Promise<CardGroup> =>
   api.patch<CardGroup>(`/groups/${id}/move`, data).then((r) => r.data)
-export const autoClusterColumn = (columnId: string, username: string): Promise<AppliedClusters> =>
-  api.post<AppliedClusters>('/groups/auto-cluster', { column_id: columnId, username }).then((r) => r.data)
-export const autoClusterPreview = (
-  columnId: string,
-  username?: string,
-): Promise<AutoClusterPreviewResult> =>
+export const autoClusterColumn = (columnId: string): Promise<AppliedClusters> =>
+  api.post<AppliedClusters>('/groups/auto-cluster', { column_id: columnId }).then((r) => r.data)
+export const autoClusterPreview = (columnId: string): Promise<AutoClusterPreviewResult> =>
   api
-    .post<AutoClusterPreviewResult>('/groups/auto-cluster-preview', { column_id: columnId, username })
+    .post<AutoClusterPreviewResult>('/groups/auto-cluster-preview', { column_id: columnId })
     .then((r) => r.data)
 export const applyAutoClusters = (data: {
   column_id: string
   groups: { title: string; card_ids: string[] }[]
-  username?: string
 }): Promise<AppliedClusters> =>
   api.post<AppliedClusters>('/groups/apply-clusters', data).then((r) => r.data)
 

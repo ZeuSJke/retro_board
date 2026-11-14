@@ -35,11 +35,15 @@ vi.mock('@dnd-kit/utilities', () => ({
   CSS: { Transform: { toString: () => undefined } },
 }))
 
-// Mock store
+// Mock store: признак ai_enabled меняется в тестах
+const storeState = vi.hoisted((): { aiEnabled: boolean | null } => ({ aiEnabled: null }))
+
 vi.mock('../../store', () => ({
   useAppStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({
       username: 'TestUser',
+      participant: { id: 'p-me', name: 'TestUser' },
+      aiEnabled: storeState.aiEnabled,
       theme: { primary: '#6750A4', dark: false },
       setUsername: vi.fn(),
       setCurrentBoard: vi.fn(),
@@ -84,6 +88,8 @@ function makeCard(id: string, groupId: string | null = null) {
     group_id: groupId,
     text: `Card ${id}`,
     author: 'Alice',
+    author_id: 'p-alice',
+    masked: false,
     color: '#FFFFFF',
     position: 0,
     likes: [],
@@ -134,6 +140,7 @@ describe('Column — auto-cluster button', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockAutoClusterColumn.mockResolvedValue({})
+    storeState.aiEnabled = null
   })
 
   // ── visibility ────────────────────────────────────────────────────────────
@@ -184,6 +191,31 @@ describe('Column — auto-cluster button', () => {
       renderColumn(column, { readOnly: true })
       expect(screen.queryByTitle(AI_BTN_TITLE)).not.toBeInTheDocument()
     })
+
+    it('скрыта, когда AI на сервере не настроен (ai_enabled: false)', () => {
+      storeState.aiEnabled = false
+      const column = makeColumn({ cards: [makeCard('c1'), makeCard('c2')] })
+      renderColumn(column)
+      expect(screen.queryByTestId('ai-cluster-btn')).not.toBeInTheDocument()
+    })
+
+    it('видна, когда AI настроен (ai_enabled: true)', () => {
+      storeState.aiEnabled = true
+      const column = makeColumn({ cards: [makeCard('c1'), makeCard('c2')] })
+      renderColumn(column)
+      expect(screen.getByTitle(AI_BTN_TITLE)).toBeEnabled()
+    })
+
+    it('отключена, пока карточки скрыты: запрос не уходит', async () => {
+      const user = userEvent.setup()
+      const column = makeColumn({ cards: [makeCard('c1'), makeCard('c2')] })
+      renderColumn(column, { cardsHidden: true })
+
+      const btn = screen.getByTestId('ai-cluster-btn')
+      expect(btn).toBeDisabled()
+      await user.click(btn).catch(() => {})
+      expect(mockAutoClusterColumn).not.toHaveBeenCalled()
+    })
   })
 
   // ── button click ──────────────────────────────────────────────────────────
@@ -197,7 +229,8 @@ describe('Column — auto-cluster button', () => {
       await user.click(screen.getByTitle(AI_BTN_TITLE))
 
       expect(mockAutoClusterColumn).toHaveBeenCalledTimes(1)
-      expect(mockAutoClusterColumn).toHaveBeenCalledWith('col-1', 'TestUser')
+      // Инициатора сервер берёт из сессии: в запросе только колонка
+      expect(mockAutoClusterColumn).toHaveBeenCalledWith('col-1')
     })
 
     it('shows success toast when clustering creates groups', async () => {
@@ -248,9 +281,11 @@ describe('Column — auto-cluster button', () => {
       })
     })
 
-    it('shows AI unavailable toast on HTTP 503', async () => {
+    it('при 503 показывает одно сообщение — причину от сервера', async () => {
       const user = userEvent.setup()
-      mockAutoClusterColumn.mockRejectedValue({ response: { status: 503 } })
+      mockAutoClusterColumn.mockRejectedValue({
+        response: { status: 503, data: { detail: 'AI-сервис временно недоступен' } },
+      })
 
       const column = makeColumn({ cards: [makeCard('c1'), makeCard('c2')] })
       renderColumn(column)
@@ -260,6 +295,24 @@ describe('Column — auto-cluster button', () => {
       await waitFor(() => {
         expect(showToast).toHaveBeenCalledWith('AI-сервис временно недоступен', 'error')
       })
+      expect(showToast).toHaveBeenCalledTimes(1)
+    })
+
+    it('при 409 (карточки скрыты) показывает причину от сервера', async () => {
+      const user = userEvent.setup()
+      mockAutoClusterColumn.mockRejectedValue({
+        response: { status: 409, data: { detail: 'Карточки ещё скрыты: сначала раскройте их' } },
+      })
+
+      const column = makeColumn({ cards: [makeCard('c1'), makeCard('c2')] })
+      renderColumn(column)
+
+      await user.click(screen.getByTitle(AI_BTN_TITLE))
+
+      await waitFor(() => {
+        expect(showToast).toHaveBeenCalledWith('Карточки ещё скрыты: сначала раскройте их', 'error')
+      })
+      expect(showToast).toHaveBeenCalledTimes(1)
     })
 
     it('shows detail message from response on HTTP 400', async () => {

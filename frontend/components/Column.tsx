@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { autoClusterColumn, createCard, deleteColumn, updateColumn } from '../api'
 import { CARD_COLOR_PRESETS, COLUMN_COLOR_PALETTE, getCardColorPreset } from '@/lib/board-themes'
+import { CANNOT_DELETE_COLUMN_HINT, isOwnCard } from '@/lib/participants'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage } from '../utils/apiError'
@@ -35,7 +36,12 @@ interface ColumnProps {
   column: ColumnType
   maxVotes?: number
   userTotalVotes?: number
-  currentUser?: string
+  /** Идентификатор текущего участника; по умолчанию — участник сессии из стора. */
+  currentUserId?: string
+  /** Модератор доски: удаляет чужие карточки и колонки с карточками. */
+  isModerator?: boolean
+  /** Имена участников по идентификатору — для подписи голосов. */
+  voterNames?: Record<string, string>
   onUpdate: (col: ColumnType) => void
   onDelete: (colId: string) => void
   onCardCreated: (card: Card) => void
@@ -47,8 +53,8 @@ interface ColumnProps {
   groupTargetId: string | null
   collapsedGroups: Record<string, boolean>
   onToggleCollapse: (groupId: string) => void
-  hideOtherCards?: boolean
-  brainstormHidden?: boolean
+  /** Сервер сейчас скрывает чужие карточки (скрытый сбор или фаза «Штурм»). */
+  cardsHidden?: boolean
   anonymous?: boolean
   dragDisabled?: boolean
   readOnly?: boolean
@@ -76,7 +82,9 @@ export default function Column({
   column,
   maxVotes = 0,
   userTotalVotes = 0,
-  currentUser,
+  currentUserId,
+  isModerator = false,
+  voterNames,
   onUpdate,
   onDelete,
   onCardCreated,
@@ -88,8 +96,7 @@ export default function Column({
   groupTargetId,
   collapsedGroups,
   onToggleCollapse,
-  hideOtherCards = false,
-  brainstormHidden = false,
+  cardsHidden = false,
   anonymous = false,
   dragDisabled = false,
   readOnly = false,
@@ -112,9 +119,11 @@ export default function Column({
   typingUsernames = [],
   onTypingChange,
 }: ColumnProps) {
-  const storeUser = useAppStore((s) => s.username)
-  const resolvedUser = currentUser ?? storeUser
-  const effectiveHide = hideOtherCards || brainstormHidden
+  const storeUserId = useAppStore((s) => s.participant?.id ?? '')
+  const aiEnabled = useAppStore((s) => s.aiEnabled)
+  const myId = currentUserId ?? storeUserId
+  // Удаление колонки стирает её карточки: с карточками это действие модератора
+  const canDeleteColumn = isModerator || column.cards.length === 0
 
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(column.title)
@@ -161,9 +170,8 @@ export default function Column({
   useEffect(() => {
     const cards = column.cards || []
     const currentIds = new Set(cards.map((c) => c.id))
-    const currentHiddenIds = new Set(
-      cards.filter((c) => effectiveHide && c.author !== resolvedUser).map((c) => c.id),
-    )
+    // Скрытые карточки — те, что сервер прислал без содержимого (masked)
+    const currentHiddenIds = new Set(cards.filter((c) => c.masked).map((c) => c.id))
 
     if (!initializedCardsRef.current) {
       initializedCardsRef.current = true
@@ -224,7 +232,7 @@ export default function Column({
     return () => {
       timers.forEach(clearTimeout)
     }
-  }, [column.cards, effectiveHide, resolvedUser])
+  }, [column.cards])
 
   const { setNodeRef, isOver } = useDroppable({
     id: `col-${column.id}`,
@@ -276,8 +284,8 @@ export default function Column({
   const filteredAndSortedCards = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     const filtered = (column.cards || []).filter((card) => {
-      const isHidden = effectiveHide && card.author !== resolvedUser
-      if (onlyMine && card.author !== resolvedUser) return false
+      const isHidden = Boolean(card.masked)
+      if (onlyMine && !isOwnCard(card, myId)) return false
       if (colorFilter) {
         if (isHidden) return false
         if (getCardColorPreset(card.color).id !== colorFilter) return false
@@ -298,9 +306,10 @@ export default function Column({
       }
       return (a.position ?? 0) - (b.position ?? 0)
     })
-  }, [column.cards, searchQuery, onlyMine, colorFilter, sortBy, effectiveHide, resolvedUser, anonymous])
+  }, [column.cards, searchQuery, onlyMine, colorFilter, sortBy, myId, anonymous])
 
-  const otherTypingUsers = typingUsernames.filter((u) => u !== resolvedUser)
+  // Список приходит уже без текущего участника (он исключён по идентификатору)
+  const otherTypingUsers = typingUsernames
 
   const groups = column.groups || []
   const groupIds = new Set(groups.map((g) => g.id))
@@ -361,7 +370,7 @@ export default function Column({
     if (clustering || readOnly) return
     setClustering(true)
     try {
-      const result = await autoClusterColumn(column.id, resolvedUser)
+      const result = await autoClusterColumn(column.id)
       const createdGroups: Array<{ group: CardGroup; card_ids: string[] }> =
         result?.created_groups || []
       if (createdGroups.length === 0) {
@@ -375,12 +384,8 @@ export default function Column({
       }
       showToast('Карточки сгруппированы', 'info')
     } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } })?.response?.status
-      if (status === 503) {
-        showToast('AI-сервис временно недоступен', 'error')
-      } else {
-        showToast(getApiErrorMessage(err, 'Не удалось сгруппировать карточки'), 'error')
-      }
+      // Одно сообщение по делу: причину сообщает сервер
+      showToast(getApiErrorMessage(err, 'Не удалось сгруппировать карточки'), 'error')
     } finally {
       setClustering(false)
     }
@@ -394,7 +399,6 @@ export default function Column({
       const created = await createCard({
         column_id: column.id,
         text,
-        author: resolvedUser,
         color: draftColor,
       })
       onCardCreated(created)
@@ -506,44 +510,60 @@ export default function Column({
             {column.cards.length}
           </Badge>
 
-          {!readOnly && !effectiveHide && ungroupedTotalCount >= 2 && (
+          {/* Без настроенного AI кнопки нет; пока карточки скрыты — отключена с пояснением */}
+          {!readOnly && aiEnabled !== false && ungroupedTotalCount >= 2 && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="h-7 w-7 shrink-0 text-primary hover:bg-primary/10"
-                  onClick={handleAutoCluster}
-                  disabled={clustering}
-                  title="Сгруппировать похожие (AI)"
-                >
-                  {clustering ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  )}
-                </Button>
+                <span className={cn('inline-flex shrink-0', cardsHidden && 'cursor-not-allowed')}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="h-7 w-7 shrink-0 text-primary hover:bg-primary/10"
+                    onClick={handleAutoCluster}
+                    disabled={clustering || cardsHidden}
+                    aria-label="Сгруппировать похожие (AI)"
+                    title={cardsHidden ? undefined : 'Сгруппировать похожие (AI)'}
+                    data-testid="ai-cluster-btn"
+                  >
+                    {clustering ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                </span>
               </TooltipTrigger>
-              <TooltipContent>Сгруппировать похожие (AI)</TooltipContent>
+              <TooltipContent>
+                {cardsHidden
+                  ? 'AI-группировка станет доступна после раскрытия карточек'
+                  : 'Сгруппировать похожие (AI)'}
+              </TooltipContent>
             </Tooltip>
           )}
 
           {!readOnly && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                  onClick={() => setDeleteOpen(true)}
-                  title="Удалить колонку"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+                <span className={cn('inline-flex shrink-0', !canDeleteColumn && 'cursor-not-allowed')}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => setDeleteOpen(true)}
+                    disabled={!canDeleteColumn}
+                    aria-label="Удалить колонку"
+                    title={canDeleteColumn ? 'Удалить колонку' : undefined}
+                    data-testid="delete-column-btn"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </span>
               </TooltipTrigger>
-              <TooltipContent>Удалить колонку</TooltipContent>
+              <TooltipContent>
+                {canDeleteColumn ? 'Удалить колонку' : CANNOT_DELETE_COLUMN_HINT}
+              </TooltipContent>
             </Tooltip>
           )}
         </div>
@@ -570,7 +590,9 @@ export default function Column({
                   cards={groupCards}
                   collapsed={Boolean(collapsedGroups[group.id])}
                   onToggleCollapse={() => onToggleCollapse(group.id)}
-                  currentUser={resolvedUser}
+                  currentUserId={myId}
+                  isModerator={isModerator}
+                  voterNames={voterNames}
                   maxVotes={maxVotes}
                   userTotalVotes={userTotalVotes}
                   onUpdated={onGroupUpdated}
@@ -579,7 +601,6 @@ export default function Column({
                   onCardDeleted={onCardDeleted}
                   groupTargetId={groupTargetId}
                   dragDisabled={dragDisabled}
-                  hideOtherCards={effectiveHide}
                   anonymous={anonymous}
                   readOnly={readOnly}
                   spotlightCardId={spotlightCardId}
@@ -601,14 +622,15 @@ export default function Column({
               <CardWidget
                 key={card.id}
                 card={card}
-                currentUser={resolvedUser}
+                currentUserId={myId}
+                isModerator={isModerator}
+                voterNames={voterNames}
                 maxVotes={maxVotes}
                 userTotalVotes={userTotalVotes}
                 onUpdated={onCardUpdated}
                 onDeleted={onCardDeleted}
                 isGroupTarget={groupTargetId === card.id}
                 dragDisabled={dragDisabled}
-                hidden={effectiveHide && card.author !== resolvedUser}
                 anonymous={anonymous}
                 readOnly={readOnly}
                 isSpotlighted={spotlightCardId === card.id}
@@ -639,7 +661,7 @@ export default function Column({
             >
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
               <span className="truncate">
-                {effectiveHide || anonymous
+                {cardsHidden || anonymous
                   ? otherTypingUsers.length > 1
                     ? 'Несколько участников пишут...'
                     : 'Кто-то пишет...'

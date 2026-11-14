@@ -407,26 +407,38 @@ export default function CreateBoardDialog({
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5 text-sm font-medium">
                   <EyeOff className="h-4 w-4 text-muted-foreground" />
-                  Скрывать чужие карточки до раскрытия
+                  Скрытый сбор
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Во время мозгового штурма участники видят только свои стикеры
+                  Каждый видит только свои карточки, пока создатель доски не нажмёт «Раскрыть».
+                  В сессии ведущего карточки откроет этап «Раскрытие».
                 </p>
               </div>
-              <Switch checked={hideCards} onCheckedChange={setHideCards} />
+              <Switch
+                checked={hideCards}
+                onCheckedChange={setHideCards}
+                aria-label="Скрытый сбор"
+                data-testid="create-hide-cards-switch"
+              />
             </div>
 
             <div className="flex items-center justify-between gap-3">
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5 text-sm font-medium">
                   <Shield className="h-4 w-4 text-muted-foreground" />
-                  Анонимное голосование
+                  Анонимный режим
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Скрывать авторов карточек для непредвзятого голосования
+                  Авторы карточек, голосовавшие и авторы оценок настроения скрыты от других
+                  участников
                 </p>
               </div>
-              <Switch checked={anonymousVotes} onCheckedChange={setAnonymousVotes} />
+              <Switch
+                checked={anonymousVotes}
+                onCheckedChange={setAnonymousVotes}
+                aria-label="Анонимный режим"
+                data-testid="create-anonymous-switch"
+              />
             </div>
 
             <div className="flex items-center justify-between gap-3">

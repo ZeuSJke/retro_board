@@ -13,6 +13,7 @@ import {
   resolveInitialAccent,
   type AccentKey,
 } from '@/lib/board-themes'
+import { avatarSeed } from '@/lib/participants'
 import { showToast } from '@/store/toastStore'
 import { getApiErrorMessage, getApiErrorStatus } from '@/utils/apiError'
 import { Button } from '@/components/ui/button'
@@ -120,7 +121,8 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
           <div className="flex items-center gap-4">
             <div
               className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br/srgb text-base font-bold text-white shadow-sm ${getUserAvatarGradient(
-                nameInput || username,
+                // Цвет — от идентификатора участника, как в шапке и на карточках
+                avatarSeed(participant?.id, nameInput || username),
               )}`}
             >
               {getUserInitials(nameInput || username)}

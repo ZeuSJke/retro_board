@@ -38,7 +38,10 @@ interface CardGroupWidgetProps {
   cards: Card[]
   collapsed: boolean
   onToggleCollapse: () => void
-  currentUser: string
+  /** Идентификатор текущего участника. */
+  currentUserId: string
+  isModerator?: boolean
+  voterNames?: Record<string, string>
   maxVotes: number
   userTotalVotes: number
   onUpdated: (group: CardGroup) => void
@@ -47,7 +50,6 @@ interface CardGroupWidgetProps {
   onCardDeleted: (cardId: string) => void
   groupTargetId: string | null
   dragDisabled?: boolean
-  hideOtherCards?: boolean
   anonymous?: boolean
   readOnly?: boolean
   spotlightCardId?: string | null
@@ -68,7 +70,9 @@ export default function CardGroupWidget({
   cards,
   collapsed,
   onToggleCollapse,
-  currentUser,
+  currentUserId,
+  isModerator = false,
+  voterNames,
   maxVotes,
   userTotalVotes,
   onUpdated,
@@ -77,7 +81,6 @@ export default function CardGroupWidget({
   onCardDeleted,
   groupTargetId,
   dragDisabled = false,
-  hideOtherCards = false,
   anonymous = false,
   readOnly = false,
   spotlightCardId = null,
@@ -291,7 +294,9 @@ export default function CardGroupWidget({
                   <CardWidget
                     key={card.id}
                     card={card}
-                    currentUser={currentUser}
+                    currentUserId={currentUserId}
+                    isModerator={isModerator}
+                    voterNames={voterNames}
                     maxVotes={maxVotes}
                     userTotalVotes={userTotalVotes}
                     onUpdated={onCardUpdated}
@@ -299,7 +304,6 @@ export default function CardGroupWidget({
                     inGroup
                     isGroupTarget={groupTargetId === card.id}
                     dragDisabled={dragDisabled}
-                    hidden={hideOtherCards && card.author !== currentUser}
                     anonymous={anonymous}
                     readOnly={readOnly}
                     isSpotlighted={spotlightCardId === card.id}

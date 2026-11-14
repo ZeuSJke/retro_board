@@ -1,10 +1,15 @@
 export interface BoardMood {
   id: string
   board_id: string
+  /** Имя автора оценки; в анонимном режиме у чужих оценок — «Участник». */
   author: string
+  /** Участник, поставивший оценку; `null` у чужих оценок в анонимном режиме и у старых записей. */
+  participant_id?: string | null
   score: number
   note: string | null
   created_at: string
+  /** Оценка текущего участника. */
+  mine?: boolean
 }
 
 export interface ColumnSeed {
@@ -30,9 +35,17 @@ export interface Board {
   anonymous_votes?: boolean
   allow_multiple_votes_per_card?: boolean
   active_facilitator?: string | null
+  /** Участник-ведущий активной сессии. */
+  active_facilitator_id?: string | null
   active_phase?: string | null
   active_session_id?: number | null
   created_at: string
+  /** Создатель доски; пусто у досок, созданных до появления участников (ими управляет любой). */
+  created_by_id?: string | null
+  /** Скрытый сбор: раскрыты ли карточки. */
+  cards_revealed?: boolean
+  /** Скрыты ли сейчас чужие карточки для получателя (решает сервер). */
+  cards_hidden?: boolean
   has_summary?: boolean
   columns: Column[]
   moods?: BoardMood[]
@@ -67,6 +80,7 @@ export interface BoardListItem {
   template?: string
   is_locked?: boolean
   created_at: string
+  created_by_id?: string | null
   action_items_total: number
   action_items_open: number
   has_summary: boolean
@@ -85,15 +99,29 @@ export interface Column {
   groups: CardGroup[]
 }
 
+/** Свойства колонки без содержимого: так её отдают `PATCH /columns/{id}` и событие `column_updated`. */
+export type ColumnInfo = Omit<Column, 'cards' | 'groups'>
+
+/**
+ * Карточка в виде, собранном сервером для текущего участника.
+ *
+ * `author_id` — автор; `null` у чужих карточек в анонимном режиме и у карточек, созданных
+ * до появления участников. `likes` — идентификаторы проголосовавших участников, по одному
+ * на голос: чужие голоса в анонимном режиме приходят как `"anon"`, у старых карточек в
+ * массиве могут быть имена. `masked` — чужая карточка до раскрытия: текста, автора и
+ * голосов в ней нет.
+ */
 export interface Card {
   id: string
   column_id: string
   group_id: string | null
   text: string
   author: string
+  author_id: string | null
   color: string
   position: number
   likes: string[]
+  masked: boolean
   created_at: string
 }
 
@@ -116,6 +144,8 @@ export interface ActionItem {
   status: ActionItemStatus
   completed_at: string | null
   created_at: string
+  /** Задача перенесена на другую доску: открытой считается её копия. */
+  superseded_by_id?: string | null
 }
 
 export interface DashboardActionItem extends ActionItem {
@@ -160,6 +190,7 @@ export interface ReactionBubble {
   id: string
   emoji: string
   username: string
+  participantId?: string
   xOffset: number
 }
 
@@ -169,22 +200,42 @@ export interface WsMessage {
 }
 
 export interface WsCursorMoveData {
+  participant_id: string
   username: string
   x: number
   y: number
 }
 
 export interface WsCursorLeaveData {
+  participant_id: string
   username: string
 }
 
 export interface WsPresenceData {
+  /** Имена — для простых клиентов; тёзки различаются только по `participants`. */
   users: string[]
+  participants: Participant[]
 }
 
 export interface WsFacilitatorData {
   facilitator: string | null
+  facilitator_id: string | null
+  facilitator_online: boolean
   phase: string | null
+  session_id?: number | null
+}
+
+/** Ведущий сессии глазами клиента. */
+export interface FacilitatorInfo {
+  id: string | null
+  name: string | null
+  /** Подключён ли ведущий к доске; роль отсутствующего ведущего можно забрать. */
+  online: boolean
+}
+
+export interface WsParticipantRenamedData {
+  participant_id: string
+  name: string
 }
 
 export interface WsPhaseData {
@@ -214,6 +265,10 @@ export interface WsGroupCollapseData {
 export interface WsCardMovedData {
   card: Card
   old_column_id: string
+  /** Итоговый порядок карточек в колонке, куда попала карточка. */
+  column_card_ids: string[]
+  /** Итоговый порядок карточек в колонке, откуда она ушла. */
+  old_column_card_ids: string[]
 }
 
 export interface WsGroupMovedData {
@@ -234,7 +289,7 @@ export interface WsGroupDeletedData {
 
 export interface WsAutoClusterCompletedData {
   column_id: string
-  username: string
+  username: string | null
   groups_count: number
 }
 
@@ -252,6 +307,9 @@ export interface WsBoardUpdatedData {
   hide_cards_until_reveal?: boolean
   anonymous_votes?: boolean
   allow_multiple_votes_per_card?: boolean
+  created_by_id?: string | null
+  cards_revealed?: boolean
+  cards_hidden?: boolean
 }
 
 export interface TimerState {
@@ -335,6 +393,7 @@ export interface AppStore {
 }
 
 export interface TypingUser {
+  participant_id: string
   username: string
   column_id: string
 }
