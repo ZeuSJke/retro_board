@@ -12,16 +12,10 @@ import {
   YAxis,
 } from 'recharts'
 import type { TrendPoint } from '../types'
+import { buildBoardAxis, sortBoardPoints } from './dashboard/chartLabels'
 
 interface Props {
   data: TrendPoint[]
-}
-
-function shortDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('ru-RU', {
-    day: 'numeric',
-    month: 'short',
-  })
 }
 
 interface PayloadItem {
@@ -42,8 +36,9 @@ function CustomTooltip({
   const meta = payload[0]?.payload
   return (
     <div className="rounded-lg border bg-popover p-2.5 text-xs text-popover-foreground shadow-md">
-      <div className="mb-1.5 font-semibold">
-        {meta?.fullName || meta?.date}
+      <div className="mb-1.5">
+        <div className="font-semibold">{meta?.fullName}</div>
+        {meta?.date && <div className="text-muted-foreground">{meta.date}</div>}
       </div>
       <div className="space-y-1">
         {payload.map((entry) => (
@@ -64,17 +59,18 @@ function CustomTooltip({
 export default memo(function TrendChart({ data }: Props) {
   if (data.length === 0) return null
 
-  const chartData = data
-    .slice()
-    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-    .map((d) => ({
-      name: d.board_name.length > 16 ? `${d.board_name.slice(0, 14)}…` : d.board_name,
-      fullName: d.board_name,
-      date: shortDate(d.created_at),
-      Открыто: d.open,
-      'В работе': d.in_progress,
-      Выполнено: d.done,
-    }))
+  // Точка — доска: на оси её название, дата — в подсказке (см. chartLabels.ts)
+  const sorted = sortBoardPoints(data)
+  const axis = buildBoardAxis(sorted)
+  const labels = new Map(axis.map((entry) => [entry.key, entry.label]))
+  const chartData = sorted.map((d, index) => ({
+    key: axis[index].key,
+    fullName: axis[index].fullName,
+    date: axis[index].date,
+    Открыто: d.open,
+    'В работе': d.in_progress,
+    Выполнено: d.done,
+  }))
 
   return (
     <div className="h-[260px] w-full">
@@ -82,7 +78,9 @@ export default memo(function TrendChart({ data }: Props) {
         <BarChart data={chartData} margin={{ top: 8, right: 8, left: -16, bottom: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
           <XAxis
-            dataKey="date"
+            dataKey="key"
+            tickFormatter={(key: string) => labels.get(key) ?? ''}
+            minTickGap={12}
             tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
             tickLine={false}
             axisLine={{ stroke: 'hsl(var(--border))' }}

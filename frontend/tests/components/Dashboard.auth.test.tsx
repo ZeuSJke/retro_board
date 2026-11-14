@@ -26,8 +26,19 @@ vi.mock('../../api', async () => {
     updateActionItem: vi.fn(),
     deleteActionItem: vi.fn(),
     loginToWorkspace: (...args: unknown[]) => mockLoginToWorkspace(...args),
+    // Сверка сессии идёт параллельно с данными дашборда — в этих тестах сети нет
+    refreshWorkspaceSession: vi.fn(() => Promise.resolve({ ai_enabled: false })),
   }
 })
+
+vi.mock('../../api/themes', () => ({
+  getTeamThemes: vi.fn(() => Promise.resolve([])),
+}))
+
+vi.mock('../../api/health', () => ({
+  getHealthTrends: vi.fn(() => Promise.resolve([])),
+  getHealthQuestions: vi.fn(() => Promise.resolve([])),
+}))
 
 describe('Dashboard — 401 and workspace expiration recovery', () => {
   beforeEach(() => {

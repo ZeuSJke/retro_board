@@ -11,16 +11,10 @@ import {
   YAxis,
 } from 'recharts'
 import type { MoodTrendPoint } from '../types'
+import { buildBoardAxis, sortBoardPoints } from './dashboard/chartLabels'
 
 interface Props {
   data: MoodTrendPoint[]
-}
-
-function shortDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('ru-RU', {
-    day: 'numeric',
-    month: 'short',
-  })
 }
 
 interface PayloadItem {
@@ -45,7 +39,10 @@ function CustomTooltip({
   const meta = payload[0]?.payload
   return (
     <div className="rounded-lg border bg-popover p-2.5 text-xs text-popover-foreground shadow-md">
-      <div className="mb-1.5 font-semibold">{meta?.fullName || meta?.date}</div>
+      <div className="mb-1.5">
+        <div className="font-semibold">{meta?.fullName}</div>
+        {meta?.date && <div>{meta.date}</div>}
+      </div>
       <div className="space-y-1 text-muted-foreground">
         <div>
           Настроение:{' '}
@@ -67,16 +64,18 @@ export default memo(function MoodTrendChart({ data }: Props) {
   const valid = data.filter((d) => d.mood_avg !== null || d.cards_count > 0)
   if (valid.length === 0) return null
 
-  const chartData = valid
-    .slice()
-    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-    .map((d) => ({
-      date: shortDate(d.created_at),
-      fullName: d.board_name,
-      moodAvg: d.mood_avg,
-      moodCount: d.mood_count,
-      cardsCount: d.cards_count,
-    }))
+  // Точка — доска: на оси её название, дата — в подсказке (см. chartLabels.ts)
+  const sorted = sortBoardPoints(valid)
+  const axis = buildBoardAxis(sorted)
+  const labels = new Map(axis.map((entry) => [entry.key, entry.label]))
+  const chartData = sorted.map((d, index) => ({
+    key: axis[index].key,
+    fullName: axis[index].fullName,
+    date: axis[index].date,
+    moodAvg: d.mood_avg,
+    moodCount: d.mood_count,
+    cardsCount: d.cards_count,
+  }))
 
   return (
     <div className="h-[260px] w-full">
@@ -90,7 +89,9 @@ export default memo(function MoodTrendChart({ data }: Props) {
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
           <XAxis
-            dataKey="date"
+            dataKey="key"
+            tickFormatter={(key: string) => labels.get(key) ?? ''}
+            minTickGap={12}
             tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
             tickLine={false}
             axisLine={{ stroke: 'hsl(var(--border))' }}
