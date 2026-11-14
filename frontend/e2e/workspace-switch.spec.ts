@@ -63,7 +63,7 @@ test.describe('Workspace switch — переключение между workspac
     expect(board1.id).not.toEqual(board2.id)
   })
 
-  test('смена workspace через Topbar работает без ошибок', async ({ page, request }) => {
+  test('смена workspace через Topbar работает без ошибок', async ({ page }) => {
     await page.goto('/')
 
     await page.getByPlaceholder(/ваше имя/i).fill('Тестер WS1')

@@ -99,7 +99,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
+    void (async () => {
       try {
         const data = await getAdminWorkspaces()
         if (!cancelled) {

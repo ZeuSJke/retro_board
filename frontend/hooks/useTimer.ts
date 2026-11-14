@@ -87,7 +87,12 @@ export function useTimer(boardId: string, sendWs: (msg: WsMessage) => void) {
       try {
         const saved = localStorage.getItem(`retro_timer_${id}`)
         if (saved) {
-          const { duration, remaining, running, savedAt } = JSON.parse(saved)
+          const { duration, remaining, running, savedAt } = JSON.parse(saved) as {
+            duration: number
+            remaining: number
+            running: boolean
+            savedAt: number
+          }
           if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
           if (running) {
             const elapsed = Math.floor((Date.now() - savedAt) / 1000)

@@ -50,7 +50,7 @@ describe('Dashboard — 401 and workspace expiration recovery', () => {
     mockGetBoards
       .mockImplementationOnce(() => {
         useAppStore.setState({ workspace: null })
-        return Promise.reject({ response: { status: 401 } })
+        return Promise.reject(Object.assign(new Error('Unauthorized'), { response: { status: 401 } }))
       })
       .mockResolvedValueOnce([
         {

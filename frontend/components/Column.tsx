@@ -477,7 +477,7 @@ export default function Column({
               className="h-7 flex-1 px-2 text-sm font-semibold"
               onBlur={saveTitle}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') saveTitle()
+                if (e.key === 'Enter') void saveTitle()
                 if (e.key === 'Escape') {
                   setTitleDraft(column.title)
                   setEditingTitle(false)
@@ -687,7 +687,7 @@ export default function Column({
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
                       emitTyping(false)
-                      handleAddCard()
+                      void handleAddCard()
                     } else if (e.key === 'Escape') {
                       emitTyping(false)
                       setComposerOpen(false)
@@ -739,7 +739,7 @@ export default function Column({
                       disabled={!draftText.trim() || creating}
                       onClick={() => {
                         emitTyping(false)
-                        handleAddCard()
+                        void handleAddCard()
                       }}
                     >
                       {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}

@@ -36,7 +36,6 @@ import { getCardColorPreset } from '@/lib/board-themes'
 import { exportBoardToPDF } from '../utils/exportPDF'
 import { getApiErrorMessage } from '../utils/apiError'
 import type {
-  ActionItem,
   AutoClusterPreviewResult,
   Board,
   BoardListItem,
@@ -104,7 +103,7 @@ function triggerConfetti() {
   if (typeof window === 'undefined') return
   import('canvas-confetti')
     .then((mod) => {
-      mod.default?.({
+      void mod.default?.({
         particleCount: 70,
         spread: 65,
         origin: { y: 0.65 },
@@ -271,7 +270,7 @@ export default function BoardPage({
 
   const handleSummaryGenerated = useCallback(() => {
     setSummaryOpen(true)
-    loadSummary()
+    void loadSummary()
     triggerConfetti()
   }, [loadSummary])
 
@@ -539,7 +538,7 @@ export default function BoardPage({
             activeCard.author,
           )
         }
-        onDragEnd({ ...event, over: null } as DragEndEvent)
+        void onDragEnd({ ...event, over: null })
         return
       }
 
@@ -555,11 +554,11 @@ export default function BoardPage({
             groupCards[0]?.author ?? null,
           )
         }
-        onDragEnd({ ...event, over: null } as DragEndEvent)
+        void onDragEnd({ ...event, over: null })
         return
       }
 
-      onDragEnd(event)
+      void onDragEnd(event)
     },
     [activeCard, activeGroup, columns, createActionItemFromCards, onDragEnd, readOnly],
   )
@@ -1129,7 +1128,7 @@ export default function BoardPage({
         id: 'reset-votes',
         label: 'Сбросить все мои голоса',
         keywords: 'reset votes лайки',
-        onSelect: handleResetMyVotes,
+        onSelect: () => void handleResetMyVotes(),
       })
     }
     list.push(
@@ -1145,7 +1144,7 @@ export default function BoardPage({
         keywords: 'summary итоги отчет',
         onSelect: () => {
           setSummaryOpen(true)
-          loadSummary()
+          void loadSummary()
         },
       },
       {
@@ -1306,7 +1305,7 @@ export default function BoardPage({
         onOpenMood={() => setMoodOpen(true)}
         onOpenSummary={() => {
           setSummaryOpen(true)
-          loadSummary()
+          void loadSummary()
         }}
         onExportMarkdown={handleExportMarkdown}
         onExportPDF={handleExportPDF}

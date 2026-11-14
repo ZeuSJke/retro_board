@@ -577,7 +577,7 @@ export default function MasterColumn({
                         className="h-7 px-2 text-xs font-semibold"
                         onBlur={() => saveTitle(item.id)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveTitle(item.id)
+                          if (e.key === 'Enter') void saveTitle(item.id)
                           if (e.key === 'Escape') setEditingTitleId(null)
                         }}
                       />
@@ -614,7 +614,7 @@ export default function MasterColumn({
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault()
-                            saveDesc(item.id)
+                            void saveDesc(item.id)
                           } else if (e.key === 'Escape') {
                             setEditingDescId(null)
                           }
@@ -682,7 +682,7 @@ export default function MasterColumn({
                               className="h-8 text-xs"
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
-                                  saveAssignee(item.id, assigneeDraft.trim() || null)
+                                  void saveAssignee(item.id, assigneeDraft.trim() || null)
                                 }
                               }}
                             />

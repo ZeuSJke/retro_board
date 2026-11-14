@@ -192,7 +192,7 @@ export default function CardGroupWidget({
                 className="h-6 px-2 text-xs font-semibold"
                 onBlur={saveTitle}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveTitle()
+                  if (e.key === 'Enter') void saveTitle()
                   if (e.key === 'Escape') {
                     setTitleDraft(group.title)
                     setEditingTitle(false)

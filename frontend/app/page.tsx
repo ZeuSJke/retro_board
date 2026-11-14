@@ -16,7 +16,7 @@ export default function HomePage() {
   useEffect(() => {
     if (!hasHydrated) return
     let cancelled = false
-    ;(async () => {
+    void (async () => {
       if (!workspace) {
         router.replace(currentBoardId ? `/board/${currentBoardId}` : '/board/start')
         return

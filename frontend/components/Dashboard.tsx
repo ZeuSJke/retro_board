@@ -323,7 +323,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!hasHydrated) return
-    loadData()
+    void loadData()
   }, [hasHydrated, loadData])
 
   const handleWorkspaceWs = useCallback((msg: WsMessage) => {
@@ -590,7 +590,7 @@ export default function Dashboard() {
                 onChange={(e) => setEditTitle(e.target.value)}
                 onBlur={() => saveTitle(item.id)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveTitle(item.id)
+                  if (e.key === 'Enter') void saveTitle(item.id)
                   if (e.key === 'Escape') setEditingTitleId(null)
                 }}
                 autoFocus
@@ -616,7 +616,7 @@ export default function Dashboard() {
                 onChange={(e) => setEditDesc(e.target.value)}
                 onBlur={() => saveDesc(item.id)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && e.ctrlKey) saveDesc(item.id)
+                  if (e.key === 'Enter' && e.ctrlKey) void saveDesc(item.id)
                   if (e.key === 'Escape') setEditingDescId(null)
                 }}
                 autoFocus
@@ -657,7 +657,7 @@ export default function Dashboard() {
                 onChange={(e) => setEditAssignee(e.target.value)}
                 onBlur={() => saveAssignee(item.id)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveAssignee(item.id)
+                  if (e.key === 'Enter') void saveAssignee(item.id)
                   if (e.key === 'Escape') setEditAssigneeId(null)
                 }}
                 placeholder="Ответственный"
@@ -750,7 +750,7 @@ export default function Dashboard() {
       <WelcomeDialog
         onConfirm={(name) => {
           setUsername(name)
-          loadData()
+          void loadData()
         }}
       />
     )

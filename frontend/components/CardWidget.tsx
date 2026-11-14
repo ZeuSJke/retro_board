@@ -492,7 +492,7 @@ export default function CardWidget({
                               aria-label={`Цвет: ${c.name}`}
                               title={c.name}
                               onClick={() => {
-                                handleQuickColorChange(c.hex)
+                                void handleQuickColorChange(c.hex)
                                 setMenuOpen(false)
                               }}
                               className={cn(
@@ -525,7 +525,7 @@ export default function CardWidget({
                               <DropdownMenuItem
                                 key={targetCol.id}
                                 onClick={() => {
-                                  handleMoveToColumn(targetCol.id)
+                                  void handleMoveToColumn(targetCol.id)
                                   setMenuOpen(false)
                                 }}
                               >
@@ -573,7 +573,7 @@ export default function CardWidget({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
-                  handleSave()
+                  void handleSave()
                 } else if (e.key === 'Escape') {
                   setEditing(false)
                 }

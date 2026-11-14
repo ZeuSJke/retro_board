@@ -81,7 +81,8 @@ export async function loginWorkspace(
     cachedWorkspaceSession = data
   }
 
-  const token = String((data as Record<string, unknown>).token || '')
+  const rawToken = (data as Record<string, unknown>).token
+  const token = typeof rawToken === 'string' ? rawToken : ''
   if (token) {
     await page.context().addCookies([
       {
