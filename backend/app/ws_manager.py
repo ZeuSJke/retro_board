@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import time
 import uuid
@@ -8,6 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from fastapi import WebSocket
+
+logger = logging.getLogger(__name__)
 
 
 def assert_single_worker() -> None:
@@ -251,7 +254,13 @@ class ConnectionManager:
                         try:
                             self.on_session_cleared(board_id)
                         except Exception:
-                            pass
+                            # Память уже очищена; если БД не обновилась, после
+                            # рестарта сессия «воскреснет» — это должно быть видно.
+                            logger.warning(
+                                "Failed to clear persisted session for board %s",
+                                board_id,
+                                exc_info=True,
+                            )
                     await self.broadcast(
                         board_id, "facilitator_update", self.facilitator_payload(board_id)
                     )

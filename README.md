@@ -390,7 +390,7 @@ retro_board/
 | `group_created` / `group_updated` / `group_moved` / `group_deleted` / `group_collapse` | CRUD, перемещение и сворачивание групп |
 | `action_item_created` / `action_item_updated` / `action_item_deleted` | CRUD Action Items |
 | `auto_cluster_completed` | Завершение AI-кластеризации |
-| `summary_generated` / `summary_failed` | Результат генерации AI-резюме |
+| `summary_generated` / `summary_failed` | Результат генерации AI-резюме; `regenerated: true` — повторная генерация по кнопке (окно итогов у остальных не открывается) |
 
 ---
 

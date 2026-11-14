@@ -61,24 +61,23 @@ def list_workspaces(
     _: bool = Depends(get_admin_user),
 ):
     """Список всех workspaces с количеством досок."""
-    workspaces = db.query(models.Workspace).all()
+    workspaces = db.query(models.Workspace).order_by(models.Workspace.created_at).all()
+    # Один запрос на все команды вместо запроса на каждую
+    counts = dict(
+        db.query(models.Board.workspace_id, func.count(models.Board.id))
+        .filter(models.Board.deleted_at.is_(None))
+        .group_by(models.Board.workspace_id)
+        .all()
+    )
     result = []
     for ws in workspaces:
-        count = (
-            db.query(func.count(models.Board.id))
-            .filter(
-                models.Board.workspace_id == ws.id,
-                models.Board.deleted_at.is_(None),
-            )
-            .scalar()
-        )
         item = schemas.WorkspaceListItem.model_validate(ws)
-        item.boards_count = count or 0
+        item.boards_count = counts.get(ws.id, 0)
         result.append(item)
     return result
 
 
-@router.post("/workspaces", response_model=schemas.WorkspaceOut, status_code=201)
+@router.post("/workspaces", response_model=schemas.WorkspaceListItem, status_code=201)
 @limiter.limit("30/minute")
 def create_workspace(
     request: Request,

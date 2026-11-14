@@ -1000,7 +1000,9 @@ async def regenerate_summary(
     await manager.broadcast(
         board.id,
         "summary_generated",
-        {"summary": out.model_dump(mode="json"), "board_id": board.id},
+        # Повторная генерация по кнопке: остальным участникам окно итогов
+        # открывать не нужно — только обновить содержимое.
+        {"summary": out.model_dump(mode="json"), "board_id": board.id, "regenerated": True},
     )
     return out
 

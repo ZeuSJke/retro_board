@@ -708,6 +708,8 @@ class TestThemesApi:
 
         board_id, event_name, payload = broadcast.await_args.args
         assert (board_id, event_name) == (sample_board["id"], "summary_generated")
+        # По этому признаку клиенты остальных участников не открывают окно итогов
+        assert payload["regenerated"] is True
         assert payload["summary"]["theme_stats"] == result["theme_stats"]
         assert [s["name"] for s in payload["summary"]["theme_stats"]] == [REVIEW]
 
