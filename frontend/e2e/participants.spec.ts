@@ -131,6 +131,9 @@ test.describe('Участники: личность, скрытый сбор, п
       await expect(creator.page.getByText('Карточка скрыта')).toBeVisible({ timeout: 10000 })
       await expect(creator.page.getByText('Мысль гостя')).toHaveCount(0)
       await expect(creator.page.getByTestId('hidden-cards-count')).toHaveText('Скрыто чужих: 1')
+      // Задачи видны всем, поэтому превратить карточку в задачу до раскрытия нельзя
+      await cardByText(creator.page, 'Мысль создателя').hover()
+      await expect(cardByText(creator.page, 'Мысль создателя').getByTitle('В задачу')).toHaveCount(0)
 
       // Сервер не отдаёт чужой текст вовсе — ни в ответе доски, ни в экспорте
       const guestBoardJson = await guest.page.evaluate(
@@ -161,6 +164,8 @@ test.describe('Участники: личность, скрытый сбор, п
       await expect(guest.page.getByText('Карточка скрыта')).toHaveCount(0)
       await expect(guest.page.getByTestId('hidden-collect-banner')).toHaveCount(0)
       await expect(creator.page.getByTestId('hidden-collect-banner')).toHaveCount(0)
+      await cardByText(creator.page, 'Мысль создателя').hover()
+      await expect(cardByText(creator.page, 'Мысль создателя').getByTitle('В задачу')).toHaveCount(1)
 
       // После перезагрузки карточки остаются раскрытыми
       await guest.page.reload()

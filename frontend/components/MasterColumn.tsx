@@ -538,7 +538,9 @@ export default function MasterColumn({
             <ListTodo className="mb-2 h-6 w-6 opacity-40" />
             <p className="font-medium text-foreground/80">Пока нет задач</p>
             <p className="mt-1">
-              Перетащите карточку сюда или нажмите кнопку задачи на любой карточке.
+              {cardsHidden
+                ? 'Пока карточки скрыты, задачу можно добавить только вручную — кнопкой «Добавить».'
+                : 'Перетащите карточку сюда или нажмите кнопку задачи на любой карточке.'}
             </p>
           </div>
         ) : (

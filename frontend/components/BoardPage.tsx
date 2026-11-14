@@ -610,6 +610,12 @@ export default function BoardPage({
 
   const createActionItemFromCards = useCallback(
     async (text: string, sourceCardIds: string[], authorHint?: string | null) => {
+      // Задачи видны всей команде (сервер их не скрывает): пока идёт скрытый сбор,
+      // текст карточки не должен попасть в «Итоги» и экспорт в обход раскрытия
+      if (cardsHidden && sourceCardIds.length > 0) {
+        showToast('Карточки ещё скрыты: задачу из карточки можно создать после раскрытия', 'info')
+        return
+      }
       try {
         const item = await createActionItem({
           board_id: board.id,
@@ -639,7 +645,7 @@ export default function BoardPage({
         showToast(getApiErrorMessage(err, 'Не удалось создать задачу'), 'error')
       }
     },
-    [anonymousMode, board.id, setActionItems],
+    [anonymousMode, board.id, cardsHidden, setActionItems],
   )
 
   const handleDragEnd = useCallback(
@@ -1598,8 +1604,10 @@ export default function BoardPage({
                   sortBy={sortBy}
                   spotlightCardId={spotlightCardId}
                   onSpotlight={handleSpotlight}
-                  onCreateActionItem={(card) =>
-                    createActionItemFromCards(card.text, [card.id], card.author)
+                  onCreateActionItem={
+                    cardsHidden
+                      ? undefined
+                      : (card) => createActionItemFromCards(card.text, [card.id], card.author)
                   }
                   onPreviewAutoCluster={handleOpenClusterPreview}
                   allowMultipleVotes={Boolean(board.allow_multiple_votes_per_card)}
@@ -1676,7 +1684,7 @@ export default function BoardPage({
                 onDeleted={(id) =>
                   setActionItems((prev) => prev.filter((i) => i.id !== id))
                 }
-                dropDisabled={readOnly}
+                dropDisabled={readOnly || cardsHidden}
                 readOnly={readOnly}
                 cardsHidden={cardsHidden}
               />

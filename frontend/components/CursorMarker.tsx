@@ -2,7 +2,6 @@
 
 import { memo, useEffect, useRef } from 'react'
 import { motion } from 'motion/react'
-import { getUserAvatarGradient } from '@/lib/board-themes'
 import { userColor } from '@/utils/theme'
 import type { CursorPos } from '@/hooks/useBoardWebSocket'
 
@@ -16,7 +15,6 @@ interface CursorMarkerProps {
 
 export default memo(function CursorMarker({ cursorId, username, posRef }: CursorMarkerProps) {
   const color = userColor(cursorId)
-  const gradient = getUserAvatarGradient(cursorId)
   const nodeRef = useRef<HTMLDivElement>(null)
   const arrowRef = useRef<SVGSVGElement>(null)
   const smoothRef = useRef<{ x: number; y: number; initialized: boolean; tilt: number }>({
@@ -93,7 +91,8 @@ export default memo(function CursorMarker({ cursorId, username, posRef }: Cursor
         </svg>
         <div
           className="absolute left-3.5 top-4 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold text-white shadow-md"
-          style={{ background: gradient }}
+          // Подпись того же цвета, что и стрелка: по нему различаются курсоры тёзок
+          style={{ backgroundColor: color }}
         >
           {username}
         </div>
