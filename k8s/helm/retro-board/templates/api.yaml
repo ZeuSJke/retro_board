@@ -1,0 +1,189 @@
+{{- $fullName := include "retro-board.fullname" . -}}
+{{- $configName := printf "%s-config" $fullName -}}
+{{- $secretName := include "retro-board.secretName" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-api
+  labels:
+    {{- include "retro-board.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  annotations:
+    traefik.ingress.kubernetes.io/service.serverstransport: {{ .Release.Namespace }}-{{ $fullName }}-api@kubernetescrd
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "retro-board.selectorLabels" (dict "root" . "component" "api") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-api
+  labels:
+    {{- include "retro-board.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  # Recreate prevents old and new single-worker pods from holding split WebSocket room state.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "retro-board.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "retro-board.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- if .Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.image.pullSecret }}
+      {{- end }}
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-db
+          image: {{ include "retro-board.apiImage" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python
+            - -c
+            - |
+              import os, socket, time
+              host, port = os.environ["PG_HOST"], int(os.environ["PG_PORT"])
+              for _ in range(60):
+                  try:
+                      socket.create_connection((host, port), timeout=2).close()
+                      print(f"DB reachable at {host}:{port}")
+                      break
+                  except OSError:
+                      time.sleep(2)
+              else:
+                  raise SystemExit(f"DB unreachable at {host}:{port}")
+          env:
+            - name: PG_HOST
+              value: {{ $fullName }}-postgres
+            - name: PG_PORT
+              value: "5432"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+        - name: migrate
+          image: {{ include "retro-board.apiImage" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: {{ $configName }}
+            - secretRef:
+                name: {{ $secretName }}
+          env:
+            - name: PG_HOST
+              value: {{ $fullName }}-postgres
+            - name: PG_PORT
+              value: "5432"
+            - name: PG_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: PG_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: PG_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql://$(PG_USER):$(PG_PASS)@$(PG_HOST):$(PG_PORT)/$(PG_DB)"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: api
+          image: {{ include "retro-board.apiImage" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ $configName }}
+            - secretRef:
+                name: {{ $secretName }}
+          env:
+            - name: SKIP_MIGRATIONS
+              value: "true"
+            - name: FORWARDED_ALLOW_IPS
+              value: {{ .Values.api.forwardedAllowIps | quote }}
+            - name: PG_HOST
+              value: {{ $fullName }}-postgres
+            - name: PG_PORT
+              value: "5432"
+            - name: PG_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: PG_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: PG_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql://$(PG_USER):$(PG_PASS)@$(PG_HOST):$(PG_PORT)/$(PG_DB)"
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.api.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

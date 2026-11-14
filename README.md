@@ -186,13 +186,11 @@ retro_board/
 │           └── websocket.py
 │
 └── frontend/
-    ├── Dockerfile                # Multi-stage: builder -> runner + nginx
-    ├── nginx.conf                # Проксирование /api и /ws на backend
-    ├── next.config.mjs           # Next.js: standalone output, API rewrite
+    ├── Dockerfile                # Multi-stage: builder -> pure standalone node:22-alpine (:3000)
+    ├── next.config.mjs           # Next.js: standalone output, security headers, conditional API rewrite
     ├── tsconfig.json             # TypeScript strict конфиг
     ├── .eslintrc.json            # ESLint + next/core-web-vitals
     ├── playwright.config.ts      # Playwright E2E конфиг
-    ├── start.sh                  # Запуск node server.js + nginx
     ├── vitest.config.ts          # Конфигурация Vitest
     ├── .env.local                # Локальные env переменные
     ├── api/
@@ -478,11 +476,19 @@ docker compose exec db pg_dump -U retro retroboard > backup_$(date +%Y%m%d).sql
 
 ---
 
-## Деплой
+## Деплой (Kubernetes + Helm)
 
-Деплой запускается вручную в интерфейсе Dokploy с использованием `docker-compose.dokploy.yml`. Переменные окружения задаются во вкладке Environment сервиса.
+Основной деплой — в Kubernetes (`k3s-dev` и `k3s-stage`) с помощью Helm-чарта [`k8s/helm/retro-board`](k8s/helm/retro-board) и shared-агента `fmrm/cluster-admins`.
 
-Приложение доступно на `https://retro.kirillbessonov.ru`.
+- На `push` в `main` GitLab CI собирает образы `api` и `web` через `buildctl` и автоматически выкатывает релиз `retro-board` в namespace `retro-board` кластера `k3s-stage` (`https://retro.kirillbessonov.ru`).
+- Локальная проверка чарта и деплой на dev-кластер:
+  - `make helm-lint` — `helm lint`, `kubeconform` и render-гейты (`scripts/helm-render-checks.sh`);
+  - `make dev-images` — сборка dev-образов через `buildctl` SSH-туннель;
+  - `make dev-deploy` — деплой в `k3s-dev` (`https://retro-dev.kirillbessonov.ru`).
+- Предварительно в namespace `retro-board` должен быть создан Secret `retro-board-secrets` (`POSTGRES_PASSWORD`, `ADMIN_LOGIN`, `ADMIN_PASSWORD`, `WORKSPACE_JWT_SECRET`, `ADMIN_JWT_SECRET` и опционально `AI_*`) и `registry-pull`.
+- Ежедневный `pg_dump -Fc` выполняется CronJob (`backup-cronjob.yaml`) на NFS `/tank/k8s-backup` с хранением 14 дней.
+
+`docker-compose.dokploy.yml` оставлен как deprecated для legacy-стенда Dokploy на период переключения.
 
 ---
 

@@ -1,0 +1,46 @@
+image:
+  tag: dev
+  pullPolicy: Always
+
+postgres:
+  storageSize: 2Gi
+  resources:
+    requests:
+      cpu: 25m
+      memory: 96Mi
+    limits:
+      memory: 256Mi
+
+api:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+web:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 96Mi
+    limits:
+      memory: 256Mi
+
+config:
+  corsOrigins: "https://retro-dev.kirillbessonov.ru"
+  secureCookies: "true"
+
+secrets:
+  existingSecret: retro-board-secrets
+
+ingress:
+  enabled: true
+  className: traefik
+  host: retro-dev.kirillbessonov.ru
+
+backup:
+  enabled: false
+
+networkPolicy:
+  enabled: false

@@ -1,0 +1,57 @@
+image:
+  # CI overrides image.tag with immutable staging-<sha8> on deploy; allowMutableTag stays false.
+  tag: latest
+  pullPolicy: IfNotPresent
+
+postgres:
+  storageSize: 5Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+api:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+web:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+config:
+  corsOrigins: "https://retro.kirillbessonov.ru"
+  secureCookies: "true"
+
+secrets:
+  # Secret holds POSTGRES_PASSWORD, ADMIN_LOGIN, ADMIN_PASSWORD, WORKSPACE_JWT_SECRET,
+  # ADMIN_JWT_SECRET, and optionally AI_BASE_URL / AI_API_KEY / AI_MODEL from Dokploy.
+  existingSecret: retro-board-secrets
+
+ingress:
+  enabled: true
+  className: traefik
+  host: retro.kirillbessonov.ru
+
+backup:
+  enabled: true
+  schedule: "5 2 * * *"
+  timeZone: "Europe/Moscow"
+  retentionDays: 14
+  subDir: "retro-board"
+  nfs:
+    server: "192.168.1.10"
+    path: "/tank/k8s-backup"
+
+networkPolicy:
+  enabled: true
+  extraApiEgress: []

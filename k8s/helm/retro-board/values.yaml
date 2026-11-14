@@ -1,0 +1,99 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  registry: registry.kirillbessonov.ru/fmrm/retro_board
+  apiRepository: api
+  webRepository: web
+  tag: latest
+  pullPolicy: IfNotPresent
+  allowMutableTag: false
+  pullSecret: registry-pull
+
+postgres:
+  image: postgres:16-alpine
+  pullPolicy: IfNotPresent
+  database: retroboard
+  user: retro
+  storageClassName: local-path
+  storageSize: 5Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+api:
+  # MUST remain 1: WebSocket room/phase/timer/facilitator state lives in process memory.
+  replicas: 1
+  forwardedAllowIps: "*"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+web:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+config:
+  corsOrigins: ""
+  secureCookies: "true"
+  csrfEnabled: "true"
+  workspaceJwtExpireHours: "168"
+  # Leave empty if AI_* overrides live in existingSecret (migrated from Dokploy).
+  aiBaseUrl: ""
+  aiModel: ""
+  aiDisableThinking: "true"
+
+secrets:
+  # Recommended for dev & staging: create Secret outside Helm once and pass its name.
+  existingSecret: ""
+  allowDevPlaceholders: false
+  postgresPassword: ""
+  adminLogin: ""
+  adminPassword: ""
+  workspaceJwtSecret: ""
+  adminJwtSecret: ""
+  aiApiKey: ""
+
+ingress:
+  enabled: true
+  className: traefik
+  host: retro.kirillbessonov.ru
+  annotations: {}
+
+traefik:
+  apiDialTimeout: "30s"
+  apiIdleConnTimeout: "600s"
+  apiReadIdleTimeout: "600s"
+  securityHeadersEnabled: true
+
+backup:
+  enabled: false
+  schedule: "5 2 * * *"
+  timeZone: "Europe/Moscow"
+  retentionDays: 14
+  image: postgres:16-alpine
+  subDir: "retro-board"
+  nfs:
+    server: ""
+    path: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+networkPolicy:
+  enabled: false
+  extraApiEgress: []

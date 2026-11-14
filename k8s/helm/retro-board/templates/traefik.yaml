@@ -1,0 +1,27 @@
+{{- $fullName := include "retro-board.fullname" . -}}
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: {{ $fullName }}-api
+  labels:
+    {{- include "retro-board.labels" . | nindent 4 }}
+spec:
+  forwardingTimeouts:
+    dialTimeout: {{ .Values.traefik.apiDialTimeout | quote }}
+    idleConnTimeout: {{ .Values.traefik.apiIdleConnTimeout | quote }}
+    readIdleTimeout: {{ .Values.traefik.apiReadIdleTimeout | quote }}
+{{- if and .Values.ingress.enabled .Values.traefik.securityHeadersEnabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullName }}-security-headers
+  labels:
+    {{- include "retro-board.labels" . | nindent 4 }}
+spec:
+  headers:
+    customFrameOptionsValue: "SAMEORIGIN"
+    contentTypeNosniff: true
+    referrerPolicy: "strict-origin-when-cross-origin"
+    contentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'self'"
+{{- end }}

@@ -5,18 +5,27 @@
 ## 1. Обзор проекта и язык
 
 **RetroBoard (Stratum)** — веб-приложение для командных Agile-ретроспектив в реальном времени.
-- **Стек**: Next.js 15 (App Router, TypeScript, Tailwind CSS, shadcn/ui + Radix UI, Zustand, `@dnd-kit`, `motion`, `recharts`, `sonner`) · FastAPI (Python, SQLAlchemy 2, Alembic, slowapi) · PostgreSQL 16 · WebSocket · Docker / Nginx.
+- **Стек**: Next.js 15 (App Router, TypeScript, Tailwind CSS, shadcn/ui + Radix UI, Zustand, `@dnd-kit`, `motion`, `recharts`, `sonner`) · FastAPI (Python, SQLAlchemy 2, Alembic, slowapi) · PostgreSQL 16 · WebSocket · Kubernetes (Helm) / Docker / Nginx.
 - **Язык**: общение в проекте, тексты UI, сообщения об ошибках, большинство промптов и commit/MR-сообщения — на русском языке.
 
 ## 2. Команды разработки и проверки
 
-### Docker (основной локальный стенд)
+### Kubernetes / Helm (`k8s/helm/retro-board/` и `Makefile`)
+```bash
+make helm-lint   # helm lint (dev + staging) + kubeconform + scripts/helm-render-checks.sh
+make dev-images  # сборка и push dev-образов через buildctl SSH-туннель к .26 (scripts/build-image.sh)
+make dev-deploy  # создание dev-секретов при отсутствии + helm upgrade на k3s-dev
+```
+- В образе `web` nginx **не** используется (`node server.js` на `:3000`); маршрутизацию `/api` и `/ws` → `api:8000` и `/` → `web:3000` в k8s выполняет Traefik Ingress (`ServersTransport` + `Middleware` `security-headers`), а в локальном Compose — отдельный сервис `proxy` (`ci/compose-nginx.conf`).
+- `api.replicas` обязан оставаться `1` со стратегией `Recreate` (stateful `ConnectionManager` в памяти); чарт падает при `api.replicas != 1`, пустом/`*`/`null` `CORS_ORIGINS` и при изменяемом теге без `pullPolicy=Always`.
+
+### Docker (локальный стенд)
 ```bash
 docker compose up --build        # сборка и запуск полного стека (http://localhost:3080)
 docker compose up db -d          # только PostgreSQL
 docker compose down -v           # остановка с удалением volumes БД
 ```
-Схема локального стека: Nginx (`:3080`) проксирует `/` → Next.js (`:3000`), `/api/` и `/ws/` → FastAPI (`:8000`).
+Схема локального стека: сервис `proxy` (`ci/compose-nginx.conf`, `:3080`) проксирует `/` → Next.js (`frontend:3000`), `/api/` и `/ws/` → FastAPI (`backend:8000`). `docker-compose.dokploy.yml` помечен deprecated на период миграции.
 
 ### Backend (`backend/`)
 Контейнер при старте (`entrypoint.sh`) автоматически выполняет `alembic upgrade head` и запускает `uvicorn main:app`.
@@ -54,7 +63,8 @@ npx playwright test
 - **Admin JWT**: `/api/admin/*` использует отдельную `httpOnly` cookie `admin_token` (`get_admin_user()`).
 - **CSRF** (`CSRFMiddleware` в `backend/main.py`): все небезопасные методы (кроме `/ws/*`, `/api/admin/login`, `/api/workspaces/login`, `/health`, `/api/health`) проверяют совпадение cookie `csrf_token` и заголовка `X-CSRF-Token`. В тестах отключается через `CSRF_ENABLED=false` / `settings.csrf_enabled = False`. Для локальной HTTP-разработки требуется `SECURE_COOKIES=false`.
 - **REST-клиент** (`frontend/api/index.ts`): Axios с `baseURL: '/api'` автоматически подставляет `X-Workspace-Token` и `X-CSRF-Token` из cookies/store и обрабатывает 401/403/423/429/5xx. Отдельный админ-клиент — `frontend/api/admin.ts`.
-- **Проксирование**: в dev `frontend/next.config.mjs` делает rewrite `/api/:path*` → `${BACKEND_URL || 'http://localhost:8000'}/api/:path*`; в prod/E2E (`frontend/nginx.conf`, `ci/e2e-nginx.conf`) Nginx обязан передавать исходный `Host` (`$http_host` / `$host`), иначе редиректы FastAPI уведут на `:8000` мимо `csrf_token` cookie.
+- **Проксирование**: в dev `frontend/next.config.mjs` делает rewrite `/api/:path*` → `${BACKEND_URL || 'http://localhost:8000'}/api/:path*` (в production отключается, если `BACKEND_URL` не задан); в локальном Compose/E2E (`ci/compose-nginx.conf`, `ci/e2e-nginx.conf`) Nginx обязан передавать исходный `Host` (`$http_host` / `$host`), иначе редиректы FastAPI уведут на `:8000` мимо `csrf_token` cookie; в k8s эту роль выполняет Traefik Ingress (`k8s/helm/retro-board/templates/ingress.yaml`).
+- **Backend entrypoint & proxy**: `backend/entrypoint.sh` запускает `uvicorn` с `--ws websockets-sansio --proxy-headers --forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-*}"`; в k8s миграции выполняет initContainer `migrate`, а основной контейнер передаёт `SKIP_MIGRATIONS=true`.
 
 ### WebSocket и ограничение на один воркер
 - **Эндпоинты** (`app/routers/websocket.py`):
@@ -94,9 +104,9 @@ npx playwright test
 ## 4. GitLab CI/CD и рабочий процесс с MR
 
 - Основной репозиторий находится в GitLab (`gitlab.kirillbessonov.ru/fmrm/retro_board.git`); GitHub является зеркалом. Работа ведётся через **Merge Requests** и CLI **`glab`** (не `gh`).
-- Конвейер описан в `.gitlab-ci.yml`: runner с тегом `homelab`, базовый образ `registry.kirillbessonov.ru/homelab/infrastructure/ci-base:2026-08-20-1809` (без Docker-демона; `e2e-tests` поднимает сервис `postgres:16-alpine`, `uvicorn`, standalone Next `:3000` и `nginx` `:3080` по `ci/e2e-nginx.conf`).
-- Джобы CI: `backend-tests`, `frontend-lint` (`npm run build` + `npm run lint`), `frontend-tests` (`npm test`), `e2e-tests` (`npx playwright test`).
-- **Обязательное правило**: после создания/обновления MR дождитесь прохождения пайплайна и убедитесь, что все джобы завершились успешно (`success`). CD из `.gitlab-ci.yml` удалён — выкладка выполняется вручную через Dokploy.
+- Конвейер описан в `.gitlab-ci.yml`: runner с тегом `homelab`, базовый образ `$CI_BASE_IMAGE` (переменная инстанса GitLab; без Docker-демона; `e2e-tests` поднимает сервис `postgres:16-alpine`, `uvicorn`, standalone Next `:3000` и `nginx` `:3080` по `ci/e2e-nginx.conf`, сборки образов идут через `buildctl`).
+- Джобы CI: `backend-tests`, `frontend-lint` (`npm run build` + `npm run lint`), `frontend-tests` (`npm test`), `e2e-tests` (`npx playwright test`), `helm` (`make helm-lint`), `image-smoke` (на MR при изменении Dockerfile/зависимостей), `build-app-staging` и `deploy-staging` (на `main` — публикация в `$CI_REGISTRY_IMAGE` и выкат в `k3s-stage` через shared GitLab Agent `fmrm/cluster-admins:k3s-stage`).
+- **Обязательное правило**: после создания/обновления MR дождитесь прохождения пайплайна и убедитесь, что все джобы завершились успешно (`success`). Перед деплоем на `k3s-stage` в namespace `retro-board` должен существовать Secret `retro-board-secrets`.
 
 ```bash
 # Создать MR из текущей ветки в main
