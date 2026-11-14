@@ -292,9 +292,14 @@ async def get_workspace_insights(
             }
         )
 
+    # Повторяющиеся темы считаем по списку тем команды, а не спрашиваем у модели
+    theme_counters = themes.themes_for_insights(db, workspace.id)
+
     # Снимок собран — соединение на время вызова модели не держим
     release_connection(db)
-    result = await asyncio.to_thread(generate_workspace_insights, snapshot)
+    result = await asyncio.to_thread(
+        generate_workspace_insights, snapshot, theme_counters
+    )
     return schemas.WorkspaceInsightsOut(**result)
 
 

@@ -650,7 +650,7 @@ class TestConnectionReleasedDuringAI:
     def test_insights_release_connection(self, client, sample_card, workspace_headers, open_connections):
         seen = []
 
-        def fake_insights(snapshot):
+        def fake_insights(snapshot, team_themes=None):
             seen.append(open_connections["open"])
             return {"summary_text": "ок", "recurring_themes": [], "recommendations": [], "boards_analyzed": 1}
 

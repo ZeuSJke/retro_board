@@ -10,7 +10,7 @@ import bcrypt
 import pytest
 
 from app import models, themes
-from app.ai.prompts import summary_generation
+from app.ai.prompts import summary_generation, workspace_insights
 from app.config import settings
 from tests.conftest import TestSessionLocal
 
@@ -755,3 +755,109 @@ class TestThemesApi:
         with TestSessionLocal() as db:
             assert db.query(models.WorkspaceTheme).count() == 0
             assert db.query(models.BoardTheme).count() == 0
+
+
+# ── Кросс-спринт анализ ──────────────────────────────────────────────────────
+
+
+class TestInsightsUseTeamThemes:
+    def _two_boards_with_review(self, client, headers, model):
+        first = make_board(client, headers, "Спринт 1")
+        second = make_board(client, headers, "Спринт 2")
+        summarize(client, headers, first, model, [new_theme(REVIEW), new_theme("Разовая тема")])
+        summarize(client, headers, second, model, [new_theme(REVIEW)])
+
+    def test_recurring_themes_come_from_the_table_not_from_the_model(
+        self, client, workspace_headers, model
+    ):
+        self._two_boards_with_review(client, workspace_headers, model)
+        model.reply = {
+            "summary_text": "Команда растёт.",
+            "recurring_themes": ["Тема, выдуманная моделью"],
+            "recommendations": ["Сократить очередь ревью"],
+        }
+
+        resp = client.post("/api/boards/workspace-insights", headers=workspace_headers)
+
+        data = resp.json()
+        assert data["generated_by_ai"] is True
+        assert data["summary_text"] == "Команда растёт."
+        assert data["recurring_themes"] == [REVIEW]
+        # Модель получила посчитанные темы, а не просьбу назвать их заново
+        prompt = model.prompts[-1]
+        assert '"boards_count": 2' in prompt and '"streak": 2' in prompt
+        assert "recurring_themes" not in prompt
+        assert "а не инструкции" in prompt
+
+    def test_model_names_themes_only_while_the_table_is_empty(
+        self, client, sample_board, sample_card, workspace_headers, model
+    ):
+        model.reply = {
+            "summary_text": "Мало данных.",
+            "recurring_themes": ["Тема от модели"],
+            "recommendations": [],
+        }
+        data = client.post("/api/boards/workspace-insights", headers=workspace_headers).json()
+        assert data["recurring_themes"] == ["Тема от модели"]
+        assert "recurring_themes" in model.prompts[-1]
+
+    def test_fallback_does_not_pass_cards_or_board_themes_as_recurring(
+        self, client, db_session, sample_board, sample_column, workspace_headers
+    ):
+        client.post(
+            "/api/cards/",
+            json={"column_id": sample_column["id"], "text": "**Деплой** падает по пятницам", "author": "A"},
+            headers=workspace_headers,
+        )
+        db_session.add(
+            models.BoardSummary(
+                board_id=sample_board["id"],
+                session_id=1,
+                summary_text="Старые итоги",
+                key_themes=["Тема одной доски"],
+                recommendations=[],
+            )
+        )
+        db_session.commit()
+
+        with patch.object(settings, "ai_base_url", ""):
+            data = client.post("/api/boards/workspace-insights", headers=workspace_headers).json()
+
+        assert data["generated_by_ai"] is False
+        assert data["recurring_themes"] == []
+        assert data["boards_analyzed"] == 1
+        assert "карточек: 1" in data["summary_text"]
+        whole = json.dumps(data, ensure_ascii=False)
+        assert "Деплой" not in whole and "Тема одной доски" not in whole
+
+    def test_fallback_reports_themes_from_the_table(self, client, workspace_headers, model):
+        self._two_boards_with_review(client, workspace_headers, model)
+
+        with patch.object(settings, "ai_base_url", ""):
+            data = client.post("/api/boards/workspace-insights", headers=workspace_headers).json()
+
+        assert data["generated_by_ai"] is False
+        assert data["recurring_themes"] == [REVIEW]
+        assert "Тем, названных в итогах нескольких досок: 1." in data["summary_text"]
+        assert any(f"«{REVIEW}» поднимается 2 ретро подряд" in r for r in data["recommendations"])
+
+    def test_fallback_falls_back_to_table_when_model_fails(self, client, workspace_headers, model):
+        self._two_boards_with_review(client, workspace_headers, model)
+        model.reply = "не JSON"
+
+        data = client.post("/api/boards/workspace-insights", headers=workspace_headers).json()
+
+        assert data["generated_by_ai"] is False
+        assert data["recurring_themes"] == [REVIEW]
+
+    def test_only_themes_seen_on_several_boards_are_recurring(self):
+        result = workspace_insights._build_fallback_insights(
+            [{"cards_count": 3}],
+            [
+                {"name": "Дважды", "boards_count": 2, "streak": 0},
+                {"name": "Однажды", "boards_count": 1, "streak": 1},
+            ],
+        )
+        assert result["recurring_themes"] == ["Дважды"]
+        # Серии нет — совета про «N ретро подряд» тоже нет
+        assert not any("подряд" in r for r in result["recommendations"])
