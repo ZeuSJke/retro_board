@@ -478,12 +478,12 @@ export default function MasterColumn({
                 className="h-8 text-xs"
               />
               <Textarea
+                autoResize
                 value={newText}
                 onChange={(e) => setNewText(e.target.value)}
                 placeholder="Что нужно сделать..."
-                rows={2}
                 required
-                className="min-h-[56px] resize-none text-xs"
+                className="min-h-[56px] text-xs"
               />
               <div className="flex items-center gap-1.5">
                 <Input
@@ -605,11 +605,11 @@ export default function MasterColumn({
 
                     {editingDescId === item.id ? (
                       <Textarea
+                        autoResize
                         value={editDesc}
                         onChange={(e) => setEditDesc(e.target.value)}
                         autoFocus
-                        rows={2}
-                        className="min-h-[52px] resize-none text-xs"
+                        className="min-h-[52px] text-xs"
                         onBlur={() => saveDesc(item.id)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey) {

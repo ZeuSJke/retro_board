@@ -339,7 +339,7 @@ export default function CardWidget({
                 data-testid="card-drag-handle"
                 aria-hidden="true"
                 title="Перетащить карточку"
-                className="flex h-5 w-4 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/45 transition-colors hover:bg-muted/80 hover:text-foreground active:cursor-grabbing group-hover/card:text-muted-foreground"
+                className="flex h-5 w-4 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/55 transition-colors hover:bg-foreground/10 hover:text-foreground active:cursor-grabbing group-hover/card:text-muted-foreground dark:hover:bg-white/15"
               >
                 <GripVertical className="h-3.5 w-3.5" />
               </span>

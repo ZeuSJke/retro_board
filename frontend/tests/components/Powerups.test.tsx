@@ -135,7 +135,7 @@ describe('RichCardText', () => {
 })
 
 describe('Polished dialogs, collapsed group & PDF export', () => {
-  it('collapsed group does not render bottom arc stub and AI dialogs keep footer spacing without sm:gap-0', () => {
+  it('collapsed group does not render bottom arc stub and AI dialogs keep footer spacing without sm:gap-0', async () => {
     const group: CardGroup = {
       id: 'g1',
       column_id: 'col1',
@@ -177,6 +177,13 @@ describe('Polished dialogs, collapsed group & PDF export', () => {
     expect(screen.getByText('AI-подбор задач')).toBeInTheDocument()
     const suggestCancel = screen.getByRole('button', { name: 'Отмена' })
     expect(suggestCancel.parentElement?.className).not.toContain('sm:gap-0')
+    expect(screen.getByRole('dialog').className).toContain('sm:max-w-3xl')
+    expect(document.querySelector('.max-h-\\[58vh\\]')).toBeNull()
+    const suggestTextarea = screen.getByPlaceholderText('Описание задачи и ожидаемый результат')
+    expect(suggestTextarea.className).toContain('overflow-hidden')
+    Object.defineProperty(suggestTextarea, 'scrollHeight', { configurable: true, value: 132 })
+    await userEvent.type(suggestTextarea, '!')
+    expect((suggestTextarea as HTMLTextAreaElement).style.height).toBe('132px')
     suggestView.unmount()
 
     const clusterView = render(
@@ -191,6 +198,9 @@ describe('Polished dialogs, collapsed group & PDF export', () => {
     )
     const clusterCancel = screen.getByRole('button', { name: 'Отмена' })
     expect(clusterCancel.parentElement?.className).not.toContain('sm:gap-0')
+    expect(screen.getByRole('dialog').className).toContain('sm:max-w-3xl')
+    expect(document.querySelector('.max-h-\\[58vh\\]')).toBeNull()
+    expect(document.querySelector('.line-clamp-2')).toBeNull()
     clusterView.unmount()
   })
 
@@ -227,9 +237,39 @@ describe('Polished dialogs, collapsed group & PDF export', () => {
     expect(tablist.className).toContain('grid-cols-2')
     expect(screen.getByText('AI-резюме и темы')).toBeInTheDocument()
     expect(screen.getByText('Markdown и Slack')).toBeInTheDocument()
-    const summaryText = screen.getByText('Команда ускорила релизы.')
-    expect(summaryText.closest('.h-\\[420px\\]')).not.toBeNull()
+    const summaryDialog = screen.getByRole('dialog')
+    expect(summaryDialog.className).toContain('h-[min(86vh,760px)]')
+    expect(summaryDialog.className).toContain('max-w-3xl')
+    expect(document.querySelector('.h-\\[420px\\]')).toBeNull()
+    const themesContainer = screen.getByText('Ключевые темы').parentElement?.parentElement
+    expect(themesContainer?.className).toContain('md:grid-cols-2')
+    const activePanel = screen.getByRole('tabpanel')
+    expect(activePanel.className).toContain('data-[state=inactive]:hidden')
     summaryView.unmount()
+
+    const singleColSummary = render(
+      <SummaryModal
+        open
+        onOpenChange={vi.fn()}
+        board={board}
+        actionItems={[]}
+        summary={{
+          id: 'sum2',
+          board_id: 'b1',
+          summary_text: 'Только темы без рекомендаций.',
+          key_themes: ['Релизы'],
+          recommendations: [],
+          created_at: '2026-03-01T12:00:00Z',
+        }}
+        loading={false}
+        error={null}
+        onSummaryUpdated={vi.fn()}
+      />,
+    )
+    const singleThemesContainer = screen.getByText('Ключевые темы').parentElement?.parentElement
+    expect(singleThemesContainer?.className).toContain('grid-cols-1')
+    expect(singleThemesContainer?.className).not.toContain('md:grid-cols-2')
+    singleColSummary.unmount()
 
     const spotlightView = render(
       <SpotlightModal
@@ -489,6 +529,12 @@ describe('CommandPalette powerups', () => {
       />,
     )
 
+    expect(screen.getByRole('dialog').className).toContain('max-w-xl')
+    expect(screen.getByRole('dialog').className).not.toContain('p-6')
+    expect(document.querySelector('[cmdk-separator]')).not.toBeNull()
+    expect(screen.getByText('выбор')).toBeInTheDocument()
+    expect(screen.getByText('открыть')).toBeInTheDocument()
+    expect(screen.getByText('закрыть')).toBeInTheDocument()
     expect(screen.getByText('Фокус на поиск')).toBeInTheDocument()
     await user.click(screen.getByText('Починить билд CI'))
     expect(cardSelect).toHaveBeenCalledTimes(1)

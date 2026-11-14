@@ -76,7 +76,7 @@ export default function SuggestActionItemsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent layout="structured" className="sm:max-w-2xl">
+      <DialogContent layout="structured" className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
@@ -88,7 +88,7 @@ export default function SuggestActionItemsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <DialogBody className="max-h-[58vh] space-y-3 bg-muted/15">
+        <DialogBody className="space-y-3 bg-muted/15">
           {loading ? (
             <div className="flex flex-col items-center justify-center gap-3 py-14 text-sm text-muted-foreground">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -148,15 +148,15 @@ export default function SuggestActionItemsDialog({
                         maxLength={100}
                       />
                       <Textarea
+                        autoResize
                         value={item.text}
                         onChange={(e) =>
                           setItems((prev) =>
                             prev.map((x, i) => (i === idx ? { ...x, text: e.target.value } : x)),
                           )
                         }
-                        rows={2}
                         placeholder="Описание задачи и ожидаемый результат"
-                        className="min-h-[60px] resize-none bg-background/80 text-xs leading-relaxed"
+                        className="min-h-[68px] bg-background/80 text-sm leading-relaxed"
                       />
                       <div className="flex items-center gap-2">
                         <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

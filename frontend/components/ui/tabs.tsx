@@ -93,7 +93,10 @@ export const TabsContent = React.forwardRef<
   return (
     <RadixTabs.Content
       ref={ref}
-      className={cn('mt-3 outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
+      className={cn(
+        'mt-3 outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=inactive]:hidden',
+        className,
+      )}
       {...props}
     />
   )
