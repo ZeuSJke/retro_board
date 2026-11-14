@@ -244,4 +244,29 @@ describe('Column', () => {
     expect(screen.queryByTitle('Сгруппировать похожие (AI)')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /добавить карточку/i })).toBeDisabled()
   })
+
+  it('keeps top padding inside the scrollable cards area so top card borders and rings are not clipped', () => {
+    render(
+      <Column
+        column={baseColumn}
+        onUpdate={noop}
+        onDelete={noop}
+        onCardCreated={noop}
+        onCardUpdated={noop}
+        onCardDeleted={noop}
+        onGroupCreated={noop}
+        onGroupUpdated={noop}
+        onGroupDeleted={noop}
+        groupTargetId={null}
+        collapsedGroups={{}}
+        onToggleCollapse={noop}
+      />,
+    )
+
+    const cardText = screen.getByText('Great teamwork')
+    const scrollArea = cardText.closest('.overflow-y-auto')
+    expect(scrollArea).not.toBeNull()
+    expect(scrollArea?.className).toContain('pt-1.5')
+    expect(scrollArea?.className).toContain('pb-3')
+  })
 })

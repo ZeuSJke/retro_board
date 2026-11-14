@@ -312,9 +312,9 @@ export default function CardWidget({
         data-card-id={card.id}
         {...(!editing && !readOnly ? { ...attributes, ...listeners } : {})}
         className={cn(
-          'group/card relative rounded-xl border p-3.5 shadow-sm transition-all duration-150',
+          'group/card relative rounded-xl border p-3.5 shadow-sm transition-[border-color,box-shadow,background-color,opacity] duration-150',
           preset.cardClass,
-          !editing && !readOnly && 'cursor-default hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md',
+          !editing && !readOnly && 'cursor-default hover:border-primary/40 hover:shadow-md',
           selected && 'ring-2 ring-primary/60 border-primary',
           isDragging && 'z-30 opacity-45 scale-[0.98]',
           isGroupTarget && 'ring-2 ring-primary bg-primary/5',

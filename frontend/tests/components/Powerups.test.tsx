@@ -364,6 +364,9 @@ describe('CardWidget cursor & powerups', () => {
     const cardEl = screen.getByTestId('card-widget')
     expect(cardEl.className).toContain('cursor-default')
     expect(cardEl.className).not.toMatch(/(^|\s)cursor-grab(\s|$)/)
+    expect(cardEl.className).not.toContain('hover:-translate-y-0.5')
+    expect(cardEl.className).not.toContain('transition-all')
+    expect(cardEl.className).toContain('hover:border-primary/40 hover:shadow-md')
 
     const handle = screen.getByTestId('card-drag-handle')
     expect(handle).toBeInTheDocument()
