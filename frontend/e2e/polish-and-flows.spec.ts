@@ -5,6 +5,7 @@ import {
   dismissWelcome,
   ensureE2EWorkspace,
   getCsrfHeaders,
+  loginViaAPI,
   loginWorkspace,
   setUsername,
   API,
@@ -219,10 +220,17 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
       })
     ).json()
 
+    // Голос ставит участник сессии, а не имя из запроса: каждый голосующий входит сам.
+    // Имя голосовавшего клиент знает по его карточкам (или по присутствию на доске).
     for (const voter of ['Nikolai Belous', 'Кирилл Ч', 'Egor', 'Александр Длиннофамильный']) {
-      await request.post(`${API}/cards/${card.id}/like?username=${encodeURIComponent(voter)}`, {
-        headers,
+      const voterSession = await loginViaAPI(request, voter)
+      const voterHeaders = await apiHeaders(request, voterSession.token)
+      await request.post(`${API}/cards/`, {
+        headers: voterHeaders,
+        data: { column_id: board.columns[0].id, text: `Карточка участника ${voter}` },
       })
+      const likeRes = await request.post(`${API}/cards/${card.id}/like`, { headers: voterHeaders })
+      expect(likeRes.ok()).toBeTruthy()
     }
 
     await page.setViewportSize({ width: 1280, height: 800 })

@@ -123,18 +123,19 @@ test.describe('Ключевые исправления (сессия, live-до�
     })
     const col = await colRes.json()
 
-    await request.post(`${API}/cards/`, {
-      data: { column_id: col.id, text: 'Секрет ведущего', author: 'Ведущий' },
-      headers,
-    })
-
     const ctxFac = await browser.newContext()
     const ctxViewer = await browser.newContext()
 
     try {
       const facPage = await ctxFac.newPage()
       await setUsername(facPage, 'Ведущий')
-      await loginWorkspace(facPage, request)
+      const facSession = await loginWorkspace(facPage, request)
+
+      // Автор карточки — участник сессии: карточку ведущего создаём его токеном
+      await request.post(`${API}/cards/`, {
+        data: { column_id: col.id, text: 'Секрет ведущего' },
+        headers: { ...csrf, 'X-Workspace-Token': facSession.token },
+      })
 
       await facPage.goto(`/board/${board.slug}`)
       await expect(facPage.getByText('Секрет ведущего')).toBeVisible({ timeout: 15000 })
@@ -147,6 +148,8 @@ test.describe('Ключевые исправления (сессия, live-до�
       await expect(facBtn).toBeVisible({ timeout: 10000 })
       await facBtn.click()
       await expect(facPage.getByTitle('Завершить режим ведущего')).toBeVisible({ timeout: 10000 })
+      // Свою карточку ведущий в штурме видит
+      await expect(facPage.getByText('Секрет ведущего')).toBeVisible()
 
       const viewerPage = await ctxViewer.newPage()
       await setUsername(viewerPage, 'Участник')
