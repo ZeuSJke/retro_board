@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import ThemeStreakBadge from '@/components/dashboard/ThemeStreakBadge'
 
 interface SummaryModalProps {
   open: boolean
@@ -188,6 +189,8 @@ export default function SummaryModal({
                                   aria-hidden="true"
                                 />
                                 <span>{theme}</span>
+                                {/* «N-й спринт подряд» из theme_stats — только для серии длиннее одной доски */}
+                                <ThemeStreakBadge summary={summary} theme={theme} />
                               </li>
                             ))}
                           </ul>
