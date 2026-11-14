@@ -36,9 +36,9 @@ make setup    # (алиас: make install) создаёт backend/.venv + ста
 ### 2. Локальные проверки (DoD gate)
 
 ```bash
-make verify         # helm-lint + lint (ruff + next build/lint) + test-backend + test-frontend
+make verify         # helm-lint + lint (ruff + next build/tsc/lint) + test-backend + test-frontend
 make helm-lint      # helm lint (dev + staging) + kubeconform + scripts/helm-render-checks.sh
-make lint           # backend ruff check . + frontend next build && next lint
+make lint           # backend ruff check . + frontend next build && tsc && next lint
 make test-backend   # alembic heads --verbose + pytest -v (SQLite in-memory)
 make test-frontend  # vitest run
 ```
@@ -156,7 +156,7 @@ retro_board/
 | Job | Триггер | Что делает |
 |---|---|---|
 | `backend-tests` | MR / `main` | `alembic heads --verbose`, `ruff check .`, `pytest -v` (SQLite in-memory) |
-| `frontend-lint` | MR / `main` | `npm ci`, `npm run build`, `npm run lint` |
+| `frontend-lint` | MR / `main` | `npm ci`, `npm run build`, `npm run typecheck`, `npm run lint` |
 | `frontend-tests` | MR / `main` | `npm ci`, `npm test` (Vitest) |
 | `e2e-tests` | MR / `main` | `postgres:16-alpine` service + `alembic upgrade head` + `uvicorn` + standalone Next `:3000` + `nginx` `:3080` (`ci/e2e-nginx.conf`) + `npx playwright test` |
 | `helm` | MR / `main` | `helm lint` (`values-dev.yaml`, `values-staging.yaml`) + `scripts/helm-render-checks.sh` |

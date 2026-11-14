@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Dashboard from '../../components/Dashboard'
+import type { DashboardActionItem } from '../../types'
 
 const mockPush = vi.fn()
 vi.mock('next/navigation', () => ({
@@ -37,7 +38,7 @@ const mockBoards = [
   },
 ]
 
-const mockItems = [
+const mockItems: DashboardActionItem[] = [
   {
     id: 'i1',
     board_id: 'b1',

@@ -6,6 +6,7 @@
 
 ```bash
 npm run build        # production standalone build (также генерирует gitignored next-env.d.ts)
+npm run typecheck    # tsc --noEmit по всем файлам (включая tests/ и e2e/; запускать после build)
 npm run lint         # next lint (ESLint next/core-web-vitals)
 npm test             # Vitest (tests/)
 npx vitest run tests/store/index.test.ts

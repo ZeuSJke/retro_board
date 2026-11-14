@@ -46,7 +46,7 @@
 make setup                # алиас: make install
 
 # Проверки и полный локальный DoD gate
-make verify               # helm-lint + lint (ruff + next build/lint) + test-backend + test-frontend
+make verify               # helm-lint + lint (ruff + next build/tsc/lint) + test-backend + test-frontend
 make helm-lint            # helm lint (dev + staging) + kubeconform + scripts/helm-render-checks.sh
 
 # Сборка и деплой на k3s-dev (https://retro-dev.kirillbessonov.ru)

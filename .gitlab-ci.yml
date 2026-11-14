@@ -76,6 +76,7 @@ frontend-lint:
     # поддерживает.
     - npm ci
     - npm run build
+    - npm run typecheck
     - npm run lint
 
 # ── Фронтенд: юнит-тесты (Vitest) ────────────────────────────────────────────

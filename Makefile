@@ -4,9 +4,9 @@ DEV_CONTEXT ?= k3s-dev
 DEV_NS ?= retro-board
 CHART := k8s/helm/retro-board
 
-BACKEND_PYTEST := $(shell [ -x backend/.venv/bin/pytest ] && echo .venv/bin/pytest || echo pytest)
-BACKEND_RUFF := $(shell [ -x backend/.venv/bin/ruff ] && echo .venv/bin/ruff || echo ruff)
-BACKEND_ALEMBIC := $(shell [ -x backend/.venv/bin/alembic ] && echo .venv/bin/alembic || echo alembic)
+BACKEND_PYTEST = $(shell [ -x backend/.venv/bin/pytest ] && echo .venv/bin/pytest || echo pytest)
+BACKEND_RUFF = $(shell [ -x backend/.venv/bin/ruff ] && echo .venv/bin/ruff || echo ruff)
+BACKEND_ALEMBIC = $(shell [ -x backend/.venv/bin/alembic ] && echo .venv/bin/alembic || echo alembic)
 
 .PHONY: help setup install helm-lint lint lint-backend lint-frontend test-backend test-frontend verify dev-images dev-secrets dev-deploy dev
 
@@ -15,7 +15,7 @@ help:
 	@echo "  setup / install - init local worktree (backend/.venv + frontend/node_modules)"
 	@echo "  helm-lint       - helm lint + kubeconform + render guard gates"
 	@echo "  lint-backend    - backend ruff check"
-	@echo "  lint-frontend   - frontend next build + next lint"
+	@echo "  lint-frontend   - frontend next build + tsc + next lint"
 	@echo "  lint            - lint-backend + lint-frontend"
 	@echo "  test-backend    - backend alembic heads + pytest (SQLite in-memory)"
 	@echo "  test-frontend   - frontend vitest"
@@ -28,8 +28,8 @@ help:
 setup:
 	@echo "── Setting up backend/.venv"
 	@cd backend && if command -v uv >/dev/null 2>&1; then \
-	  [ -d .venv ] || uv venv; \
-	  uv pip install -r requirements-dev.txt; \
+	  [ -d .venv ] || env -u VIRTUAL_ENV uv venv; \
+	  env -u VIRTUAL_ENV uv pip install --python .venv/bin/python -r requirements-dev.txt; \
 	else \
 	  [ -d .venv ] || python3 -m venv .venv; \
 	  .venv/bin/pip install -r requirements-dev.txt; \
@@ -52,7 +52,7 @@ lint-backend:
 	cd backend && $(BACKEND_RUFF) check .
 
 lint-frontend:
-	cd frontend && npm run build && npm run lint
+	cd frontend && npm run build && npm run typecheck && npm run lint
 
 lint: lint-backend lint-frontend
 
