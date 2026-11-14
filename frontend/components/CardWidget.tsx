@@ -31,6 +31,7 @@ import {
 import {
   CANNOT_DELETE_CARD_HINT,
   NOT_YOUR_CARD_HINT,
+  avatarSeed,
   canDeleteCard,
   canEditCardText,
   countMyVotes,
@@ -384,7 +385,7 @@ export default function CardWidget({
               ) : (
                 <span
                   className={cn(
-                    `flex h-5 w-5 items-center justify-center rounded-full bg-linear-to-br/srgb text-[9px] font-bold text-white transition-opacity duration-150 ${getUserAvatarGradient(card.author)}`,
+                    `flex h-5 w-5 items-center justify-center rounded-full bg-linear-to-br/srgb text-[9px] font-bold text-white transition-opacity duration-150 ${getUserAvatarGradient(avatarSeed(card.author_id, card.author))}`,
                     onToggleSelect &&
                       !readOnly &&
                       (selected
