@@ -75,7 +75,7 @@ export function formatBoardMarkdown(
   }
 
   if (actionItems.length > 0) {
-    lines.push(`## Action Items (${actionItems.length})`)
+    lines.push(`## Задачи по итогам (${actionItems.length})`)
     for (const item of actionItems) {
       const title = item.title || item.text
       const assignee = item.assignee ? ` (@${item.assignee})` : ''

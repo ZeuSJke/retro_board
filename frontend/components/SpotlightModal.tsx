@@ -3,13 +3,14 @@
 import { useEffect } from 'react'
 import { motion } from 'motion/react'
 import { ChevronLeft, ChevronRight, ListTodo, Sparkles, ThumbsUp, User } from 'lucide-react'
-import { getCardColorPreset } from '@/lib/board-themes'
+import { getCardColorPreset, getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import type { Card, Column } from '@/types'
 import { RichCardText } from './RichCardText'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -100,15 +101,21 @@ export default function SpotlightModal({
   const canAddMore = !(maxVotes > 0 && userTotalVotes >= maxVotes)
   const limitReached = allowMultipleVotes ? !canAddMore : !liked && !canAddMore
   const voteDisabled = readOnly || limitReached
+  const showAuthor = !anonymous || card.author === currentUser
 
   return (
     <Dialog open={Boolean(card)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-xl" hideClose={!isFacilitator}>
-        <DialogHeader>
-          <div className="flex flex-wrap items-center justify-between gap-2 pr-6">
+      <DialogContent
+        layout="structured"
+        className="max-w-2xl"
+        hideClose={!isFacilitator}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        <DialogHeader className="gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <DialogTitle className="flex items-center gap-2 text-base">
               <Sparkles className="h-4 w-4 text-primary" />
-              В фокусе обсуждения
+              <span>В фокусе обсуждения</span>
               {column && (
                 <Badge variant="outline" className="ml-1 gap-1.5 font-normal">
                   <span
@@ -121,21 +128,21 @@ export default function SpotlightModal({
             </DialogTitle>
 
             {queueCards.length > 0 && currentIdx >= 0 && (
-              <span className="font-mono text-xs text-muted-foreground tabular-nums">
+              <Badge variant="secondary" className="font-mono text-xs tabular-nums">
                 {currentIdx + 1} / {queueCards.length}
-              </span>
+              </Badge>
             )}
           </div>
 
           {isFacilitator && queueCards.length > 1 && onSelectCard && (
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t pt-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
               {onQueueModeChange ? (
-                <div className="inline-flex rounded-lg border bg-muted/50 p-0.5 text-xs">
+                <div className="inline-flex rounded-lg border bg-muted/60 p-0.5 text-xs">
                   <button
                     type="button"
                     onClick={() => onQueueModeChange('all')}
                     className={cn(
-                      'rounded-md px-2 py-1 font-medium transition-colors',
+                      'rounded-md px-2.5 py-1 font-medium transition-colors',
                       queueMode === 'all'
                         ? 'bg-background text-foreground shadow-xs'
                         : 'text-muted-foreground hover:text-foreground',
@@ -147,7 +154,7 @@ export default function SpotlightModal({
                     type="button"
                     onClick={() => onQueueModeChange('top_votes')}
                     className={cn(
-                      'rounded-md px-2 py-1 font-medium transition-colors',
+                      'rounded-md px-2.5 py-1 font-medium transition-colors',
                       queueMode === 'top_votes'
                         ? 'bg-background text-foreground shadow-xs'
                         : 'text-muted-foreground hover:text-foreground',
@@ -167,7 +174,7 @@ export default function SpotlightModal({
                   variant="outline"
                   onClick={() => prevItem && onSelectCard(prevItem.card.id)}
                   title="Предыдущая (←)"
-                  className="h-7 px-2 text-xs"
+                  className="h-7 gap-1 px-2.5 text-xs"
                 >
                   <ChevronLeft className="h-3.5 w-3.5" />
                   Предыдущая
@@ -178,7 +185,7 @@ export default function SpotlightModal({
                   variant="outline"
                   onClick={() => nextItem && onSelectCard(nextItem.card.id)}
                   title="Следующая (→)"
-                  className="h-7 px-2 text-xs"
+                  className="h-7 gap-1 px-2.5 text-xs"
                 >
                   Следующая
                   <ChevronRight className="h-3.5 w-3.5" />
@@ -188,67 +195,95 @@ export default function SpotlightModal({
           )}
         </DialogHeader>
 
-        <motion.div
-          key={card.id}
-          initial={{ opacity: 0, scale: 0.94, y: 10 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-          className={`rounded-2xl border p-5 shadow-sm ${preset.cardClass}`}
-        >
-          <p className="whitespace-pre-wrap break-words text-lg font-medium leading-relaxed text-foreground">
-            <RichCardText text={card.text} />
-          </p>
+        {/* Фиксированная высота сцены исключает прыжки кнопок навигации и футера при смене карточки */}
+        <DialogBody className="flex-none overflow-visible py-5">
+          <div className={cn('relative flex h-[280px] sm:h-[300px] flex-col rounded-2xl border p-5 shadow-xs transition-colors', preset.cardClass)}>
+            {preset.id !== 'default' && (
+              <div
+                className="absolute bottom-4 left-0 top-4 w-1 rounded-r-full"
+                style={{ backgroundColor: preset.accentDot }}
+                aria-hidden="true"
+              />
+            )}
 
-          <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <User className="h-3.5 w-3.5" />
-              <span>
-                {anonymous && card.author !== currentUser
-                  ? 'Анонимный участник'
-                  : card.author}
-              </span>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant={liked ? 'default' : 'outline'}
-              disabled={voteDisabled}
-              title={
-                readOnly
-                  ? 'Доска заблокирована для правок'
-                  : limitReached
-                    ? 'Лимит голосов исчерпан'
-                    : liked && !allowMultipleVotes
-                      ? 'Убрать лайк'
-                      : 'Лайк'
-              }
-              onClick={() => onLike(card.id)}
-              className="gap-1.5 font-mono transition-transform active:scale-95"
+            <motion.div
+              key={card.id}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.16, ease: 'easeOut' }}
+              className="flex min-h-0 flex-1 flex-col justify-between"
             >
-              <motion.span
-                key={liked ? 'liked' : 'idle'}
-                initial={liked ? { scale: 1.3, rotate: -12 } : false}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 18 }}
-                className="inline-flex"
-              >
-                <ThumbsUp className="h-3.5 w-3.5" />
-              </motion.span>
-              {card.likes.length}
-              {allowMultipleVotes && myVotes > 0 ? ` (×${myVotes})` : ''}
-            </Button>
-          </div>
-        </motion.div>
+              <div className="min-h-0 flex-1 overflow-y-auto scrollbar-subtle pr-1">
+                <p className="whitespace-pre-wrap break-words text-base font-medium leading-relaxed text-foreground sm:text-lg">
+                  <RichCardText text={card.text} />
+                </p>
+              </div>
 
-        <DialogFooter className="flex-wrap gap-2 sm:justify-between">
+              <div className="mt-4 flex shrink-0 items-center justify-between border-t border-border/60 pt-3">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {showAuthor ? (
+                    <>
+                      <span
+                        className={`flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br text-[10px] font-bold text-white ${getUserAvatarGradient(card.author)}`}
+                      >
+                        {getUserInitials(card.author)}
+                      </span>
+                      <span className="font-medium text-foreground/85">{card.author}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                        <User className="h-3.5 w-3.5" />
+                      </span>
+                      <span>Анонимный участник</span>
+                    </>
+                  )}
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={liked ? 'default' : 'outline'}
+                  disabled={voteDisabled}
+                  title={
+                    readOnly
+                      ? 'Доска заблокирована для правок'
+                      : limitReached
+                        ? 'Лимит голосов исчерпан'
+                        : liked && !allowMultipleVotes
+                          ? 'Убрать лайк'
+                          : 'Лайк'
+                  }
+                  onClick={() => onLike(card.id)}
+                  className="gap-1.5 font-mono transition-transform active:scale-95"
+                >
+                  <motion.span
+                    key={liked ? 'liked' : 'idle'}
+                    initial={liked ? { scale: 1.3, rotate: -12 } : false}
+                    animate={{ scale: 1, rotate: 0 }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 18 }}
+                    className="inline-flex"
+                  >
+                    <ThumbsUp className="h-3.5 w-3.5" />
+                  </motion.span>
+                  {card.likes.length}
+                  {allowMultipleVotes && myVotes > 0 ? ` (×${myVotes})` : ''}
+                </Button>
+              </div>
+            </motion.div>
+          </div>
+        </DialogBody>
+
+        <DialogFooter className="sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
               variant="secondary"
               onClick={() => onCreateActionItem(card)}
+              className="gap-1.5"
             >
               <ListTodo className="h-4 w-4 text-primary" />
-              Создать Action Item
+              Создать задачу
             </Button>
             {isFacilitator && nextItem && onSelectCard && (
               <Button
@@ -258,6 +293,7 @@ export default function SpotlightModal({
                   onCreateActionItem(card)
                   onSelectCard(nextItem.card.id)
                 }}
+                className="gap-1"
               >
                 В задачу и далее
                 <ChevronRight className="h-4 w-4" />
@@ -265,7 +301,7 @@ export default function SpotlightModal({
             )}
           </div>
           {isFacilitator && (
-            <Button type="button" onClick={onClose}>
+            <Button type="button" onClick={onClose} className="shrink-0">
               Снять фокус для всех
             </Button>
           )}

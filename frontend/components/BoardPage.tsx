@@ -54,6 +54,7 @@ import BoardToolbar from './BoardToolbar'
 import BoardsPanel from './BoardsPanel'
 import BulkActionsBar from './BulkActionsBar'
 import Column from './Column'
+import { RichCardText } from './RichCardText'
 import CommandPalette, {
   type CommandBoardAction,
   type CommandSearchCard,
@@ -506,7 +507,7 @@ export default function BoardPage({
         setActionItems((prev) =>
           prev.find((i) => i.id === item.id) ? prev : [...prev, item],
         )
-        showToast('Добавлено в Action Items', 'success')
+        showToast('Добавлено в задачи', 'success')
         generateActionItemTitle(text)
           .then((generatedTitle) =>
             updateActionItem(item.id, { title: generatedTitle }).then((updated) => {
@@ -517,11 +518,11 @@ export default function BoardPage({
           )
           .catch(() => {
             updateActionItem(item.id, {
-              title: text.slice(0, 60) || 'Action Item',
+              title: text.slice(0, 60) || 'Задача',
             }).catch(() => {})
           })
       } catch (err) {
-        showToast(getApiErrorMessage(err, 'Не удалось создать Action Item'), 'error')
+        showToast(getApiErrorMessage(err, 'Не удалось создать задачу'), 'error')
       }
     },
     [anonymousMode, board.id, setActionItems],
@@ -971,7 +972,7 @@ export default function BoardPage({
 
   const handleBulkCreateActionItem = useCallback(
     () =>
-      runBulkAction('Не удалось создать Action Item', async (ids) => {
+      runBulkAction('Не удалось создать задачу', async (ids) => {
         const combinedText = selectedCards
           .map((c) => c.text.trim())
           .filter(Boolean)
@@ -1279,7 +1280,7 @@ export default function BoardPage({
   }
 
   const handleExportPDF = () => {
-    exportBoardToPDF(board, columns, actionItems)
+    exportBoardToPDF(board, columns, actionItems, summary)
   }
 
   const remoteCursors = Object.keys(cursorsRef.current).filter(
@@ -1536,7 +1537,7 @@ export default function BoardPage({
               )}
             >
               <p className="line-clamp-3 text-sm text-foreground">
-                {activeCard.text}
+                <RichCardText text={activeCard.text} />
               </p>
             </div>
           ) : activeGroup ? (

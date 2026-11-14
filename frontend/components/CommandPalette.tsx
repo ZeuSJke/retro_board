@@ -104,7 +104,7 @@ export default function CommandPalette({
                 Создать новую доску
               </Command.Item>
               <Command.Item
-                value="dashboard панель управления аналитика"
+                value="dashboard панель управления аналитика задачи action items"
                 onSelect={() => {
                   setOpen(false)
                   onNavigateDashboard()
@@ -112,7 +112,7 @@ export default function CommandPalette({
                 className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground aria-selected:bg-accent"
               >
                 <BarChart3 className="h-4 w-4 text-primary" />
-                Панель управления и Action Items
+                Панель управления и задачи
               </Command.Item>
               <Command.Item
                 value="toggle theme переключить тему светлая тёмная"

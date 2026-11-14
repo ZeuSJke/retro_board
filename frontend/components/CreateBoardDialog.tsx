@@ -446,7 +446,7 @@ export default function CreateBoardDialog({
               <div className="flex items-center justify-between gap-3 border-t pt-3">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2 text-sm font-medium">
-                    Перенести нерешённые Action Items
+                    Перенести незакрытые задачи
                     {openItemsCount > 0 && (
                       <Badge variant="warning" className="text-[11px]">
                         {openItemsCount} открытых

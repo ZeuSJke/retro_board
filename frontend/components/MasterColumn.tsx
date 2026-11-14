@@ -343,7 +343,7 @@ export default function MasterColumn({
               size="sm"
               className="h-7 gap-1 px-2 text-xs"
               onClick={handleOpenAiSuggest}
-              title="AI: предложить Action Items на основе карточек"
+              title="AI: предложить задачи на основе карточек"
               data-testid="ai-suggest-action-items-btn"
             >
               <Sparkles className="h-3.5 w-3.5 text-primary" />
@@ -514,14 +514,14 @@ export default function MasterColumn({
       <div
         ref={setNodeRef}
         className={cn(
-          'flex-1 space-y-2.5 overflow-y-auto p-3 transition-colors',
+          'scrollbar-subtle flex-1 space-y-2.5 overflow-y-auto p-3 transition-colors',
           isOver && 'bg-primary/10 ring-2 ring-inset ring-primary/40',
         )}
       >
         {actionItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 px-4 py-10 text-center text-xs text-muted-foreground">
             <ListTodo className="mb-2 h-6 w-6 opacity-40" />
-            <p className="font-medium text-foreground/80">Пока нет Action Items</p>
+            <p className="font-medium text-foreground/80">Пока нет задач</p>
             <p className="mt-1">
               Перетащите карточку сюда или нажмите кнопку задачи на любой карточке.
             </p>
@@ -750,7 +750,7 @@ export default function MasterColumn({
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить Action Item?</AlertDialogTitle>
+            <AlertDialogTitle>Удалить задачу?</AlertDialogTitle>
             <AlertDialogDescription>
               Задача «{deleteTarget?.title || deleteTarget?.text}» будет удалена безвозвратно.
             </AlertDialogDescription>

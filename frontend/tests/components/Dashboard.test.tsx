@@ -112,7 +112,7 @@ describe('Dashboard', () => {
 
     expect(screen.getByText('Доски команды')).toBeInTheDocument()
     expect(screen.getByText('Кросс-спринт AI-аналитика')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /Action Items/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Задачи/i })).toBeInTheDocument()
   })
 
   it('switches to boards tab and navigates to board on click', async () => {
@@ -160,6 +160,49 @@ describe('Dashboard', () => {
     expect(screen.getByText('В работе')).toBeInTheDocument()
     expect(screen.getByText('Выполнено')).toBeInTheDocument()
     expect(screen.getByText('Update docs')).toBeInTheDocument()
+
+    // Collapse "Выполнено" kanban column and expand back
+    await user.click(screen.getByRole('button', { name: /Свернуть колонку Выполнено/i }))
+    expect(screen.getByText(/Колонка свёрнута \(1\)/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Развернуть колонку Выполнено/i }))
+    expect(screen.getByText('Update docs')).toBeInTheDocument()
+  })
+
+  it('renders clickable links in tasks and collapses long kanban columns beyond 6 items', async () => {
+    const user = userEvent.setup()
+    const apiMod = await import('../../api')
+    const manyItems = [
+      {
+        ...mockItems[0],
+        id: 'link-item',
+        title: 'См. [доку](https://docs.example.com)',
+        text: 'Подробнее на https://tracker.example.com/browse/RETRO-1.',
+      },
+      ...Array.from({ length: 7 }, (_, i) => ({
+        ...mockItems[0],
+        id: `extra-${i}`,
+        title: `Задача списка ${i + 1}`,
+        text: `Описание ${i + 1}`,
+        status: 'open' as const,
+      })),
+    ]
+    vi.mocked(apiMod.getAllActionItems).mockResolvedValueOnce(manyItems)
+
+    render(<Dashboard />)
+
+    const docLink = await screen.findByRole('link', { name: 'доку' })
+    expect(docLink).toHaveAttribute('href', 'https://docs.example.com/')
+    const urlLink = screen.getByRole('link', {
+      name: 'https://tracker.example.com/browse/RETRO-1',
+    })
+    expect(urlLink).toHaveAttribute('href', 'https://tracker.example.com/browse/RETRO-1')
+
+    await user.click(screen.getByRole('button', { name: /Канбан/i }))
+    expect(screen.getByRole('button', { name: /Показать ещё 2/i })).toBeInTheDocument()
+    expect(screen.queryByText('Задача списка 7')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Показать ещё 2/i }))
+    expect(screen.getByText('Задача списка 7')).toBeInTheDocument()
   })
 
   it('fetches AI insights when clicking button', async () => {

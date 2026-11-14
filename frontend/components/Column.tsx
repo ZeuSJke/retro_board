@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { AnimatePresence, motion } from 'motion/react'
@@ -229,6 +229,49 @@ export default function Column({
   const { setNodeRef, isOver } = useDroppable({
     id: `col-${column.id}`,
   })
+
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [isScrolling, setIsScrolling] = useState(false)
+  const [hasMoreBelow, setHasMoreBelow] = useState(false)
+
+  const updateScrollIndicator = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    setHasMoreBelow(el.scrollHeight - el.scrollTop - el.clientHeight > 8)
+  }, [])
+
+  const setCardsAreaRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      scrollContainerRef.current = node
+      setNodeRef(node)
+    },
+    [setNodeRef],
+  )
+
+  const handleCardsScroll = useCallback(() => {
+    updateScrollIndicator()
+    setIsScrolling(true)
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
+    scrollTimerRef.current = setTimeout(() => {
+      setIsScrolling(false)
+    }, 900)
+  }, [updateScrollIndicator])
+
+  useEffect(() => {
+    updateScrollIndicator()
+    const el = scrollContainerRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(updateScrollIndicator)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [updateScrollIndicator, column.cards, collapsedGroups])
+
+  useEffect(() => {
+    return () => {
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
+    }
+  }, [])
 
   const filteredAndSortedCards = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -506,10 +549,13 @@ export default function Column({
         </div>
 
         {/* Scrollable cards area */}
-        <div
-          ref={setNodeRef}
-          className="flex-1 space-y-2.5 overflow-y-auto px-3 pb-3 min-h-[72px]"
-        >
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={setCardsAreaRef}
+            onScroll={handleCardsScroll}
+            data-scrolling={isScrolling ? 'true' : undefined}
+            className="scrollbar-subtle flex-1 space-y-2.5 overflow-y-auto px-3 pb-3 min-h-[72px]"
+          >
           <SortableContext
             items={filteredAndSortedCards.map((c) => c.id)}
             strategy={verticalListSortingStrategy}
@@ -602,6 +648,13 @@ export default function Column({
                     : `${otherTypingUsers.slice(0, 2).join(', ')} пишут...`}
               </span>
             </div>
+          )}
+          </div>
+          {hasMoreBelow && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-card/90 to-transparent"
+            />
           )}
         </div>
 

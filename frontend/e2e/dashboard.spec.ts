@@ -18,7 +18,7 @@ test.describe('Dashboard', () => {
     await page.goto('/dashboard')
 
     await expect(page.locator('header')).toContainText('Панель управления')
-    await expect(page.getByRole('tab', { name: /Action Items/i })).toBeVisible()
+    await expect(page.getByRole('tab', { name: /Задачи/i })).toBeVisible()
     await expect(page.getByRole('tab', { name: /Доски/i })).toBeVisible()
 
     await page.getByRole('tab', { name: /Доски/i }).click()
@@ -86,7 +86,7 @@ test.describe('Dashboard', () => {
 
     await page.goto('/dashboard')
 
-    await expect(page.locator('body')).toContainText('Динамика Action Items')
+    await expect(page.locator('body')).toContainText('Динамика задач')
     // Recharts renders SVG
     await expect(page.locator('.recharts-responsive-container').first()).toBeVisible()
   })

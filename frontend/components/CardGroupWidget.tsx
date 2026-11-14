@@ -320,13 +320,6 @@ export default function CardGroupWidget({
             </motion.div>
           )}
         </AnimatePresence>
-
-        {collapsed && cards.length > 1 && (
-          <div
-            aria-hidden="true"
-            className="mx-2 mt-1.5 h-1.5 rounded-b-lg border-x border-b border-primary/20 bg-primary/[0.03] transition-all"
-          />
-        )}
       </div>
 
       <AlertDialog open={dissolveOpen} onOpenChange={setDissolveOpen}>

@@ -55,7 +55,7 @@ export default function WorkspaceInsightsCard({
       <CardContent>
         {!insights ? (
           <p className="text-sm text-muted-foreground">
-            Нажмите «Собрать инсайты», чтобы проанализировать карточки, Action Items и оценки настроения по всем спринтам команды.
+            Нажмите «Собрать инсайты», чтобы проанализировать карточки, итоговые задачи и оценки настроения по всем спринтам команды.
           </p>
         ) : (
           <div className="space-y-4">

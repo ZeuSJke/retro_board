@@ -11,7 +11,7 @@ import Providers from '../components/Providers'
 
 export const metadata: Metadata = {
   title: 'RetroBoard — Ретроспектива команды',
-  description: 'Интерактивная доска ретроспектив, голосования и Action Items',
+  description: 'Интерактивная доска ретроспектив, голосования и итоговых задач',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
