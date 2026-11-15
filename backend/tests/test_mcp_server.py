@@ -1,8 +1,8 @@
 """Тесты Streamable HTTP MCP-сервера (`/mcp`), 15 инструментов, 3 промптов и инвариантов."""
 
 import asyncio
-from datetime import UTC, datetime
 import json
+from datetime import UTC, datetime
 
 import anyio
 import httpx
@@ -1163,3 +1163,149 @@ async def test_mcp_real_streamable_http_client_and_concurrent_context_isolation(
         set_db_session_factory(None)
         if file_engine is not None:
             file_engine.dispose()
+
+
+def test_mcp_search_cards_sql_filters_pagination_and_escaping(
+    client, db_session, workspace_headers, login_as
+):
+    """Проверка SQL-предфильтрации search_cards (#18): кириллица, LIKE-экранирование,
+    пагинация, скрытый сбор (свои vs чужие) и анонимный режим.
+    """
+    rw_secret = _create_token(client, workspace_headers, name="SearchBot", scope="read_write")[
+        "secret"
+    ]
+    other_headers = login_as("Марина")
+
+    # Создаём доску с колонками с кириллицей и спецсимволом %
+    board_resp = client.post(
+        "/api/boards/",
+        json={
+            "name": "Поиск SQL",
+            "template": "custom",
+            "custom_columns": [
+                {"title": "Что хорошо_100%", "color": "#006E1C"},
+                {"title": "Что улучшить", "color": "#BA1A1A"},
+            ],
+        },
+        headers=workspace_headers,
+    )
+    assert board_resp.status_code == 201
+    board = board_resp.json()
+    col_good = board["columns"][0]["id"]
+    col_improve = board["columns"][1]["id"]
+
+    # Удалённая доска не должна попадать в поиск
+    deleted_resp = client.post("/api/boards/", json={"name": "Старая доска"}, headers=workspace_headers)
+    assert deleted_resp.status_code == 201
+    deleted_board = deleted_resp.json()
+    client.post(
+        "/api/cards/",
+        json={"column_id": deleted_board["columns"][0]["id"], "text": "РЕЛИЗ в архиве"},
+        headers=workspace_headers,
+    )
+    assert client.delete(f"/api/boards/{deleted_board['id']}", headers=workspace_headers).status_code == 204
+
+    # Карточки: кириллица в разном регистре + спецсимволы % и _
+    err, c_agent_1, _ = _call_tool(
+        client,
+        rw_secret,
+        "create_card",
+        {"board_id_or_slug": board["id"], "column_id": col_good, "text": "Ёжик готов на 100%"},
+    )
+    assert not err
+    err, c_agent_2, _ = _call_tool(
+        client,
+        rw_secret,
+        "create_card",
+        {"board_id_or_slug": board["id"], "column_id": col_improve, "text": "ёжик sprint_1"},
+    )
+    assert not err
+    c_human_1 = client.post(
+        "/api/cards/",
+        json={"column_id": col_good, "text": "ЁЖИК sprintX1 1000"},
+        headers=other_headers,
+    ).json()
+    c_human_2 = client.post(
+        "/api/cards/",
+        json={"column_id": col_improve, "text": "Ёлка и ещё один ёжик"},
+        headers=other_headers,
+    ).json()
+
+    # Кириллица в верхнем регистре находит все 4 карточки в разных регистрах
+    err, all_hits, _ = _call_tool(
+        client, rw_secret, "search_cards", {"query": "ЁЖИК", "limit": 2, "offset": 0}
+    )
+    assert not err
+    assert all_hits["total"] == 4
+    assert all_hits["has_more"] is True
+    assert len(all_hits["items"]) == 2
+
+    err, page_2, _ = _call_tool(
+        client, rw_secret, "search_cards", {"query": "ЁЖИК", "limit": 2, "offset": 2}
+    )
+    assert not err
+    assert page_2["total"] == 4
+    assert page_2["has_more"] is False
+    assert [h["id"] for h in all_hits["items"] + page_2["items"]] == [
+        c_agent_1["id"],
+        c_human_1["id"],
+        c_agent_2["id"],
+        c_human_2["id"],
+    ]
+
+    # Выход offset за границы
+    err, page_empty, _ = _call_tool(
+        client, rw_secret, "search_cards", {"query": "ёжик", "limit": 10, "offset": 10}
+    )
+    assert not err
+    assert page_empty["total"] == 4
+    assert page_empty["items"] == []
+    assert page_empty["has_more"] is False
+
+    # Экранирование '%' и '_' в LIKE (иначе "100%" совпало бы с "1000", а "_1" с "X1")
+    err, pct_hits, _ = _call_tool(client, rw_secret, "search_cards", {"query": "100%"})
+    assert not err
+    assert [h["id"] for h in pct_hits["items"]] == [c_agent_1["id"]]
+
+    err, underscore_hits, _ = _call_tool(client, rw_secret, "search_cards", {"query": "sprint_1"})
+    assert not err
+    assert [h["id"] for h in underscore_hits["items"]] == [c_agent_2["id"]]
+
+    # Фильтр по column_title (кириллица без учёта регистра + экранирование % и _)
+    err, col_hits, _ = _call_tool(
+        client,
+        rw_secret,
+        "search_cards",
+        {"query": "ёжик", "column_title": "ХОРОШО_100%"},
+    )
+    assert not err
+    assert [h["id"] for h in col_hits["items"]] == [c_agent_1["id"], c_human_1["id"]]
+
+    # Включаем скрытый сбор и анонимность: чужие карточки пропадают даже из total,
+    # а собственные карточки агента остаются видны с author_kind="agent".
+    patch_resp = client.patch(
+        f"/api/boards/{board['id']}",
+        json={"hide_cards_until_reveal": True, "anonymous_votes": True},
+        headers=workspace_headers,
+    )
+    assert patch_resp.status_code == 200
+
+    err, hidden_hits, _ = _call_tool(client, rw_secret, "search_cards", {"query": "ЁЖИК"})
+    assert not err
+    assert hidden_hits["total"] == 2
+    assert {h["id"] for h in hidden_hits["items"]} == {c_agent_1["id"], c_agent_2["id"]}
+    assert all(h["author_kind"] == "agent" and h["masked"] is False for h in hidden_hits["items"])
+
+    # Раскрытие возвращает видимость всех карточек и анонимизирует людей
+    assert (
+        client.post(f"/api/boards/{board['id']}/reveal", headers=workspace_headers).status_code
+        == 200
+    )
+    err, revealed_hits, _ = _call_tool(client, rw_secret, "search_cards", {"query": "ЁЖИК"})
+    assert not err
+    assert revealed_hits["total"] == 4
+    by_id = {h["id"]: h for h in revealed_hits["items"]}
+    assert by_id[c_human_1["id"]]["author"] == "Участник"
+    assert by_id[c_human_1["id"]]["author_kind"] == "human"
+    assert by_id[c_agent_1["id"]]["author"] == "SearchBot"
+    assert by_id[c_agent_1["id"]]["author_kind"] == "agent"

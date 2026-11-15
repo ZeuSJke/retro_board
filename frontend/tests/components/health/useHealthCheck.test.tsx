@@ -131,7 +131,7 @@ describe('useHealthCheck', () => {
     expect(result.current.rotiOpen).toBe(true)
 
     act(() => {
-      handled = result.current.handleServerEvent({ event: 'card_created', data: {} })
+      handled = result.current.handleServerEvent({ event: 'card_deleted', data: { id: 'c-1' } })
     })
     expect(handled).toBe(false)
   })

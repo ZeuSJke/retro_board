@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from app import models, schemas
 from app.board_view import (
     broadcast_card,
     can_delete_card,
@@ -11,13 +12,12 @@ from app.board_view import (
     require_cards_visible,
 )
 from app.database import get_db
-from app import models, schemas
+from app.limiter import TEAM_BULK_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.services import cards as cards_service
 from app.services.cards import load_board_cards, prune_empty_groups
 from app.utils import get_or_404, require_unlocked_board
-from app.ws_manager import manager
-from app.limiter import TEAM_BULK_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.workspace_auth import get_current_participant, get_current_workspace
+from app.ws_manager import manager
 
 router = APIRouter()
 
@@ -70,7 +70,7 @@ async def update_card(
     participant: models.Participant = Depends(get_current_participant),
 ):
     card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
-    col = db.get(models.Column, card.column_id)
+    col = get_or_404(db, models.Column, card.column_id, "Карточка не найдена")
     board = require_unlocked_board(
         db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
@@ -107,11 +107,11 @@ async def move_card(
     participant: models.Participant = Depends(get_current_participant),
 ):
     card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
-    col = db.get(models.Column, card.column_id)
+    col = get_or_404(db, models.Column, card.column_id, "Карточка не найдена")
     board = require_unlocked_board(
         db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
-    old_col = db.get(models.Column, card.column_id)
+    old_col = col
     new_col = get_or_404(db, models.Column, body.column_id, "Колонка назначения не найдена")
     if new_col.board_id != old_col.board_id:
         raise HTTPException(400, "Колонки должны быть на одной доске")
@@ -178,7 +178,7 @@ async def toggle_like(
     card = db.query(models.Card).filter(models.Card.id == card_id).with_for_update().first()
     if not card:
         raise HTTPException(404, "Карточка не найдена")
-    col = db.get(models.Column, card.column_id)
+    col = get_or_404(db, models.Column, card.column_id, "Карточка не найдена")
     # Lock board row too to prevent parallel votes across different cards from exceeding max_votes
     board = (
         db.query(models.Board)
@@ -338,7 +338,7 @@ async def delete_card(
     participant: models.Participant = Depends(get_current_participant),
 ):
     card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
-    col = db.get(models.Column, card.column_id)
+    col = get_or_404(db, models.Column, card.column_id, "Карточка не найдена")
     board = require_unlocked_board(
         db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )

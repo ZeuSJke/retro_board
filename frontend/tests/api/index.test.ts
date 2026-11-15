@@ -29,6 +29,7 @@ import {
   revealBoardCards,
   submitBoardMood,
   autoClusterPreview,
+  AI_API_TIMEOUT_MS,
 } from '../../api'
 
 const api = axios.create()
@@ -115,9 +116,13 @@ describe('API client', () => {
     expect(result).toEqual(board)
   })
 
-  it('autoClusterPreview отправляет только колонку', async () => {
+  it('autoClusterPreview отправляет только колонку и увеличенный таймаут', async () => {
     ;(api.post as ReturnType<typeof vi.fn>).mockResolvedValue({ data: { column_id: 'c1', groups: [] } })
     await autoClusterPreview('c1')
-    expect(api.post).toHaveBeenCalledWith('/groups/auto-cluster-preview', { column_id: 'c1' })
+    expect(api.post).toHaveBeenCalledWith(
+      '/groups/auto-cluster-preview',
+      { column_id: 'c1' },
+      { timeout: AI_API_TIMEOUT_MS },
+    )
   })
 })

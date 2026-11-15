@@ -1,3 +1,5 @@
+import type { HealthTeamSummary, WsHealthCheckRequestedData } from './health'
+
 export interface BoardMood {
   id: string
   board_id: string
@@ -204,30 +206,87 @@ export interface ReactionBubble {
   xOffset: number
 }
 
-export interface WsMessage {
-  event: string
-  data: Record<string, unknown>
+export interface WsEnvelopeBase {
   /** Порядковый номер события данных доски; у курсоров, таймера и присутствия его нет. */
   seq?: number
   /** Поколение нумерации: меняется при рестарте сервера. */
   epoch?: string
 }
 
+export interface WsGroupsCollapsedData {
+  group_ids: string[]
+}
+
+export type WsMessage = WsEnvelopeBase &
+  (
+    | { event: 'identify'; data: Record<string, never> }
+    | { event: 'pong'; data: Record<string, unknown> }
+    | { event: 'cursor_move'; data: WsCursorMoveData }
+    | { event: 'cursor_leave'; data: WsCursorLeaveData }
+    | { event: 'ready_toggle'; data: Record<string, never> }
+    | { event: 'ready_update'; data: { ready_ids: string[] } }
+    | { event: 'spotlight_card'; data: { card_id: string | null } }
+    | { event: 'spotlight_update'; data: { card_id: string | null } }
+    | { event: 'card_typing'; data: { column_id: string; is_typing: boolean } }
+    | { event: 'typing_update'; data: { typing: TypingUser[] } }
+    | { event: 'reaction'; data: { emoji: string; id?: string; username?: string; participant_id?: string } }
+    | { event: 'presence_update'; data: WsPresenceData }
+    | { event: 'facilitator_start'; data: Record<string, never> }
+    | { event: 'facilitator_stop'; data: { lock_board?: boolean } }
+    | { event: 'facilitator_transfer'; data: { participant_id: string } }
+    | { event: 'facilitator_takeover'; data: Record<string, never> }
+    | { event: 'facilitator_update'; data: WsFacilitatorData }
+    | { event: 'phase_change'; data: WsPhaseData }
+    | { event: 'phase_update'; data: WsPhaseData }
+    | { event: 'timer_start'; data: WsTimerStartData }
+    | { event: 'timer_pause'; data: WsTimerPauseData }
+    | { event: 'timer_reset'; data: WsTimerResetData }
+    | { event: 'group_collapse'; data: WsGroupCollapseData }
+    | { event: 'groups_collapsed'; data: WsGroupsCollapsedData }
+    | { event: 'cards_visibility_changed'; data: { hidden?: boolean } & Record<string, unknown> }
+    | { event: 'participant_renamed'; data: WsParticipantRenamedData }
+    | { event: 'mood_updated'; data: BoardMood }
+    | { event: 'action_item_created'; data: ActionItem }
+    | { event: 'action_item_updated'; data: ActionItem }
+    | { event: 'action_item_deleted'; data: WsDeletedData }
+    | { event: 'auto_cluster_completed'; data: WsAutoClusterCompletedData }
+    | { event: 'summary_generated'; data: { regenerated?: unknown } & Record<string, unknown> }
+    | { event: 'summary_failed'; data: WsSummaryFailedData }
+    | { event: 'board_created'; data: BoardListItem }
+    | { event: 'board_updated'; data: WsBoardUpdatedData }
+    | { event: 'board_deleted'; data: WsDeletedData }
+    | { event: 'column_created'; data: Column }
+    | { event: 'column_updated'; data: Column }
+    | { event: 'column_deleted'; data: WsDeletedData }
+    | { event: 'card_created'; data: Card }
+    | { event: 'card_updated'; data: Card }
+    | { event: 'card_moved'; data: WsCardMovedData }
+    | { event: 'card_deleted'; data: WsDeletedData }
+    | { event: 'group_created'; data: CardGroup }
+    | { event: 'group_updated'; data: CardGroup }
+    | { event: 'group_deleted'; data: WsGroupDeletedData }
+    | { event: 'group_moved'; data: WsGroupMovedData }
+    | { event: 'health_check_start'; data: Record<string, never> }
+    | { event: 'health_check_requested'; data: WsHealthCheckRequestedData }
+    | { event: 'health_updated'; data: HealthTeamSummary }
+    | { event: 'roti_requested'; data: Record<string, unknown> }
+  )
+
 export interface WsCursorMoveData {
-  participant_id: string
-  username: string
+  participant_id?: string
+  username?: string
   x: number
   y: number
 }
 
 export interface WsCursorLeaveData {
-  participant_id: string
-  username: string
+  participant_id?: string
+  username?: string
 }
 
 export interface WsPresenceData {
   /** Имена — для простых клиентов; тёзки различаются только по `participants`. */
-  users: string[]
+  users?: string[]
   participants: Participant[]
 }
 
@@ -259,7 +318,9 @@ export interface WsPhaseData {
 export interface WsTimerStartData {
   duration: number
   remaining: number
-  ts: number
+  ts?: number
+  /** Ожидаемое время окончания по часам сервера (мс UTC); отсчёт по-прежнему идёт от `remaining`. */
+  ends_at_ms?: number
 }
 
 export interface WsTimerPauseData {

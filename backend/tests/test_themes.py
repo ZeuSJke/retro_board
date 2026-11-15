@@ -730,7 +730,7 @@ class TestThemesApi:
         self, client, sample_board, workspace_headers, model
     ):
         """Итоги по переходу в фазу «Итоги»: те же темы и счётчики, что при перегенерации."""
-        from app.routers import boards
+        from app.services import boards as boards_service
         from app.ws_manager import manager
 
         earlier = make_board(client, workspace_headers, "Спринт 0")
@@ -752,7 +752,9 @@ class TestThemesApi:
             "recommendations": [],
         }
         with patch("app.database.SessionLocal", TestSessionLocal):
-            result = boards._generate_summary_internal(board_id, "p-fac", "test-workspace-id")
+            result = boards_service.generate_summary_internal(
+                board_id, "p-fac", "test-workspace-id"
+            )
 
         assert result is not None
         assert result["key_themes"] == [REVIEW, FLAKY]

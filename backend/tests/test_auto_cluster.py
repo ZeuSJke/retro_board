@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 from app.config import settings
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for parse_clustering_response
 # ---------------------------------------------------------------------------
@@ -277,7 +276,8 @@ class TestAutoCluster:
     ):
         """Column belongs to different workspace → 404."""
         import bcrypt
-        from app.models import Workspace, Board, Column
+
+        from app.models import Board, Column, Workspace
 
         # Create another workspace with its own board and column
         other_ws = Workspace(

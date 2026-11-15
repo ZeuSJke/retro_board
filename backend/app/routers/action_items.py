@@ -2,25 +2,25 @@ import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
-from app.board_view import ANON_AUTHOR, require_cards_visible
-from app.database import get_db, release_connection
 from app import models, schemas
-from app.services import action_items as action_items_service
-from app.services.action_items import copy_unresolved_action_items
-from app.utils import get_or_404, require_live_board
 from app.ai import ai_client
 from app.ai.prompts.title_generation import (
     TITLE_GENERATION_CONFIG,
     build_title_prompt,
     clean_generated_title,
 )
-from app.ws_manager import manager
+from app.board_view import ANON_AUTHOR, require_cards_visible
+from app.database import get_db, release_connection
 from app.limiter import TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
+from app.services import action_items as action_items_service
+from app.services.action_items import copy_unresolved_action_items
+from app.utils import get_or_404, require_live_board
 from app.workspace_auth import get_current_workspace
+from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +81,18 @@ def get_trends(
 @limiter.limit(TEAM_READ_LIMIT)
 def list_all_action_items(
     request: Request,
+    response: Response,
     status: Optional[str] = None,
     board_id: Optional[str] = None,
     assignee: Optional[str] = None,
     include_carried: bool = False,
+    limit: Optional[int] = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """List action items across all boards with optional filters."""
-    items, _total = action_items_service.list_workspace_action_items(
+    items, total = action_items_service.list_workspace_action_items(
         db,
         workspace.id,
         status=status,
@@ -97,7 +100,10 @@ def list_all_action_items(
         assignee=assignee,
         include_carried=include_carried,
         lookup="id",
+        limit=limit,
+        offset=offset,
     )
+    response.headers["X-Total-Count"] = str(total)
     return items
 
 

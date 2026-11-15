@@ -27,7 +27,8 @@ postgres:
 api:
   # MUST remain 1: WebSocket room/phase/timer/facilitator state lives in process memory.
   replicas: 1
-  forwardedAllowIps: "*"
+  # Loopback (probes) + k3s pod CIDR (Traefik Ingress); avoids trusting arbitrary X-Forwarded-For.
+  forwardedAllowIps: "127.0.0.1,10.42.0.0/16"
   resources:
     requests:
       cpu: 100m

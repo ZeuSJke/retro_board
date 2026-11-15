@@ -1,0 +1,43 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":timezone(Europe/Moscow)"
+  ],
+  "schedule": [
+    "before 08:00 on monday"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "prConcurrentLimit": 4,
+  "packageRules": [
+    {
+      "matchManagers": [
+        "dockerfile",
+        "gitlabci"
+      ],
+      "pinDigests": true
+    },
+    {
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "frontend minor/patch dependencies"
+    },
+    {
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchFileNames": [
+        "backend/requirements*.in"
+      ],
+      "groupName": "backend direct dependencies"
+    }
+  ]
+}

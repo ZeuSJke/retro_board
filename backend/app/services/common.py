@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
-from sqlalchemy import case, or_
+from sqlalchemy import ColumnElement, case, or_
 from sqlalchemy.orm import Query, Session
 
 from app import models
@@ -12,7 +12,7 @@ from app.utils import require_live_board, require_unlocked_board
 BroadcastAction = Callable[[], Awaitable[None]]
 BoardLookupMode = Literal["id", "slug", "id_or_slug"]
 
-_LOOKUP_PREDICATES: dict[BoardLookupMode, Callable[[str], object]] = {
+_LOOKUP_PREDICATES: dict[BoardLookupMode, Callable[[str], ColumnElement[bool]]] = {
     "id": lambda value: models.Board.id == value,
     "slug": lambda value: models.Board.slug == value,
     "id_or_slug": lambda value: or_(

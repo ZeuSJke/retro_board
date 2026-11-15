@@ -15,9 +15,9 @@
 `TESTING=true` выключен до тех пор, пока тест не включит `limiter.enabled = True`.
 """
 
+import time
 from collections import deque
 from threading import Lock
-import time
 
 from app.limiter import limiter
 

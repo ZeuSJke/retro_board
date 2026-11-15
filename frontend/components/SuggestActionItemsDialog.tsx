@@ -155,14 +155,14 @@ export default function SuggestActionItemsDialog({
           ) : (
             <>
               <div className="flex items-center justify-between px-0.5 text-xs text-muted-foreground">
-                <button
-                  type="button"
-                  onClick={handleToggleAll}
-                  className="inline-flex items-center gap-2 font-medium text-foreground/85 transition-colors hover:text-primary"
-                >
-                  <Checkbox checked={allSelected} tabIndex={-1} aria-hidden="true" />
+                <label className="inline-flex cursor-pointer items-center gap-2 font-medium text-foreground/85 transition-colors hover:text-primary">
+                  <Checkbox
+                    checked={allSelected}
+                    onCheckedChange={handleToggleAll}
+                    aria-label={allSelected ? 'Снять все' : 'Выбрать все'}
+                  />
                   <span>{allSelected ? 'Снять все' : 'Выбрать все'}</span>
-                </button>
+                </label>
                 <span className="tabular-nums">
                   Выбрано: {selectedItems.length} из {items.length}
                 </span>

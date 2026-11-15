@@ -1,15 +1,16 @@
 import uuid
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.database import get_db
 from app import models, schemas
-from app.utils import get_or_404, require_unlocked_board
-from app.ws_manager import manager
-from app.limiter import limiter
 from app.board_view import require_moderator
+from app.database import get_db
+from app.limiter import limiter
+from app.utils import get_or_404, require_unlocked_board
 from app.workspace_auth import get_current_participant, get_current_workspace
+from app.ws_manager import manager
 
 router = APIRouter()
 

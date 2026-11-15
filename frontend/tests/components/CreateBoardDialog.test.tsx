@@ -1,9 +1,11 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import CreateBoardDialog from '../../components/CreateBoardDialog'
 import BoardsPanel from '../../components/BoardsPanel'
 import { onBoardsRefreshRequested } from '../../lib/board-list-signals'
+import { makeQueryClient } from '../../lib/query-client'
 import { showToast } from '../../store/toastStore'
 import type { BoardListItem } from '../../types'
 
@@ -51,11 +53,18 @@ function dialogProps(existingBoards: BoardListItem[], open = true) {
   return { open, onOpenChange: vi.fn(), existingBoards, onCreated: vi.fn() }
 }
 
+function renderWithQuery(ui: React.ReactElement) {
+  const client = makeQueryClient()
+  return render(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  })
+}
+
 describe('CreateBoardDialog — форма новой доски', () => {
   it('введённое не сбрасывается, когда коллега меняет любую доску', async () => {
     const user = userEvent.setup()
     const boards = [item('b-1', 'Спринт 1')]
-    const view = render(<CreateBoardDialog {...dialogProps(boards)} />)
+    const view = renderWithQuery(<CreateBoardDialog {...dialogProps(boards)} />)
 
     await user.type(screen.getByTestId('create-board-name-input'), 'Спринт 43')
     await user.click(screen.getByRole('button', { name: /4Ls/ }))
@@ -72,7 +81,7 @@ describe('CreateBoardDialog — форма новой доски', () => {
   it('каждое новое открытие начинается с чистой формы', async () => {
     const user = userEvent.setup()
     const boards = [item('b-1', 'Спринт 1')]
-    const view = render(<CreateBoardDialog {...dialogProps(boards)} />)
+    const view = renderWithQuery(<CreateBoardDialog {...dialogProps(boards)} />)
     await user.type(screen.getByTestId('create-board-name-input'), 'Черновик')
 
     view.rerender(<CreateBoardDialog {...dialogProps(boards, false)} />)
@@ -83,7 +92,7 @@ describe('CreateBoardDialog — форма новой доски', () => {
   })
 
   it('кнопки закреплены: «Создать» вне прокручиваемой части, поля — внутри', () => {
-    render(<CreateBoardDialog {...dialogProps([item('b-1', 'Спринт 1')])} />)
+    renderWithQuery(<CreateBoardDialog {...dialogProps([item('b-1', 'Спринт 1')])} />)
 
     const submit = screen.getByTestId('create-board-submit-btn')
     const nameInput = screen.getByTestId('create-board-name-input')
@@ -98,7 +107,7 @@ describe('CreateBoardDialog — форма новой доски', () => {
     api.createBoard.mockResolvedValue({ id: 'b-new', name: 'Спринт 3', slug: 'sprint-3', columns: [] })
     const boards = [item('b-2', 'Спринт 2', { action_items_open: 4 }), item('b-1', 'Спринт 1')]
     const props = dialogProps(boards)
-    const view = render(<CreateBoardDialog {...props} />)
+    const view = renderWithQuery(<CreateBoardDialog {...props} />)
 
     expect(screen.getByText('4 открытых')).toBeInTheDocument()
     await user.type(screen.getByTestId('create-board-name-input'), 'Спринт 3')
@@ -131,7 +140,7 @@ describe('CreateBoardDialog — форма новой доски', () => {
         data: { detail: [{ type: 'string_too_long', loc: ['body', 'name'], ctx: { max_length: 120 } }] },
       },
     })
-    render(<CreateBoardDialog {...dialogProps([])} />)
+    renderWithQuery(<CreateBoardDialog {...dialogProps([])} />)
 
     await user.type(screen.getByTestId('create-board-name-input'), 'Спринт')
     await user.click(screen.getByTestId('create-board-submit-btn'))

@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
@@ -63,9 +64,11 @@ import { getHealthQuestions, getHealthTrends } from '../api/health'
 import { getTeamThemes } from '../api/themes'
 import { useAppStore } from '../store'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { queryKeys } from '../lib/query-client'
 import { showToast } from '../store/toastStore'
-import { getApiErrorMessage, markApiErrorReported } from '../utils/apiError'
+import { getApiErrorMessage, getApiErrorStatus, markApiErrorReported } from '../utils/apiError'
 import { boardToBoardListItem } from '../utils/boardMapper'
+import { isBoardListItem, isBoardUpdatedData, isDeletedData } from '../utils/wsData'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import { avatarSeed } from '@/lib/participants'
 import type {
@@ -77,11 +80,9 @@ import type {
   MoodTrendPoint,
   TrendPoint,
   WorkspaceInsights,
-  WsBoardUpdatedData,
   WsMessage,
 } from '../types'
 import type { HealthQuestion, HealthTrendPoint } from '../types/health'
-import type { TeamTheme } from '../types/themes'
 import ActionItemExternalLink from './ActionItemExternalLink'
 import AgentTokensDialog, { type AgentTokensAdapter } from './AgentTokensDialog'
 import BoardsPanel from './BoardsPanel'
@@ -267,6 +268,7 @@ function KanbanDraggableCard({
 
 export default function Dashboard() {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const { theme, setTheme } = useTheme()
   const workspace = useAppStore((s) => s.workspace)
   const participant = useAppStore((s) => s.participant)
@@ -278,24 +280,29 @@ export default function Dashboard() {
   const hasHydrated = useAppStore((s) => s._hasHydrated ?? true)
   const username = participant?.name ?? savedName
 
-  const [boards, setBoards] = useState<BoardListItem[]>([])
-  const [items, setItems] = useState<DashboardActionItem[]>([])
-  const [trends, setTrends] = useState<TrendPoint[]>([])
-  const [moodTrends, setMoodTrends] = useState<MoodTrendPoint[]>([])
-  const [healthTrends, setHealthTrends] = useState<HealthTrendPoint[]>([])
-  const [healthQuestions, setHealthQuestions] = useState<HealthQuestion[]>([])
-  const [themes, setThemes] = useState<TeamTheme[]>([])
-  const [themesError, setThemesError] = useState(false)
   const [insights, setInsights] = useState<WorkspaceInsights | null>(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
 
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [needsAuth, setNeedsAuth] = useState(false)
   // Была ли на этой странице сессия: если она пропала (выход, ответ 401) — показываем вход.
   // Значение выводится из стора прямо при рендере, без эффекта.
   const [hadWorkspace, setHadWorkspace] = useState(Boolean(workspace))
   if (workspace && !hadWorkspace) setHadWorkspace(true)
+
+  const workspaceId = workspace?.workspaceId ?? 'anonymous'
+  const queriesEnabled = hasHydrated && Boolean(workspace)
+  const boardsKey = useMemo(() => queryKeys.boards(workspaceId), [workspaceId])
+  const itemsKey = useMemo(
+    () => queryKeys.dashboardActionItems(workspaceId, { status: 'all', boardId: 'all', assignee: '' }),
+    [workspaceId],
+  )
+  const trendsKey = useMemo(() => queryKeys.dashboardTrends(workspaceId), [workspaceId])
+  const moodTrendsKey = useMemo(() => queryKeys.dashboardMoodTrends(workspaceId), [workspaceId])
+  const healthTrendsKey = useMemo(() => queryKeys.dashboardHealthTrends(workspaceId), [workspaceId])
+  const themesKey = useMemo(() => queryKeys.dashboardThemes(workspaceId), [workspaceId])
+  const healthQuestionsKey = useMemo(
+    () => ['dashboard', workspaceId, 'health-questions'] as const,
+    [workspaceId],
+  )
 
   const [activeTab, setActiveTab] = useState<'tasks' | 'boards'>('tasks')
   const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list')
@@ -350,95 +357,147 @@ export default function Dashboard() {
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryError, setSummaryError] = useState<string | null>(null)
 
-  // Запросы дашборда: только сеть, состояние не трогают
-  const requestDashboard = useCallback(async () => {
-    // Сверка сессии с сервером: участник, команда и признак ai_enabled попадают в стор.
-    // Данные дашборда её не ждут; при 401 перехватчик сам сбросит сессию.
+  // Сверка сессии с сервером: участник, команда и признак ai_enabled попадают в стор.
+  // Данные дашборда её не ждут; при 401 перехватчик сам сбросит сессию.
+  useEffect(() => {
+    if (!queriesEnabled) return
     void refreshWorkspaceSession().catch(markApiErrorReported)
-    const [boardsRes, itemsRes, trendsRes, moodRes, themesRes, healthRes, questionsRes] =
-      await Promise.all([
-        getBoards(),
-        getAllActionItems(),
-        getActionItemTrends().catch(() => [] as TrendPoint[]),
-        getMoodTrends().catch(() => [] as MoodTrendPoint[]),
+  }, [queriesEnabled, workspaceId])
+
+  const boardsQuery = useQuery({
+    queryKey: boardsKey,
+    queryFn: getBoards,
+    enabled: queriesEnabled,
+  })
+  const itemsQuery = useQuery({
+    queryKey: itemsKey,
+    queryFn: async () => withoutCarriedOriginals(await getAllActionItems()),
+    enabled: queriesEnabled,
+  })
+  const trendsQuery = useQuery({
+    queryKey: trendsKey,
+    queryFn: () => getActionItemTrends().catch(() => [] as TrendPoint[]),
+    enabled: queriesEnabled,
+  })
+  const moodTrendsQuery = useQuery({
+    queryKey: moodTrendsKey,
+    queryFn: () => getMoodTrends().catch(() => [] as MoodTrendPoint[]),
+    enabled: queriesEnabled,
+  })
+  const healthTrendsQuery = useQuery({
+    queryKey: healthTrendsKey,
+    queryFn: () => getHealthTrends().catch(() => [] as HealthTrendPoint[]),
+    enabled: queriesEnabled,
+  })
+  const healthQuestionsQuery = useQuery({
+    queryKey: healthQuestionsKey,
+    queryFn: () => getHealthQuestions().catch(() => [] as HealthQuestion[]),
+    enabled: queriesEnabled,
+  })
+  const themesQuery = useQuery({
+    queryKey: themesKey,
+    queryFn: async () => {
+      try {
+        return await getTeamThemes()
+      } catch (err) {
         // Блок тем сам показывает ошибку и «Повторить» — общий тост не нужен
-        getTeamThemes().catch((err: unknown) => {
-          markApiErrorReported(err)
-          return null
-        }),
-        getHealthTrends().catch(() => [] as HealthTrendPoint[]),
-        getHealthQuestions().catch(() => [] as HealthQuestion[]),
-      ])
-    return { boardsRes, itemsRes, trendsRes, moodRes, themesRes, healthRes, questionsRes }
-  }, [])
+        markApiErrorReported(err)
+        throw err
+      }
+    },
+    enabled: queriesEnabled,
+  })
+
+  const boards = useMemo(() => boardsQuery.data ?? [], [boardsQuery.data])
+  const items = useMemo(() => itemsQuery.data ?? [], [itemsQuery.data])
+  const trends = useMemo(() => trendsQuery.data ?? [], [trendsQuery.data])
+  const moodTrends = useMemo(() => moodTrendsQuery.data ?? [], [moodTrendsQuery.data])
+  const healthTrends = useMemo(() => healthTrendsQuery.data ?? [], [healthTrendsQuery.data])
+  const healthQuestions = useMemo(() => healthQuestionsQuery.data ?? [], [healthQuestionsQuery.data])
+  const themes = useMemo(() => themesQuery.data ?? [], [themesQuery.data])
+  const themesError = themesQuery.isError
+  const { refetch: refetchThemes } = themesQuery
+
+  const setBoards = useCallback(
+    (updater: (prev: BoardListItem[]) => BoardListItem[]) => {
+      queryClient.setQueryData<BoardListItem[]>(boardsKey, (prev = []) => updater(prev))
+    },
+    [queryClient, boardsKey],
+  )
+  const setItems = useCallback(
+    (updater: (prev: DashboardActionItem[]) => DashboardActionItem[]) => {
+      queryClient.setQueryData<DashboardActionItem[]>(itemsKey, (prev = []) => updater(prev))
+    },
+    [queryClient, itemsKey],
+  )
+
+  const primaryError = boardsQuery.error ?? itemsQuery.error
+  const authError = primaryError !== null && getApiErrorStatus(primaryError) === 401
+  const needsAuth = (hasHydrated && !workspace) || (hadWorkspace && !workspace) || authError
+  const loading = queriesEnabled && (boardsQuery.isLoading || itemsQuery.isLoading)
+  const error =
+    primaryError && !authError
+      ? getApiErrorMessage(primaryError, 'Не удалось загрузить аналитику')
+      : null
 
   const loadData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    setNeedsAuth(false)
-    try {
-      const data = await requestDashboard()
-      setBoards(data.boardsRes)
-      setItems(withoutCarriedOriginals(data.itemsRes))
-      setTrends(data.trendsRes)
-      setMoodTrends(data.moodRes)
-      setThemes(data.themesRes ?? [])
-      setThemesError(data.themesRes === null)
-      setHealthTrends(data.healthRes)
-      setHealthQuestions(data.questionsRes)
-    } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } })?.response?.status
-      if (status === 401 || !useAppStore.getState().workspace) {
-        setNeedsAuth(true)
-      } else {
-        setError(getApiErrorMessage(err, 'Не удалось загрузить аналитику'))
-      }
-    } finally {
-      setLoading(false)
-    }
-  }, [requestDashboard])
+    const wsId = useAppStore.getState().workspace?.workspaceId
+    if (!wsId) return
+    void refreshWorkspaceSession().catch(markApiErrorReported)
+    await Promise.all([
+      queryClient.refetchQueries({ queryKey: queryKeys.boards(wsId) }),
+      queryClient.refetchQueries({ queryKey: ['dashboard', wsId] }),
+    ])
+  }, [queryClient])
 
-  useEffect(() => {
-    if (!hasHydrated) return
-    void loadData()
-  }, [hasHydrated, loadData])
-
-  const handleWorkspaceWs = useCallback((msg: WsMessage) => {
-    if (msg.event === 'board_created') {
-      const created = msg.data as unknown as BoardListItem
-      setBoards((prev) => (prev.some((b) => b.id === created.id) ? prev : [created, ...prev]))
-    } else if (msg.event === 'board_updated') {
-      const updated = msg.data as unknown as WsBoardUpdatedData
-      setBoards((prev) =>
-        prev.map((b) =>
-          b.id === updated.id
-            ? {
-                ...b,
-                name: updated.name ?? b.name,
-                max_votes: updated.max_votes ?? b.max_votes,
-                is_locked: updated.is_locked ?? b.is_locked,
-              }
-            : b,
-        ),
-      )
-      const renamed = updated.name
-      if (renamed) {
-        setItems((prev) =>
-          prev.map((i) => (i.board_id === updated.id ? { ...i, board_name: renamed } : i)),
+  const handleWorkspaceWs = useCallback(
+    (msg: WsMessage) => {
+      if (msg.event === 'board_created') {
+        if (!isBoardListItem(msg.data)) return
+        const created = msg.data
+        setBoards((prev) => (prev.some((b) => b.id === created.id) ? prev : [created, ...prev]))
+      } else if (msg.event === 'board_updated') {
+        if (!isBoardUpdatedData(msg.data)) return
+        const updated = msg.data
+        setBoards((prev) =>
+          prev.map((b) =>
+            b.id === updated.id
+              ? {
+                  ...b,
+                  name: updated.name ?? b.name,
+                  max_votes: updated.max_votes ?? b.max_votes,
+                  is_locked: updated.is_locked ?? b.is_locked,
+                }
+              : b,
+          ),
+        )
+        const renamed = updated.name
+        if (renamed) {
+          setItems((prev) =>
+            prev.map((i) => (i.board_id === updated.id ? { ...i, board_name: renamed } : i)),
+          )
+        }
+      } else if (msg.event === 'board_deleted') {
+        if (!isDeletedData(msg.data)) return
+        const deletedId = msg.data.id
+        // Вместе с доской уходят её задачи и точки на графиках
+        setBoards((prev) => prev.filter((b) => b.id !== deletedId))
+        setItems((prev) => prev.filter((i) => i.board_id !== deletedId))
+        queryClient.setQueryData<TrendPoint[]>(trendsKey, (prev = []) =>
+          prev.filter((t) => t.board_id !== deletedId),
+        )
+        queryClient.setQueryData<MoodTrendPoint[]>(moodTrendsKey, (prev = []) =>
+          prev.filter((m) => m.board_id !== deletedId),
+        )
+        queryClient.setQueryData<HealthTrendPoint[]>(healthTrendsKey, (prev = []) =>
+          prev.filter((h) => h.board_id !== deletedId),
         )
       }
-    } else if (msg.event === 'board_deleted') {
-      const deleted = msg.data as unknown as { id: string }
-      // Вместе с доской уходят её задачи и точки на графиках
-      setBoards((prev) => prev.filter((b) => b.id !== deleted.id))
-      setItems((prev) => prev.filter((i) => i.board_id !== deleted.id))
-      setTrends((prev) => prev.filter((t) => t.board_id !== deleted.id))
-      setMoodTrends((prev) => prev.filter((m) => m.board_id !== deleted.id))
-      setHealthTrends((prev) => prev.filter((h) => h.board_id !== deleted.id))
-    }
-  }, [])
+    },
+    [queryClient, setBoards, setItems, trendsKey, moodTrendsKey, healthTrendsKey],
+  )
 
-  useWebSocket('workspace', handleWorkspaceWs)
+  useWebSocket('workspace', handleWorkspaceWs, undefined, { expectPong: true })
 
   const openBoardSummary = async (item: BoardListItem) => {
     if (summaryOpeningId) return
@@ -918,11 +977,16 @@ export default function Dashboard() {
     )
   }
 
-  if (needsAuth || (hadWorkspace && !workspace)) {
+  if (needsAuth) {
     return (
       <WelcomeDialog
         onConfirm={(name) => {
           setUsername(name)
+          const wsId = useAppStore.getState().workspace?.workspaceId
+          if (wsId) {
+            void queryClient.resetQueries({ queryKey: queryKeys.boards(wsId) })
+            void queryClient.resetQueries({ queryKey: ['dashboard', wsId] })
+          }
           void loadData()
         }}
       />
@@ -1154,7 +1218,7 @@ export default function Dashboard() {
             <TeamThemesCard
               themes={themes}
               error={themesError}
-              onRetry={loadData}
+              onRetry={() => void refetchThemes()}
               aiEnabled={aiEnabled}
             />
 

@@ -12,7 +12,25 @@ import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { getActionItems, getBoard } from '../api'
 import { getApiErrorStatus, markApiErrorReported } from '../utils/apiError'
-import { asCard, asColumn, asGroup, asActionItem } from '../utils/wsData'
+import {
+  asActionItem,
+  asCard,
+  asColumn,
+  asGroup,
+  isBoardListItem,
+  isBoardMood,
+  isBoardUpdatedData,
+  isCardMovedData,
+  isDeletedData,
+  isGroupCollapseData,
+  isGroupDeletedData,
+  isGroupMovedData,
+  isGroupsCollapsedData,
+  isParticipant,
+  isRecord,
+  isSummaryFailedData,
+  isTypingUser,
+} from '../utils/wsData'
 import {
   applyActionItemDeleted,
   applyActionItemSaved,
@@ -32,14 +50,8 @@ import type {
   Participant,
   ReactionBubble,
   TypingUser,
-  WsMessage,
-  WsCardMovedData,
-  WsGroupCollapseData,
-  WsGroupMovedData,
-  WsDeletedData,
-  WsGroupDeletedData,
   WsBoardUpdatedData,
-  WsSummaryFailedData,
+  WsMessage,
 } from '../types'
 
 export interface CursorPos {
@@ -126,16 +138,6 @@ interface UseBoardWebSocketParams {
   onServerEvent?: (msg: WsMessage) => boolean
 }
 
-function isParticipant(value: unknown): value is Participant {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as Participant).id === 'string' &&
-    (value as Participant).id.length > 0 &&
-    typeof (value as Participant).name === 'string'
-  )
-}
-
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
 }
@@ -146,9 +148,16 @@ interface AwaitedState {
   spotlight: boolean
   ready: boolean
   typing: boolean
+  groupsCollapsed: boolean
 }
 
-const NOTHING_AWAITED: AwaitedState = { timer: false, spotlight: false, ready: false, typing: false }
+const NOTHING_AWAITED: AwaitedState = {
+  timer: false,
+  spotlight: false,
+  ready: false,
+  typing: false,
+  groupsCollapsed: false,
+}
 
 interface SyncState {
   running: boolean
@@ -283,6 +292,7 @@ export function useBoardWebSocket({
     setSessionSynced(false)
     setFacilitator(NO_FACILITATOR)
     setPhase(null)
+    setCollapsedGroups({})
     setParticipants([])
     setKnownNames({})
     setReadyIds([])
@@ -400,11 +410,16 @@ export function useBoardWebSocket({
   // того нет и на сервере, и состояние, оставшееся с прошлого подключения, пора сбросить.
   const settleAwaitedState = useCallback(() => {
     const awaited = awaitedRef.current
-    if (!awaited.timer && !awaited.spotlight && !awaited.ready && !awaited.typing) return
+    if (!awaited.timer && !awaited.spotlight && !awaited.ready && !awaited.typing && !awaited.groupsCollapsed) {
+      return
+    }
     awaitedRef.current = NOTHING_AWAITED
     if (awaited.ready) setReadyIds((prev) => (prev.length > 0 ? [] : prev))
     if (awaited.spotlight) setSpotlightCardId(null)
     if (awaited.typing) setTypingUsers((prev) => (prev.length > 0 ? [] : prev))
+    if (awaited.groupsCollapsed) {
+      setCollapsedGroups((prev) => (Object.keys(prev).length > 0 ? {} : prev))
+    }
     if (awaited.timer) callbacksRef.current.onTimerAbsent?.()
   }, [])
 
@@ -416,13 +431,27 @@ export function useBoardWebSocket({
   const dispatch = useCallback(
     (msg: WsMessage) => {
       const { event } = msg
-      const data = msg.data ?? {}
+      const rawData: unknown = msg.data ?? {}
+      const data: Record<string, unknown> = isRecord(rawData) ? rawData : {}
       const callbacks = callbacksRef.current
 
       if (callbacks.onServerEvent?.(msg)) return
 
+      if (event === 'groups_collapsed') {
+        noLongerAwaited('groupsCollapsed')
+        if (!isGroupsCollapsedData(rawData)) return
+        const next: Record<string, boolean> = {}
+        for (const id of rawData.group_ids) {
+          if (id) next[id] = true
+        }
+        setCollapsedGroups(next)
+        return
+      }
+
       if (event === 'group_collapse') {
-        const { group_id, collapsed } = data as unknown as WsGroupCollapseData
+        noLongerAwaited('groupsCollapsed')
+        if (!isGroupCollapseData(rawData)) return
+        const { group_id, collapsed } = rawData
         setCollapsedGroups((prev) => ({ ...prev, [group_id]: collapsed }))
         return
       }
@@ -480,16 +509,7 @@ export function useBoardWebSocket({
 
       if (event === 'typing_update') {
         noLongerAwaited('typing')
-        const list = Array.isArray(data.typing)
-          ? data.typing.filter(
-              (item): item is TypingUser =>
-                typeof item === 'object' &&
-                item !== null &&
-                typeof (item as TypingUser).participant_id === 'string' &&
-                typeof (item as TypingUser).username === 'string' &&
-                typeof (item as TypingUser).column_id === 'string',
-            )
-          : []
+        const list = Array.isArray(data.typing) ? data.typing.filter(isTypingUser) : []
         setTypingUsers(list)
         return
       }
@@ -516,8 +536,8 @@ export function useBoardWebSocket({
       }
 
       if (event === 'mood_updated') {
-        if (typeof data?.id === 'string' && typeof data?.score === 'number') {
-          callbacks.onMoodUpdated?.(data as unknown as BoardMood)
+        if (isBoardMood(rawData)) {
+          callbacks.onMoodUpdated?.(rawData)
         }
         return
       }
@@ -597,8 +617,9 @@ export function useBoardWebSocket({
       }
 
       if (event === 'action_item_deleted') {
-        const { id } = data as { id?: string }
-        if (id) setActionItems((prev) => applyActionItemDeleted(prev, id))
+        if (isDeletedData(rawData)) {
+          setActionItems((prev) => applyActionItemDeleted(prev, rawData.id))
+        }
         return
       }
 
@@ -619,26 +640,26 @@ export function useBoardWebSocket({
       }
 
       if (event === 'summary_failed') {
-        const { message } = data as unknown as WsSummaryFailedData
-        callbacks.onSummaryFailed?.(message)
+        if (isSummaryFailedData(rawData)) {
+          callbacks.onSummaryFailed?.(rawData.message)
+        } else {
+          callbacks.onSummaryFailed?.(typeof data.message === 'string' ? data.message : undefined)
+        }
         return
       }
 
       if (event === 'board_created') {
-        const board = data as unknown as BoardListItem
-        if (board?.id) callbacks.onBoardCreated?.(board)
+        if (isBoardListItem(rawData)) callbacks.onBoardCreated?.(rawData)
         return
       }
 
       if (event === 'board_updated') {
-        const upd = data as unknown as WsBoardUpdatedData
-        if (upd?.id) callbacks.onBoardUpdated?.(upd)
+        if (isBoardUpdatedData(rawData)) callbacks.onBoardUpdated?.(rawData)
         return
       }
 
       if (event === 'board_deleted') {
-        const { id } = data as unknown as WsDeletedData
-        if (id) callbacks.onBoardDeleted?.(id)
+        if (isDeletedData(rawData)) callbacks.onBoardDeleted?.(rawData.id)
         return
       }
 
@@ -646,54 +667,52 @@ export function useBoardWebSocket({
       try {
         switch (event) {
           case 'column_created':
-            change = { type: 'column_created', column: asColumn(data) }
+            change = { type: 'column_created', column: asColumn(rawData) }
             break
           case 'column_updated':
-            change = { type: 'column_updated', column: asColumn(data) }
+            change = { type: 'column_updated', column: asColumn(rawData) }
             break
-          case 'column_deleted': {
-            const deletedId = (data as unknown as WsDeletedData)?.id
-            if (deletedId) change = { type: 'column_deleted', id: deletedId }
+          case 'column_deleted':
+            if (isDeletedData(rawData)) change = { type: 'column_deleted', id: rawData.id }
             break
-          }
           case 'card_created':
-            change = { type: 'card_created', card: asCard(data) }
+            change = { type: 'card_created', card: asCard(rawData) }
             break
           case 'card_updated':
-            change = { type: 'card_updated', card: asCard(data) }
+            change = { type: 'card_updated', card: asCard(rawData) }
             break
-          case 'card_moved': {
-            const moved = data as unknown as WsCardMovedData
-            if (!moved?.card || !moved.old_column_id) break
-            change = {
-              ...moved,
-              type: 'card_moved',
-              card: asCard(moved.card as unknown as Record<string, unknown>),
+          case 'card_moved':
+            if (isCardMovedData(rawData)) {
+              change = {
+                ...rawData,
+                type: 'card_moved',
+                card: asCard(rawData.card),
+              }
             }
             break
-          }
-          case 'card_deleted': {
-            const deletedId = (data as unknown as WsDeletedData)?.id
-            if (deletedId) change = { type: 'card_deleted', id: deletedId }
+          case 'card_deleted':
+            if (isDeletedData(rawData)) change = { type: 'card_deleted', id: rawData.id }
             break
-          }
           case 'group_created':
-            change = { type: 'group_created', group: asGroup(data) }
+            change = { type: 'group_created', group: asGroup(rawData) }
             break
           case 'group_updated':
-            change = { type: 'group_updated', group: asGroup(data) }
+            change = { type: 'group_updated', group: asGroup(rawData) }
             break
-          case 'group_deleted': {
-            const del = data as unknown as WsGroupDeletedData
-            if (del?.id) change = { ...del, type: 'group_deleted' }
+          case 'group_deleted':
+            if (isGroupDeletedData(rawData)) {
+              change = { ...rawData, type: 'group_deleted' }
+              setCollapsedGroups((prev) => {
+                if (!(rawData.id in prev)) return prev
+                const next = { ...prev }
+                delete next[rawData.id]
+                return next
+              })
+            }
             break
-          }
-          case 'group_moved': {
-            const moved = data as unknown as WsGroupMovedData
-            if (!moved?.group || !moved.old_column_id || !Array.isArray(moved.cards)) break
-            change = { ...moved, type: 'group_moved' }
+          case 'group_moved':
+            if (isGroupMovedData(rawData)) change = { ...rawData, type: 'group_moved' }
             break
-          }
           default:
             break
         }
@@ -870,7 +889,13 @@ export function useBoardWebSocket({
         if (pos) {
           sendMessageRef.current?.({ event: 'cursor_move', data: { x: pos.x, y: pos.y } })
         }
-        awaitedRef.current = { timer: true, spotlight: true, ready: true, typing: true }
+        awaitedRef.current = {
+          timer: true,
+          spotlight: true,
+          ready: true,
+          typing: true,
+          groupsCollapsed: true,
+        }
         statusRef.current = 'open'
         // Пока сокета не было, события могли пройти мимо: копим новые до снимка
         if (info?.reconnected) sequencer.markStale()

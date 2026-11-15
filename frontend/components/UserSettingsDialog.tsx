@@ -148,6 +148,7 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
               <Switch
                 checked={theme === 'dark'}
                 onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
+                aria-label="Тёмная тема"
               />
             </div>
 
@@ -156,7 +157,11 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
                 <Grid3X3 className="h-4 w-4 text-muted-foreground" />
                 Точечная сетка холста
               </div>
-              <Switch checked={dotGrid} onCheckedChange={setDotGrid} />
+              <Switch
+                checked={dotGrid}
+                onCheckedChange={setDotGrid}
+                aria-label="Точечная сетка холста"
+              />
             </div>
           </div>
 

@@ -59,9 +59,11 @@ backend-tests:
     - uv venv
     - uv pip install --require-hashes -r requirements-dev.txt
     - . .venv/bin/activate
-    # Проверка целостности цепочки миграций + статический линт ruff.
+    # Проверка целостности цепочки миграций, синтаксиса entrypoint, ruff и mypy.
+    - sh -n entrypoint.sh
     - alembic heads --verbose
     - ruff check .
+    - mypy app main.py
     - pytest -v
 
 # ── Бэкенд на PostgreSQL: миграции и тот же набор тестов ─────────────────────
@@ -71,7 +73,7 @@ backend-tests:
 backend-tests-pg:
   stage: test
   services:
-    - name: docker.io/library/postgres:16-alpine
+    - name: docker.io/library/postgres:16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
       alias: postgres
   variables:
     POSTGRES_DB: retro
@@ -98,10 +100,31 @@ backend-tests-pg:
       else:
           raise SystemExit("Postgres is not reachable after 60s")
       PY
+    # Миграция непустой БД (0014 -> 0015 с удалённой и живой доской одинакового имени)
+    - alembic upgrade 0014
+    - |
+      python - <<'PY'
+      import os
+      from datetime import UTC, datetime
+      from sqlalchemy import create_engine, text
+      eng = create_engine(os.environ["DATABASE_URL"].replace("postgresql://", "postgresql+psycopg://"))
+      with eng.begin() as conn:
+          conn.execute(text("INSERT INTO workspaces (id, name, slug, access_key_hash) VALUES ('mig-ws', 'Mig WS', 'mig-ws', 'hash')"))
+          conn.execute(text("INSERT INTO boards (id, workspace_id, name, slug, max_votes, deleted_at) VALUES ('mig-del', 'mig-ws', 'Sprint 1', 'sprint-1', 5, :ts)"), {"ts": datetime.now(UTC)})
+      PY
     - alembic upgrade head
+    - |
+      python - <<'PY'
+      import os
+      from sqlalchemy import create_engine, text
+      eng = create_engine(os.environ["DATABASE_URL"].replace("postgresql://", "postgresql+psycopg://"))
+      with eng.begin() as conn:
+          conn.execute(text("INSERT INTO boards (id, workspace_id, name, slug, max_votes) VALUES ('mig-live', 'mig-ws', 'Sprint 1', 'sprint-1', 5)"))
+      PY
     - alembic check
     - alembic downgrade base
     - alembic upgrade head
+    - mypy app main.py
     - pytest -q
 
 # ── Зависимости: известные уязвимости ────────────────────────────────────────
@@ -116,26 +139,33 @@ deps-audit:
     - cd frontend
     - npm audit --omit=dev
 
+.frontend-job:
+  stage: test
+  cache:
+    key:
+      files:
+        - frontend/package-lock.json
+    paths:
+      - frontend/node_modules/
+  before_script:
+    - set -e
+    - '[ -n "${CI_BASE_IMAGE:-}" ] || { echo "ERROR CI_BASE_IMAGE is not set (instance CI variable expected)" >&2; exit 1; }'
+    - cd frontend
+    # Кэшируем node_modules по хэшу package-lock.json между запусками, иначе ставим из /cache/npm.
+    - '[ -d node_modules ] && [ -f node_modules/.package-lock.json ] || npm ci --prefer-offline'
+
 # ── Фронтенд: сборка + линт ──────────────────────────────────────────────────
 frontend-lint:
-  stage: test
+  extends: .frontend-job
   script:
-    - cd frontend
-    # В репозитории npm-lockfile (package-lock.json) — ставим зависимости через
-    # npm ci. Кэш npm (npm_config_cache=/cache/npm) задан в образе и смонтирован
-    # раннером с хоста: со второго прогона npm ci заметно быстрее.
-    # Node 24 — та же линия, что в frontend/Dockerfile.
-    - npm ci
     - npm run build
     - npm run typecheck
     - npm run lint
 
 # ── Фронтенд: юнит-тесты (Vitest) ────────────────────────────────────────────
 frontend-tests:
-  stage: test
+  extends: .frontend-job
   script:
-    - cd frontend
-    - npm ci
     - npm test
 
 # ── E2E: Playwright против полного стека ─────────────────────────────────────
@@ -155,7 +185,7 @@ e2e-tests:
   services:
     # docker.io/library/... — подмена на зеркало dh-mirror.gitverse.ru происходит
     # на уровне машины (зеркалирование registry на стенде), а не у Zot — Zot снесён.
-    - name: docker.io/library/postgres:16-alpine
+    - name: docker.io/library/postgres:16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
       alias: postgres
   variables:
     # POSTGRES_* уходят в сервисный контейнер PostgreSQL.
@@ -365,7 +395,7 @@ deploy-staging:
         --namespace "$STAGING_NAMESPACE" \
         -f k8s/helm/retro-board/values-staging.yaml \
         --set-string image.tag="$STAGING_TAG" \
-        --wait --timeout 10m
+        --wait --atomic --timeout 10m
     - kubectl -n "$STAGING_NAMESPACE" rollout status statefulset/retro-board-postgres --timeout=5m
     - kubectl -n "$STAGING_NAMESPACE" rollout status deploy/retro-board-api --timeout=5m
     - kubectl -n "$STAGING_NAMESPACE" rollout status deploy/retro-board-web --timeout=5m

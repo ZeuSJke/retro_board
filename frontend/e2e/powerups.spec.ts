@@ -26,24 +26,18 @@ async function openBoard(page: import('@playwright/test').Page, slug: string, be
   await page.goto(`/board/${slug}`)
   await dismissWelcome(page)
   await page.waitForLoadState('networkidle')
-  await page.waitForTimeout(600)
+  await expect(page.getByTitle('Подключено (Live)')).toBeVisible({ timeout: 15000 })
 
   if (!becomeFacilitator) return
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const facBtn = page.getByTitle('Стать ведущим')
-    if (await facBtn.isVisible({ timeout: 2500 }).catch(() => false)) {
-      await facBtn.click()
-      const doneBtn = page.getByTitle('Завершить режим ведущего')
-      if (await doneBtn.waitFor({ timeout: 4000 }).catch(() => null)) {
-        break
-      }
-    }
+  await expect(async () => {
     const doneBtn = page.getByTitle('Завершить режим ведущего')
-    if (await doneBtn.isVisible({ timeout: 800 }).catch(() => false)) {
-      break
+    if (await doneBtn.isVisible()) return
+    const facBtn = page.getByTitle('Стать ведущим')
+    if (await facBtn.isVisible()) {
+      await facBtn.click()
     }
-    await page.waitForTimeout(400)
-  }
+    await expect(doneBtn).toBeVisible({ timeout: 3000 })
+  }).toPass({ timeout: 15000, intervals: [200, 500, 1000] })
 }
 
 test.describe('Курсор, автоссылки и улучшения доски', () => {

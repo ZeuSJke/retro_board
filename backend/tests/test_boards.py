@@ -287,8 +287,9 @@ class TestBoardListHasSummary:
         self, db_session, client, workspace_headers, sample_board
     ):
         """Board with summary should have has_summary=True."""
-        from app.models import BoardSummary
         import uuid
+
+        from app.models import BoardSummary
 
         summary = BoardSummary(
             id=str(uuid.uuid4()),
@@ -310,8 +311,9 @@ class TestBoardListHasSummary:
         self, db_session, client, workspace_headers, sample_board
     ):
         """has_summary should be True if ANY summary exists for the board."""
-        from app.models import BoardSummary
         import uuid
+
+        from app.models import BoardSummary
 
         for session_id in [100, 200, 300]:
             summary = BoardSummary(
@@ -335,6 +337,7 @@ class TestCardBroadcastActionParity:
     def test_snapshot_matches_card_view_across_modes(self, db_session, test_workspace, monkeypatch):
         import asyncio
         import uuid
+
         from app import models
         from app.board_view import card_broadcast_action, card_view, cards_hidden
         from app.ws_manager import manager
@@ -414,3 +417,64 @@ class TestCardBroadcastActionParity:
                 assert captured_build is not None
                 for viewer_id in viewers:
                     assert captured_build(viewer_id) == card_view(card, board, viewer_id, hidden)
+
+
+def test_soft_delete_preserves_name_and_allows_multiple_deletes(
+    client, db_session, workspace_headers
+):
+    """Частичный уникальный индекс сохраняет имя и slug удалённой доски в БД."""
+    from app import models
+
+    first = client.post("/api/boards/", json={"name": "Повторный спринт"}, headers=workspace_headers)
+    assert first.status_code == 201
+    first_id = first.json()["id"]
+    first_slug = first.json()["slug"]
+    assert client.delete(f"/api/boards/{first_id}", headers=workspace_headers).status_code == 204
+
+    second = client.post("/api/boards/", json={"name": "Повторный спринт"}, headers=workspace_headers)
+    assert second.status_code == 201
+    second_id = second.json()["id"]
+    assert client.delete(f"/api/boards/{second_id}", headers=workspace_headers).status_code == 204
+
+    third = client.post("/api/boards/", json={"name": "Повторный спринт"}, headers=workspace_headers)
+    assert third.status_code == 201
+
+    db_session.expire_all()
+    row1 = db_session.get(models.Board, first_id)
+    row2 = db_session.get(models.Board, second_id)
+    assert row1 is not None and row1.name == "Повторный спринт" and row1.slug == first_slug
+    assert row2 is not None and row2.name == "Повторный спринт" and row2.deleted_at is not None
+
+
+def test_rest_boards_and_action_items_pagination_headers(
+    client, workspace_headers, sample_board
+):
+    b2 = client.post("/api/boards/", json={"name": "Board 2"}, headers=workspace_headers).json()
+    b3 = client.post("/api/boards/", json={"name": "Board 3"}, headers=workspace_headers).json()
+
+    resp_p1 = client.get("/api/boards/?limit=2&offset=0", headers=workspace_headers)
+    assert resp_p1.status_code == 200
+    assert resp_p1.headers["X-Total-Count"] == "3"
+    assert len(resp_p1.json()) == 2
+
+    resp_p2 = client.get("/api/boards/?limit=2&offset=2", headers=workspace_headers)
+    assert resp_p2.status_code == 200
+    assert resp_p2.headers["X-Total-Count"] == "3"
+    assert len(resp_p2.json()) == 1
+
+    seen_ids = {b["id"] for b in resp_p1.json() + resp_p2.json()}
+    assert seen_ids == {sample_board["id"], b2["id"], b3["id"]}
+
+    for idx in range(3):
+        assert (
+            client.post(
+                "/api/action-items/",
+                json={"board_id": b2["id"], "text": f"Task {idx}"},
+                headers=workspace_headers,
+            ).status_code
+            == 201
+        )
+    ai_resp = client.get("/api/action-items/all?limit=2&offset=1", headers=workspace_headers)
+    assert ai_resp.status_code == 200
+    assert ai_resp.headers["X-Total-Count"] == "3"
+    assert len(ai_resp.json()) == 2

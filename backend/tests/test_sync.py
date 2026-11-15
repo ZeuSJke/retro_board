@@ -126,6 +126,30 @@ class TestEventNumbers:
         snapshot = client.get(f"/api/boards/{sample_board['id']}", headers=workspace_headers).json()
         assert snapshot["event_epoch"] != old_epoch and snapshot["event_seq"] == 0
 
+    def test_participant_renamed_is_sequenced_on_board_and_unsequenced_on_workspace(
+        self, client, workspace_headers, sample_board
+    ):
+        board_id = sample_board["id"]
+        with (
+            _ws(client, board_id, workspace_headers) as board_ws,
+            client.websocket_connect(
+                f"/ws/workspace?workspace_token={workspace_headers['X-Workspace-Token']}",
+                headers={"origin": TEST_ORIGIN},
+            ) as workspace_ws,
+        ):
+            resp = client.patch(
+                "/api/workspaces/me/participant",
+                json={"name": "Новое Имя"},
+                headers=workspace_headers,
+            )
+            assert resp.status_code == 200
+            board_msg = _recv(board_ws, "participant_renamed")
+            ws_msg = _recv(workspace_ws, "participant_renamed")
+        assert board_msg["seq"] == 1
+        assert board_msg["epoch"] == manager.epoch
+        assert board_msg["data"]["name"] == "Новое Имя"
+        assert "seq" not in ws_msg and ws_msg["data"]["name"] == "Новое Имя"
+
 
 class TestHeartbeat:
     def test_ping_is_answered(self, client, workspace_headers, sample_board):
@@ -144,10 +168,13 @@ class TestStateSurvivesRestart:
             _recv(ws, "timer_start")
             _send(ws, "spotlight_card", {"card_id": "card-42"})
             _recv(ws, "spotlight_update")
+            _send(ws, "group_collapse", {"group_id": "grp-saved", "collapsed": True})
+            _recv(ws, "group_collapse")
 
         db_session.expire_all()
         saved = json.loads(db_session.get(Board, board_id).session_state)
         assert saved["spotlight"] == "card-42"
+        assert saved["collapsed_groups"] == ["grp-saved"]
         assert saved["timer"]["running"] is True and saved["timer"]["duration"] == 300
         assert saved["timer"]["ends_at_ms"] > time.time() * 1000
 
@@ -155,9 +182,11 @@ class TestStateSurvivesRestart:
 
         with _ws(client, board_id, workspace_headers) as ws:
             assert _recv(ws, "spotlight_update")["data"] == {"card_id": "card-42"}
+            assert _recv(ws, "groups_collapsed")["data"] == {"group_ids": ["grp-saved"]}
             timer = _recv(ws, "timer_start")["data"]
             assert timer["duration"] == 300
             assert 190 < timer["remaining"] <= 200
+            assert timer["ends_at_ms"] > time.time() * 1000
 
     def test_paused_timer_is_restored(self, client, workspace_headers, sample_board):
         board_id = sample_board["id"]

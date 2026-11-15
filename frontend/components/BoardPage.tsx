@@ -2,40 +2,33 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import {
-  DndContext,
-  DragOverlay,
-  defaultDropAnimationSideEffects,
-  type Announcements,
-  type DragEndEvent,
-  type DropAnimation,
-  type ScreenReaderInstructions,
-} from '@dnd-kit/core'
+import { DndContext, DragOverlay, type DragEndEvent } from '@dnd-kit/core'
 import { AnimatePresence } from 'motion/react'
 import { ChevronLeft, ChevronRight, Layers } from 'lucide-react'
 import {
-  applyAutoClusters,
-  autoClusterPreview,
-  bulkDeleteCards,
-  bulkUpdateCards,
   createActionItem,
   createColumn,
   generateActionItemTitle,
-  getBoardSummary,
-  mergeCards,
   resetBoardVotes,
   revealBoardCards,
-  toggleLike,
   updateActionItem,
   updateColumn,
 } from '../api'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
+import { useBoardBulkActions } from '../hooks/useBoardBulkActions'
 import { useBoardDragDrop } from '../hooks/useBoardDragDrop'
+import { useBoardShortcuts } from '../hooks/useBoardShortcuts'
+import { useBoardSummary } from '../hooks/useBoardSummary'
 import { NO_FACILITATOR, useBoardWebSocket } from '../hooks/useBoardWebSocket'
 import { shallowEqualRecords, useStableValue } from '../hooks/useStableValue'
 import { useFacilitator } from '../hooks/useFacilitator'
 import { useTimer } from '../hooks/useTimer'
+import {
+  BOARD_DROP_ANIMATION,
+  DND_ACCESSIBILITY,
+  sameColumnsMeta,
+} from '@/lib/board-dnd-accessibility'
 import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown'
 import { getCardColorPreset } from '@/lib/board-themes'
 import {
@@ -46,22 +39,13 @@ import {
   applyParticipantRenamedToMoods,
   countMaskedCards,
 } from '@/lib/board-events'
-import { blockingOverlay } from '@/lib/hotkeys'
-import {
-  canDeleteCard,
-  canModerateBoard,
-  mergeBlockedReason,
-  countMyVotes,
-  countMyVotesOnBoard,
-} from '@/lib/participants'
+import { canModerateBoard, countMyVotesOnBoard } from '@/lib/participants'
 import { getApiErrorMessage, getApiErrorStatus } from '../utils/apiError'
 import type {
   ActionItem,
-  AutoClusterPreviewResult,
   Board,
   BoardListItem,
   BoardMood,
-  BoardSummary,
   Card,
   CardGroup,
   Column as ColumnType,
@@ -70,34 +54,19 @@ import type {
   WsBoardUpdatedData,
   WsMessage,
 } from '../types'
-import AutoClusterPreviewDialog from './AutoClusterPreviewDialog'
-import BoardSettingsDialog from './BoardSettingsDialog'
+import BoardDialogs from './BoardDialogs'
 import BoardToolbar from './BoardToolbar'
-import BoardsPanel from './BoardsPanel'
-import BulkActionsBar from './BulkActionsBar'
 import Column from './Column'
 import { RichCardText } from './RichCardText'
-import type { CommandBoardAction, CommandSearchCard } from './CommandPalette'
-import CommandPalette from './CommandPaletteLazy'
 import ConnectionBanner from './ConnectionBanner'
 import CursorMarker from './CursorMarker'
-import { HEALTH_CHECK_OPEN_EVENT, openHealthCheck } from './HealthCheckButton'
+import { HEALTH_CHECK_OPEN_EVENT } from './HealthCheckButton'
 import HiddenCollectBanner from './HiddenCollectBanner'
 import MasterColumn from './MasterColumn'
-import MoodDialog from './MoodDialog'
 import SessionBar from './SessionBar'
-import ShortcutsDialog from './ShortcutsDialog'
-import SpotlightModal, { type SpotlightQueueItem } from './SpotlightModal'
-import SummaryModal from './SummaryModal'
+import type { SpotlightQueueItem } from './SpotlightModal'
 import Topbar from './Topbar'
-import UserSettingsDialog from './UserSettingsDialog'
-import {
-  HEALTH_CHECK_START,
-  HealthCheckDialog,
-  RotiPrompt,
-  useHealthCheck,
-} from '@/components/health'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { useHealthCheck } from '@/components/health'
 import { cn } from '@/lib/utils'
 
 interface BoardPageProps {
@@ -116,88 +85,6 @@ interface BoardPageProps {
 const MASTER_WIDTH_STORAGE_KEY = 'retro_master_width'
 const MIN_MASTER_WIDTH = 280
 const MAX_MASTER_WIDTH = 560
-
-const BOARD_DROP_ANIMATION: DropAnimation = {
-  duration: 220,
-  easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-  sideEffects: defaultDropAnimationSideEffects({
-    styles: {
-      active: {
-        opacity: '0.45',
-      },
-    },
-  }),
-}
-
-function triggerConfetti() {
-  if (typeof window === 'undefined') return
-  import('canvas-confetti')
-    .then((mod) => {
-      // Без воркера: по умолчанию библиотека создаёт его из blob:, а CSP (script-src 'self')
-      // это запрещает — браузер писал ошибку в консоль при каждом салюте
-      void mod.default?.create(undefined, { resize: true })({
-        particleCount: 70,
-        spread: 65,
-        origin: { y: 0.65 },
-      })
-    })
-    .catch(() => {})
-}
-
-interface ColumnMeta {
-  id: string
-  title: string
-  color: string
-}
-
-function sameColumnsMeta(a: ColumnMeta[], b: ColumnMeta[]): boolean {
-  return (
-    a.length === b.length &&
-    a.every((c, i) => c.id === b[i].id && c.title === b[i].title && c.color === b[i].color)
-  )
-}
-
-/** Как назвать то, что тащат или над чем оказались, в объявлениях для экранного диктора. */
-function describeDragItem(data: Record<string, unknown> | undefined): string {
-  if (data?.type === 'card') {
-    const text = (data.card as Card | undefined)?.text?.trim()
-    return text ? `карточка «${text.slice(0, 60)}»` : 'карточка'
-  }
-  if (data?.type === 'group') {
-    return `группа «${(data.group as CardGroup | undefined)?.title ?? ''}»`
-  }
-  if (data?.type === 'column') return `колонка «${typeof data.title === 'string' ? data.title : ''}»`
-  if (data?.type === 'master') return 'панель задач'
-  return 'элемент доски'
-}
-
-// Перетаскивание с клавиатуры: подсказка и объявления для экранного диктора
-const DND_INSTRUCTIONS: ScreenReaderInstructions = {
-  draggable:
-    'Чтобы взять элемент, нажмите пробел или Enter. Стрелками переместите его, пробелом или Enter отпустите, клавишей Escape отмените перенос.',
-}
-
-const DND_ANNOUNCEMENTS: Announcements = {
-  onDragStart: ({ active }) => `Взято: ${describeDragItem(active.data.current)}.`,
-  onDragOver: ({ active, over }) =>
-    over
-      ? `${describeDragItem(active.data.current)} — над: ${describeDragItem(over.data.current)}.`
-      : `${describeDragItem(active.data.current)} — вне доски.`,
-  onDragEnd: ({ active, over }) =>
-    over
-      ? `Перенесено: ${describeDragItem(active.data.current)} — ${describeDragItem(over.data.current)}.`
-      : `Перенос отменён: ${describeDragItem(active.data.current)} возвращается на место.`,
-  onDragCancel: ({ active }) =>
-    `Перенос отменён: ${describeDragItem(active.data.current)} возвращается на место.`,
-}
-
-const DND_ACCESSIBILITY = {
-  announcements: DND_ANNOUNCEMENTS,
-  screenReaderInstructions: DND_INSTRUCTIONS,
-}
-
-/** Сколько карточка остаётся подсвеченной после перехода к ней из палитры команд. */
-const CARD_FLASH_MS = 2200
 
 export default function BoardPage({
   board,
@@ -225,7 +112,6 @@ export default function BoardPage({
   const [boardSettingsOpen, setBoardSettingsOpen] = useState(false)
   const [userSettingsOpen, setUserSettingsOpen] = useState(false)
   const [moodOpen, setMoodOpen] = useState(false)
-  const [summaryOpen, setSummaryOpen] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
   const [masterOpen, setMasterOpen] = useState(true)
   const [masterWidth, setMasterWidth] = useState<number | null>(null)
@@ -249,30 +135,23 @@ export default function BoardPage({
   const [onlyMine, setOnlyMine] = useState(false)
   const [sortBy, setSortBy] = useState<'order' | 'votes'>('order')
   const [colorFilter, setColorFilter] = useState<string | null>(null)
-  const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(() => new Set())
-  const lastSelectedCardIdRef = useRef<string | null>(null)
-  const [bulkBusy, setBulkBusy] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [reactionsPopoverOpen, setReactionsPopoverOpen] = useState(false)
   const [resettingVotes, setResettingVotes] = useState(false)
   const [revealing, setRevealing] = useState(false)
   const [spotlightQueueMode, setSpotlightQueueMode] = useState<'all' | 'top_votes'>('all')
-  const [clusterPreviewState, setClusterPreviewState] = useState<{
-    column: ColumnType
-    preview: AutoClusterPreviewResult
-  } | null>(null)
-  const [applyingClusters, setApplyingClusters] = useState(false)
-
   const [moods, setMoods] = useState<BoardMood[]>(board.moods || [])
-  const [summary, setSummary] = useState<BoardSummary | null>(null)
-  const [summaryLoading, setSummaryLoading] = useState(false)
-  const [summaryError, setSummaryError] = useState<string | null>(null)
 
   const canvasRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const typingStateRef = useRef<Record<string, boolean>>({})
   const cursorNodeTick = useState(0)
   const forceCursorRender = cursorNodeTick[1]
+
+  const boardRef = useRef(board)
+  useEffect(() => {
+    boardRef.current = board
+  }, [board])
 
   const updateCanvasScrollState = useCallback(() => {
     const el = canvasRef.current
@@ -355,48 +234,27 @@ export default function BoardPage({
     handlePhaseChanged,
   } = useFacilitator(sendWs, timer.duration, handleTimerReset)
 
-  const loadSummary = useCallback(async (known = Boolean(board.has_summary)) => {
-    // Итогов у доски нет и события о них не было: запрос вслепую вернул бы 404
-    if (!known) return
-    setSummaryLoading(true)
-    setSummaryError(null)
-    try {
-      const data = await getBoardSummary(board.id)
-      setSummary(data)
-    } catch (err) {
-      setSummaryError(getApiErrorMessage(err, 'Не удалось загрузить AI-итоги'))
-    } finally {
-      setSummaryLoading(false)
-    }
-  }, [board.id, board.has_summary])
+  const handleMarkHasSummary = useCallback(() => {
+    const current = boardRef.current
+    if (!current.has_summary) onBoardUpdated({ ...current, has_summary: true })
+  }, [onBoardUpdated])
 
-  const boardRef = useRef(board)
-  boardRef.current = board
-
-  const handleSummaryGenerated = useCallback((regenerated: boolean) => {
-    void loadSummary(true)
-    if (!board.has_summary) onBoardUpdated({ ...board, has_summary: true })
-    // Итоги пересоздали кнопкой: у остальных окно не открываем, только обновляем содержимое
-    if (regenerated) return
-    setSummaryOpen(true)
-    triggerConfetti()
-  }, [board, loadSummary, onBoardUpdated])
-
-  // Открыть окно итогов; запрашивать ли сами итоги, решает loadSummary (по has_summary)
-  const openSummary = useCallback(() => {
-    setSummaryOpen(true)
-    void loadSummary()
-  }, [loadSummary])
-
-  const handleSummaryFailed = useCallback((msg?: string) => {
-    setSummaryLoading(false)
-    // Не одинокий тост: окно итогов объясняет, что случилось, и предлагает повторить или
-    // открыть экспорт. Без настроенного AI это не сбой — причина написана в самом окне
-    if (useAppStore.getState().aiEnabled !== false) {
-      setSummaryError(msg || 'Не удалось сгенерировать итоги')
-    }
-    setSummaryOpen(true)
-  }, [])
+  const {
+    summaryOpen,
+    setSummaryOpen,
+    summary,
+    setSummary,
+    summaryLoading,
+    summaryError,
+    openSummary,
+    handleSummaryGenerated,
+    handleSummaryFailed,
+    resetSummary,
+  } = useBoardSummary({
+    boardId: board.id,
+    hasSummary: Boolean(board.has_summary),
+    onMarkHasSummary: handleMarkHasSummary,
+  })
 
   // Доска перечитана с сервера (после переподключения, пропуска событий, смены видимости
   // карточек). Колонки заменил хук сокета; здесь — настройки доски и настроение.
@@ -549,39 +407,6 @@ export default function BoardPage({
     return () => observer.disconnect()
   }, [updateCanvasScrollState, columns.length, masterOpen, masterWidth])
 
-  const loadedBoardIdRef = useRef<string | null>(null)
-  useEffect(() => {
-    const initialBoard = boardRef.current
-    const boardChanged = loadedBoardIdRef.current !== board.id
-    loadedBoardIdRef.current = board.id
-    if (!boardChanged) return
-
-    resetBoard(initialBoard)
-    setMoods(initialBoard.moods || [])
-    setSummary(null)
-    setSummaryError(null)
-    setColorFilter(null)
-    setSelectedCardIds(new Set())
-    lastSelectedCardIdRef.current = null
-    setClusterPreviewState(null)
-    typingStateRef.current = {}
-    handleFacilitatorChanged(
-      initialBoard.active_facilitator_id
-        ? {
-            id: initialBoard.active_facilitator_id,
-            name: initialBoard.active_facilitator ?? null,
-            online: true,
-          }
-        : null,
-      initialBoard.active_phase ?? null,
-    )
-    if (initialBoard.has_summary) {
-      getBoardSummary(board.id)
-        .then((s) => s && setSummary(s))
-        .catch(() => {})
-    }
-  }, [board.id, resetBoard, handleFacilitatorChanged])
-
   // Subscribe cursor arrivals to render CursorMarker components dynamically
   useEffect(() => {
     return subscribeCursors(() => {
@@ -701,26 +526,6 @@ export default function BoardPage({
     const onlineIds = onlineParticipants.length > 0 ? onlineParticipants.map((p) => p.id) : [myId]
     return onlineIds.filter((id) => voters.has(id)).length
   }, [anonymousMode, onlineParticipants, columns, myId])
-
-  const allCardsMap = useMemo(() => {
-    const map = new Map<string, Card>()
-    columns.forEach((col) => col.cards.forEach((card) => map.set(card.id, card)))
-    return map
-  }, [columns])
-
-  const selectedCards = useMemo(
-    () =>
-      Array.from(selectedCardIds)
-        .map((id) => allCardsMap.get(id))
-        .filter((card): card is Card => Boolean(card)),
-    [selectedCardIds, allCardsMap],
-  )
-
-  useEffect(() => {
-    if (readOnly) {
-      setSelectedCardIds(new Set())
-    }
-  }, [readOnly])
 
   const createActionItemFromCards = useCallback(
     async (text: string, sourceCardIds: string[], authorHint?: string | null) => {
@@ -872,19 +677,6 @@ export default function BoardPage({
     [applyChange],
   )
 
-  const handleCardDeleted = useCallback(
-    (cardId: string) => {
-      applyChange({ type: 'card_deleted', id: cardId })
-      setSelectedCardIds((prev) => {
-        if (!prev.has(cardId)) return prev
-        const next = new Set(prev)
-        next.delete(cardId)
-        return next
-      })
-    },
-    [applyChange],
-  )
-
   // Сервер карточку не удалил: она встаёт на прежнее место по своей позиции
   const handleCardRestored = useCallback(
     (card: Card, err?: unknown) => {
@@ -944,6 +736,73 @@ export default function BoardPage({
   const handleActionItemDeleted = useCallback(
     (id: string) => setActionItems((prev) => applyActionItemDeleted(prev, id)),
     [setActionItems],
+  )
+
+  const {
+    selectedCardIds,
+    selectedCards,
+    bulkBusy,
+    clearSelection,
+    removeDeletedCard,
+    resetBulkState,
+    handleToggleSelectCard,
+    handleBulkGroup,
+    handleBulkColor,
+    handleBulkMove,
+    handleBulkCreateActionItem,
+    handleBulkDelete,
+    handleMergeCards,
+    canDeleteSelection,
+    mergeBlocked,
+    clusterPreviewState,
+    setClusterPreviewState,
+    applyingClusters,
+    handleOpenClusterPreview,
+    handleApplyClusterPreview,
+  } = useBoardBulkActions({
+    columns,
+    columnsRef,
+    myId,
+    anonymousMode,
+    isModerator,
+    cardsHidden,
+    readOnly,
+    applyChange,
+    createActionItemFromCards,
+    onGroupCreated: handleGroupCreated,
+  })
+
+  const loadedBoardIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    const initialBoard = boardRef.current
+    const boardChanged = loadedBoardIdRef.current !== board.id
+    loadedBoardIdRef.current = board.id
+    if (!boardChanged) return
+
+    resetBoard(initialBoard)
+    setMoods(initialBoard.moods || [])
+    resetSummary(initialBoard.id, Boolean(initialBoard.has_summary))
+    setColorFilter(null)
+    resetBulkState()
+    typingStateRef.current = {}
+    handleFacilitatorChanged(
+      initialBoard.active_facilitator_id
+        ? {
+            id: initialBoard.active_facilitator_id,
+            name: initialBoard.active_facilitator ?? null,
+            online: true,
+          }
+        : null,
+      initialBoard.active_phase ?? null,
+    )
+  }, [board.id, resetBoard, resetSummary, resetBulkState, handleFacilitatorChanged])
+
+  const handleCardDeleted = useCallback(
+    (cardId: string) => {
+      applyChange({ type: 'card_deleted', id: cardId })
+      removeDeletedCard(cardId)
+    },
+    [applyChange, removeDeletedCard],
   )
 
   const handleToggleCollapse = useCallback(
@@ -1111,403 +970,39 @@ export default function BoardPage({
     }
   }, [applySnapshot, board.id, onBoardUpdated, revealing])
 
-  const handleToggleSelectCard = useCallback(
-    (cardId: string, shiftKey = false) => {
-      if (readOnly) return
-      // Скрытые до раскрытия чужие карточки в диапазон не попадают: выбрать их нельзя
-      const orderedIds = columnsRef.current.flatMap((c) =>
-        c.cards.filter((card) => !card.masked).map((card) => card.id),
-      )
-      setSelectedCardIds((prev) => {
-        const next = new Set(prev)
-        if (shiftKey && lastSelectedCardIdRef.current) {
-          const startIdx = orderedIds.indexOf(lastSelectedCardIdRef.current)
-          const endIdx = orderedIds.indexOf(cardId)
-          if (startIdx !== -1 && endIdx !== -1) {
-            const [lo, hi] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx]
-            for (let i = lo; i <= hi; i += 1) {
-              next.add(orderedIds[i])
-            }
-            return next
-          }
-        }
-        if (next.has(cardId)) {
-          next.delete(cardId)
-        } else {
-          next.add(cardId)
-        }
-        return next
-      })
-      lastSelectedCardIdRef.current = cardId
-    },
-    [readOnly],
-  )
+  const focusSearch = useCallback(() => {
+    searchInputRef.current?.focus()
+    searchInputRef.current?.select()
+  }, [])
+  const openBoardSettings = useCallback(() => setBoardSettingsOpen(true), [])
+  const openMood = useCallback(() => setMoodOpen(true), [])
+  const openShortcuts = useCallback(() => setShortcutsOpen(true), [])
+  const toggleReactionsPopover = useCallback(() => setReactionsPopoverOpen((prev) => !prev), [])
+  const openReactionsPopover = useCallback(() => setReactionsPopoverOpen(true), [])
 
-  // Ответ массовой операции: карточки с новыми колонкой, группой или цветом
-  const applyBulkUpdatedCards = useCallback(
-    (updatedCards: Card[], extraGroup?: CardGroup) => {
-      if (extraGroup) applyChange({ type: 'group_created', group: extraGroup }, 'rest')
-      for (const card of updatedCards) applyChange({ type: 'card_updated', card }, 'rest')
-    },
-    [applyChange],
-  )
-
-  const runBulkAction = useCallback(
-    async (fallbackError: string, fn: (cardIds: string[]) => Promise<void>) => {
-      if (readOnly || bulkBusy || selectedCards.length === 0) return
-      setBulkBusy(true)
-      try {
-        await fn(selectedCards.map((c) => c.id))
-      } catch (err) {
-        showToast(getApiErrorMessage(err, fallbackError), 'error')
-      } finally {
-        setBulkBusy(false)
-      }
-    },
-    [bulkBusy, readOnly, selectedCards],
-  )
-
-  const handleBulkGroup = useCallback(
-    (title: string) =>
-      runBulkAction('Не удалось сгруппировать карточки', async (ids) => {
-        const updated = await bulkUpdateCards({ card_ids: ids, group_title: title })
-        const newGroupId = updated[0]?.group_id
-        const targetColId = updated[0]?.column_id
-        // Группу ответ не содержит (она придёт событием): пока собираем её сами — в конец колонки
-        const lastGroupPosition = (
-          columnsRef.current.find((c) => c.id === targetColId)?.groups || []
-        ).reduce((max, g) => Math.max(max, g.position), -1)
-        const syntheticGroup: CardGroup | undefined =
-          newGroupId && targetColId
-            ? {
-                id: newGroupId,
-                column_id: targetColId,
-                title: title.trim() || 'Новая группа',
-                position: lastGroupPosition + 1,
-              }
-            : undefined
-        applyBulkUpdatedCards(updated, syntheticGroup)
-        setSelectedCardIds(new Set())
-        showToast('Карточки объединены в группу', 'success')
-      }),
-    [applyBulkUpdatedCards, runBulkAction],
-  )
-
-  const handleBulkColor = useCallback(
-    (hex: string) =>
-      runBulkAction('Не удалось изменить цвет карточек', async (ids) => {
-        const updated = await bulkUpdateCards({ card_ids: ids, color: hex })
-        applyBulkUpdatedCards(updated)
-        setSelectedCardIds(new Set())
-      }),
-    [applyBulkUpdatedCards, runBulkAction],
-  )
-
-  const handleBulkMove = useCallback(
-    (columnId: string) =>
-      runBulkAction('Не удалось переместить карточки', async (ids) => {
-        const updated = await bulkUpdateCards({ card_ids: ids, column_id: columnId })
-        applyBulkUpdatedCards(updated)
-        setSelectedCardIds(new Set())
-        showToast('Карточки перемещены', 'success')
-      }),
-    [applyBulkUpdatedCards, runBulkAction],
-  )
-
-  const handleBulkCreateActionItem = useCallback(
-    () =>
-      runBulkAction('Не удалось создать задачу', async (ids) => {
-        const combinedText = selectedCards
-          .map((c) => c.text.trim())
-          .filter(Boolean)
-          .join('\n')
-        const firstAuthor = selectedCards[0]?.author ?? null
-        await createActionItemFromCards(combinedText, ids, firstAuthor)
-        setSelectedCardIds(new Set())
-      }),
-    [createActionItemFromCards, runBulkAction, selectedCards],
-  )
-
-  const handleBulkDelete = useCallback(
-    () =>
-      runBulkAction('Не удалось удалить карточки', async (ids) => {
-        await bulkDeleteCards(ids)
-        applyChange({ type: 'cards_deleted', ids })
-        setSelectedCardIds(new Set())
-        showToast(`Удалено карточек: ${ids.length}`, 'success')
-      }),
-    [applyChange, runBulkAction],
-  )
-
-  const handleMergeCards = useCallback(
-    (targetText: string) =>
-      runBulkAction('Не удалось объединить карточки', async (ids) => {
-        const merged = await mergeCards(ids, targetText)
-        applyChange({ type: 'cards_deleted', ids: ids.filter((id) => id !== merged.id) })
-        applyChange({ type: 'card_updated', card: merged }, 'rest')
-        setSelectedCardIds(new Set())
-        showToast('Дубли объединены, голоса суммированы', 'success')
-      }),
-    [applyChange, runBulkAction],
-  )
-
-  const handleOpenClusterPreview = useCallback(
-    async (col: ColumnType) => {
-      if (readOnly) return
-      try {
-        const preview = await autoClusterPreview(col.id)
-        if (!preview.groups || preview.groups.length === 0) {
-          showToast('AI не нашёл похожих карточек для группировки', 'info')
-          return
-        }
-        setClusterPreviewState({ column: col, preview })
-      } catch (err: unknown) {
-        // Одно сообщение по делу: причину («AI не настроен», «временно недоступен»,
-        // «карточки ещё скрыты») сообщает сервер
-        showToast(getApiErrorMessage(err, 'Не удалось выполнить AI-кластеризацию'), 'error')
-      }
-    },
-    [readOnly],
-  )
-
-  const handleApplyClusterPreview = useCallback(
-    async (groupsToApply: { title: string; card_ids: string[] }[]) => {
-      if (!clusterPreviewState || applyingClusters || readOnly) return
-      setApplyingClusters(true)
-      try {
-        const colId = clusterPreviewState.column.id
-        const result = await applyAutoClusters({
-          column_id: colId,
-          groups: groupsToApply,
-        })
-        for (const entry of result.created_groups || []) {
-          if (entry?.group) {
-            handleGroupCreated(entry.group, entry.card_ids || [])
-          }
-        }
-        setClusterPreviewState(null)
-        showToast(
-          `Создано групп: ${(result.created_groups || []).length}`,
-          'success',
-        )
-      } catch (err) {
-        showToast(getApiErrorMessage(err, 'Не удалось применить группы'), 'error')
-      } finally {
-        setApplyingClusters(false)
-      }
-    },
-    [applyingClusters, clusterPreviewState, handleGroupCreated, readOnly],
-  )
-
-  const commandBoardActions = useMemo<CommandBoardAction[]>(() => {
-    const list: CommandBoardAction[] = []
-    if (!readOnly) {
-      list.push({
-        id: 'new-card',
-        label: 'Добавить карточку в первую колонку',
-        keywords: 'создать карточку стикер add card',
-        shortcut: 'N',
-        onSelect: () => {
-          const btn = document.querySelector<HTMLButtonElement>('[data-column-add-btn="true"]')
-          btn?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
-          btn?.click()
-        },
-      })
-    }
-    list.push(
-      {
-        id: 'search-cards',
-        label: 'Поиск по карточкам на доске',
-        keywords: 'фильтр найти search',
-        shortcut: 'F',
-        onSelect: () => {
-          searchInputRef.current?.focus()
-          searchInputRef.current?.select()
-        },
-      },
-      {
-        id: 'toggle-master',
-        label: masterOpen ? 'Скрыть панель «Задачи»' : 'Показать панель «Задачи»',
-        keywords: 'action items задачи итоги',
-        shortcut: 'M',
-        onSelect: handleToggleMaster,
-      },
-      {
-        id: 'open-reactions',
-        label: 'Отправить быструю реакцию',
-        keywords: 'эмодзи emoji reaction',
-        shortcut: 'R',
-        onSelect: () => setReactionsPopoverOpen(true),
-      },
-    )
-    if (hasGroups) {
-      list.push({
-        id: 'toggle-groups',
-        label: allGroupsCollapsed ? 'Развернуть все группы' : 'Свернуть все группы',
-        keywords: 'collapse expand groups кластеры',
-        onSelect: handleToggleCollapseAllGroups,
-      })
-    }
-    if (!readOnly && userTotalVotes > 0) {
-      list.push({
-        id: 'reset-votes',
-        label: 'Сбросить все мои голоса',
-        keywords: 'reset votes лайки',
-        onSelect: () => void handleResetMyVotes(),
-      })
-    }
-    list.push(
-      {
-        id: 'board-settings',
-        label: 'Настройки доски',
-        keywords: 'settings лимит голосов таймер слепой',
-        onSelect: () => setBoardSettingsOpen(true),
-      },
-      {
-        id: 'ai-summary',
-        label: aiEnabled === false ? 'Итоги ретроспективы и экспорт' : 'AI-резюме ретроспективы',
-        keywords: 'summary итоги отчет',
-        onSelect: openSummary,
-      },
-      {
-        id: 'mood-checkin',
-        label: 'Чек-ин настроения',
-        keywords: 'mood оценка',
-        onSelect: () => setMoodOpen(true),
-      },
-      {
-        id: 'health-check',
-        label: 'Health check команды',
-        keywords: 'health опрос чек-ин светофор здоровье команды',
-        onSelect: openHealthCheck,
-      },
-      {
-        id: 'shortcuts-help',
-        label: 'Шпаргалка горячих клавиш',
-        keywords: 'keyboard shortcuts help помощь',
-        shortcut: '?',
-        onSelect: () => setShortcutsOpen(true),
-      },
-    )
-    return list
-  }, [
-    aiEnabled,
-    allGroupsCollapsed,
-    handleResetMyVotes,
-    handleToggleCollapseAllGroups,
-    handleToggleMaster,
-    hasGroups,
+  const { commandBoardActions, commandSearchCards } = useBoardShortcuts({
+    columns,
     masterOpen,
-    openSummary,
+    hasGroups,
+    allGroupsCollapsed,
     readOnly,
     userTotalVotes,
-  ])
-
-  // Перейти к карточке на своём экране: прокрутить и ненадолго подсветить
-  const flashCard = useCallback((cardId: string) => {
-    const el = document.querySelector<HTMLElement>(`[data-card-id="${cardId}"]`)
-    if (!el) return
-    el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
-    el.setAttribute('data-flash', 'true')
-    window.setTimeout(() => el.removeAttribute('data-flash'), CARD_FLASH_MS)
-  }, [])
-
-  const commandSearchCards = useMemo<CommandSearchCard[]>(() => {
-    const items: CommandSearchCard[] = []
-    for (const col of columns) {
-      for (const card of col.cards) {
-        if (card.masked) continue
-        items.push({
-          id: card.id,
-          text: card.text,
-          columnTitle: col.title,
-          likesCount: (card.likes || []).length,
-          onSelect: () => {
-            flashCard(card.id)
-            // Поиск карточки — личное действие: фокус всей команде включает только ведущий
-            if (isFacilitator) handleSelectSpotlightCard(card.id)
-          },
-        })
-      }
-    }
-    return items
-  }, [columns, flashCard, handleSelectSpotlightCard, isFacilitator])
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      const target = e.target as HTMLElement | null
-      if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
-          target.isContentEditable)
-      ) {
-        return
-      }
-
-      // Окно или меню забирают клавиатуру целиком; поповер (таймер, реакции, участники) —
-      // только Escape, которым он закрывается. Остальные клавиши доски при нём работают.
-      const overlay = blockingOverlay()
-
-      if (e.key === 'Escape') {
-        if (!overlay && selectedCardIds.size > 0) {
-          setSelectedCardIds(new Set())
-        }
-        return
-      }
-
-      if (overlay === 'modal' || overlay === 'menu') {
-        return
-      }
-
-      if (e.key === '?') {
-        e.preventDefault()
-        setShortcutsOpen(true)
-        return
-      }
-
-      if (e.code === 'KeyN' && !readOnly) {
-        const firstAddBtn = document.querySelector<HTMLButtonElement>(
-          '[data-column-add-btn="true"]',
-        )
-        if (firstAddBtn) {
-          e.preventDefault()
-          firstAddBtn.scrollIntoView({
-            behavior: 'smooth',
-            block: 'nearest',
-            inline: 'center',
-          })
-          firstAddBtn.click()
-        }
-        return
-      }
-
-      if (e.code === 'KeyF' || e.key === '/') {
-        e.preventDefault()
-        searchInputRef.current?.focus()
-        searchInputRef.current?.select()
-        return
-      }
-
-      if (e.code === 'KeyM') {
-        e.preventDefault()
-        handleToggleMaster()
-        return
-      }
-
-      if (e.code === 'KeyR') {
-        e.preventDefault()
-        setReactionsPopoverOpen((prev) => !prev)
-      }
-    }
-
-    // На фазе перехвата: поповер закрывается по Escape раньше, чем событие всплывёт до окна,
-    // и к тому моменту уже не виден как открытый — Escape сбросил бы ещё и выделение
-    window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [handleToggleMaster, readOnly, selectedCardIds.size])
+    aiEnabled,
+    isFacilitator,
+    selectedCount: selectedCardIds.size,
+    onFocusSearch: focusSearch,
+    onToggleMaster: handleToggleMaster,
+    onToggleCollapseAllGroups: handleToggleCollapseAllGroups,
+    onResetMyVotes: handleResetMyVotes,
+    onOpenBoardSettings: openBoardSettings,
+    onOpenSummary: openSummary,
+    onOpenMood: openMood,
+    onOpenShortcuts: openShortcuts,
+    onToggleReactionsPopover: toggleReactionsPopover,
+    onOpenReactionsPopover: openReactionsPopover,
+    onClearSelection: clearSelection,
+    onSelectSpotlightCard: handleSelectSpotlightCard,
+  })
 
   useEffect(() => {
     const open = () => healthRef.current.openDialog()
@@ -1544,17 +1039,6 @@ export default function BoardPage({
 
   // Курсоры других участников; свой (из второй вкладки той же сессии) не показываем
   const remoteCursors = Object.entries(cursorsRef.current).filter(([id]) => id !== myId)
-
-  // Удалять выбранные карточки можно, если каждая из них своя, либо я модератор
-  const canDeleteSelection = selectedCards.every((card) =>
-    canDeleteCard(card, myId, { anonymous: anonymousMode, moderator: isModerator }),
-  )
-  // Объединение — и правка, и удаление: чужие карточки объединяет только модератор
-  const mergeBlocked = mergeBlockedReason(selectedCards, myId, {
-    anonymous: anonymousMode,
-    moderator: isModerator,
-    cardsHidden,
-  })
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
@@ -1837,185 +1321,80 @@ export default function BoardPage({
         </DragOverlay>
       </DndContext>
 
-      {/* Mobile Action Items Sheet */}
-      <Sheet open={mobileMasterOpen} onOpenChange={setMobileMasterOpen}>
-        <SheetContent side="right" className="w-[340px] p-0 sm:max-w-sm">
-          <SheetHeader className="sr-only">
-            <SheetTitle>Задачи доски</SheetTitle>
-          </SheetHeader>
-          <MasterColumn
-            boardId={board.id}
-            actionItems={actionItems}
-            participants={participants}
-            onCreated={handleActionItemSaved}
-            onUpdated={handleActionItemChanged}
-            onRestored={handleActionItemSaved}
-            onDeleted={handleActionItemDeleted}
-            dropDisabled
-            readOnly={readOnly}
-            cardsHidden={cardsHidden}
-          />
-        </SheetContent>
-      </Sheet>
-
-      {/* Floating emoji reactions */}
-      {reactions.length > 0 && (
-        <div
-          data-testid="reactions-overlay"
-          className="pointer-events-none fixed inset-x-0 top-14 bottom-4 z-50 overflow-hidden"
-          aria-hidden="true"
-        >
-          {reactions.map((r) => (
-            <div
-              key={r.id}
-              style={{ left: `${r.xOffset}%` }}
-              className="animate-float-up absolute bottom-2 flex -translate-x-1/2 flex-col items-center gap-1"
-            >
-              <span className="text-4xl drop-shadow-md">{r.emoji}</span>
-              {r.username && (
-                <span className="rounded-full border border-border/60 bg-background/90 px-2 py-0.5 text-[10px] font-medium shadow-xs backdrop-blur-xs">
-                  {r.username}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Drawers & Dialogs */}
-      <BoardsPanel
-        open={boardsPanelOpen}
-        onOpenChange={setBoardsPanelOpen}
+      <BoardDialogs
+        board={board}
         boards={boards}
-        currentBoardId={board.id}
+        columns={columns}
+        actionItems={actionItems}
+        participants={participants}
+        myId={myId}
+        isModerator={isModerator}
+        canControlSession={canControlSession}
+        readOnly={readOnly}
+        cardsHidden={cardsHidden}
+        anonymousMode={anonymousMode}
+        userTotalVotes={userTotalVotes}
+        reactions={reactions}
+        mobileMasterOpen={mobileMasterOpen}
+        onMobileMasterOpenChange={setMobileMasterOpen}
+        onActionItemSaved={handleActionItemSaved}
+        onActionItemChanged={handleActionItemChanged}
+        onActionItemDeleted={handleActionItemDeleted}
+        boardsPanelOpen={boardsPanelOpen}
+        onBoardsPanelOpenChange={setBoardsPanelOpen}
         onSelectBoard={onSelectBoard}
         onOpenCreateBoard={onOpenCreateBoard}
         onNavigateDashboard={() => router.push('/dashboard')}
-      />
-
-      <BulkActionsBar
-        selectedCards={readOnly ? [] : selectedCards}
-        columns={columns}
-        busy={bulkBusy}
-        onClear={() => setSelectedCardIds(new Set())}
+        selectedCards={selectedCards}
+        bulkBusy={bulkBusy}
+        canDeleteSelection={canDeleteSelection}
+        mergeBlockedReason={mergeBlocked}
+        onClearSelection={clearSelection}
         onBulkGroup={handleBulkGroup}
         onBulkColor={handleBulkColor}
         onBulkMove={handleBulkMove}
         onBulkCreateActionItem={handleBulkCreateActionItem}
         onBulkDelete={handleBulkDelete}
-        canDelete={canDeleteSelection}
         onMergeCards={handleMergeCards}
-        mergeBlockedReason={mergeBlocked}
-      />
-
-      <CommandPalette
-        boards={boards}
-        open={commandOpen}
-        onOpenChange={setCommandOpen}
-        onSelectBoard={onSelectBoard}
-        onCreateBoard={onOpenCreateBoard}
-        onNavigateDashboard={() => router.push('/dashboard')}
-        boardActions={commandBoardActions}
-        searchableCards={commandSearchCards}
-      />
-
-      <BoardSettingsDialog
-        open={boardSettingsOpen}
-        onOpenChange={setBoardSettingsOpen}
-        board={board}
-        canModerate={isModerator}
-        onBoardUpdated={handleSettingsSaved}
+        commandOpen={commandOpen}
+        onCommandOpenChange={setCommandOpen}
+        commandBoardActions={commandBoardActions}
+        commandSearchCards={commandSearchCards}
+        boardSettingsOpen={boardSettingsOpen}
+        onBoardSettingsOpenChange={setBoardSettingsOpen}
+        onSettingsSaved={handleSettingsSaved}
         onBoardDeleted={onBoardDeleted}
-      />
-
-      <UserSettingsDialog
-        open={userSettingsOpen}
-        onOpenChange={setUserSettingsOpen}
-      />
-
-      <MoodDialog
-        open={moodOpen}
-        onOpenChange={setMoodOpen}
-        boardId={board.id}
-        anonymous={anonymousMode}
+        userSettingsOpen={userSettingsOpen}
+        onUserSettingsOpenChange={setUserSettingsOpen}
+        moodOpen={moodOpen}
+        onMoodOpenChange={setMoodOpen}
         moods={moods}
         onMoodSubmitted={handleWsMoodUpdated}
-      />
-
-      <SummaryModal
-        open={summaryOpen}
-        onOpenChange={setSummaryOpen}
-        board={{ ...board, columns }}
-        actionItems={actionItems}
+        summaryOpen={summaryOpen}
+        onSummaryOpenChange={setSummaryOpen}
         summary={summary}
-        loading={summaryLoading}
-        error={summaryError}
+        summaryLoading={summaryLoading}
+        summaryError={summaryError}
         onSummaryUpdated={(updated) => {
           setSummary(updated)
           onBoardUpdated({ ...board, has_summary: true })
         }}
-      />
-
-      <AutoClusterPreviewDialog
-        open={Boolean(clusterPreviewState)}
-        onOpenChange={(open) => {
-          if (!open) setClusterPreviewState(null)
-        }}
-        columnTitle={clusterPreviewState?.column.title || ''}
-        preview={clusterPreviewState?.preview || null}
-        cards={clusterPreviewState?.column.cards || []}
-        applying={applyingClusters}
-        onApply={handleApplyClusterPreview}
-      />
-
-      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-
-      <SpotlightModal
-        card={spotlightData?.card || null}
-        column={spotlightData?.column}
-        anonymous={anonymousMode}
-        isFacilitator={canControlSession}
-        currentUserId={myId}
-        readOnly={readOnly}
-        maxVotes={board.max_votes}
-        userTotalVotes={userTotalVotes}
-        allowMultipleVotes={Boolean(board.allow_multiple_votes_per_card)}
-        queueCards={spotlightQueue}
-        queueMode={spotlightQueueMode}
-        onQueueModeChange={setSpotlightQueueMode}
-        onSelectCard={handleSelectSpotlightCard}
-        onClose={() => {
-          if (canControlSession) {
-            sendMessage({ event: 'spotlight_card', data: { card_id: null } })
-          }
-        }}
-        onCreateActionItem={(card) =>
-          createActionItemFromCards(card.text, [card.id], card.author)
-        }
-        onLike={() => {
-          if (!spotlightData || readOnly) return
-          const targetCard = spotlightData.card
-          const allowMulti = Boolean(board.allow_multiple_votes_per_card)
-          const alreadyLiked = countMyVotes(targetCard, myId) > 0
-          const adding = allowMulti || !alreadyLiked
-          if (adding && board.max_votes > 0 && userTotalVotes >= board.max_votes) {
-            showToast(`Лимит голосов исчерпан (${userTotalVotes}/${board.max_votes})`, 'info')
-            return
-          }
-          toggleLike(targetCard.id, allowMulti ? 'add' : 'toggle')
-            .then((updated) => handleCardUpdated(updated))
-            .catch((err) => showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error'))
-        }}
-      />
-
-      {/* Health check: запустить опрос у всех может ведущий, а вне сессии — любой участник */}
-      <HealthCheckDialog
+        clusterPreviewState={clusterPreviewState}
+        onCloseClusterPreview={() => setClusterPreviewState(null)}
+        applyingClusters={applyingClusters}
+        onApplyClusterPreview={handleApplyClusterPreview}
+        shortcutsOpen={shortcutsOpen}
+        onShortcutsOpenChange={setShortcutsOpen}
+        spotlightData={spotlightData}
+        spotlightQueue={spotlightQueue}
+        spotlightQueueMode={spotlightQueueMode}
+        onSpotlightQueueModeChange={setSpotlightQueueMode}
+        onSelectSpotlightCard={handleSelectSpotlightCard}
+        onCreateActionItemFromCard={createActionItemFromCards}
+        onSpotlightCardUpdated={handleCardUpdated}
         health={health}
-        onStartForTeam={
-          canControlSession ? () => sendMessage(HEALTH_CHECK_START) : undefined
-        }
+        sendMessage={sendMessage}
       />
-      <RotiPrompt health={health} />
     </div>
   )
 }

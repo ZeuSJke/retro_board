@@ -1,6 +1,7 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useTheme } from 'next-themes'
 import {
@@ -33,6 +34,7 @@ import {
 } from '@/api/admin'
 import AgentTokensDialog, { type AgentTokensAdapter } from '@/components/AgentTokensDialog'
 import { BrandMark } from '@/components/BrandLogo'
+import { queryKeys } from '@/lib/query-client'
 import { showToast } from '@/store/toastStore'
 import {
   getApiErrorMessage,
@@ -125,11 +127,27 @@ interface AdminTeamsProps {
  */
 export default function AdminTeams({ onLogout }: AdminTeamsProps) {
   const { theme, setTheme } = useTheme()
+  const queryClient = useQueryClient()
+
+  const workspacesQuery = useQuery({
+    queryKey: queryKeys.adminWorkspaces(),
+    queryFn: async () => {
+      try {
+        return await getAdminWorkspaces()
+      } catch (err) {
+        // Ошибка показана на странице — общий тост не нужен
+        markApiErrorReported(err)
+        throw err
+      }
+    },
+  })
 
   // null — список ещё не загружен
-  const [workspaces, setWorkspaces] = useState<WorkspaceListItem[] | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [reloadKey, setReloadKey] = useState(0)
+  const workspaces = workspacesQuery.data ?? null
+  const loadError =
+    workspacesQuery.isError && getApiErrorStatus(workspacesQuery.error) !== 401
+      ? 'Не удалось загрузить список команд. Проверьте соединение и повторите.'
+      : null
   const [error, setError] = useState<string | null>(null)
 
   const [dialogMode, setDialogMode] = useState<DialogMode>(null)
@@ -145,33 +163,10 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
   const [createAccessKey, setCreateAccessKey] = useState('')
   const [renameName, setRenameName] = useState('')
   const [keyAccessKey, setKeyAccessKey] = useState('')
-  const [activeTokensCount, setActiveTokensCount] = useState(0)
   const [revokeAgentTokens, setRevokeAgentTokens] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
-    getAdminWorkspaces()
-      .then((data) => {
-        if (cancelled) return
-        setWorkspaces(data)
-        setLoadError(null)
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        // Ошибка показана на странице — общий тост не нужен
-        markApiErrorReported(err)
-        if (getApiErrorStatus(err) !== 401) {
-          setLoadError('Не удалось загрузить список команд. Проверьте соединение и повторите.')
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [reloadKey])
-
   const reload = () => {
-    setLoadError(null)
-    setReloadKey((n) => n + 1)
+    void workspacesQuery.refetch()
   }
 
   const openCreate = () => {
@@ -183,28 +178,21 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
     setDialogMode('create')
   }
 
-  useEffect(() => {
-    if (dialogMode !== 'key' || !target) return
-    let cancelled = false
-    Promise.resolve(getAdminAgentTokens(target.id))
-      .then((tokens) => {
-        if (cancelled || !Array.isArray(tokens)) return
-        setActiveTokensCount(tokens.filter((t) => !t.revoked_at).length)
-      })
-      .catch(() => {
-        // Оставляем счётчик, полученный со списком команд, чтобы не блокировать смену ключа.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [dialogMode, target])
+  const tokensCountQuery = useQuery({
+    queryKey: ['admin', 'agent-tokens', target?.id ?? ''],
+    queryFn: () => getAdminAgentTokens(target!.id),
+    enabled: dialogMode === 'key' && Boolean(target),
+    staleTime: 0,
+  })
+  const activeTokensCount = Array.isArray(tokensCountQuery.data)
+    ? tokensCountQuery.data.filter((t) => !t.revoked_at).length
+    : (target?.active_agent_tokens_count ?? 0)
 
   const openFor = (mode: Exclude<DialogMode, 'create' | null>, ws: WorkspaceListItem) => {
     setTarget(ws)
     setRenameName(ws.name)
     setKeyAccessKey('')
     setRevokeAgentTokens(false)
-    setActiveTokensCount(ws.active_agent_tokens_count ?? 0)
     setDialogError(null)
     setDialogMode(mode)
   }
@@ -226,7 +214,10 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
         access_key: createAccessKey,
       })
       // Порядок как у сервера: новые команды — в конце списка
-      setWorkspaces((prev) => [...(prev ?? []), created])
+      queryClient.setQueryData<WorkspaceListItem[]>(queryKeys.adminWorkspaces(), (prev) => [
+        ...(prev ?? []),
+        created,
+      ])
       setDialogMode(null)
       showToast('Команда создана', 'success')
     } catch (err) {
@@ -246,7 +237,7 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
     setDialogError(null)
     try {
       const updated = await updateAdminWorkspace(target.id, { name: renameName.trim() })
-      setWorkspaces((prev) =>
+      queryClient.setQueryData<WorkspaceListItem[]>(queryKeys.adminWorkspaces(), (prev) =>
         (prev ?? []).map((w) => (w.id === updated.id ? { ...w, ...updated } : w)),
       )
       setDialogMode(null)
@@ -274,11 +265,12 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
           : { access_key: keyAccessKey },
       )
       if (revokeAgentTokens) {
-        setWorkspaces((prev) =>
+        queryClient.setQueryData<WorkspaceListItem[]>(queryKeys.adminWorkspaces(), (prev) =>
           (prev ?? []).map((w) =>
             w.id === target.id ? { ...w, active_agent_tokens_count: 0 } : w,
           ),
         )
+        void queryClient.invalidateQueries({ queryKey: ['admin', 'agent-tokens', target.id] })
       }
       setDialogMode(null)
       showToast(
@@ -301,7 +293,9 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
     setError(null)
     try {
       await deleteAdminWorkspace(ws.id)
-      setWorkspaces((prev) => (prev ?? []).filter((w) => w.id !== ws.id))
+      queryClient.setQueryData<WorkspaceListItem[]>(queryKeys.adminWorkspaces(), (prev) =>
+        (prev ?? []).filter((w) => w.id !== ws.id),
+      )
       showToast('Команда удалена', 'success')
     } catch (err) {
       setError(getApiErrorMessage(err, 'Не удалось удалить команду'))

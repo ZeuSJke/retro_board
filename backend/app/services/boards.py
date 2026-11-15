@@ -1,16 +1,18 @@
 """Сервисный слой для досок, списков, трендов и итогов ретро."""
 
-from datetime import UTC, datetime
+import logging
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from slugify import slugify
-from sqlalchemy import and_, case, exists, func
+from sqlalchemy import and_, case, exists, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas, themes
-from app.board_view import board_view, require_cards_visible
+from app.ai.prompts.summary_generation import generate_summary
+from app.board_view import ANON_AUTHOR, board_view, require_cards_visible
 from app.database import release_connection
 from app.models import now_utc
 from app.services.action_items import copy_unresolved_action_items
@@ -22,6 +24,8 @@ from app.services.common import (
     find_live_board,
 )
 from app.ws_manager import manager
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_COLUMNS = [
     {"title": "😊 Что хорошо", "color": "#006E1C"},
@@ -650,3 +654,176 @@ def save_board_summary_sync(
         recommendations=recommendations,
         update_latest_when_no_session=True,
     )
+
+
+def get_board_full_data(
+    db: Session, board_id: str, workspace_id: str
+) -> dict:
+    """Собрать полный снимок доски с колонками и карточками для AI-резюме."""
+    board = (
+        db.query(models.Board)
+        .options(
+            selectinload(models.Board.columns).selectinload(models.Column.cards),
+        )
+        .filter(
+            or_(
+                models.Board.slug == board_id,
+                models.Board.id == board_id,
+            ),
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id == workspace_id,
+        )
+        .first()
+    )
+
+    if not board:
+        return {}
+
+    return {
+        "id": board.id,
+        "name": board.name,
+        # Темы команды: модель переиспользует их названия вместо новых
+        "team_themes": themes.themes_for_prompt(db, workspace_id),
+        "columns": [
+            {
+                "id": col.id,
+                "title": col.title,
+                "position": col.position,
+                "cards": [
+                    {
+                        "id": card.id,
+                        "text": card.text,
+                        "author": (
+                            ANON_AUTHOR
+                            if board.anonymous_votes
+                            and (card.author_kind or "human") != "agent"
+                            else card.author
+                        ),
+                        "likes": card.likes or [],
+                        "position": card.position,
+                    }
+                    for card in col.cards
+                ],
+            }
+            for col in board.columns
+        ],
+    }
+
+
+def generate_summary_internal(
+    board_id: str,
+    facilitator_id: str,
+    workspace_id: str,
+) -> dict | None:
+    """Сгенерировать и сохранить итоги (блокирующий вызов; запускать в to_thread).
+
+    Открывает собственную Session, чтобы не переиспользовать сессию запроса/WS
+    между потоками. Возвращает словарь итогов или None при сбое.
+    """
+    from app.database import SessionLocal
+
+    logger.info("Starting summary generation for board %s", board_id)
+
+    if manager.get_facilitator(board_id) != facilitator_id:
+        logger.warning(
+            "Participant %s is not facilitator of board %s", facilitator_id, board_id
+        )
+        return None
+
+    session_id = manager.get_session_id(board_id)
+    if not session_id:
+        session_id = int(datetime.now(UTC).timestamp() * 1000)
+        manager.set_session_id(board_id, session_id)
+        logger.info("Created new session ID: %s", session_id)
+
+    db = SessionLocal()
+    try:
+        board_row = db.get(models.Board, board_id)
+        if (
+            board_row is None
+            or board_row.workspace_id != workspace_id
+            or board_row.deleted_at is not None
+        ):
+            logger.warning(
+                "Summary generation refused for board %s: not live in workspace",
+                board_id,
+            )
+            return None
+
+        existing = (
+            db.query(models.BoardSummary)
+            .filter(
+                models.BoardSummary.board_id == board_id,
+                models.BoardSummary.session_id == session_id,
+            )
+            .first()
+        )
+
+        if existing:
+            logger.info(
+                "Summary already exists for board %s, session %s",
+                board_id,
+                session_id,
+            )
+            return themes.summary_out(db, existing, workspace_id).model_dump(
+                mode="json"
+            )
+
+        board_data = get_board_full_data(db, board_id, workspace_id)
+        if not board_data:
+            logger.warning("No board data for %s", board_id)
+            return None
+
+        # Данные прочитаны — соединение на время вызова модели не держим.
+        # Сессия та же: следующий запрос возьмёт соединение из пула заново.
+        db.close()
+        try:
+            ai_result = generate_summary(board_data)
+            logger.info("AI summary generated for board %s", board_id)
+        except Exception as e:
+            logger.error(
+                "AI summary generation failed for board %s: %s", board_id, e
+            )
+            return None
+
+        # Темы доски пишутся той же транзакцией, что и итоги
+        theme_names = themes.apply_board_themes(
+            db, workspace_id, board_data["id"], ai_result
+        )
+        summary = models.BoardSummary(
+            id=str(uuid.uuid4()),
+            board_id=board_data["id"],
+            session_id=session_id,
+            summary_text=ai_result.get("summary_text", ""),
+            key_themes=theme_names,
+            recommendations=ai_result.get("recommendations", []),
+        )
+        db.add(summary)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            logger.info(
+                "Summary race lost for board %s, session %s",
+                board_id,
+                session_id,
+            )
+            existing = (
+                db.query(models.BoardSummary)
+                .filter(
+                    models.BoardSummary.board_id == board_data["id"],
+                    models.BoardSummary.session_id == session_id,
+                )
+                .first()
+            )
+            if existing is None:
+                return None
+            return themes.summary_out(db, existing, workspace_id).model_dump(
+                mode="json"
+            )
+        db.refresh(summary)
+        logger.info("Summary saved to DB for board %s", board_id)
+
+        return themes.summary_out(db, summary, workspace_id).model_dump(mode="json")
+    finally:
+        db.close()

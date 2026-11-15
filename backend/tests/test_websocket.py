@@ -697,11 +697,11 @@ class TestSummaryEvents:
     def test_summary_failed_event_on_generation_error(
         self, client, ws_token, ws_board, monkeypatch
     ):
-        from app.routers import boards as boards_router
+        from app.services import boards as boards_service
 
         monkeypatch.setattr(settings, "ai_base_url", "http://llm.test/v1")
         monkeypatch.setattr(
-            boards_router, "_generate_summary_internal", lambda *args, **kwargs: None
+            boards_service, "generate_summary_internal", lambda *args, **kwargs: None
         )
         with connect(client, ws_board.id, ws_token) as ws:
             send(ws, "facilitator_start")
@@ -714,12 +714,12 @@ class TestSummaryEvents:
         self, client, ws_token, ws_board, monkeypatch
     ):
         """Итоги из фазы и по кнопке приходят одним конвертом; различает их флаг regenerated."""
-        from app.routers import boards as boards_router
+        from app.services import boards as boards_service
 
         summary = {"id": "s1", "summary_text": "Итоги", "key_themes": [], "recommendations": []}
         monkeypatch.setattr(settings, "ai_base_url", "http://llm.test/v1")
         monkeypatch.setattr(
-            boards_router, "_generate_summary_internal", lambda *args, **kwargs: summary
+            boards_service, "generate_summary_internal", lambda *args, **kwargs: summary
         )
         with connect(client, ws_board.id, ws_token) as ws:
             send(ws, "facilitator_start")
@@ -751,3 +751,130 @@ class TestRateLimit:
 
             send(ws, "phase_change", {"phase": "vote"})
             assert recv_event(ws, "phase_update")["data"]["phase"] == "vote"
+
+
+class TestGroupCollapsePersistence:
+    def test_late_joiner_receives_groups_collapsed_snapshot(
+        self, client, ws_token_for, ws_board
+    ):
+        with connect(client, ws_board.id, ws_token_for("Alice")) as ws1:
+            send(ws1, "group_collapse", {"group_id": "grp-1", "collapsed": True})
+            assert recv_event(ws1, "group_collapse")["data"] == {
+                "group_id": "grp-1",
+                "collapsed": True,
+            }
+
+            with connect(client, ws_board.id, ws_token_for("Bob"), drain=False) as ws2:
+                assert recv_event(ws2, "groups_collapsed")["data"] == {"group_ids": ["grp-1"]}
+
+            send(ws1, "group_collapse", {"group_id": "grp-1", "collapsed": False})
+            assert recv_event(ws1, "group_collapse")["data"]["collapsed"] is False
+
+            with connect(client, ws_board.id, ws_token_for("Carol"), drain=False) as ws3:
+                seen3 = events_until(ws3, "presence_update")
+                assert "groups_collapsed" not in seen3
+
+
+class TestBoardUpdateDeduplication:
+    def test_patch_board_sends_single_board_updated_to_active_board(
+        self, client, ws_token, ws_board
+    ):
+        ws_headers = {"X-Workspace-Token": ws_token}
+        with (
+            connect(client, ws_board.id, ws_token) as ws_board_sock,
+            client.websocket_connect(
+                f"/ws/workspace?workspace_token={ws_token}", headers={"origin": TEST_ORIGIN}
+            ) as ws_workspace_sock,
+        ):
+            resp = client.patch(
+                f"/api/boards/{ws_board.id}",
+                json={"name": "Без дублей"},
+                headers=ws_headers,
+            )
+            assert resp.status_code == 200
+
+            ws_event = recv_event(ws_workspace_sock, "board_updated")
+            assert ws_event["data"]["name"] == "Без дублей"
+
+            # На самой доске событие приходит один раз и имеет порядковый номер;
+            # следом отправляем group_collapse как маркер, чтобы убедиться, что второго дубля нет.
+            send(ws_board_sock, "group_collapse", {"group_id": "marker", "collapsed": True})
+            board_events = []
+            for _ in range(20):
+                msg = ws_board_sock.receive_json()
+                board_events.append(msg)
+                if msg["event"] == "group_collapse":
+                    break
+            updated = [m for m in board_events if m["event"] == "board_updated"]
+            assert len(updated) == 1
+            assert updated[0]["seq"] == 1
+            assert updated[0]["data"]["name"] == "Без дублей"
+
+
+class TestSlowConsumerAndSchema:
+    def test_slow_consumer_full_queue_dropped_without_blocking_healthy_peer(self):
+        import asyncio
+
+        from app.ws_manager import ConnectionManager
+
+        class FakeSocket:
+            def __init__(self, hang: bool = False):
+                self.hang = hang
+                self.sent: list[str] = []
+                self.closed_codes: list[int] = []
+                self.release = asyncio.Event()
+
+            async def accept(self):
+                return None
+
+            async def send_text(self, message: str):
+                if self.hang:
+                    await self.release.wait()
+                self.sent.append(message)
+
+            async def close(self, code: int = 1000, reason: str = ""):
+                self.closed_codes.append(code)
+                self.release.set()
+
+        async def scenario():
+            mgr = ConnectionManager()
+            mgr.MAX_SOCKET_QUEUE = 2
+            slow = FakeSocket(hang=True)
+            healthy = FakeSocket(hang=False)
+            await mgr.connect("b1", slow, peer=None)
+            await mgr.connect("b1", healthy, peer=None)
+            try:
+                # 1-е сообщение уйдёт в hang внутри send_text, ещё 2 забьют очередь (maxsize=2),
+                # 4-е переполнит очередь медленного клиента и отключит его, не блокируя healthy.
+                await mgr.broadcast("b1", "reaction", {"emoji": "👍"})
+                await asyncio.sleep(0)
+                for i in range(4):
+                    await mgr.broadcast("b1", "reaction", {"emoji": "👍", "i": i})
+                    await asyncio.sleep(0)
+                await asyncio.sleep(0.05)
+                assert len(healthy.sent) == 5
+                assert healthy in mgr.rooms.get("b1", [])
+                assert slow not in mgr.rooms.get("b1", [])
+                assert 1008 in slow.closed_codes
+            finally:
+                slow.release.set()
+                mgr.reset()
+
+        asyncio.run(scenario())
+
+    def test_ws_schemas_rejects_bool_nan_and_unknown_events(self):
+        from app.ws_schemas import parse_ws_event
+
+        assert parse_ws_event("unknown", {}) is None
+        assert parse_ws_event("cursor_move", {"x": True, "y": 10}) is None
+        assert parse_ws_event("cursor_move", {"x": float("nan"), "y": 10}) is None
+        assert parse_ws_event("phase_change", {"phase": "bogus"}) is None
+        assert parse_ws_event("reaction", {"emoji": "🤖"}) is None
+        assert parse_ws_event("group_collapse", {"group_id": "g1", "collapsed": "yes"}) is None
+        parsed_ready = parse_ws_event("ready_toggle", {"ready": "invalid"})
+        assert parsed_ready is not None and parsed_ready[1].ready is None
+        parsed_timer = parse_ws_event("timer_start", {"duration": 60, "remaining": 60, "junk": 1})
+        assert parsed_timer is not None and parsed_timer[1].sanitized() == {
+            "duration": 60,
+            "remaining": 60,
+        }

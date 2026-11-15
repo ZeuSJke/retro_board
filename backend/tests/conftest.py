@@ -39,12 +39,11 @@ _test_ws_name = "WebSocket Test Workspace"
 # We'll create this workspace in the test DB via a fixture
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import TypeDecorator, Text
-
-from fastapi.testclient import TestClient
+from sqlalchemy.types import Text, TypeDecorator
 
 # ---------------------------------------------------------------------------
 # TypeDecorator that stores a Python list as JSON text (for SQLite)
@@ -71,13 +70,14 @@ class JSONEncodedList(TypeDecorator):
 # ---------------------------------------------------------------------------
 # Import app AFTER env is set, then patch the likes column type
 # ---------------------------------------------------------------------------
-from app.database import Base, get_db
-from app import models as app_models  # noqa: F401 — импорт ради регистрации мапперов
-from sqlalchemy import ARRAY
-
 # Import app but patch lifespan so alembic is not invoked during tests
 from contextlib import asynccontextmanager
+
+from sqlalchemy import ARRAY
+
 import main as _main_module
+from app import models as app_models  # noqa: F401 — импорт ради регистрации мапперов
+from app.database import Base, get_db
 
 
 @asynccontextmanager
@@ -146,6 +146,11 @@ else:
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA foreign_keys=ON")
         cur.close()
+        # Встроенный SQLite lower() складывает только ASCII; подменяем для кириллицы,
+        # чтобы func.lower() в запросах совпадал с PostgreSQL UTF-8.
+        dbapi_conn.create_function(
+            "lower", 1, lambda s: s.lower() if isinstance(s, str) else s
+        )
 
 
 TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

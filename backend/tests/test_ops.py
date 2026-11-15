@@ -1,11 +1,12 @@
-"""Эксплуатация: идентификатор запроса в ответе и журнале, проверка готовности."""
+"""Эксплуатация: идентификатор запроса в ответе и журнале, проверка готовности и метрики."""
 
+import json
 import logging
 from unittest.mock import patch
 
 import main
 from app.config import settings
-from app.request_context import RequestIdFilter, request_id_var
+from app.request_context import JsonLogFormatter, RequestIdFilter, configure_logging, request_id_var
 
 
 class TestRequestId:
@@ -68,3 +69,48 @@ class TestReadiness:
             alive = client.get("/api/health")
         assert resp.status_code == 503
         assert alive.status_code == 200
+
+
+class TestObservabilityMetricsAndJsonLogs:
+    def test_metrics_endpoint_exposes_http_ws_and_error_metrics(self, client):
+        assert client.get("/api/health").status_code == 200
+        assert client.get("/api/test-500").status_code == 500
+
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+        assert "set-cookie" not in resp.headers
+        body = resp.text
+        assert "retro_http_requests_total" in body
+        assert "retro_http_request_duration_seconds" in body
+        assert "retro_ws_active_connections" in body
+        assert "retro_ws_dropped_slow_consumers_total" in body
+        assert 'retro_unhandled_errors_total{exc_type="RuntimeError",source="http"}' in body or (
+            'retro_unhandled_errors_total' in body and 'source="http"' in body
+        )
+
+    def test_json_log_formatter_includes_request_id(self):
+        formatter = JsonLogFormatter()
+        record = logging.LogRecord(
+            "retroboard", logging.WARNING, __file__, 1, "тест json", None, None
+        )
+        token = request_id_var.set("trace-abcdef0123")
+        try:
+            RequestIdFilter().filter(record)
+            parsed = json.loads(formatter.format(record))
+        finally:
+            request_id_var.reset(token)
+
+        assert parsed["level"] == "WARNING"
+        assert parsed["request_id"] == "trace-abcdef0123"
+        assert parsed["logger"] == "retroboard"
+        assert parsed["message"] == "тест json"
+
+    def test_configure_logging_switches_to_json_via_env(self, monkeypatch):
+        monkeypatch.setenv("LOG_FORMAT", "json")
+        configure_logging()
+        try:
+            root = logging.getLogger()
+            assert isinstance(root.handlers[0].formatter, JsonLogFormatter)
+        finally:
+            monkeypatch.delenv("LOG_FORMAT", raising=False)
+            configure_logging()

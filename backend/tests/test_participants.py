@@ -116,7 +116,7 @@ class TestSession:
         resp = client.post("/api/workspaces/logout")
         assert resp.status_code == 204
         cookie = resp.headers["set-cookie"]
-        assert cookie.startswith('workspace_token=""') or cookie.startswith("workspace_token=;")
+        assert cookie.startswith(('workspace_token=""', "workspace_token=;"))
         assert "Max-Age=0" in cookie
 
     def test_logout_ends_the_session_on_the_server(self, client, test_workspace):
@@ -603,9 +603,9 @@ class TestHiddenCollection:
             events = []
             while "cards_visibility_changed" not in events:
                 events.append(ws_anya.receive_json()["event"])
-            # board_updated приходит дважды на правку (канал команды и канал доски);
+            # Каждая из двух правок шлёт board_updated ровно один раз (без дубля от workspace);
             # будь у правки max_votes своё событие видимости, цикл оборвался бы раньше
-            assert events == ["board_updated"] * 4 + ["cards_visibility_changed"]
+            assert events == ["board_updated"] * 2 + ["cards_visibility_changed"]
 
     def test_session_brainstorm_masks_live_and_reveal_phase_opens(self, client, workspace_headers, login_as):
         anya = login_as("Аня")

@@ -7,8 +7,10 @@ REST, ни в WebSocket-событии. Скрывать уже отправле
 
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
+from typing import cast
 
 from fastapi import HTTPException
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import object_session
 
 from app import models
@@ -30,6 +32,26 @@ def cards_hidden(board: models.Board) -> bool:
     if board.active_phase is None:
         return bool(board.hide_cards_until_reveal and not board.cards_revealed)
     return False
+
+
+def visible_cards_sql_filter(viewer_id: str | None):
+    """SQL-предикат видимости карточек (зеркало `not card_view(...)["masked"]`)."""
+    not_hidden = or_(
+        and_(
+            models.Board.active_phase.is_not(None),
+            models.Board.active_phase != "brainstorm",
+        ),
+        and_(
+            models.Board.active_phase.is_(None),
+            or_(
+                models.Board.hide_cards_until_reveal.is_(False),
+                models.Board.cards_revealed.is_(True),
+            ),
+        ),
+    )
+    if viewer_id is not None:
+        return or_(not_hidden, models.Card.author_id == viewer_id)
+    return not_hidden
 
 
 def is_own(card: models.Card, viewer_id: str | None) -> bool:
@@ -224,7 +246,12 @@ def card_broadcast_action(
 
     async def _send() -> None:
         def build(viewer_id: str | None) -> dict:
-            view = card_view(card_snap, board_snap, viewer_id, hidden)
+            view = card_view(
+                cast(models.Card, card_snap),
+                cast(models.Board, board_snap),
+                viewer_id,
+                hidden,
+            )
             return wrap(view) if wrap else view
 
         await manager.broadcast_each(board_snap.id, event, build)

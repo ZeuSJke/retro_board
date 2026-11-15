@@ -1,8 +1,8 @@
 """Выпуск, проверка и отзыв токенов MCP-агентов команды."""
 
-from datetime import UTC, datetime, timedelta
 import hashlib
 import secrets
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session

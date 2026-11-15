@@ -1,8 +1,17 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react'
+import { act, render as rtlRender, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Dashboard from '../../components/Dashboard'
+import { makeQueryClient } from '../../lib/query-client'
 import { useAppStore } from '../../store'
+
+const render = (ui: React.ReactElement) => {
+  const client = makeQueryClient()
+  return rtlRender(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  })
+}
 import { showToast } from '../../store/toastStore'
 import type { AgentToken, DashboardActionItem, WsMessage } from '../../types'
 import type { HealthTrendPoint } from '../../types/health'
@@ -184,10 +193,10 @@ describe('Dashboard', () => {
     render(<Dashboard />)
 
     await waitFor(() => {
-      expect(screen.getByText('Панель управления')).toBeInTheDocument()
+      expect(screen.getByText('Доски команды')).toBeInTheDocument()
     })
 
-    expect(screen.getByText('Доски команды')).toBeInTheDocument()
+    expect(screen.getByText('Панель управления')).toBeInTheDocument()
     expect(screen.getByText('Аналитика по спринтам')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Задачи/i })).toBeInTheDocument()
   })
@@ -645,7 +654,9 @@ describe('Dashboard — одна реальная задача считаетс�
       ws.handler?.({ event: 'board_deleted', data: { id: 'b1' } })
     })
 
-    expect(screen.queryByText('Fix CI')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByText('Fix CI')).not.toBeInTheDocument()
+    })
     expect(screen.getByRole('tab', { name: 'Задачи (1)' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Доски (1)' })).toBeInTheDocument()
   })

@@ -7,9 +7,12 @@
 """
 
 import contextvars
+import json
 import logging
+import os
 import re
 import uuid
+from datetime import UTC, datetime
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -30,10 +33,30 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
-def configure_logging(level: int = logging.INFO) -> None:
-    """Единый формат журнала с идентификатором запроса."""
+class JsonLogFormatter(logging.Formatter):
+    """Однострочный JSON-форматер для централизованного сбора логов (`LOG_FORMAT=json`)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, object] = {
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
+            "level": record.levelname,
+            "request_id": getattr(record, "request_id", request_id_var.get()),
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def configure_logging(level: int = logging.INFO, fmt: str | None = None) -> None:
+    """Единый формат журнала с идентификатором запроса (`text` или `json` через `LOG_FORMAT`)."""
+    selected = (fmt if fmt is not None else os.getenv("LOG_FORMAT", "text")).strip().lower()
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    if selected == "json":
+        handler.setFormatter(JsonLogFormatter())
+    else:
+        handler.setFormatter(logging.Formatter(LOG_FORMAT))
     handler.addFilter(RequestIdFilter())
     root = logging.getLogger()
     root.handlers[:] = [handler]

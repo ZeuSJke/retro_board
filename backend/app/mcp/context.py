@@ -1,10 +1,9 @@
 """Контекст аутентифицированного MCP-агента и доступ к сессии БД."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
-from typing import Iterator
 
 from sqlalchemy.orm import Session
 

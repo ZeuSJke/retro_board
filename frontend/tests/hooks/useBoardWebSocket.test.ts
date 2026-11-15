@@ -42,13 +42,6 @@ vi.mock('../../api', () => ({
   getBoard: vi.fn(() => new Promise(() => {})),
 }))
 
-vi.mock('../../utils/wsData', () => ({
-  asCard: (d: unknown) => d,
-  asColumn: (d: unknown) => d,
-  asGroup: (d: unknown) => d,
-  asActionItem: (d: unknown) => d,
-}))
-
 import { showToast } from '../../store/toastStore'
 import { getBoard } from '../../api'
 
@@ -549,10 +542,10 @@ describe('useBoardWebSocket', () => {
     const { result } = setup()
 
     act(() => {
-      result.current.sendMessage({ event: 'test', data: {} })
+      result.current.sendMessage({ event: 'ready_toggle', data: {} })
     })
 
-    expect(mockSendMessage).toHaveBeenCalledWith({ event: 'test', data: {} })
+    expect(mockSendMessage).toHaveBeenCalledWith({ event: 'ready_toggle', data: {} })
   })
 
   it('tracks sessionSynced on facilitator_update and resets when boardId changes', () => {
@@ -848,5 +841,54 @@ describe('useBoardWebSocket', () => {
     const seen = onServerEvent.mock.calls.map(([msg]) => msg.event)
     expect(seen).toEqual(expect.arrayContaining(['health_check_requested', 'health_updated', 'roti_requested']))
     expect(cardIds(result)).toEqual(['A'])
+  })
+
+  it('groups_collapsed и group_collapse синхронизируют свёрнутые группы; group_deleted и смена boardId очищают состояние', () => {
+    const callbacks = {
+      onTimerWsEvent: vi.fn(),
+      onFacilitatorChanged: vi.fn(),
+      onPhaseChanged: vi.fn(),
+      onBoardUpdated: vi.fn(),
+      onBoardDeleted: vi.fn(),
+    }
+    const { result, rerender } = renderHook(
+      ({ boardId }: { boardId: string }) =>
+        useBoardWebSocket({
+          boardId,
+          ...callbacks,
+        }),
+      { initialProps: { boardId: 'board-1' } },
+    )
+
+    // Снимок свёрнутых групп на старте/переподключении заменяет старое состояние
+    act(() => {
+      wsOpenHandler?.()
+    })
+    emit('groups_collapsed', { group_ids: ['g-1', 'g-2'] })
+    expect(result.current.collapsedGroups).toEqual({ 'g-1': true, 'g-2': true })
+
+    // Инкрементальное переключение и удаление одной группы
+    emit('group_collapse', { group_id: 'g-3', collapsed: true })
+    emit('group_collapse', { group_id: 'g-1', collapsed: false })
+    expect(result.current.collapsedGroups).toEqual({ 'g-1': false, 'g-2': true, 'g-3': true })
+
+    emit('group_deleted', { id: 'g-2', column_id: 'col-1' })
+    expect(result.current.collapsedGroups).toEqual({ 'g-1': false, 'g-3': true })
+
+    // При переподключении без groups_collapsed в пачке присутствия свёрнутые группы сбрасываются
+    act(() => {
+      wsOpenHandler?.()
+    })
+    emit('presence_update', { participants: [{ id: 'p-me', name: 'TestUser' }] })
+    expect(result.current.collapsedGroups).toEqual({})
+
+    // Заполняем снова и проверяем сброс при смене boardId
+    emit('groups_collapsed', { group_ids: ['g-9'] })
+    expect(result.current.collapsedGroups).toEqual({ 'g-9': true })
+
+    act(() => {
+      rerender({ boardId: 'board-2' })
+    })
+    expect(result.current.collapsedGroups).toEqual({})
   })
 })

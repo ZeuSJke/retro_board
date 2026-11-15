@@ -91,12 +91,14 @@ const serverCards = async (request: APIRequestContext, session: E2ESession, boar
  * слушатель стрелок появляется сразу после того, как карточка взята, а не в тот же миг.
  */
 async function keyboardDrag(page: Page, text: string, arrows: string[], finish: 'Space' | 'Escape' = 'Space') {
+  const nextFrame = () =>
+    page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))))
   await cardByText(page, text).getByTestId('card-drag-handle').focus()
   await page.keyboard.press('Space')
-  await page.waitForTimeout(250)
+  await expect(page.locator('[id^="DndLiveRegion"]')).toContainText('Взято:')
   for (const arrow of arrows) {
     await page.keyboard.press(arrow)
-    await page.waitForTimeout(300)
+    await nextFrame()
   }
   await page.keyboard.press(finish)
 }
@@ -201,7 +203,8 @@ test.describe('Поведение доски', () => {
 
       // Отмена клавишей Escape: карточка возвращается, на сервере ничего не меняется
       await keyboardDrag(page, 'Один', ['ArrowRight'], 'Escape')
-      await page.waitForTimeout(500)
+      await expect(page.locator('[id^="DndLiveRegion"]')).toContainText('Перенос отменён')
+      await page.waitForLoadState('networkidle')
       expect(await serverCards(request, owner, board.id)).toEqual(afterMove)
       expect(await cardTexts(page, 0)).toEqual(afterMove[0])
       expect(await cardTexts(page, 1)).toEqual(afterMove[1])
@@ -230,7 +233,7 @@ test.describe('Поведение доски', () => {
 
       // Попытка перетащить ничего не меняет ни на экране, ни на сервере
       await cardByText(page, 'Один').dragTo(page.getByTestId('board-column').nth(1), { force: true })
-      await page.waitForTimeout(600)
+      await page.waitForLoadState('networkidle')
       expect(await serverCards(request, owner, board.id).then((c) => c[0])).toEqual(['Один', 'Два'])
 
       await page.getByRole('button', { name: 'По голосам', exact: true }).click()
@@ -348,7 +351,9 @@ test.describe('Поведение доски', () => {
       await guest.page.getByPlaceholder('Найти доску или команду...').fill('И это тоже')
       await guest.page.getByRole('option', { name: /И это тоже/ }).first().click()
       await expect(cardByText(guest.page, 'И это тоже')).toHaveAttribute('data-flash', 'true')
-      await guest.page.waitForTimeout(800)
+      await expect(cardByText(guest.page, 'И это тоже')).not.toHaveAttribute('data-flash', 'true', {
+        timeout: 4000,
+      })
       await expect(guest.page.getByRole('dialog')).toHaveCount(0)
       await expect(creator.page.getByRole('dialog')).toHaveCount(0)
 
@@ -442,7 +447,7 @@ test.describe('Поведение доски', () => {
       await page.getByTestId('export-menu-btn').click()
       await page.getByText('Итоги ретроспективы').click()
       await expect(page.getByRole('dialog').getByText('Итоги ретроспективы')).toBeVisible({ timeout: 10000 })
-      await page.waitForTimeout(800)
+      await page.waitForLoadState('networkidle')
 
       expect(summaryRequests).toEqual([])
       expect(creator.errors.filter((text) => text.includes('404'))).toEqual([])

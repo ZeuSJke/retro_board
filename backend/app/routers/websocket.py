@@ -2,25 +2,45 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
 
 import anyio
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException
-
-from app.config import settings
-from app.ws_manager import Peer, manager
-from app.ws_payloads import (
-    MAX_ID_LENGTH,
-    MAX_WS_MESSAGE_CHARS,
-    clean_cursor_move,
-    clean_group_collapse,
-    clean_timer,
-    number_in_range,
-    short_str,
-)
-from app.workspace_auth import SESSION_COOKIE, decode_workspace_token, resolve_session
-from app.database import get_db
 from app import models
+from app.config import settings
+from app.database import get_db
+from app.observability import record_unhandled_error
+from app.workspace_auth import SESSION_COOKIE, decode_workspace_token, resolve_session
+from app.ws_manager import Peer, manager
+from app.ws_payloads import MAX_WS_MESSAGE_CHARS, number_in_range
+from app.ws_schemas import (
+    ALLOWED_REACTIONS as ALLOWED_REACTIONS,
+)
+from app.ws_schemas import (
+    KNOWN_EVENTS as KNOWN_EVENTS,
+)
+from app.ws_schemas import (
+    VALID_PHASES as VALID_PHASES,
+)
+from app.ws_schemas import (
+    CardTypingIn,
+    CursorMoveIn,
+    FacilitatorStopIn,
+    FacilitatorTransferIn,
+    GroupCollapseIn,
+    PhaseChangeIn,
+    ReactionIn,
+    ReadyToggleIn,
+    SpotlightCardIn,
+    TimerPauseIn,
+    TimerResetIn,
+    TimerStartIn,
+    WsBasePayload,
+    parse_ws_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,32 +50,15 @@ WS_RATE_LIMIT = 20  # max non-cursor control messages per second
 WS_CURSOR_RATE_LIMIT = 30  # max cursor_move frames per second
 WS_RATE_WINDOW = 1.0  # seconds
 
-VALID_PHASES = ("brainstorm", "reveal", "discuss", "vote", "summary")
 
-ALLOWED_REACTIONS = frozenset({"❤️", "👍", "🔥", "🎉", "💡", "👏", "😂"})
-
-KNOWN_EVENTS = frozenset(
-    {
-        "identify",
-        "cursor_move",
-        "cursor_leave",
-        "group_collapse",
-        "timer_start",
-        "timer_pause",
-        "timer_reset",
-        "facilitator_start",
-        "facilitator_stop",
-        "facilitator_transfer",
-        "facilitator_takeover",
-        "phase_change",
-        "summary_generated",
-        "ready_toggle",
-        "spotlight_card",
-        "reaction",
-        "card_typing",
-        "health_check_start",
-    }
-)
+@dataclass
+class _WsContext:
+    websocket: WebSocket
+    board_id: str
+    workspace_id: str
+    peer: Peer
+    facilitator_id: str | None
+    is_facilitator: bool
 
 
 def _open_ws_db(websocket: WebSocket):
@@ -148,7 +151,7 @@ def _dump_state(board_id: str) -> str | None:
 
 
 def _persist_session_state(websocket: WebSocket, board_id: str, workspace_id: str) -> None:
-    """Сохранить таймер и фокус в строке доски, чтобы рестарт пода их не обнулил."""
+    """Сохранить таймер, фокус и свёрнутые группы в строке доски."""
     db_gen = _open_ws_db(websocket)
     try:
         db = next(db_gen)
@@ -158,7 +161,7 @@ def _persist_session_state(websocket: WebSocket, board_id: str, workspace_id: st
         board.session_state = _dump_state(board_id)
         db.commit()
     except Exception:
-        logger.warning("Failed to persist timer state for board %s", board_id, exc_info=True)
+        logger.warning("Failed to persist session state for board %s", board_id, exc_info=True)
     finally:
         try:
             next(db_gen)
@@ -217,9 +220,9 @@ async def _trigger_summary_generation(
     """Trigger automatic summary generation when entering summary phase.
 
     This function is called when facilitator changes phase to 'summary'.
-    Generation runs in a thread with its own DB session (see boards module).
+    Generation runs in a thread with its own DB session (see services.boards module).
     """
-    from app.routers.boards import _generate_summary_internal
+    from app.services import boards as boards_service
 
     if not settings.ai_configured:
         # Без шлюза не занимаем ни поток, ни соединение с БД.
@@ -234,11 +237,13 @@ async def _trigger_summary_generation(
 
     try:
         summary_data = await asyncio.to_thread(
-            _generate_summary_internal, board_id, facilitator_id, workspace_id
+            boards_service.generate_summary_internal,
+            board_id,
+            facilitator_id,
+            workspace_id,
         )
         if summary_data:
-            logger.info("Summary generated for board %s, broadcasting", board_id)
-            # Та же форма, что у перегенерации по кнопке (см. boards.py)
+            logger.info("Summary generated successfully for board %s", board_id)
             await manager.broadcast(
                 board_id,
                 "summary_generated",
@@ -297,9 +302,17 @@ def _timer_snapshot_message(timer: dict) -> dict | None:
             return None
         now_ms = time.time() * 1000
         left = max(0, remaining - (now_ms - started_ms) / 1000)
+        ends_at_ms = number_in_range(timer.get("ends_at_ms"), 0, float("inf"))
+        if ends_at_ms is None:
+            ends_at_ms = round(started_ms + remaining * 1000)
         return {
             "event": "timer_start",
-            "data": {"duration": duration, "remaining": left, "ts": now_ms},
+            "data": {
+                "duration": duration,
+                "remaining": left,
+                "ts": now_ms,
+                "ends_at_ms": ends_at_ms,
+            },
         }
     if remaining > 0:
         return {
@@ -309,8 +322,8 @@ def _timer_snapshot_message(timer: dict) -> dict | None:
     return None
 
 
-async def _send(websocket: WebSocket, event: str, data: dict) -> None:
-    await websocket.send_text(json.dumps({"event": event, "data": data}, default=str))
+async def _send(websocket: WebSocket, event: str, data: dict) -> bool:
+    return await manager.send_event(websocket, event, data)
 
 
 async def _broadcast_session_reset(board_id: str, had_ready: bool, had_spot: bool) -> None:
@@ -318,6 +331,289 @@ async def _broadcast_session_reset(board_id: str, had_ready: bool, had_spot: boo
         await manager.broadcast(board_id, "ready_update", manager.ready_payload(board_id))
     if had_spot:
         await manager.broadcast(board_id, "spotlight_update", {"card_id": None})
+
+
+# ── Обработчики входящих WS-событий ──────────────────────────────────────────
+
+
+async def _handle_identify(ctx: _WsContext, _payload: WsBasePayload) -> None:
+    # Личность задаёт сессия, а не сообщение. Событие оставлено для
+    # клиентов, которые ждут в ответ состав доски и состояние сессии.
+    await _send(ctx.websocket, "presence_update", manager.presence_payload(ctx.board_id))
+    await _send(ctx.websocket, "facilitator_update", manager.facilitator_payload(ctx.board_id))
+
+
+async def _handle_cursor_move(ctx: _WsContext, payload: WsBasePayload) -> None:
+    if not isinstance(payload, CursorMoveIn):
+        return
+    # Подписанный курсор над формой колонки выдал бы автора карточки,
+    # которая появится следом: в анонимном режиме и при скрытом сборе
+    # курсоры не рассылаются вовсе.
+    if manager.is_identity_hidden(ctx.board_id):
+        return
+    await manager.broadcast(
+        ctx.board_id,
+        "cursor_move",
+        {
+            "participant_id": ctx.peer.id,
+            "username": ctx.peer.name,
+            "x": payload.x,
+            "y": payload.y,
+        },
+        exclude=ctx.websocket,
+    )
+
+
+async def _handle_cursor_leave(ctx: _WsContext, _payload: WsBasePayload) -> None:
+    await manager.broadcast(
+        ctx.board_id,
+        "cursor_leave",
+        {"participant_id": ctx.peer.id, "username": ctx.peer.name},
+        exclude=ctx.websocket,
+    )
+
+
+async def _handle_group_collapse(ctx: _WsContext, payload: WsBasePayload) -> None:
+    if not isinstance(payload, GroupCollapseIn):
+        return
+    collapse = {"group_id": payload.group_id, "collapsed": payload.collapsed}
+    manager.set_group_collapsed(ctx.board_id, payload.group_id, payload.collapsed)
+    _persist_session_state(ctx.websocket, ctx.board_id, ctx.workspace_id)
+    # Broadcast to ALL (including sender) for sync
+    await manager.broadcast(ctx.board_id, "group_collapse", collapse)
+
+
+def _timer_handler(event: str) -> Callable[[_WsContext, WsBasePayload], Awaitable[None]]:
+    async def _handle(ctx: _WsContext, payload: WsBasePayload) -> None:
+        # Only facilitator can control timer when session is active
+        if ctx.facilitator_id and not ctx.is_facilitator:
+            return
+        timer_data: dict[str, Any] | None = None
+        if isinstance(payload, TimerStartIn):
+            timer_data = payload.sanitized()
+        elif isinstance(payload, TimerPauseIn):
+            timer_data = payload.sanitized()
+        elif isinstance(payload, TimerResetIn):
+            timer_data = payload.sanitized()
+        if timer_data is None:
+            return
+        ends_at_ms = manager.set_timer(ctx.board_id, event, timer_data)
+        if event == "timer_start" and ends_at_ms is not None:
+            timer_data = {**timer_data, "ends_at_ms": ends_at_ms}
+        _persist_session_state(ctx.websocket, ctx.board_id, ctx.workspace_id)
+        await manager.broadcast(ctx.board_id, event, timer_data)
+
+    return _handle
+
+
+async def _handle_facilitator_start(ctx: _WsContext, _payload: WsBasePayload) -> None:
+    if ctx.facilitator_id:
+        return
+    # Заблокированная доска — архив: новая сессия скрыла бы её
+    # карточки у всех («Штурм»). Сначала доску нужно разблокировать.
+    if _board_is_locked(ctx.websocket, ctx.board_id):
+        return
+    had_ready, had_spot = manager.set_facilitator(ctx.board_id, ctx.peer)
+    _sync_board_session_db(
+        ctx.websocket,
+        ctx.board_id,
+        ctx.workspace_id,
+        ctx.peer,
+        "brainstorm",
+        manager.get_session_id(ctx.board_id),
+    )
+    await manager.broadcast(
+        ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
+    )
+    await _broadcast_session_reset(ctx.board_id, had_ready, had_spot)
+    # «Штурм» скрывает чужие карточки: клиенты перечитывают доску
+    await manager.broadcast(ctx.board_id, "cards_visibility_changed", {})
+
+
+async def _handle_facilitator_stop(ctx: _WsContext, payload: WsBasePayload) -> None:
+    if not ctx.is_facilitator:
+        return
+    lock_board = bool(payload.lock_board) if isinstance(payload, FacilitatorStopIn) else False
+    had_ready, had_spot = manager.clear_session(ctx.board_id)
+    # Завершение сессии раскрывает всё, что было скрыто в «Штурме»
+    board_payload = _sync_board_session_db(
+        ctx.websocket,
+        ctx.board_id,
+        ctx.workspace_id,
+        None,
+        None,
+        None,
+        lock_board=lock_board,
+        reveal=True,
+    )
+    await manager.broadcast(
+        ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
+    )
+    await _broadcast_session_reset(ctx.board_id, had_ready, had_spot)
+    # Таймер сессии убран: без события он шёл бы до нуля у тех, кто
+    # был на доске, и отсутствовал у вошедших позже
+    ended_timer = manager.pop_ended_timer(ctx.board_id)
+    if ended_timer:
+        await manager.broadcast(ctx.board_id, "timer_reset", ended_timer)
+    await manager.broadcast(ctx.board_id, "cards_visibility_changed", {})
+    # Встреча закончилась — самое время спросить, была ли она полезной
+    await manager.broadcast(ctx.board_id, "roti_requested", {})
+    if board_payload:
+        await manager.broadcast(ctx.board_id, "board_updated", board_payload)
+        await manager.broadcast_workspace(
+            ctx.workspace_id,
+            "board_updated",
+            board_payload,
+            exclude_board_id=ctx.board_id,
+        )
+
+
+async def _handle_facilitator_transfer(ctx: _WsContext, payload: WsBasePayload) -> None:
+    # Ведущий передаёт роль участнику, который сейчас на доске
+    if not ctx.is_facilitator or not isinstance(payload, FacilitatorTransferIn):
+        return
+    target = next((p for p in manager.get_users(ctx.board_id) if p.id == payload.participant_id), None)
+    if target is None or target.id == ctx.peer.id:
+        return
+    manager.transfer_facilitator(ctx.board_id, target)
+    _sync_board_session_db(
+        ctx.websocket,
+        ctx.board_id,
+        ctx.workspace_id,
+        target,
+        manager.get_phase(ctx.board_id),
+        manager.get_session_id(ctx.board_id),
+    )
+    await manager.broadcast(
+        ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
+    )
+
+
+async def _handle_facilitator_takeover(ctx: _WsContext, _payload: WsBasePayload) -> None:
+    # Любой участник забирает роль, если ведущий пропал
+    if not manager.can_take_over(ctx.board_id):
+        return
+    manager.transfer_facilitator(ctx.board_id, ctx.peer)
+    _sync_board_session_db(
+        ctx.websocket,
+        ctx.board_id,
+        ctx.workspace_id,
+        ctx.peer,
+        manager.get_phase(ctx.board_id),
+        manager.get_session_id(ctx.board_id),
+    )
+    await manager.broadcast(
+        ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
+    )
+
+
+async def _handle_phase_change(ctx: _WsContext, payload: WsBasePayload) -> None:
+    if not ctx.is_facilitator or not isinstance(payload, PhaseChangeIn):
+        return
+    phase = payload.phase
+    previous_phase = manager.get_phase(ctx.board_id)
+    had_ready, had_spot = manager.set_phase(ctx.board_id, phase)
+    # Выход из «Штурма» раскрывает карточки насовсем
+    leaving_brainstorm = previous_phase == "brainstorm" and phase != "brainstorm"
+    _sync_board_session_db(
+        ctx.websocket,
+        ctx.board_id,
+        ctx.workspace_id,
+        ctx.peer,
+        phase,
+        manager.get_session_id(ctx.board_id),
+        reveal=leaving_brainstorm,
+    )
+    await manager.broadcast(ctx.board_id, "phase_update", {"phase": phase})
+    await _broadcast_session_reset(ctx.board_id, had_ready, had_spot)
+    if leaving_brainstorm or phase == "brainstorm":
+        await manager.broadcast(ctx.board_id, "cards_visibility_changed", {})
+    if phase == "summary":
+        logger.info("Summary phase entered on board %s", ctx.board_id)
+        _start_summary_generation(ctx.board_id, ctx.peer.id, ctx.workspace_id)
+
+
+async def _handle_ready_toggle(ctx: _WsContext, payload: WsBasePayload) -> None:
+    ready_flag = payload.ready if isinstance(payload, ReadyToggleIn) else None
+    manager.toggle_ready(ctx.board_id, ctx.peer.id, ready=ready_flag)
+    await manager.broadcast(ctx.board_id, "ready_update", manager.ready_payload(ctx.board_id))
+
+
+async def _handle_spotlight_card(ctx: _WsContext, payload: WsBasePayload) -> None:
+    if ctx.facilitator_id and not ctx.is_facilitator:
+        return
+    if not isinstance(payload, SpotlightCardIn):
+        return
+    manager.set_spotlight(ctx.board_id, payload.card_id)
+    _persist_session_state(ctx.websocket, ctx.board_id, ctx.workspace_id)
+    await manager.broadcast(ctx.board_id, "spotlight_update", {"card_id": payload.card_id})
+
+
+async def _handle_reaction(ctx: _WsContext, payload: WsBasePayload) -> None:
+    if not isinstance(payload, ReactionIn) or not payload.valid_emoji():
+        return
+    reaction_id = payload.id if payload.id is not None else f"{time.time():.6f}"
+    await manager.broadcast(
+        ctx.board_id,
+        "reaction",
+        {
+            "id": reaction_id[:64],
+            "emoji": payload.emoji,
+            "username": ctx.peer.name,
+            "participant_id": ctx.peer.id,
+        },
+    )
+
+
+async def _handle_health_check_start(ctx: _WsContext, _payload: WsBasePayload) -> None:
+    # Запустить health check у всех: в сессии — ведущий, вне её — любой
+    if ctx.facilitator_id and not ctx.is_facilitator:
+        return
+    await manager.broadcast(
+        ctx.board_id,
+        "health_check_requested",
+        {"requested_by": ctx.peer.name, "participant_id": ctx.peer.id},
+    )
+
+
+async def _handle_card_typing(ctx: _WsContext, payload: WsBasePayload) -> None:
+    if not isinstance(payload, CardTypingIn):
+        return
+    if payload.is_typing:
+        column_id = payload.sanitized_column_id()
+        if column_id is None:
+            return
+        changed = manager.set_typing(ctx.board_id, ctx.peer.id, column_id)
+    else:
+        changed = manager.set_typing(ctx.board_id, ctx.peer.id, None)
+    if changed:
+        await manager.broadcast_typing(ctx.board_id)
+
+
+async def _handle_noop(_ctx: _WsContext, _payload: WsBasePayload) -> None:
+    return None
+
+
+_EVENT_HANDLERS: dict[str, Callable[[_WsContext, WsBasePayload], Awaitable[None]]] = {
+    "identify": _handle_identify,
+    "cursor_move": _handle_cursor_move,
+    "cursor_leave": _handle_cursor_leave,
+    "group_collapse": _handle_group_collapse,
+    "timer_start": _timer_handler("timer_start"),
+    "timer_pause": _timer_handler("timer_pause"),
+    "timer_reset": _timer_handler("timer_reset"),
+    "facilitator_start": _handle_facilitator_start,
+    "facilitator_stop": _handle_facilitator_stop,
+    "facilitator_transfer": _handle_facilitator_transfer,
+    "facilitator_takeover": _handle_facilitator_takeover,
+    "phase_change": _handle_phase_change,
+    "summary_generated": _handle_noop,
+    "ready_toggle": _handle_ready_toggle,
+    "spotlight_card": _handle_spotlight_card,
+    "reaction": _handle_reaction,
+    "health_check_start": _handle_health_check_start,
+    "card_typing": _handle_card_typing,
+}
 
 
 @router.websocket("/ws/workspace")
@@ -388,7 +684,7 @@ async def websocket_endpoint(
             await websocket.close(code=1008, reason="Board not found")
             return
         manager.set_identity_hidden(board_id, _identity_hidden(board))
-        # Таймер и фокус поднимаются из БД один раз после рестарта процесса
+        # Таймер, фокус и свёрнутые группы поднимаются из БД один раз после рестарта процесса
         try:
             saved_state = json.loads(board.session_state) if board.session_state else None
         except ValueError:
@@ -416,20 +712,23 @@ async def websocket_endpoint(
     cursor_timestamps: list[float] = []
 
     try:
-        # Начальное состояние: кто на доске, сессия ведущего, готовность, фокус, таймер
+        # Начальное состояние: кто на доске, сессия ведущего, готовность, фокус, свёрнутые группы, таймер
         await _send(websocket, "facilitator_update", manager.facilitator_payload(board_id))
         if manager.get_ready_ids(board_id):
             await _send(websocket, "ready_update", manager.ready_payload(board_id))
         spotlight_id = manager.get_spotlight(board_id)
         if spotlight_id:
             await _send(websocket, "spotlight_update", {"card_id": spotlight_id})
+        collapsed_groups = manager.get_collapsed_groups(board_id)
+        if collapsed_groups:
+            await _send(websocket, "groups_collapsed", {"group_ids": collapsed_groups})
         typing_users = manager.typing_for(board_id, peer.id)
         if typing_users:
             await _send(websocket, "typing_update", {"typing": typing_users})
         timer = manager.get_timer(board_id)
         timer_message = _timer_snapshot_message(timer) if timer else None
         if timer_message:
-            await websocket.send_text(json.dumps(timer_message))
+            await _send(websocket, timer_message["event"], timer_message["data"])
         # Участник известен с момента подключения — сообщаем о нём всем сразу
         await manager.broadcast(board_id, "presence_update", manager.presence_payload(board_id))
         if manager.get_facilitator(board_id) == peer.id:
@@ -452,16 +751,10 @@ async def websocket_endpoint(
                 msg = json.loads(data)
                 if not isinstance(msg, dict):
                     continue
-                event = msg.get("event")
-                payload = msg.get("data")
-                if payload is None:
-                    payload = {}
-                if not isinstance(payload, dict):
+                parsed = parse_ws_event(msg.get("event"), msg.get("data"))
+                if parsed is None:
                     continue
-
-                # Validate event type
-                if not isinstance(event, str) or event not in KNOWN_EVENTS:
-                    continue
+                event, payload = parsed
 
                 # Separate rate-limit buckets so cursor movement never drops session/timer commands
                 now = time.monotonic()
@@ -479,249 +772,26 @@ async def websocket_endpoint(
                 # Имя могли сменить через REST — берём актуальное
                 peer = manager.get_peer(websocket) or peer
                 facilitator_id = manager.get_facilitator(board_id)
-                is_facilitator = facilitator_id == peer.id
-
-                if event == "identify":
-                    # Личность задаёт сессия, а не сообщение. Событие оставлено для
-                    # клиентов, которые ждут в ответ состав доски и состояние сессии.
-                    await _send(websocket, "presence_update", manager.presence_payload(board_id))
-                    await _send(
-                        websocket, "facilitator_update", manager.facilitator_payload(board_id)
-                    )
-
-                elif event == "cursor_move":
-                    cursor = clean_cursor_move(payload)
-                    if cursor is None:
-                        continue
-                    # Подписанный курсор над формой колонки выдал бы автора карточки,
-                    # которая появится следом: в анонимном режиме и при скрытом сборе
-                    # курсоры не рассылаются вовсе.
-                    if manager.is_identity_hidden(board_id):
-                        continue
-                    await manager.broadcast(
-                        board_id,
-                        "cursor_move",
-                        {"participant_id": peer.id, "username": peer.name, **cursor},
-                        exclude=websocket,
-                    )
-
-                elif event == "cursor_leave":
-                    await manager.broadcast(
-                        board_id,
-                        "cursor_leave",
-                        {"participant_id": peer.id, "username": peer.name},
-                        exclude=websocket,
-                    )
-
-                elif event == "group_collapse":
-                    collapse = clean_group_collapse(payload)
-                    if collapse is None:
-                        continue
-                    # Broadcast to ALL (including sender) for sync
-                    await manager.broadcast(board_id, "group_collapse", collapse)
-
-                elif event in ("timer_start", "timer_pause", "timer_reset"):
-                    # Only facilitator can control timer when session is active
-                    if facilitator_id and not is_facilitator:
-                        continue
-                    timer_data = clean_timer(event, payload)
-                    if timer_data is None:
-                        continue
-                    manager.set_timer(board_id, event, timer_data)
-                    _persist_session_state(websocket, board_id, workspace_id)
-                    await manager.broadcast(board_id, event, timer_data)
-
-                elif event == "facilitator_start":
-                    if facilitator_id:
-                        continue
-                    # Заблокированная доска — архив: новая сессия скрыла бы её
-                    # карточки у всех («Штурм»). Сначала доску нужно разблокировать.
-                    if _board_is_locked(websocket, board_id):
-                        continue
-                    had_ready, had_spot = manager.set_facilitator(board_id, peer)
-                    _sync_board_session_db(
-                        websocket,
-                        board_id,
-                        workspace_id,
-                        peer,
-                        "brainstorm",
-                        manager.get_session_id(board_id),
-                    )
-                    await manager.broadcast(
-                        board_id, "facilitator_update", manager.facilitator_payload(board_id)
-                    )
-                    await _broadcast_session_reset(board_id, had_ready, had_spot)
-                    # «Штурм» скрывает чужие карточки: клиенты перечитывают доску
-                    await manager.broadcast(board_id, "cards_visibility_changed", {})
-
-                elif event == "facilitator_stop":
-                    if not is_facilitator:
-                        continue
-                    lock_board = bool(payload.get("lock_board"))
-                    had_ready, had_spot = manager.clear_session(board_id)
-                    # Завершение сессии раскрывает всё, что было скрыто в «Штурме»
-                    board_payload = _sync_board_session_db(
-                        websocket,
-                        board_id,
-                        workspace_id,
-                        None,
-                        None,
-                        None,
-                        lock_board=lock_board,
-                        reveal=True,
-                    )
-                    await manager.broadcast(
-                        board_id, "facilitator_update", manager.facilitator_payload(board_id)
-                    )
-                    await _broadcast_session_reset(board_id, had_ready, had_spot)
-                    # Таймер сессии убран: без события он шёл бы до нуля у тех, кто
-                    # был на доске, и отсутствовал у вошедших позже
-                    ended_timer = manager.pop_ended_timer(board_id)
-                    if ended_timer:
-                        await manager.broadcast(board_id, "timer_reset", ended_timer)
-                    await manager.broadcast(board_id, "cards_visibility_changed", {})
-                    # Встреча закончилась — самое время спросить, была ли она полезной
-                    await manager.broadcast(board_id, "roti_requested", {})
-                    if board_payload:
-                        await manager.broadcast(board_id, "board_updated", board_payload)
-                        await manager.broadcast_workspace(
-                            workspace_id, "board_updated", board_payload
-                        )
-
-                elif event == "facilitator_transfer":
-                    # Ведущий передаёт роль участнику, который сейчас на доске
-                    if not is_facilitator:
-                        continue
-                    target_id = short_str(payload.get("participant_id"), MAX_ID_LENGTH)
-                    target = next(
-                        (p for p in manager.get_users(board_id) if p.id == target_id), None
-                    )
-                    if target is None or target.id == peer.id:
-                        continue
-                    manager.transfer_facilitator(board_id, target)
-                    _sync_board_session_db(
-                        websocket,
-                        board_id,
-                        workspace_id,
-                        target,
-                        manager.get_phase(board_id),
-                        manager.get_session_id(board_id),
-                    )
-                    await manager.broadcast(
-                        board_id, "facilitator_update", manager.facilitator_payload(board_id)
-                    )
-
-                elif event == "facilitator_takeover":
-                    # Любой участник забирает роль, если ведущий пропал
-                    if not manager.can_take_over(board_id):
-                        continue
-                    manager.transfer_facilitator(board_id, peer)
-                    _sync_board_session_db(
-                        websocket,
-                        board_id,
-                        workspace_id,
-                        peer,
-                        manager.get_phase(board_id),
-                        manager.get_session_id(board_id),
-                    )
-                    await manager.broadcast(
-                        board_id, "facilitator_update", manager.facilitator_payload(board_id)
-                    )
-
-                elif event == "phase_change":
-                    phase = payload.get("phase")
-                    if not is_facilitator or phase not in VALID_PHASES:
-                        continue
-                    previous_phase = manager.get_phase(board_id)
-                    had_ready, had_spot = manager.set_phase(board_id, phase)
-                    # Выход из «Штурма» раскрывает карточки насовсем
-                    leaving_brainstorm = previous_phase == "brainstorm" and phase != "brainstorm"
-                    _sync_board_session_db(
-                        websocket,
-                        board_id,
-                        workspace_id,
-                        peer,
-                        phase,
-                        manager.get_session_id(board_id),
-                        reveal=leaving_brainstorm,
-                    )
-                    await manager.broadcast(board_id, "phase_update", {"phase": phase})
-                    await _broadcast_session_reset(board_id, had_ready, had_spot)
-                    if leaving_brainstorm or phase == "brainstorm":
-                        await manager.broadcast(board_id, "cards_visibility_changed", {})
-                    if phase == "summary":
-                        logger.info("Summary phase entered on board %s", board_id)
-                        _start_summary_generation(board_id, peer.id, workspace_id)
-
-                elif event == "ready_toggle":
-                    ready_flag = (
-                        payload.get("ready") if isinstance(payload.get("ready"), bool) else None
-                    )
-                    manager.toggle_ready(board_id, peer.id, ready=ready_flag)
-                    await manager.broadcast(
-                        board_id, "ready_update", manager.ready_payload(board_id)
-                    )
-
-                elif event == "spotlight_card":
-                    if facilitator_id and not is_facilitator:
-                        continue
-                    card_id = payload.get("card_id")
-                    if card_id is not None and short_str(card_id, MAX_ID_LENGTH) is None:
-                        continue
-                    manager.set_spotlight(board_id, card_id)
-                    _persist_session_state(websocket, board_id, workspace_id)
-                    await manager.broadcast(
-                        board_id, "spotlight_update", {"card_id": card_id}
-                    )
-
-                elif event == "reaction":
-                    emoji = payload.get("emoji")
-                    if not isinstance(emoji, str) or emoji not in ALLOWED_REACTIONS:
-                        continue
-                    reaction_id = (
-                        payload.get("id")
-                        if isinstance(payload.get("id"), str)
-                        else f"{time.time():.6f}"
-                    )
-                    await manager.broadcast(
-                        board_id,
-                        "reaction",
-                        {
-                            "id": reaction_id[:64],
-                            "emoji": emoji,
-                            "username": peer.name,
-                            "participant_id": peer.id,
-                        },
-                    )
-
-                elif event == "health_check_start":
-                    # Запустить health check у всех: в сессии — ведущий, вне её — любой
-                    if facilitator_id and not is_facilitator:
-                        continue
-                    await manager.broadcast(
-                        board_id,
-                        "health_check_requested",
-                        {"requested_by": peer.name, "participant_id": peer.id},
-                    )
-
-                elif event == "card_typing":
-                    column_id = payload.get("column_id")
-                    if bool(payload.get("is_typing")):
-                        if short_str(column_id, MAX_ID_LENGTH) is None:
-                            continue
-                        changed = manager.set_typing(board_id, peer.id, column_id)
-                    else:
-                        changed = manager.set_typing(board_id, peer.id, None)
-                    if changed:
-                        await manager.broadcast_typing(board_id)
+                ctx = _WsContext(
+                    websocket=websocket,
+                    board_id=board_id,
+                    workspace_id=workspace_id,
+                    peer=peer,
+                    facilitator_id=facilitator_id,
+                    is_facilitator=facilitator_id == peer.id,
+                )
+                handler = _EVENT_HANDLERS.get(event)
+                if handler is not None:
+                    await handler(ctx, payload)
 
             except (json.JSONDecodeError, KeyError):
                 pass
             except WebSocketDisconnect:
                 raise
-            except Exception:
+            except Exception as exc:
                 # Сбой обработки одного сообщения не должен рвать соединение:
                 # фиксируем его в журнале и ждём следующее сообщение.
+                record_unhandled_error("ws", type(exc).__name__)
                 logger.exception(
                     "Unhandled error while handling WS message on board %s", board_id
                 )

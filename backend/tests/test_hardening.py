@@ -224,7 +224,11 @@ class TestWebSocketHardening:
             assert (moved["username"], moved["x"], moved["y"]) == ("Tester", 10, 20)
 
             _send(ws1, "timer_start", {"duration": 300, "remaining": 300, "junk": "мусор"})
-            assert _recv(ws2, "timer_start")["data"] == {"duration": 300, "remaining": 300}
+            started_data = _recv(ws2, "timer_start")["data"]
+            assert "junk" not in started_data
+            assert (started_data["duration"], started_data["remaining"]) == (300, 300)
+            assert isinstance(started_data.get("ends_at_ms"), (int, float))
+            assert started_data["ends_at_ms"] > 0
 
     def test_cursor_leave_uses_sender_identity(self, client, ws_token_for):
         """Нельзя убрать чужой курсор, прислав чужое имя: личность берётся из сессии."""
@@ -274,7 +278,8 @@ class TestSummaryGenerationGuard:
 
     def test_no_ai_means_no_generation_thread(self):
         """Без шлюза итоги не генерируются: ни потока, ни соединения с БД."""
-        from app.routers import boards, websocket as ws_router
+        from app.routers import websocket as ws_router
+        from app.services import boards as boards_service
 
         sent = []
 
@@ -285,7 +290,7 @@ class TestSummaryGenerationGuard:
             with (
                 patch.object(settings, "ai_base_url", ""),
                 patch.object(ws_router.manager, "broadcast", fake_broadcast),
-                patch.object(boards, "_generate_summary_internal") as generate,
+                patch.object(boards_service, "generate_summary_internal") as generate,
             ):
                 await ws_router._trigger_summary_generation("b1", "u", "w")
                 return generate.called
@@ -684,8 +689,8 @@ class TestConnectionReleasedDuringAI:
 
     def test_regenerate_rechecks_board_after_model(self, client, sample_card, sample_board, workspace_headers):
         """Пока модель думала, доску удалили: итоги к удалённой доске не пишем."""
-        from tests.conftest import TestSessionLocal
         from app.models import BoardSummary
+        from tests.conftest import TestSessionLocal
 
         def fake_summary(board_data):
             deleted = client.delete(f"/api/boards/{sample_board['id']}", headers=workspace_headers)
@@ -735,11 +740,9 @@ class TestConnectionReleasedDuringAI:
         self, client, sample_card, sample_board, open_connections
     ):
         """Итоги по переходу в фазу «Итоги» генерируются в потоке со своей сессией."""
-        from app.routers import boards
-        from app.ws_manager import manager
+        from app.services import boards as boards_service
+        from app.ws_manager import Peer, manager
         from tests.conftest import TestSessionLocal
-
-        from app.ws_manager import Peer
 
         board_id = sample_board["id"]
         manager.set_facilitator(board_id, Peer("p-fac", "Ведущий"))
@@ -751,9 +754,11 @@ class TestConnectionReleasedDuringAI:
 
         with (
             patch("app.database.SessionLocal", TestSessionLocal),
-            patch.object(boards, "generate_summary", fake_summary),
+            patch.object(boards_service, "generate_summary", fake_summary),
         ):
-            result = boards._generate_summary_internal(board_id, "p-fac", "test-workspace-id")
+            result = boards_service.generate_summary_internal(
+                board_id, "p-fac", "test-workspace-id"
+            )
 
         assert seen == [0]
         assert result is not None

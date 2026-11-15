@@ -59,11 +59,20 @@ test.describe('Drag and Drop', () => {
     const card = page.getByTestId('card-widget').filter({ hasText: 'Перетащи меня' })
     const targetCol = page.getByTestId('board-column').filter({ hasText: 'Колонка Б' })
 
-    // Perform drag: use Playwright's built-in drag-to
-    await card.dragTo(targetCol, { force: true })
+    // Perform drag: steps > 1 required for dnd-kit MouseSensor activation + over update
+    await card.dragTo(targetCol, { force: true, steps: 10 })
 
-    // Allow time for optimistic update + API roundtrip
-    await page.waitForTimeout(1000)
+    // Wait for optimistic update + API roundtrip to settle on server
+    await expect
+      .poll(async () => {
+        const res = await request.get(`${API}/boards/${board.id}`, {
+          headers: { 'X-Workspace-Token': wsData.token },
+        })
+        const data = await res.json()
+        const b = data.columns.find((c: { title: string }) => c.title === 'Колонка Б')
+        return b?.cards?.length || 0
+      })
+      .toBe(1)
 
     // Verify the card moved to column B via API
     const boardRes = await request.get(`${API}/boards/${board.id}`, {
@@ -73,11 +82,7 @@ test.describe('Drag and Drop', () => {
     const colB = boardData.columns.find((c: { title: string }) => c.title === 'Колонка Б')
     const colA = boardData.columns.find((c: { title: string }) => c.title === 'Колонка А')
 
-    // The card should be in column B (or still in A if DnD didn't trigger perfectly)
-    // DnD tests can be flaky, so we verify the board loaded correctly at minimum
-    expect(colA).toBeDefined()
-    expect(colB).toBeDefined()
-    const totalCards = (colA?.cards?.length || 0) + (colB?.cards?.length || 0)
-    expect(totalCards).toBe(1)
+    expect(colA?.cards?.length).toBe(0)
+    expect(colB?.cards?.length).toBe(1)
   })
 })
