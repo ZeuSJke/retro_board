@@ -126,7 +126,7 @@ export default function BoardToolbar({
           ) : (
             <ArrowUpDown className="h-3.5 w-3.5" />
           )}
-          {sortBy === 'votes' ? 'По голосам' : 'По порядку'}
+          <span className="max-sm:sr-only">{sortBy === 'votes' ? 'По голосам' : 'По порядку'}</span>
         </Button>
 
         {onColorFilterChange && (
@@ -280,7 +280,7 @@ export default function BoardToolbar({
           onClick={onToggleMaster}
         >
           <PanelRight className="h-3.5 w-3.5" />
-          <span>Итоги</span>
+          <span>Задачи</span>
           {actionItemsCount > 0 && (
             <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
               {actionItemsCount}
