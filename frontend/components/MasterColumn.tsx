@@ -342,6 +342,8 @@ export default function MasterColumn({
     try {
       await deleteActionItem(target.id)
     } catch (err) {
+      // 404 — задачу уже удалил коллега: возвращать нечего, и это не ошибка для пользователя
+      if (getApiErrorStatus(err) === 404) return
       // Сервер задачу не удалил: возвращаем её в список. Это именно возврат, а не правка:
       // правка задачу, которой в списке нет, не добавляет.
       ;(onRestored ?? onCreated)?.(target)

@@ -194,6 +194,10 @@ export function syncSessionFromStorage(raw: string | null): void {
   }
   if (!isRecord(parsed)) return
   const version = typeof parsed.version === 'number' ? parsed.version : 0
+  // Вкладка со сборкой до обновления пишет прежнюю версию: участника в ней нет, а на 401
+  // она записывает «сессии нет». Принять такую запись значило бы разлогинить новую вкладку
+  // при действующей cookie — старой вкладке всё равно нужна перезагрузка.
+  if (version < APP_STORE_VERSION) return
   const next = migratePersistedState(parsed.state, version)
   const current = useAppStore.getState()
   const sameSession =

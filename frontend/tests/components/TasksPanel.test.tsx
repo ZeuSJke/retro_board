@@ -184,6 +184,44 @@ describe('Панель «Задачи» — статус задачи', () => {
   })
 })
 
+describe('Панель «Задачи» — удаление', () => {
+  async function deleteFirst(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByTitle('Удалить задачу'))
+    await user.click(await screen.findByRole('button', { name: 'Удалить' }))
+  }
+
+  it('сервер не удалил задачу — она возвращается в список с сообщением об ошибке', async () => {
+    const user = userEvent.setup()
+    const item = task('1')
+    api.deleteActionItem.mockRejectedValue({ response: { status: 500, data: {} } })
+    const onRestored = vi.fn()
+    const { onDeleted, onUpdated } = renderPanel({ actionItems: [item], onRestored })
+
+    await deleteFirst(user)
+
+    await waitFor(() => expect(onRestored).toHaveBeenCalledWith(item))
+    expect(onDeleted).toHaveBeenCalledWith('1')
+    // Возврат — не правка: правка не добавляет задачу, которой нет в списке
+    expect(onUpdated).not.toHaveBeenCalled()
+    expect(showToast).toHaveBeenCalledWith('Не удалось удалить задачу', 'error')
+  })
+
+  it('404 — задачу уже удалил коллега: она не возвращается и ошибки нет', async () => {
+    const user = userEvent.setup()
+    api.deleteActionItem.mockRejectedValue({ response: { status: 404, data: {} } })
+    const onRestored = vi.fn()
+    const { onCreated, onDeleted } = renderPanel({ actionItems: [task('1')], onRestored })
+
+    await deleteFirst(user)
+
+    await waitFor(() => expect(api.deleteActionItem).toHaveBeenCalledWith('1'))
+    expect(onDeleted).toHaveBeenCalledWith('1')
+    expect(onRestored).not.toHaveBeenCalled()
+    expect(onCreated).not.toHaveBeenCalled()
+    expect(showToast).not.toHaveBeenCalled()
+  })
+})
+
 describe('Панель «Задачи» — AI-подбор', () => {
   it('ошибка AI: окно остаётся и называет причину, «Повторить» спрашивает ещё раз', async () => {
     const user = userEvent.setup()

@@ -512,6 +512,10 @@ class ConnectionManager:
     def set_identity_hidden(self, board_id: str, hidden: bool) -> None:
         self.identity_hidden[board_id] = hidden
 
+    def is_identity_hidden(self, board_id: str) -> bool:
+        """Нельзя ли показывать, кто что делает на доске. Нет записи — нельзя."""
+        return self.identity_hidden.get(board_id, True)
+
     def typing_for(self, board_id: str, viewer_id: str | None) -> list[dict[str, str]]:
         """Список печатающих для конкретного получателя.
 
@@ -519,7 +523,7 @@ class ConnectionManager:
         карточка появится следом: чужие записи приходят без имени и идентификатора.
         """
         entries = self.get_typing(board_id)
-        if not self.identity_hidden.get(board_id, True):
+        if not self.is_identity_hidden(board_id):
             return entries
         masked: list[dict[str, str]] = []
         for entry in entries:

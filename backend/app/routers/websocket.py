@@ -493,6 +493,11 @@ async def websocket_endpoint(
                     cursor = clean_cursor_move(payload)
                     if cursor is None:
                         continue
+                    # Подписанный курсор над формой колонки выдал бы автора карточки,
+                    # которая появится следом: в анонимном режиме и при скрытом сборе
+                    # курсоры не рассылаются вовсе.
+                    if manager.is_identity_hidden(board_id):
+                        continue
                     await manager.broadcast(
                         board_id,
                         "cursor_move",

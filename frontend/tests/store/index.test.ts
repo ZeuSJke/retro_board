@@ -352,6 +352,15 @@ describe('сессия между вкладками', () => {
     expect(useAppStore.getState()).toBe(before)
   })
 
+  it('запись от вкладки со старой сборкой не разлогинивает новую', () => {
+    useAppStore.setState({ workspace, participant })
+    // Сборка до обновления пишет версию 0: участника в ней нет, а на 401 — «сессии нет»
+    syncSessionFromStorage(stored({ workspace: legacyWorkspace }, 0))
+    syncSessionFromStorage(stored({ workspace: null }, 0))
+    expect(useAppStore.getState().participant).toEqual(participant)
+    expect(useAppStore.getState().workspace).toEqual(workspace)
+  })
+
   it('событие storage от другой вкладки доходит до стора', () => {
     window.dispatchEvent(
       new StorageEvent('storage', {

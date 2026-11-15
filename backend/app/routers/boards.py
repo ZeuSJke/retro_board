@@ -640,10 +640,11 @@ async def update_board(
         db.rollback()
         raise HTTPException(409, "Измени название, такая доска уже есть") from err
     board = _board_query(db).filter(models.Board.id == board.id).first() or board
+    # Признак ставится до рассылок: между ними цикл событий успевает обработать чужой ввод
+    manager.set_identity_hidden(board.id, bool(board.anonymous_votes or cards_hidden(board)))
     payload = board_settings_payload(board)
     await manager.broadcast_workspace(workspace.id, "board_updated", payload)
     await manager.broadcast(board.id, "board_updated", payload)
-    manager.set_identity_hidden(board.id, bool(board.anonymous_votes or cards_hidden(board)))
     # Скрытие и анонимность меняют то, что сервер отдаёт каждому получателю:
     # клиенты перечитывают доску.
     if cards_hidden(board) != was_hidden or board.anonymous_votes != was_anonymous:

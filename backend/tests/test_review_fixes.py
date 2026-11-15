@@ -459,6 +459,39 @@ class TestTypingDoesNotNameTheAuthor:
         assert [t["participant_id"] for t in shown] == [owner_id]
 
 
+class TestCursorsDoNotNameTheAuthor:
+    """Подписанный курсор над формой колонки — тот же сигнал, что и «печатает»."""
+
+    def _cursor_seen_by_other(self, client, owner, anya, **board_settings):
+        board = _board(client, owner, "Курсоры", **board_settings)
+        with _ws(client, board["id"], owner) as ws_owner, _ws(client, board["id"], anya) as ws_anya:
+            _recv(ws_anya, "presence_update")
+            ws_owner.send_json({"event": "cursor_move", "data": {"x": 0.42, "y": 0.13}})
+            # Следом — событие, которое точно дойдёт: по нему видно, был ли перед ним курсор
+            ws_owner.send_json({"event": "reaction", "data": {"emoji": "👍"}})
+            events = []
+            while not events or events[-1]["event"] != "reaction":
+                events.append(ws_anya.receive_json())
+        return [e for e in events if e["event"] == "cursor_move"]
+
+    def test_no_cursors_on_anonymous_board(self, client, workspace_headers, login_as):
+        assert self._cursor_seen_by_other(
+            client, workspace_headers, login_as("Аня"), anonymous_votes=True
+        ) == []
+
+    def test_no_cursors_while_cards_are_hidden(self, client, workspace_headers, login_as):
+        assert self._cursor_seen_by_other(
+            client, workspace_headers, login_as("Аня"), hide_cards_until_reveal=True
+        ) == []
+
+    def test_cursors_still_work_on_open_board(self, client, workspace_headers, login_as):
+        owner_id = participant_id_of(client, workspace_headers)
+        cursors = self._cursor_seen_by_other(client, workspace_headers, login_as("Аня"))
+        assert [(c["data"]["participant_id"], c["data"]["username"]) for c in cursors] == [
+            (owner_id, "Tester")
+        ]
+
+
 class TestSessionEndResetsTimer:
     def test_timer_is_reset_for_everyone_when_session_stops(
         self, client, workspace_headers, login_as
