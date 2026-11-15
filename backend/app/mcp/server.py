@@ -20,7 +20,7 @@ from starlette.responses import JSONResponse
 from starlette.types import Receive, Scope, Send
 
 from app import health, models, schemas, themes
-from app.config import _is_testing, settings
+from app.config import settings
 from app.mcp.context import (
     AgentContext,
     get_agent_context,
@@ -90,9 +90,6 @@ def _build_transport_security() -> TransportSecuritySettings:
     }
     allowed_origins: set[str] = set()
 
-    if _is_testing():
-        allowed_hosts.update({"testserver", "testserver:*", "testclient", "testclient:*"})
-
     for origin in settings.cors_origins_list:
         allowed_origins.add(origin)
         parsed = urlparse(origin)
@@ -128,7 +125,7 @@ def _format_validation_error(err: ValidationError) -> str:
     return "; ".join(messages) or "Некорректные параметры запроса"
 
 
-def _run_sync_tool(fn: Callable[[Any, AgentContext], Any]):
+def _run_db_op(fn: Callable[[Any, AgentContext], Any]) -> Any:
     ctx = get_agent_context()
     try:
         with open_db_session() as db:
@@ -139,21 +136,14 @@ def _run_sync_tool(fn: Callable[[Any, AgentContext], Any]):
         raise ToolError(_format_validation_error(exc)) from exc
 
 
+def _run_sync_tool(fn: Callable[[Any, AgentContext], Any]):
+    return _run_db_op(fn)
+
+
 async def _run_write_tool(
     fn: Callable[[Any, AgentContext], tuple[Any, list[BroadcastAction]]],
 ):
-    ctx = get_agent_context()
-
-    def _run_db() -> tuple[Any, list[BroadcastAction]]:
-        try:
-            with open_db_session() as db:
-                return fn(db, ctx)
-        except HTTPException as exc:
-            raise ToolError(str(exc.detail)) from exc
-        except ValidationError as exc:
-            raise ToolError(_format_validation_error(exc)) from exc
-
-    result, broadcasts = await anyio.to_thread.run_sync(_run_db)
+    result, broadcasts = await anyio.to_thread.run_sync(_run_db_op, fn)
     await dispatch_broadcasts(broadcasts)
     return result
 
@@ -421,17 +411,25 @@ async def create_board(
     name: str,
     template: str = "classic",
     source_board_id_or_slug: Optional[str] = None,
-    carry_forward_items: bool = True,
+    carry_forward_items: bool = False,
     max_votes: int = Field(default=5, ge=1, le=99),
     hide_cards_until_reveal: bool = False,
     anonymous_votes: bool = False,
     allow_multiple_votes_per_card: bool = False,
     custom_columns: Optional[list[schemas.ColumnSeed]] = None,
 ) -> dict[str, Any]:
-    """Создать новую доску ретроспективы (при `carry_forward_items=True` переносит нерешённые задачи)."""
+    """Создать новую доску ретроспективы (ограничение — не более 30 досок в минуту).
+
+    По умолчанию перенос задач выключен (`carry_forward_items=False`). Если передать
+    `carry_forward_items=True`, открытые задачи с исходной (или последней) доски
+    копируются на новую, а оригиналы на предыдущей доске помечаются перенесёнными
+    (`superseded_by_id`) и становятся доступны только для чтения — отменить перенос нельзя.
+    """
 
     def _op(db, ctx: AgentContext):
         _require_write_scope(ctx, "create_board")
+        if not mcp_rate_limiter.allow_create_board(ctx.token_id):
+            raise ToolError("Превышен лимит создания досок (не более 30 в минуту)")
         participant = _load_agent_participant(db, ctx)
         body = schemas.BoardCreate(
             name=name,
@@ -770,19 +768,25 @@ async def mcp_lifespan():
         _state.session_manager = None
 
 
+def _json_error_response(
+    status_code: int,
+    detail: str,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse({"detail": detail}, status_code=status_code, headers=headers)
+
+
 def _rate_limit_response(detail: str) -> JSONResponse:
-    return JSONResponse(
-        {"detail": detail},
-        status_code=429,
-        headers={"Retry-After": "60"},
-    )
+    return _json_error_response(429, detail, {"Retry-After": "60"})
 
 
-def _unauthorized_response(detail: str) -> JSONResponse:
-    return JSONResponse(
-        {"detail": detail},
-        status_code=401,
-        headers={"WWW-Authenticate": 'Bearer realm="RetroBoard MCP"'},
+def _auth_failure_response(client_ip: str, unauthorized_detail: str) -> JSONResponse:
+    if not mcp_rate_limiter.record_auth_failure(client_ip):
+        return _rate_limit_response("Слишком много неудачных попыток входа")
+    return _json_error_response(
+        401,
+        unauthorized_detail,
+        {"WWW-Authenticate": 'Bearer realm="RetroBoard MCP"'},
     )
 
 
@@ -795,8 +799,6 @@ def _authenticate_agent_sync(raw_token: str) -> AgentContext | None:
         return AgentContext(
             token_id=token_row.id,
             workspace_id=workspace.id,
-            workspace_slug=workspace.slug,
-            workspace_name=workspace.name,
             participant_id=participant.id,
             agent_name=token_row.name,
             scope=token_row.scope,
@@ -815,12 +817,12 @@ class MCPASGIApp:
 
         method = (scope.get("method") or "GET").upper()
         if method == "GET":
-            response = JSONResponse(
-                {"detail": "Method Not Allowed: stateless MCP endpoint supports POST"},
-                status_code=405,
-                headers={"Allow": "POST", "Cache-Control": "no-store"},
+            resp = _json_error_response(
+                405,
+                "Метод не поддерживается: используйте POST /mcp",
+                {"Allow": "POST", "Cache-Control": "no-store"},
             )
-            await response(scope, receive, send)
+            await resp(scope, receive, send)
             return
 
         raw_token = _extract_bearer_token(scope)
@@ -832,19 +834,15 @@ class MCPASGIApp:
             return
 
         if not raw_token:
-            if not mcp_rate_limiter.record_auth_failure(client_ip):
-                resp = _rate_limit_response("Слишком много неудачных попыток входа")
-            else:
-                resp = _unauthorized_response("Требуется Bearer-токен агента")
+            resp = _auth_failure_response(client_ip, "Требуется Bearer-токен агента")
             await resp(scope, receive, send)
             return
 
         agent_ctx = await anyio.to_thread.run_sync(_authenticate_agent_sync, raw_token)
         if agent_ctx is None:
-            if not mcp_rate_limiter.record_auth_failure(client_ip):
-                resp = _rate_limit_response("Слишком много неудачных попыток входа")
-            else:
-                resp = _unauthorized_response("Токен агента недействителен или отозван")
+            resp = _auth_failure_response(
+                client_ip, "Токен агента недействителен или отозван"
+            )
             await resp(scope, receive, send)
             return
 
@@ -855,7 +853,7 @@ class MCPASGIApp:
 
         manager = _state.session_manager
         if manager is None:
-            resp = JSONResponse({"detail": "MCP server is not running"}, status_code=503)
+            resp = _json_error_response(503, "MCP-сервер не запущен")
             await resp(scope, receive, send)
             return
 

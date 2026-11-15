@@ -14,6 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 interface ActionItemExternalLinkProps {
   item: ActionItem
   editDisabled?: boolean
+  disabledReason?: string
   onUpdated: (item: ActionItem) => void
   /** На канбан-доске перетаскивание слушает pointerDown: тормозим всплытие, чтобы открывался клик. */
   stopPointerDown?: boolean
@@ -22,6 +23,7 @@ interface ActionItemExternalLinkProps {
 export default function ActionItemExternalLink({
   item,
   editDisabled = false,
+  disabledReason = 'Редактирование внешней ссылки недоступно',
   onUpdated,
   stopPointerDown = false,
 }: ActionItemExternalLinkProps) {
@@ -61,9 +63,27 @@ export default function ActionItemExternalLink({
     }
   }
 
-  if (!safeLink && editDisabled) return null
-
   const stop = stopPointerDown ? (e: React.PointerEvent) => e.stopPropagation() : undefined
+
+  const triggerButton = (
+    <button
+      type="button"
+      disabled={editDisabled}
+      aria-label={safeLink ? 'Изменить внешнюю ссылку' : 'Указать внешнюю ссылку'}
+      title={
+        editDisabled
+          ? disabledReason
+          : safeLink
+            ? 'Изменить внешнюю ссылку'
+            : 'Ссылка в Jira / Tracker / GitHub'
+      }
+      data-testid={`action-item-link-btn-${item.id}`}
+      className="inline-flex items-center gap-1 rounded-full border border-dashed border-border/80 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border/80 disabled:hover:text-muted-foreground"
+    >
+      {safeLink ? <Pencil className="h-2.5 w-2.5" /> : <Link2 className="h-3 w-3" />}
+      {!safeLink && <span>Ссылка</span>}
+    </button>
+  )
 
   return (
     <div className="inline-flex items-center gap-1" onPointerDown={stop}>
@@ -82,7 +102,9 @@ export default function ActionItemExternalLink({
         </a>
       )}
 
-      {!editDisabled && (
+      {editDisabled ? (
+        triggerButton
+      ) : (
         <Popover
           open={open}
           onOpenChange={(nextOpen) => {
@@ -90,18 +112,7 @@ export default function ActionItemExternalLink({
             else setOpen(false)
           }}
         >
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-label={safeLink ? 'Изменить внешнюю ссылку' : 'Указать внешнюю ссылку'}
-              title={safeLink ? 'Изменить внешнюю ссылку' : 'Ссылка в Jira / Tracker / GitHub'}
-              data-testid={`action-item-link-btn-${item.id}`}
-              className="inline-flex items-center gap-1 rounded-full border border-dashed border-border/80 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-            >
-              {safeLink ? <Pencil className="h-2.5 w-2.5" /> : <Link2 className="h-3 w-3" />}
-              {!safeLink && <span>Ссылка</span>}
-            </button>
-          </PopoverTrigger>
+          <PopoverTrigger asChild>{triggerButton}</PopoverTrigger>
           <PopoverContent align="start" className="w-72 space-y-2 p-3">
             <div className="text-xs font-semibold">Внешняя задача</div>
             <Input

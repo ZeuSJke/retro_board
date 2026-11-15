@@ -105,13 +105,17 @@ export interface WorkspaceListItem {
   name: string
   created_at: string
   boards_count: number
+  active_agent_tokens_count?: number
 }
 
 /** Ответ создания команды: та же строка списка, `boards_count` у новой команды — 0. */
 export type AdminWorkspaceResponse = WorkspaceListItem
 
-/** Ответ изменения команды: счётчика досок в нём нет. */
-export type AdminWorkspaceUpdated = Omit<WorkspaceListItem, 'boards_count'>
+/** Ответ изменения команды: счётчиков досок и токенов в нём нет. */
+export type AdminWorkspaceUpdated = Omit<
+  WorkspaceListItem,
+  'boards_count' | 'active_agent_tokens_count'
+>
 
 interface InviteResponse {
   invite_token: string
@@ -135,9 +139,12 @@ export const createAdminWorkspace = (data: { slug: string; name: string; access_
 
 /**
  * Изменить команду. Смена `access_key` на сервере завершает сессии всех участников
- * и перевыпускает ссылку-приглашение.
+ * и перевыпускает ссылку-приглашение; токены MCP-агентов отзываются только при `revoke_agent_tokens: true`.
  */
-export const updateAdminWorkspace = (id: string, data: { name?: string; access_key?: string }): Promise<AdminWorkspaceUpdated> =>
+export const updateAdminWorkspace = (
+  id: string,
+  data: { name?: string; access_key?: string; revoke_agent_tokens?: boolean },
+): Promise<AdminWorkspaceUpdated> =>
   adminApi.patch<AdminWorkspaceUpdated>(`/workspaces/${id}`, data).then((r) => r.data)
 
 export const deleteAdminWorkspace = (id: string) =>

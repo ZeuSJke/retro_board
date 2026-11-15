@@ -15,8 +15,6 @@ from app.database import SessionLocal
 class AgentContext:
     token_id: str
     workspace_id: str
-    workspace_slug: str
-    workspace_name: str
     participant_id: str
     agent_name: str
     scope: str  # "read_only" | "read_write"

@@ -101,6 +101,43 @@ def revoke_agent_token(
     return token
 
 
+def revoke_all_agent_tokens(
+    db: Session, workspace_id: str, *, commit: bool = True
+) -> int:
+    """Отозвать все действующие токены агентов команды и их бот-учётки."""
+    tokens = (
+        db.query(models.AgentToken)
+        .filter(
+            models.AgentToken.workspace_id == workspace_id,
+            models.AgentToken.revoked_at.is_(None),
+        )
+        .all()
+    )
+    if not tokens:
+        return 0
+
+    now = now_utc()
+    participant_ids = [t.participant_id for t in tokens]
+    for token in tokens:
+        token.revoked_at = now
+
+    if participant_ids:
+        participants = (
+            db.query(models.Participant)
+            .filter(
+                models.Participant.id.in_(participant_ids),
+                models.Participant.revoked_at.is_(None),
+            )
+            .all()
+        )
+        for participant in participants:
+            participant.revoked_at = now
+
+    if commit:
+        db.commit()
+    return len(tokens)
+
+
 def resolve_agent_token(
     db: Session, raw_secret: str
 ) -> tuple[models.AgentToken, models.Workspace, models.Participant] | None:

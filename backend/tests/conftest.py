@@ -23,6 +23,10 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ADMIN_LOGIN", "testadmin")
 os.environ.setdefault("ADMIN_PASSWORD", "testpassword123")
+_existing_mcp_hosts = os.environ.get("MCP_ALLOWED_HOSTS", "")
+os.environ["MCP_ALLOWED_HOSTS"] = ",".join(
+    part for part in (_existing_mcp_hosts, "testserver", "testclient") if part
+)
 os.environ["TESTING"] = "true"
 
 # ---------------------------------------------------------------------------

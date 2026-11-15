@@ -180,6 +180,10 @@ def test_workspace_key_rotation_does_not_revoke_agent_tokens(
     ).json()
     secret = created["secret"]
 
+    ws_list = client.get("/api/admin/workspaces", headers=admin_headers).json()
+    ws_row = next(w for w in ws_list if w["id"] == test_workspace.id)
+    assert ws_row["active_agent_tokens_count"] == 1
+
     rotate = client.patch(
         f"/api/admin/workspaces/{test_workspace.id}",
         json={"access_key": "brandnewkey42"},
@@ -191,11 +195,26 @@ def test_workspace_key_rotation_does_not_revoke_agent_tokens(
     me_resp = client.get("/api/workspaces/me", headers=workspace_headers)
     assert me_resp.status_code == 401
 
-    # Агентский токен продолжает работать независимо от смены ключа команды
+    # По умолчанию агентский токен продолжает работать независимо от смены ключа команды
     db_session.expire_all()
     assert resolve_agent_token(db_session, secret) is not None
     mcp_resp = client.post("/mcp", json=_mcp_init_payload(), headers=_mcp_headers(secret))
     assert mcp_resp.status_code == 200
+
+    # При явном флаге revoke_agent_tokens=True администратор отзывает токены тем же действием
+    rotate_and_revoke = client.patch(
+        f"/api/admin/workspaces/{test_workspace.id}",
+        json={"access_key": "secondkey42", "revoke_agent_tokens": True},
+        headers=admin_headers,
+    )
+    assert rotate_and_revoke.status_code == 200
+
+    db_session.expire_all()
+    assert resolve_agent_token(db_session, secret) is None
+    assert client.post("/mcp", json=_mcp_init_payload(), headers=_mcp_headers(secret)).status_code == 401
+    ws_list_after = client.get("/api/admin/workspaces", headers=admin_headers).json()
+    ws_row_after = next(w for w in ws_list_after if w["id"] == test_workspace.id)
+    assert ws_row_after["active_agent_tokens_count"] == 0
 
 
 def test_csrf_protects_agent_token_routes_when_enabled(db_session, test_workspace):

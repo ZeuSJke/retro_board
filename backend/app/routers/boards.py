@@ -166,11 +166,6 @@ async def create_board(
     )
 
 
-def _board_query(db: Session):
-    """Board query with eager-loaded columns → cards + groups + moods (kept for tests)."""
-    return boards_service.board_query(db)
-
-
 @router.get("/by-slug/{slug}", response_model=schemas.BoardOut)
 @limiter.limit(TEAM_READ_LIMIT)
 def get_board_by_slug(
@@ -185,7 +180,6 @@ def get_board_by_slug(
         workspace.id,
         participant.id,
         slug,
-        board_query_fn=_board_query,
         lookup="slug",
     )
 
@@ -204,7 +198,6 @@ def get_board(
         workspace.id,
         participant.id,
         board_id,
-        board_query_fn=_board_query,
         lookup="id",
     )
 
@@ -269,7 +262,7 @@ async def update_board(
     except IntegrityError as err:
         db.rollback()
         raise HTTPException(409, "Измени название, такая доска уже есть") from err
-    board = _board_query(db).filter(models.Board.id == board.id).first() or board
+    board = boards_service.board_query(db).filter(models.Board.id == board.id).first() or board
     # Признак ставится до рассылок: между ними цикл событий успевает обработать чужой ввод
     manager.set_identity_hidden(board.id, bool(board.anonymous_votes or cards_hidden(board)))
     payload = board_settings_payload(board)
@@ -295,7 +288,7 @@ async def reveal_cards(
 
     В сессии карточки раскрывает ведущий переходом из фазы «Штурм».
     """
-    board = _board_query(db).filter(models.Board.id == board_id).first()
+    board = boards_service.board_query(db).filter(models.Board.id == board_id).first()
     # Раскрытие не меняет содержимое, поэтому блокировка доски ему не мешает
     require_live_board(board, workspace.id)
     assert board is not None
@@ -305,7 +298,7 @@ async def reveal_cards(
     if not board.cards_revealed:
         board.cards_revealed = True
         db.commit()
-        board = _board_query(db).filter(models.Board.id == board_id).first() or board
+        board = boards_service.board_query(db).filter(models.Board.id == board_id).first() or board
         manager.set_identity_hidden(board.id, bool(board.anonymous_votes or cards_hidden(board)))
         payload = board_settings_payload(board)
         await manager.broadcast_workspace(workspace.id, "board_updated", payload)

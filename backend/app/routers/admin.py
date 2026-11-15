@@ -71,10 +71,17 @@ def list_workspaces(
         .group_by(models.Board.workspace_id)
         .all()
     )
+    token_counts = dict(
+        db.query(models.AgentToken.workspace_id, func.count(models.AgentToken.id))
+        .filter(models.AgentToken.revoked_at.is_(None))
+        .group_by(models.AgentToken.workspace_id)
+        .all()
+    )
     result = []
     for ws in workspaces:
         item = schemas.WorkspaceListItem.model_validate(ws)
         item.boards_count = counts.get(ws.id, 0)
+        item.active_agent_tokens_count = token_counts.get(ws.id, 0)
         result.append(item)
     return result
 
@@ -135,13 +142,15 @@ def update_workspace(
         ws.name = body.name
     if body.access_key is not None:
         ws.access_key_hash = hash_access_key(body.access_key)
-        # Смена ключа закрывает доступ всем, кто его получил: выданные сессии
-        # перестают действовать, ссылка-приглашение перевыпускается.
+        # Смена ключа закрывает доступ участникам по JWT и ссылке-приглашению;
+        # токены MCP-агентов независимы и отзываются только при явном флаге.
         ws.token_epoch += 1
         ws.invite_token = new_invite_token()
         # Открытые сокеты сессию не перепроверяют — закрываем их, иначе отозванный
         # участник продолжал бы получать события и управлять сессией ведущего.
         background.add_task(manager.disconnect_workspace_sessions, ws.id)
+    if body.revoke_agent_tokens:
+        agent_token_service.revoke_all_agent_tokens(db, ws.id, commit=False)
     db.commit()
     db.refresh(ws)
     return ws

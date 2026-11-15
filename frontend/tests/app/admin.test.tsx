@@ -263,9 +263,14 @@ describe('Админка /admin', () => {
       expect(await navigator.clipboard.readText()).toBe(generated)
     })
 
-    it('смена ключа предупреждает о выходе участников и перевыпуске приглашения', async () => {
+    it('смена ключа предупреждает о выходе участников, показывает число токенов агентов и даёт отозвать их опционально', async () => {
       const user = userEvent.setup()
       await renderSignedIn()
+      api.getAdminAgentTokens.mockResolvedValueOnce([
+        { id: 't1', revoked_at: null },
+        { id: 't2', revoked_at: null },
+        { id: 't3', revoked_at: '2026-11-10T10:00:00Z' },
+      ])
       api.updateAdminWorkspace.mockResolvedValueOnce({ ...platform })
 
       await user.click(teamRow('Платформа').getByRole('button', { name: 'Ключ' }))
@@ -276,12 +281,45 @@ describe('Админка /admin', () => {
       )
       expect(within(dialog).getByText(/Ключ нельзя посмотреть после сохранения/)).toBeInTheDocument()
 
+      const tokensBox = within(dialog).getByTestId('key-change-agent-tokens-box')
+      expect(await within(tokensBox).findByText('2')).toBeInTheDocument()
+      expect(tokensBox).toHaveTextContent('По умолчанию смена ключа их не отзывает')
+
+      // Без отметки чекбокса передаётся только access_key
+      const checkbox = within(dialog).getByRole('checkbox', {
+        name: /Также отозвать действующие токены агентов \(2\)/,
+      })
+      expect(checkbox).not.toBeChecked()
+
       await user.type(within(dialog).getByLabelText('Новый ключ доступа'), 'new-team-key')
       await user.click(within(dialog).getByRole('button', { name: 'Сменить ключ' }))
 
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
       expect(api.updateAdminWorkspace).toHaveBeenCalledWith('ws-1', { access_key: 'new-team-key' })
       expect(showToast).toHaveBeenCalledWith('Ключ доступа изменён: участникам нужно войти заново', 'success')
+
+      // Повторное открытие: если отметить отзыв — уходит revoke_agent_tokens: true
+      api.getAdminAgentTokens.mockResolvedValueOnce([{ id: 't1', revoked_at: null }])
+      api.updateAdminWorkspace.mockResolvedValueOnce({ ...platform })
+      await user.click(teamRow('Платформа').getByRole('button', { name: 'Ключ' }))
+      const dialog2 = await screen.findByRole('dialog', { name: 'Сменить ключ доступа' })
+      const checkbox2 = await within(dialog2).findByRole('checkbox', {
+        name: /Также отозвать действующие токены агентов \(1\)/,
+      })
+      await user.click(checkbox2)
+      expect(checkbox2).toBeChecked()
+      await user.type(within(dialog2).getByLabelText('Новый ключ доступа'), 'another-key-99')
+      await user.click(within(dialog2).getByRole('button', { name: 'Сменить ключ' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      expect(api.updateAdminWorkspace).toHaveBeenLastCalledWith('ws-1', {
+        access_key: 'another-key-99',
+        revoke_agent_tokens: true,
+      })
+      expect(showToast).toHaveBeenLastCalledWith(
+        'Ключ доступа изменён, токены агентов отозваны: участникам нужно войти заново',
+        'success',
+      )
     })
 
     it('слишком короткий ключ при смене — сообщение сервера по делу', async () => {

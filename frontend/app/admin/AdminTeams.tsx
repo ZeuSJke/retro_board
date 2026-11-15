@@ -53,6 +53,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -144,6 +145,8 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
   const [createAccessKey, setCreateAccessKey] = useState('')
   const [renameName, setRenameName] = useState('')
   const [keyAccessKey, setKeyAccessKey] = useState('')
+  const [activeTokensCount, setActiveTokensCount] = useState(0)
+  const [revokeAgentTokens, setRevokeAgentTokens] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -180,10 +183,28 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
     setDialogMode('create')
   }
 
+  useEffect(() => {
+    if (dialogMode !== 'key' || !target) return
+    let cancelled = false
+    Promise.resolve(getAdminAgentTokens(target.id))
+      .then((tokens) => {
+        if (cancelled || !Array.isArray(tokens)) return
+        setActiveTokensCount(tokens.filter((t) => !t.revoked_at).length)
+      })
+      .catch(() => {
+        // Оставляем счётчик, полученный со списком команд, чтобы не блокировать смену ключа.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [dialogMode, target])
+
   const openFor = (mode: Exclude<DialogMode, 'create' | null>, ws: WorkspaceListItem) => {
     setTarget(ws)
     setRenameName(ws.name)
     setKeyAccessKey('')
+    setRevokeAgentTokens(false)
+    setActiveTokensCount(ws.active_agent_tokens_count ?? 0)
     setDialogError(null)
     setDialogMode(mode)
   }
@@ -246,9 +267,26 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
     setDialogLoading(true)
     setDialogError(null)
     try {
-      await updateAdminWorkspace(target.id, { access_key: keyAccessKey })
+      await updateAdminWorkspace(
+        target.id,
+        revokeAgentTokens
+          ? { access_key: keyAccessKey, revoke_agent_tokens: true }
+          : { access_key: keyAccessKey },
+      )
+      if (revokeAgentTokens) {
+        setWorkspaces((prev) =>
+          (prev ?? []).map((w) =>
+            w.id === target.id ? { ...w, active_agent_tokens_count: 0 } : w,
+          ),
+        )
+      }
       setDialogMode(null)
-      showToast('Ключ доступа изменён: участникам нужно войти заново', 'success')
+      showToast(
+        revokeAgentTokens
+          ? 'Ключ доступа изменён, токены агентов отозваны: участникам нужно войти заново'
+          : 'Ключ доступа изменён: участникам нужно войти заново',
+        'success',
+      )
     } catch (err) {
       setDialogError(getApiErrorMessage(err, 'Не удалось сменить ключ доступа', TEAM_FIELD_LABELS))
     } finally {
@@ -667,6 +705,34 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
                 hint="Ключ нельзя посмотреть после сохранения — только сменить ещё раз. Сохраните его сейчас."
                 autoFocus
               />
+              <div
+                className="space-y-2 rounded-lg border bg-muted/40 px-3 py-2.5 text-xs"
+                data-testid="key-change-agent-tokens-box"
+              >
+                <p className="text-muted-foreground">
+                  Действующих токенов MCP-агентов:{' '}
+                  <span className="font-mono font-semibold text-foreground">
+                    {activeTokensCount}
+                  </span>
+                  . По умолчанию смена ключа их не отзывает.
+                </p>
+                {activeTokensCount > 0 && (
+                  <label
+                    htmlFor="revoke-agent-tokens-checkbox"
+                    className="flex cursor-pointer items-start gap-2 pt-0.5 text-foreground"
+                  >
+                    <Checkbox
+                      id="revoke-agent-tokens-checkbox"
+                      checked={revokeAgentTokens}
+                      onCheckedChange={(checked) => setRevokeAgentTokens(checked === true)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Также отозвать действующие токены агентов ({activeTokensCount})
+                    </span>
+                  </label>
+                )}
+              </div>
               {dialogError && (
                 <p role="alert" className="text-xs font-medium text-destructive">
                   {dialogError}

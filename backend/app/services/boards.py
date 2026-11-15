@@ -292,7 +292,6 @@ def get_board_view(
     viewer_id: str | None,
     board_id_or_slug: str,
     *,
-    board_query_fn=None,
     lookup: BoardLookupMode = "id_or_slug",
 ) -> dict:
     """Снимок доски (по ID или slug) для конкретного участника/агента."""
@@ -311,8 +310,7 @@ def get_board_view(
 
     # Номер события читается до выборки доски, чтобы не потерять конкурентные изменения.
     seq_before = manager.current_seq(board_id)
-    query_fn = board_query_fn or board_query
-    board = query_fn(db).filter(models.Board.id == board_id).first()
+    board = board_query(db).filter(models.Board.id == board_id).first()
     if not board or board.deleted_at is not None:
         raise HTTPException(404, "Доска не найдена")
     return board_view(board, viewer_id, event_seq=seq_before)
@@ -652,30 +650,3 @@ def save_board_summary_sync(
         recommendations=recommendations,
         update_latest_when_no_session=True,
     )
-
-
-async def save_board_summary_for_workspace(
-    db: Session,
-    workspace_id: str,
-    *,
-    board_id_or_slug: str,
-    summary_text: str,
-    key_themes: list[str] | None = None,
-    themes_payload: list[dict] | None = None,
-    recommendations: list[str] | None = None,
-    require_unlocked: bool = True,
-) -> schemas.BoardSummaryOut:
-    """Сохранить или обновить итоги доски от агента и синхронизировать темы."""
-    out, broadcasts = save_board_summary_sync(
-        db,
-        workspace_id,
-        board_id_or_slug=board_id_or_slug,
-        summary_text=summary_text,
-        themes_payload=themes_payload,
-        key_themes=key_themes,
-        recommendations=recommendations,
-        require_unlocked=require_unlocked,
-    )
-    release_connection(db)
-    await dispatch_broadcasts(broadcasts)
-    return out

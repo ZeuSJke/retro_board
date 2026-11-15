@@ -656,6 +656,12 @@ export default function MasterColumn({
               // считается её копия — статус меняют там
               const carried = Boolean(item.superseded_by_id)
               const itemReadOnly = readOnly || carried
+              const carriedReason = 'Задача перенесена на другую доску — изменения доступны в копии'
+              const itemReadOnlyReason = carried
+                ? carriedReason
+                : readOnly
+                  ? 'Доска заблокирована — редактирование отключено'
+                  : undefined
               const StatusIcon = carried ? CornerUpRight : meta.Icon
               const isDone = item.status === 'done'
 
@@ -735,10 +741,11 @@ export default function MasterColumn({
                             setEditTitle(item.title || '')
                           }
                         }}
+                        title={itemReadOnlyReason}
                         className={cn(
                           'text-xs font-semibold leading-snug',
                           isDone && 'line-through',
-                          !itemReadOnly && 'cursor-text hover:text-primary',
+                          itemReadOnly ? 'cursor-not-allowed' : 'cursor-text hover:text-primary',
                         )}
                       >
                         {item.title || (
@@ -774,9 +781,10 @@ export default function MasterColumn({
                             setEditDesc(item.text)
                           }
                         }}
+                        title={itemReadOnlyReason}
                         className={cn(
                           'whitespace-pre-wrap wrap-break-word text-xs text-muted-foreground',
-                          !itemReadOnly && 'cursor-text hover:text-foreground',
+                          itemReadOnly ? 'cursor-not-allowed' : 'cursor-text hover:text-foreground',
                         )}
                       >
                         <RichCardText text={item.text} />
@@ -800,12 +808,8 @@ export default function MasterColumn({
                             <button
                               type="button"
                               disabled={itemReadOnly}
-                              title={
-                                carried
-                                  ? 'Задача перенесена на другую доску — изменения доступны в копии'
-                                  : undefined
-                              }
-                              className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border/80 px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:cursor-default"
+                              title={itemReadOnlyReason}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border/80 px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {item.assignee ? (
                                 <>
@@ -880,18 +884,22 @@ export default function MasterColumn({
                         <ActionItemExternalLink
                           item={item}
                           editDisabled={carried}
+                          disabledReason={carriedReason}
                           onUpdated={onUpdated}
                         />
                       </div>
 
-                      {!itemReadOnly && (
+                      {!readOnly && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          className="h-6 w-6 opacity-80 sm:opacity-0 transition-opacity sm:group-hover/ai:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
+                          disabled={carried}
+                          className="h-6 w-6 opacity-80 sm:opacity-0 transition-opacity sm:group-hover/ai:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-40 sm:group-hover/ai:disabled:opacity-50"
                           onClick={() => setDeleteTarget(item)}
-                          title="Удалить задачу"
+                          title={carried ? carriedReason : 'Удалить задачу'}
+                          aria-label={carried ? carriedReason : 'Удалить задачу'}
+                          data-testid={`action-item-delete-btn-${item.id}`}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>

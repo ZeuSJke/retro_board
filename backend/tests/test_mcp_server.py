@@ -17,6 +17,7 @@ from app.mcp import mcp_lifespan, set_db_session_factory
 from app.mcp import server as mcp_server
 from app.mcp.rate_limit import (
     MCP_AUTH_FAIL_LIMIT_PER_MINUTE,
+    MCP_CREATE_BOARD_LIMIT_PER_MINUTE,
     MCP_TOKEN_LIMIT_PER_MINUTE,
     mcp_rate_limiter,
 )
@@ -94,10 +95,12 @@ def _call_tool(
 
 
 def test_mcp_transport_auth_and_csrf_rules(client, test_workspace, workspace_headers):
-    # GET /mcp запрещён (stateless mode -> без открытого SSE-потока)
+    # GET /mcp запрещён (stateless mode -> без открытого SSE-потока), ошибка на русском
     get_resp = client.get("/mcp")
     assert get_resp.status_code == 405
     assert get_resp.headers.get("allow") == "POST"
+    assert "POST /mcp" in get_resp.json()["detail"]
+    assert "не поддерживается" in get_resp.json()["detail"]
 
     # Без Bearer или с неверным/cookie-токеном -> 401
     init_body = {
@@ -156,6 +159,17 @@ def test_mcp_transport_auth_and_csrf_rules(client, test_workspace, workspace_hea
     assert del_resp.status_code == 200
     revoked_resp = _mcp_post(client, secret, "tools/list")
     assert revoked_resp.status_code == 401
+
+    # При неостановленном/неинициализированном session_manager ошибка 503 тоже на русском
+    secret_ok = _create_token(client, workspace_headers, name="LiveBot", scope="read_only")["secret"]
+    orig_mgr = mcp_server._state.session_manager
+    mcp_server._state.session_manager = None
+    try:
+        down_resp = _mcp_post(client, secret_ok, "tools/list")
+        assert down_resp.status_code == 503
+        assert down_resp.json()["detail"] == "MCP-сервер не запущен"
+    finally:
+        mcp_server._state.session_manager = orig_mgr
 
 
 def test_mcp_dns_rebinding_protection(client, test_workspace, workspace_headers):
@@ -250,6 +264,61 @@ def test_mcp_rate_limits_per_token_and_auth_failures(
 
         assert anyio.run(_call_other_ip) == 200
         assert auth_calls == MCP_AUTH_FAIL_LIMIT_PER_MINUTE + 1
+    finally:
+        limiter.enabled = prev_enabled
+        mcp_rate_limiter.reset()
+
+
+def test_mcp_create_board_defaults_to_no_carry_and_enforces_strict_rate_limit(
+    client, workspace_headers, sample_board
+):
+    rw_secret = _create_token(client, workspace_headers, name="Board Bot", scope="read_write")[
+        "secret"
+    ]
+    open_task = client.post(
+        "/api/action-items/",
+        json={"board_id": sample_board["id"], "title": "Открытая", "text": "Оставить активной"},
+        headers=workspace_headers,
+    ).json()
+
+    # Без явного carry_forward_items=True перенос задач НЕ срабатывает
+    err_b, created_board, _ = _call_tool(
+        client,
+        rw_secret,
+        "create_board",
+        {"name": "Черновик без переноса"},
+    )
+    assert not err_b
+
+    old_tasks = client.get(
+        f"/api/action-items/?board_id={sample_board['id']}", headers=workspace_headers
+    ).json()
+    assert old_tasks[0]["id"] == open_task["id"]
+    assert old_tasks[0]["superseded_by_id"] is None
+    assert (
+        client.get(
+            f"/api/action-items/?board_id={created_board['id']}", headers=workspace_headers
+        ).json()
+        == []
+    )
+
+    # create_board ограничен строже общего токен-лимита (30/мин как в REST)
+    prev_enabled = limiter.enabled
+    limiter.enabled = True
+    mcp_rate_limiter.reset()
+    try:
+        for i in range(MCP_CREATE_BOARD_LIMIT_PER_MINUTE):
+            err, _, _ = _call_tool(client, rw_secret, "create_board", {"name": f"Rate Board {i}"})
+            assert not err
+        err_limit, msg_limit, _ = _call_tool(
+            client, rw_secret, "create_board", {"name": "Rate Board Overflow"}
+        )
+        assert err_limit
+        assert "лимит создания досок" in str(msg_limit).lower()
+
+        # Чтение тем же токеном ещё не исчерпало общий 120/мин лимит
+        err_list, _, _ = _call_tool(client, rw_secret, "list_boards")
+        assert not err_list
     finally:
         limiter.enabled = prev_enabled
         mcp_rate_limiter.reset()

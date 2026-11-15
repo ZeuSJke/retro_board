@@ -165,6 +165,7 @@ class WorkspaceCreate(BaseModel):
 class WorkspaceUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     access_key: Optional[str] = Field(default=None, min_length=4, max_length=100)
+    revoke_agent_tokens: bool = False
 
     @field_validator("name")
     @classmethod
@@ -194,6 +195,7 @@ class WorkspaceMeOut(WorkspaceOut):
 
 class WorkspaceListItem(WorkspaceOut):
     boards_count: int = 0
+    active_agent_tokens_count: int = 0
 
 
 # ── Admin ────────────────────────────────────────────────────────────────────

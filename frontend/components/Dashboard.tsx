@@ -864,6 +864,7 @@ export default function Dashboard() {
             <ActionItemExternalLink
               item={item}
               editDisabled={Boolean(item.superseded_by_id)}
+              disabledReason="Задача перенесена на другую доску — изменения доступны в копии"
               stopPointerDown
               onUpdated={(updated) =>
                 setItems((prev) =>

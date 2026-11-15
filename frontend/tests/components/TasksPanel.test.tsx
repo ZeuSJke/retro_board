@@ -416,23 +416,60 @@ describe('Внешняя ссылка на задачу (external_url)', () => {
       ],
     })
 
+    const carriedReason = 'Задача перенесена на другую доску — изменения доступны в копии'
     expect(screen.getByTestId('action-item-carried')).toBeInTheDocument()
     expect(screen.getByTestId('action-item-status')).toBeDisabled()
     expect(screen.getByRole('button', { name: /Назначить/i })).toBeDisabled()
-    expect(screen.queryByTitle('Удалить задачу')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('action-item-link-btn-t-carried')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Назначить/i })).toHaveAttribute('title', carriedReason)
+
+    // Недоступные действия отключены с причиной, а не скрыты молча
+    const deleteBtn = screen.getByTestId('action-item-delete-btn-t-carried')
+    expect(deleteBtn).toBeDisabled()
+    expect(deleteBtn).toHaveAttribute('title', carriedReason)
+
+    const linkBtn = screen.getByTestId('action-item-link-btn-t-carried')
+    expect(linkBtn).toBeDisabled()
+    expect(linkBtn).toHaveAttribute('title', carriedReason)
     expect(screen.getByTestId('action-item-external-link')).toHaveAttribute(
       'href',
       'https://tracker.company.ru/CARRY-1',
     )
 
-    await user.click(screen.getByText('Перенесённый заголовок'))
-    await user.click(screen.getByText('Перенесённое описание'))
+    const titleEl = screen.getByText('Перенесённый заголовок')
+    const descEl = screen.getByText('Перенесённое описание')
+    expect(titleEl).toHaveAttribute('title', carriedReason)
+    expect(descEl.closest('p')).toHaveAttribute('title', carriedReason)
+
+    await user.click(titleEl)
+    await user.click(descEl)
     await user.click(screen.getByRole('button', { name: /Назначить/i }))
+    await user.click(linkBtn)
+    await user.click(deleteBtn)
     expect(screen.queryByDisplayValue('Перенесённый заголовок')).not.toBeInTheDocument()
     expect(screen.queryByDisplayValue('Перенесённое описание')).not.toBeInTheDocument()
     expect(screen.queryByPlaceholderText('Имя участника')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('https://tracker.company.ru/TASK-1')).not.toBeInTheDocument()
     expect(api.updateActionItem).not.toHaveBeenCalled()
     expect(api.deleteActionItem).not.toHaveBeenCalled()
+  })
+
+  it('перенесённая задача без внешней ссылки всё равно показывает отключённую кнопку «Ссылка» с причиной', () => {
+    renderPanel({
+      readOnly: false,
+      actionItems: [
+        task('t-carried-no-link', {
+          external_url: null,
+          superseded_by_id: 't-copy-2',
+        }),
+      ],
+    })
+
+    const linkBtn = screen.getByTestId('action-item-link-btn-t-carried-no-link')
+    expect(linkBtn).toBeDisabled()
+    expect(linkBtn).toHaveTextContent('Ссылка')
+    expect(linkBtn).toHaveAttribute(
+      'title',
+      'Задача перенесена на другую доску — изменения доступны в копии',
+    )
   })
 })

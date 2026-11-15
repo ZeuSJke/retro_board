@@ -1,11 +1,15 @@
 """In-memory rate limiter для MCP-эндпоинта `/mcp`.
 
-Разделён на две независимые корзины:
+Разделён на независимые корзины:
 - на валидный `token_id` (чтобы активный агент не мешал остальной команде за NAT);
+- на создание досок по `token_id` (`create_board`, строгий лимит как в REST);
 - на IP при неуспешной аутентификации: по достижении порога IP блокируется в
   cooldown-корзине до обращения к БД/threadpool (`is_auth_failure_blocked`), а
   неудачи записываются после отказа (`record_auth_failure`); валидные токены с
   других IP и неблокированных адресов не затрагиваются.
+
+Используем лёгкую LRU-корзину на `time.monotonic()` вместо `limits.storage.MemoryStorage`,
+так как `MemoryStorage` не ограничивает число IP-ключей и запускает фоновый timer-поток.
 
 Автоматически повторяет состояние `app.limiter.limiter.enabled`, поэтому в
 `TESTING=true` выключен до тех пор, пока тест не включит `limiter.enabled = True`.
@@ -18,6 +22,7 @@ import time
 from app.limiter import limiter
 
 MCP_TOKEN_LIMIT_PER_MINUTE = 120
+MCP_CREATE_BOARD_LIMIT_PER_MINUTE = 30
 MCP_AUTH_FAIL_LIMIT_PER_MINUTE = 30
 _WINDOW_SECONDS = 60.0
 
@@ -35,6 +40,11 @@ class SlidingWindowLimiter:
         stale = [k for k, dq in self._buckets.items() if not dq or dq[-1] <= cutoff]
         for k in stale:
             del self._buckets[k]
+
+    @staticmethod
+    def _trim_bucket(bucket: deque[float], cutoff: float) -> None:
+        while bucket and bucket[0] <= cutoff:
+            bucket.popleft()
 
     @staticmethod
     def _auth_fail_key(client_ip: str) -> str:
@@ -55,8 +65,7 @@ class SlidingWindowLimiter:
                     del self._buckets[oldest_key]
                 bucket = deque()
             else:
-                while bucket and bucket[0] <= cutoff:
-                    bucket.popleft()
+                self._trim_bucket(bucket, cutoff)
             self._buckets[key] = bucket
             if len(bucket) >= limit:
                 return False
@@ -65,6 +74,11 @@ class SlidingWindowLimiter:
 
     def allow_token(self, token_id: str) -> bool:
         return self._allow(f"token:{token_id}", MCP_TOKEN_LIMIT_PER_MINUTE)
+
+    def allow_create_board(self, token_id: str) -> bool:
+        return self._allow(
+            f"create-board:{token_id}", MCP_CREATE_BOARD_LIMIT_PER_MINUTE
+        )
 
     def is_auth_failure_blocked(self, client_ip: str) -> bool:
         """Проверить без обращения к БД, исчерпан ли IP-лимит ошибок входа."""
@@ -76,8 +90,7 @@ class SlidingWindowLimiter:
             bucket = self._buckets.get(key)
             if bucket is None:
                 return False
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
+            self._trim_bucket(bucket, cutoff)
             if not bucket:
                 del self._buckets[key]
                 return False
