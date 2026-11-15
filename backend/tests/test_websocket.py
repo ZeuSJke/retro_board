@@ -654,6 +654,31 @@ class TestWorkspaceSocket:
             assert ev_deleted["data"]["id"] == board["id"]
 
 
+class TestLockedBoardSession:
+    def test_session_cannot_start_on_a_locked_board(self, client, ws_token, ws_board, db_session):
+        """Заблокированная доска — архив: «Штурм» новой сессии скрыл бы её карточки у всех."""
+        ws_board.is_locked = True
+        db_session.commit()
+        with connect(client, ws_board.id, ws_token) as ws:
+            send(ws, "facilitator_start")
+            # Команда молча отклонена; следующая — обычный ответ без ведущего
+            send(ws, "identify")
+            assert recv_event(ws, "facilitator_update")["data"]["facilitator_id"] is None
+        db_session.refresh(ws_board)
+        assert ws_board.active_phase is None and ws_board.active_facilitator_id is None
+
+    def test_session_starts_after_unlock(self, client, ws_token, ws_board, db_session):
+        ws_board.is_locked = True
+        db_session.commit()
+        with connect(client, ws_board.id, ws_token) as ws:
+            send(ws, "facilitator_start")
+            ws_board.is_locked = False
+            db_session.commit()
+            send(ws, "facilitator_start")
+            started = recv_event(ws, "facilitator_update")["data"]
+            assert started["facilitator_id"] is not None and started["phase"] == "brainstorm"
+
+
 class TestSummaryEvents:
     def test_summary_failed_event_on_generation_error(
         self, client, ws_token, ws_board, monkeypatch
@@ -670,6 +695,24 @@ class TestSummaryEvents:
             send(ws, "phase_change", {"phase": "summary"})
             ev = recv_event(ws, "summary_failed")
             assert ev["data"]["message"] == "Не удалось сгенерировать итоги"
+
+    def test_summary_generated_has_the_same_shape_as_regeneration(
+        self, client, ws_token, ws_board, monkeypatch
+    ):
+        """Итоги из фазы и по кнопке приходят одним конвертом; различает их флаг regenerated."""
+        from app.routers import boards as boards_router
+
+        summary = {"id": "s1", "summary_text": "Итоги", "key_themes": [], "recommendations": []}
+        monkeypatch.setattr(settings, "ai_base_url", "http://llm.test/v1")
+        monkeypatch.setattr(
+            boards_router, "_generate_summary_internal", lambda *args, **kwargs: summary
+        )
+        with connect(client, ws_board.id, ws_token) as ws:
+            send(ws, "facilitator_start")
+            recv_event(ws, "facilitator_update")
+            send(ws, "phase_change", {"phase": "summary"})
+            ev = recv_event(ws, "summary_generated")
+            assert ev["data"] == {"summary": summary, "board_id": ws_board.id, "regenerated": False}
 
     def test_summary_failed_event_without_ai(self, client, ws_token, ws_board, monkeypatch):
         monkeypatch.setattr(settings, "ai_base_url", "")

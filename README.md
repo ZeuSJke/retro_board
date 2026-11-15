@@ -354,7 +354,7 @@ retro_board/
 |---|---|
 | `identify` | Личность сокета задаёт сессия, имя из сообщения не принимается; в ответ сервер присылает `presence_update` и `facilitator_update` |
 | `cursor_move` / `cursor_leave` | Позиция курсора (`x`, `y`) и уход курсора |
-| `facilitator_start` / `facilitator_stop` | Старт / завершение сессии фасилитации (опционально блокировка доски при стопе) |
+| `facilitator_start` / `facilitator_stop` | Старт / завершение сессии ведущего (опционально блокировка доски при стопе); на заблокированной доске сессия не стартует |
 | `facilitator_transfer` | Ведущий передаёт роль участнику на доске (`participant_id`); фаза и таймер сохраняются |
 | `facilitator_takeover` | Участник забирает роль, если ведущий не в сети дольше 15 секунд |
 | `health_check_start` | Запустить health check у всех участников (в сессии — только ведущий) |
@@ -390,7 +390,7 @@ retro_board/
 | `group_created` / `group_updated` / `group_moved` / `group_deleted` / `group_collapse` | CRUD, перемещение и сворачивание групп |
 | `action_item_created` / `action_item_updated` / `action_item_deleted` | CRUD Action Items |
 | `auto_cluster_completed` | Завершение AI-кластеризации; `participant_id` — кто запустил |
-| `summary_generated` / `summary_failed` | Результат генерации AI-резюме; `regenerated: true` — повторная генерация по кнопке (окно итогов у остальных не открывается) |
+| `summary_generated` / `summary_failed` | Результат генерации AI-резюме: `{summary, board_id, regenerated}`; `regenerated: true` — повторная генерация по кнопке (окно итогов у остальных не открывается) |
 
 ---
 
