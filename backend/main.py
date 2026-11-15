@@ -26,9 +26,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.routing import Route
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from app.limiter import limiter
+from app.mcp import mcp_asgi_app, mcp_lifespan
 
 logger = logging.getLogger("retroboard")
 configure_logging()
@@ -39,7 +41,8 @@ async def lifespan(app: FastAPI):
     from app.ws_manager import assert_single_worker
 
     assert_single_worker()
-    yield
+    async with mcp_lifespan():
+        yield
 
 
 app = FastAPI(
@@ -100,6 +103,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # (only logins — the rest of /api/admin/* stays protected)
         if (
             request.url.path.startswith("/ws/")
+            or request.url.path in ("/mcp", "/mcp/")
             or request.url.path == "/api/admin/login"
             or request.url.path
             in (
@@ -159,6 +163,23 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*", "x-csrf-token"],
+)
+
+app.routes.extend(
+    [
+        Route(
+            "/mcp",
+            endpoint=mcp_asgi_app,
+            methods=["GET", "POST", "DELETE"],
+            include_in_schema=False,
+        ),
+        Route(
+            "/mcp/",
+            endpoint=mcp_asgi_app,
+            methods=["GET", "POST", "DELETE"],
+            include_in_schema=False,
+        ),
+    ]
 )
 
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])

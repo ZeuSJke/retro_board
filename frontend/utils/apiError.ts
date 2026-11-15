@@ -46,6 +46,7 @@ const DEFAULT_FIELD_LABELS: FieldLabels = {
   name: 'Название',
   title: 'Заголовок',
   text: 'Текст',
+  external_url: 'Ссылка',
   login: 'Логин',
   password: 'Пароль',
 }

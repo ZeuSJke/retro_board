@@ -23,6 +23,10 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ADMIN_LOGIN", "testadmin")
 os.environ.setdefault("ADMIN_PASSWORD", "testpassword123")
+_existing_mcp_hosts = os.environ.get("MCP_ALLOWED_HOSTS", "")
+os.environ["MCP_ALLOWED_HOSTS"] = ",".join(
+    part for part in (_existing_mcp_hosts, "testserver", "testclient") if part
+)
 os.environ["TESTING"] = "true"
 
 # ---------------------------------------------------------------------------
@@ -78,7 +82,10 @@ import main as _main_module
 
 @asynccontextmanager
 async def _test_lifespan(app):
-    yield
+    from app.mcp import mcp_lifespan
+
+    async with mcp_lifespan():
+        yield
 
 
 _main_module.app.router.lifespan_context = _test_lifespan
@@ -164,16 +171,20 @@ def _reset_ws_manager():
     phases/timers/session_ids иначе протекают из теста в тест и дают
     ложные presence/facilitator/timer-состояния.
     """
+    from app.mcp import mcp_rate_limiter
     from app.ws_manager import manager as _ws_manager
 
     _ws_manager.reset()
+    mcp_rate_limiter.reset()
     yield
     _ws_manager.reset()
+    mcp_rate_limiter.reset()
 
 
 @pytest.fixture()
 def client():
     """FastAPI TestClient with the DB dependency overridden to use SQLite."""
+    from app.mcp import set_db_session_factory
 
     def _override():
         db = TestSessionLocal()
@@ -183,8 +194,10 @@ def client():
             db.close()
 
     app.dependency_overrides[get_db] = _override
+    set_db_session_factory(TestSessionLocal)
     with TestClient(app) as c:
         yield c
+    set_db_session_factory(None)
     app.dependency_overrides.clear()
 
 

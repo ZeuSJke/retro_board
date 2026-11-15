@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -10,7 +9,8 @@ from sqlalchemy.orm import Session
 from app.board_view import ANON_AUTHOR, require_cards_visible
 from app.database import get_db, release_connection
 from app import models, schemas
-from app.models import now_utc
+from app.services import action_items as action_items_service
+from app.services.action_items import copy_unresolved_action_items
 from app.utils import get_or_404, require_live_board
 from app.ai import ai_client
 from app.ai.prompts.title_generation import (
@@ -89,78 +89,16 @@ def list_all_action_items(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """List action items across all boards with optional filters."""
-    q = (
-        db.query(models.ActionItem, models.Board.name)
-        .join(models.Board, models.ActionItem.board_id == models.Board.id)
-        .filter(
-            models.Board.deleted_at.is_(None),
-            models.Board.workspace_id == workspace.id,
-        )
+    items, _total = action_items_service.list_workspace_action_items(
+        db,
+        workspace.id,
+        status=status,
+        board_id_or_slug=board_id,
+        assignee=assignee,
+        include_carried=include_carried,
+        lookup="id",
     )
-    if not include_carried:
-        # Задача, перенесённая на другую доску, представлена там своей копией
-        q = q.filter(models.ActionItem.superseded_by_id.is_(None))
-    if status:
-        q = q.filter(models.ActionItem.status == status)
-    if board_id:
-        q = q.filter(models.ActionItem.board_id == board_id)
-    if assignee:
-        q = q.filter(models.ActionItem.assignee == assignee)
-    q = q.order_by(models.ActionItem.created_at.desc())
-    results = q.all()
-    return [
-        schemas.DashboardActionItem(
-            **schemas.ActionItemOut.model_validate(item).model_dump(),
-            board_name=board_name,
-        )
-        for item, board_name in results
-    ]
-
-
-def copy_unresolved_action_items(
-    db: Session,
-    source_board_id: str,
-    target_board_id: str,
-    item_ids: list[str] | None = None,
-) -> tuple[list[schemas.ActionItemOut], list[schemas.ActionItemOut]]:
-    """Перенести нерешённые задачи со старой доски на целевую (без commit).
-
-    На целевой доске появляется копия, а оригинал помечается перенесённым
-    (`superseded_by_id`): он остаётся в истории своей доски, но больше не
-    считается открытым — иначе одна задача считалась бы дважды. Уже
-    перенесённые задачи повторно не переносятся.
-
-    Возвращает (созданные копии, помеченные оригиналы).
-    """
-    query = db.query(models.ActionItem).filter(
-        models.ActionItem.board_id == source_board_id,
-        models.ActionItem.status != "done",
-        models.ActionItem.superseded_by_id.is_(None),
-    )
-    if item_ids is not None:
-        query = query.filter(models.ActionItem.id.in_(item_ids))
-    items = query.order_by(models.ActionItem.created_at).all()
-    created: list[schemas.ActionItemOut] = []
-    carried: list[schemas.ActionItemOut] = []
-    for src in items:
-        new_item = models.ActionItem(
-            id=str(uuid.uuid4()),
-            board_id=target_board_id,
-            title=src.title,
-            text=src.text,
-            assignee=src.assignee,
-            source_card_ids=list(src.source_card_ids or []),
-            status=src.status,
-        )
-        db.add(new_item)
-        db.flush()
-        src.superseded_by_id = new_item.id
-        db.flush()
-        db.refresh(new_item)
-        db.refresh(src)
-        created.append(schemas.ActionItemOut.model_validate(new_item))
-        carried.append(schemas.ActionItemOut.model_validate(src))
-    return created, carried
+    return items
 
 
 @router.post(
@@ -280,7 +218,7 @@ async def suggest_action_items(
             "id": card.id,
             "column": col_title,
             "text": card.text,
-            "author": ANON_AUTHOR if board.anonymous_votes else card.author,
+            "author": ANON_AUTHOR if (board.anonymous_votes and card.author_kind != "agent") else card.author,
             "likes_count": len(card.likes or []),
         }
         for card, col_title in rows
@@ -307,42 +245,18 @@ async def create_action_item(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    board = get_or_404(db, models.Board, body.board_id, "Доска не найдена")
-    require_live_board(board, workspace.id)
-    if body.source_card_ids:
-        valid_cards = (
-            db.query(models.Card.id)
-            .join(models.Column, models.Card.column_id == models.Column.id)
-            .filter(
-                models.Column.board_id == body.board_id,
-                models.Card.id.in_(body.source_card_ids),
-            )
-            .all()
-        )
-        valid_ids = {row[0] for row in valid_cards}
-        invalid_ids = set(body.source_card_ids) - valid_ids
-        if invalid_ids:
-            raise HTTPException(
-                400,
-                f"Некорректные source_card_ids: {', '.join(sorted(invalid_ids))}",
-            )
-    item = models.ActionItem(
-        id=str(uuid.uuid4()),
-        board_id=body.board_id,
+    return await action_items_service.create_action_item_for_workspace(
+        db,
+        workspace.id,
+        board_id_or_slug=body.board_id,
         title=body.title,
         text=body.text,
         assignee=body.assignee,
+        external_url=body.external_url,
         source_card_ids=body.source_card_ids,
         status=body.status,
+        require_unlocked=False,
     )
-    db.add(item)
-    db.commit()
-    db.refresh(item)
-    out = schemas.ActionItemOut.model_validate(item)
-    await manager.broadcast(
-        body.board_id, "action_item_created", out.model_dump(mode="json")
-    )
-    return out
 
 
 @router.patch("/{item_id}", response_model=schemas.ActionItemOut)
@@ -354,29 +268,18 @@ async def update_action_item(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    item = get_or_404(db, models.ActionItem, item_id, "Задача не найдена")
-    require_live_board(
-        db.get(models.Board, item.board_id), workspace.id, "Задача не найдена"
+    return await action_items_service.update_action_item_for_workspace(
+        db,
+        workspace.id,
+        item_id=item_id,
+        provided_fields=body.model_fields_set,
+        title=body.title,
+        text=body.text,
+        assignee=body.assignee,
+        external_url=body.external_url,
+        status=body.status,
+        restrict_locked_fields=False,
     )
-    if body.title is not None:
-        item.title = body.title
-    if body.text is not None:
-        item.text = body.text
-    if "assignee" in body.model_fields_set:
-        item.assignee = body.assignee
-    if "status" in body.model_fields_set and body.status is not None:
-        item.status = body.status
-        if body.status == "done":
-            item.completed_at = now_utc()
-        else:
-            item.completed_at = None
-    db.commit()
-    db.refresh(item)
-    out = schemas.ActionItemOut.model_validate(item)
-    await manager.broadcast(
-        item.board_id, "action_item_updated", out.model_dump(mode="json")
-    )
-    return out
 
 
 @router.delete("/{item_id}", status_code=204)

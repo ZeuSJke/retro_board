@@ -15,6 +15,9 @@ const api = vi.hoisted(() => ({
   deleteAdminWorkspace: vi.fn(),
   getAdminWorkspaceInvite: vi.fn(),
   rotateAdminWorkspaceInvite: vi.fn(),
+  getAdminAgentTokens: vi.fn(),
+  createAdminAgentToken: vi.fn(),
+  revokeAdminAgentToken: vi.fn(),
 }))
 
 // Сетевые вызовы подменены, отметка о входе (localStorage) — настоящая
@@ -260,9 +263,14 @@ describe('Админка /admin', () => {
       expect(await navigator.clipboard.readText()).toBe(generated)
     })
 
-    it('смена ключа предупреждает о выходе участников и перевыпуске приглашения', async () => {
+    it('смена ключа предупреждает о выходе участников, показывает число токенов агентов и даёт отозвать их опционально', async () => {
       const user = userEvent.setup()
       await renderSignedIn()
+      api.getAdminAgentTokens.mockResolvedValueOnce([
+        { id: 't1', revoked_at: null },
+        { id: 't2', revoked_at: null },
+        { id: 't3', revoked_at: '2026-11-10T10:00:00Z' },
+      ])
       api.updateAdminWorkspace.mockResolvedValueOnce({ ...platform })
 
       await user.click(teamRow('Платформа').getByRole('button', { name: 'Ключ' }))
@@ -273,12 +281,45 @@ describe('Админка /admin', () => {
       )
       expect(within(dialog).getByText(/Ключ нельзя посмотреть после сохранения/)).toBeInTheDocument()
 
+      const tokensBox = within(dialog).getByTestId('key-change-agent-tokens-box')
+      expect(await within(tokensBox).findByText('2')).toBeInTheDocument()
+      expect(tokensBox).toHaveTextContent('По умолчанию смена ключа их не отзывает')
+
+      // Без отметки чекбокса передаётся только access_key
+      const checkbox = within(dialog).getByRole('checkbox', {
+        name: /Также отозвать действующие токены агентов \(2\)/,
+      })
+      expect(checkbox).not.toBeChecked()
+
       await user.type(within(dialog).getByLabelText('Новый ключ доступа'), 'new-team-key')
       await user.click(within(dialog).getByRole('button', { name: 'Сменить ключ' }))
 
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
       expect(api.updateAdminWorkspace).toHaveBeenCalledWith('ws-1', { access_key: 'new-team-key' })
       expect(showToast).toHaveBeenCalledWith('Ключ доступа изменён: участникам нужно войти заново', 'success')
+
+      // Повторное открытие: если отметить отзыв — уходит revoke_agent_tokens: true
+      api.getAdminAgentTokens.mockResolvedValueOnce([{ id: 't1', revoked_at: null }])
+      api.updateAdminWorkspace.mockResolvedValueOnce({ ...platform })
+      await user.click(teamRow('Платформа').getByRole('button', { name: 'Ключ' }))
+      const dialog2 = await screen.findByRole('dialog', { name: 'Сменить ключ доступа' })
+      const checkbox2 = await within(dialog2).findByRole('checkbox', {
+        name: /Также отозвать действующие токены агентов \(1\)/,
+      })
+      await user.click(checkbox2)
+      expect(checkbox2).toBeChecked()
+      await user.type(within(dialog2).getByLabelText('Новый ключ доступа'), 'another-key-99')
+      await user.click(within(dialog2).getByRole('button', { name: 'Сменить ключ' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      expect(api.updateAdminWorkspace).toHaveBeenLastCalledWith('ws-1', {
+        access_key: 'another-key-99',
+        revoke_agent_tokens: true,
+      })
+      expect(showToast).toHaveBeenLastCalledWith(
+        'Ключ доступа изменён, токены агентов отозваны: участникам нужно войти заново',
+        'success',
+      )
     })
 
     it('слишком короткий ключ при смене — сообщение сервера по делу', async () => {
@@ -398,5 +439,72 @@ describe('generateSlugFromName', () => {
     const slug = generateSlugFromName(`${'щ'.repeat(19)}abc ${'я'.repeat(10)}`)
     expect(slug).toBe(`${'shch'.repeat(19)}abc`)
     expect(generateSlugFromName('я'.repeat(60))).toHaveLength(80)
+  })
+})
+
+describe('токены агентов в админке', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    setAdminSessionHint(false)
+  })
+
+  it('открывает диалог токенов команды, выпускает и отзывает токен через admin API', async () => {
+    const user = userEvent.setup()
+    api.getAdminAgentTokens.mockResolvedValueOnce([])
+    api.createAdminAgentToken.mockResolvedValueOnce({
+      token: {
+        id: 'tok-adm-1',
+        workspace_id: 'ws-1',
+        participant_id: 'p-adm-bot-1',
+        name: 'Admin Bot',
+        token_prefix: 'rba_adm1',
+        scope: 'read_write',
+        created_by_id: null,
+        created_at: '2026-11-15T10:00:00Z',
+        last_used_at: null,
+        revoked_at: null,
+      },
+      secret: 'rba_adm1_secret_token',
+    })
+    api.revokeAdminAgentToken.mockResolvedValueOnce({
+      id: 'tok-adm-1',
+      workspace_id: 'ws-1',
+      participant_id: 'p-adm-bot-1',
+      name: 'Admin Bot',
+      token_prefix: 'rba_adm1',
+      scope: 'read_write',
+      created_by_id: null,
+      created_at: '2026-11-15T10:00:00Z',
+      last_used_at: null,
+      revoked_at: '2026-11-15T10:05:00Z',
+    })
+
+    await renderSignedIn()
+
+    await user.click(teamRow('Платформа').getByRole('button', { name: 'Токены агентов' }))
+
+    const dialog = await screen.findByTestId('agent-tokens-dialog')
+    expect(within(dialog).getByText('Администрирование')).toBeInTheDocument()
+    expect(within(dialog).getByText('Платформа')).toBeInTheDocument()
+    await waitFor(() => expect(api.getAdminAgentTokens).toHaveBeenCalledWith('ws-1'))
+
+    await user.type(within(dialog).getByTestId('agent-token-name-input'), 'Admin Bot')
+    await user.click(within(dialog).getByRole('radio', { name: 'Чтение и запись' }))
+    await user.click(within(dialog).getByTestId('agent-token-create-btn'))
+
+    await waitFor(() =>
+      expect(api.createAdminAgentToken).toHaveBeenCalledWith('ws-1', {
+        name: 'Admin Bot',
+        scope: 'read_write',
+      }),
+    )
+    expect(within(dialog).getByTestId('agent-token-secret-input')).toHaveValue('rba_adm1_secret_token')
+
+    await user.click(within(dialog).getByTestId('agent-token-revoke-tok-adm-1'))
+    await user.click(within(dialog).getByTestId('agent-token-confirm-revoke-tok-adm-1'))
+
+    await waitFor(() => expect(api.revokeAdminAgentToken).toHaveBeenCalledWith('ws-1', 'tok-adm-1'))
+    expect(within(dialog).getByTestId('agent-token-row-tok-adm-1')).toHaveTextContent('Отозван')
   })
 })

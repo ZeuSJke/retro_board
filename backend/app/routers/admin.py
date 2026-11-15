@@ -15,6 +15,7 @@ from app.workspace_auth import (
 )
 from app.config import settings
 from app.limiter import entry_limit_key, limiter
+from app.services import agent_tokens as agent_token_service
 from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -70,10 +71,17 @@ def list_workspaces(
         .group_by(models.Board.workspace_id)
         .all()
     )
+    token_counts = dict(
+        db.query(models.AgentToken.workspace_id, func.count(models.AgentToken.id))
+        .filter(models.AgentToken.revoked_at.is_(None))
+        .group_by(models.AgentToken.workspace_id)
+        .all()
+    )
     result = []
     for ws in workspaces:
         item = schemas.WorkspaceListItem.model_validate(ws)
         item.boards_count = counts.get(ws.id, 0)
+        item.active_agent_tokens_count = token_counts.get(ws.id, 0)
         result.append(item)
     return result
 
@@ -134,13 +142,15 @@ def update_workspace(
         ws.name = body.name
     if body.access_key is not None:
         ws.access_key_hash = hash_access_key(body.access_key)
-        # Смена ключа закрывает доступ всем, кто его получил: выданные сессии
-        # перестают действовать, ссылка-приглашение перевыпускается.
+        # Смена ключа закрывает доступ участникам по JWT и ссылке-приглашению;
+        # токены MCP-агентов независимы и отзываются только при явном флаге.
         ws.token_epoch += 1
         ws.invite_token = new_invite_token()
         # Открытые сокеты сессию не перепроверяют — закрываем их, иначе отозванный
         # участник продолжал бы получать события и управлять сессией ведущего.
         background.add_task(manager.disconnect_workspace_sessions, ws.id)
+    if body.revoke_agent_tokens:
+        agent_token_service.revoke_all_agent_tokens(db, ws.id, commit=False)
     db.commit()
     db.refresh(ws)
     return ws
@@ -200,3 +210,70 @@ def delete_workspace(
     db.delete(ws)
     db.commit()
     background.add_task(manager.disconnect_workspace_sessions, workspace_id)
+
+
+@router.get(
+    "/workspaces/{workspace_id}/agent-tokens",
+    response_model=list[schemas.AgentTokenOut],
+)
+@limiter.limit("30/minute")
+def admin_list_agent_tokens(
+    request: Request,
+    workspace_id: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Список токенов MCP-агентов команды (для администратора)."""
+    ws = db.get(models.Workspace, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Команда не найдена")
+    return agent_token_service.list_agent_tokens(db, ws.id)
+
+
+@router.post(
+    "/workspaces/{workspace_id}/agent-tokens",
+    response_model=schemas.AgentTokenCreatedOut,
+    status_code=201,
+)
+@limiter.limit("30/minute")
+def admin_create_agent_token(
+    request: Request,
+    workspace_id: str,
+    body: schemas.AgentTokenCreate,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Выпустить токен MCP-агента для команды (от имени администратора)."""
+    ws = db.get(models.Workspace, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Команда не найдена")
+    token, secret = agent_token_service.create_agent_token(
+        db,
+        ws.id,
+        name=body.name,
+        scope=body.scope,
+        created_by_id=None,
+    )
+    return schemas.AgentTokenCreatedOut(
+        token=schemas.AgentTokenOut.model_validate(token),
+        secret=secret,
+    )
+
+
+@router.delete(
+    "/workspaces/{workspace_id}/agent-tokens/{token_id}",
+    response_model=schemas.AgentTokenOut,
+)
+@limiter.limit("30/minute")
+def admin_revoke_agent_token(
+    request: Request,
+    workspace_id: str,
+    token_id: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Отозвать токен MCP-агента команды (от имени администратора)."""
+    ws = db.get(models.Workspace, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Команда не найдена")
+    return agent_token_service.revoke_agent_token(db, ws.id, token_id)

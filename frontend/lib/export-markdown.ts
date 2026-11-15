@@ -1,4 +1,11 @@
-import type { ActionItem, Board, BoardSummary } from '../types'
+import type { ActionItem, Board, BoardSummary, Card } from '../types'
+import { parseSafeExternalUrl } from './urls'
+
+function formatCardAuthor(card: Card, anonymousVotes: boolean): string {
+  const isAgent = card.author_kind === 'agent' && !card.masked
+  if (isAgent) return ` — *${card.author} (агент)*`
+  return anonymousVotes ? '' : ` — *${card.author}*`
+}
 
 const STATUS_LABELS: Record<string, string> = {
   open: 'Открыта',
@@ -65,14 +72,14 @@ export function formatBoardMarkdown(
       lines.push(`### ${grp.title}`)
       for (const c of cards) {
         const votes = c.likes.length > 0 ? ` 👍 ${c.likes.length}` : ''
-        const author = board.anonymous_votes ? '' : ` — *${c.author}*`
+        const author = formatCardAuthor(c, Boolean(board.anonymous_votes))
         lines.push(`- ${c.text}${author}${votes}`)
       }
     }
 
     for (const c of ungrouped) {
       const votes = c.likes.length > 0 ? ` 👍 ${c.likes.length}` : ''
-      const author = board.anonymous_votes ? '' : ` — *${c.author}*`
+      const author = formatCardAuthor(c, Boolean(board.anonymous_votes))
       lines.push(`- ${c.text}${author}${votes}`)
     }
     if (maskedCount > 0) {
@@ -90,7 +97,9 @@ export function formatBoardMarkdown(
       const status = item.superseded_by_id
         ? 'Перенесена на другую доску'
         : STATUS_LABELS[item.status] || item.status
-      lines.push(`- [${item.status === 'done' ? 'x' : ' '}] **${title}**${assignee} — ${status}`)
+      const safeLink = parseSafeExternalUrl(item.external_url)
+      const linkPart = safeLink ? ` — [${safeLink.label}](${safeLink.href})` : ''
+      lines.push(`- [${item.status === 'done' ? 'x' : ' '}] **${title}**${assignee} — ${status}${linkPart}`)
     }
     lines.push('')
   }

@@ -302,4 +302,32 @@ describe('CardWidget — скрытый сбор и анонимный режи�
     expect(tooltip).toHaveTextContent('3 голоса (анонимно)')
     expect(tooltip).not.toHaveTextContent('TestUser')
   })
+
+  it('карточка агента показывает имя и бейдж «Агент» даже в анонимном режиме', () => {
+    const agentCard: Card = {
+      ...baseCard,
+      id: 'c-agent',
+      author: 'Review Bot',
+      author_id: null,
+      author_kind: 'agent',
+    }
+    const { rerender } = render(
+      <CardWidget card={agentCard} anonymous onUpdate={vi.fn()} onDelete={vi.fn()} />,
+    )
+
+    expect(screen.getByText('Review Bot')).toBeInTheDocument()
+    expect(screen.getByTestId('card-agent-badge')).toHaveTextContent('Агент')
+
+    // На скрытой доске чужая замаскированная карточка скрывает и имя агента, и бейдж
+    rerender(
+      <CardWidget
+        card={{ ...agentCard, masked: true, author: 'Участник', text: 'Скрытая карточка' }}
+        anonymous
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+    expect(screen.queryByTestId('card-agent-badge')).not.toBeInTheDocument()
+    expect(screen.queryByText('Review Bot')).not.toBeInTheDocument()
+  })
 })

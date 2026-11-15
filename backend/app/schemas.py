@@ -2,9 +2,12 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Literal, Optional
+from urllib.parse import urlparse
 from pydantic import BaseModel, Field, field_validator
 
 ActionItemStatus = Literal["open", "in_progress", "done"]
+AgentTokenScope = Literal["read_only", "read_write"]
+AuthorKind = Literal["human", "agent"]
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -56,6 +59,23 @@ def _participant_name(v: str | None) -> str:
         return DEFAULT_PARTICIPANT_NAME
     if _HTML_TAG_RE.search(stripped):
         raise ValueError("Имя не должно содержать HTML-теги")
+    return stripped
+
+
+def _validate_external_url(v: str | None) -> str | None:
+    """Проверить внешнюю ссылку задачи (только http/https, пустая строка -> None)."""
+    if v is None:
+        return None
+    stripped = _utf8_encodable(v).strip()
+    if not stripped:
+        return None
+    if len(stripped) > 500:
+        raise ValueError("Ссылка не должна превышать 500 символов")
+    if any(ch.isspace() or ord(ch) < 32 for ch in stripped):
+        raise ValueError("Ссылка не должна содержать пробелы или управляющие символы")
+    parsed = urlparse(stripped)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("Ссылка должна начинаться с http:// или https:// и содержать домен")
     return stripped
 
 
@@ -145,6 +165,7 @@ class WorkspaceCreate(BaseModel):
 class WorkspaceUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     access_key: Optional[str] = Field(default=None, min_length=4, max_length=100)
+    revoke_agent_tokens: bool = False
 
     @field_validator("name")
     @classmethod
@@ -174,6 +195,7 @@ class WorkspaceMeOut(WorkspaceOut):
 
 class WorkspaceListItem(WorkspaceOut):
     boards_count: int = 0
+    active_agent_tokens_count: int = 0
 
 
 # ── Admin ────────────────────────────────────────────────────────────────────
@@ -242,6 +264,7 @@ class CardOut(BaseModel):
     text: str = ""
     author: str = ""
     author_id: Optional[str] = None
+    author_kind: AuthorKind = "human"
     color: str = "#FFFFFF"
     position: int
     likes: list[str] = []
@@ -508,6 +531,7 @@ class ActionItemCreate(BaseModel):
     title: str = Field(default="", max_length=200)
     text: str = Field(..., min_length=1, max_length=2000)
     assignee: Optional[str] = Field(default=None, max_length=60)
+    external_url: Optional[str] = Field(default=None, max_length=500)
     source_card_ids: list[str] = []
     status: ActionItemStatus = "open"
 
@@ -516,17 +540,28 @@ class ActionItemCreate(BaseModel):
     def validate_text(cls, v: str) -> str:
         return _strip_non_empty(v, "Текст задачи") or ""
 
+    @field_validator("external_url")
+    @classmethod
+    def validate_external_url(cls, v: str | None) -> str | None:
+        return _validate_external_url(v)
+
 
 class ActionItemUpdate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=200)
     text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
     assignee: Optional[str] = Field(default=None, max_length=60)
+    external_url: Optional[str] = Field(default=None, max_length=500)
     status: Optional[ActionItemStatus] = None
 
     @field_validator("text")
     @classmethod
     def validate_text(cls, v: str | None) -> str | None:
         return _strip_non_empty(v, "Текст задачи")
+
+    @field_validator("external_url")
+    @classmethod
+    def validate_external_url(cls, v: str | None) -> str | None:
+        return _validate_external_url(v)
 
 
 class ActionItemOut(BaseModel):
@@ -535,6 +570,7 @@ class ActionItemOut(BaseModel):
     title: str = ""
     text: str
     assignee: Optional[str] = None
+    external_url: Optional[str] = None
     source_card_ids: list[str] = []
     status: str = "open"
     completed_at: Optional[datetime] = None
@@ -807,3 +843,42 @@ class HealthTrendPoint(BaseModel):
     created_at: datetime
     averages: dict[str, float] = {}
     roti_average: Optional[float] = None
+
+
+# ── Токены MCP-агентов ────────────────────────────────────────────────────────
+
+
+class AgentTokenCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=60)
+    scope: AgentTokenScope = "read_only"
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        stripped = _utf8_encodable(v).strip()
+        if not stripped:
+            raise ValueError("Название токена не должно быть пустым")
+        if _HTML_TAG_RE.search(stripped):
+            raise ValueError("Название токена не должно содержать HTML-теги")
+        return stripped
+
+
+class AgentTokenOut(BaseModel):
+    id: str
+    workspace_id: str
+    participant_id: str
+    name: str
+    token_prefix: str
+    scope: AgentTokenScope
+    created_by_id: Optional[str] = None
+    created_at: datetime
+    last_used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class AgentTokenCreatedOut(BaseModel):
+    token: AgentTokenOut
+    # Полный секрет возвращается ровно один раз при выпуске.
+    secret: str

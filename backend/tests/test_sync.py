@@ -67,17 +67,17 @@ class TestEventNumbers:
         Иначе клиент счёл бы его уже учтённым и пропустил, хотя в снимке его данных нет.
         Обратная ошибка безвредна: событие, применённое поверх снимка повторно, ничего не портит.
         """
-        from app.routers import boards as boards_router
+        from app.services import boards as boards_service
 
         board_id = sample_board["id"]
-        real_query = boards_router._board_query
+        real_query = boards_service.board_query
 
         def query_with_concurrent_event(db):
             # Пока запрос готовится, другой участник успевает сделать правку
             manager.seq[board_id] = manager.current_seq(board_id) + 1
             return real_query(db)
 
-        monkeypatch.setattr(boards_router, "_board_query", query_with_concurrent_event)
+        monkeypatch.setattr(boards_service, "board_query", query_with_concurrent_event)
         by_id = client.get(f"/api/boards/{board_id}", headers=workspace_headers).json()
         assert by_id["event_seq"] == 0
         by_slug = client.get(

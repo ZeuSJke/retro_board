@@ -90,16 +90,28 @@ def _candidates(ai_result: dict[str, Any]) -> list[dict[str, Any]]:
     """Темы из результата генерации итогов.
 
     Основной формат — themes (объекты), запасной — key_themes (строки):
-    так отвечала модель до появления списка тем.
+    так отвечала модель до появления списка тем. Если переданы оба списка
+    (например, через save_summary агента), дополняем themes недостающими из key_themes.
     """
     raw = ai_result.get("themes")
     items = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
-    if items:
-        return items
     legacy = ai_result.get("key_themes")
     if not isinstance(legacy, list):
-        return []
-    return [{"name": name} for name in legacy if isinstance(name, str)]
+        return items
+    seen = {
+        theme_key(clean_theme_name(item.get("name")))
+        for item in items
+        if isinstance(item.get("name"), str)
+    }
+    merged = list(items)
+    for name in legacy:
+        if not isinstance(name, str):
+            continue
+        key = theme_key(clean_theme_name(name))
+        if key and key not in seen:
+            seen.add(key)
+            merged.append({"name": name})
+    return merged
 
 
 def resolve_candidates(

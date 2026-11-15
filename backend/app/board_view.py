@@ -5,6 +5,9 @@
 REST, ни в WebSocket-событии. Скрывать уже отправленное на клиенте бессмысленно.
 """
 
+from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
+
 from fastapi import HTTPException
 from sqlalchemy.orm import object_session
 
@@ -56,6 +59,7 @@ def card_view(
             "text": "",
             "author": "",
             "author_id": None,
+            "author_kind": "human",
             "color": "#FFFFFF",
             "likes": [],
             "masked": True,
@@ -63,9 +67,12 @@ def card_view(
     likes = list(card.likes or [])
     author = card.author
     author_id = card.author_id
+    author_kind = card.author_kind or "human"
     if board.anonymous_votes:
         likes = [voter if voter == viewer_id else ANON_VOTER for voter in likes]
-        if not own:
+        # Агент в анонимном режиме остаётся явно подписанным, чтобы команда
+        # видела авторство и бейдж агента, пока человеческие карточки скрыты.
+        if not own and author_kind != "agent":
             author = ANON_AUTHOR
             author_id = None
     return {
@@ -73,6 +80,7 @@ def card_view(
         "text": card.text,
         "author": author,
         "author_id": author_id,
+        "author_kind": author_kind,
         "color": card.color,
         "likes": likes,
         "masked": False,
@@ -185,6 +193,45 @@ def board_settings_payload(board: models.Board) -> dict:
     }
 
 
+def card_broadcast_action(
+    board: models.Board,
+    event: str,
+    card: models.Card,
+    wrap=None,
+) -> Callable[[], Awaitable[None]]:
+    """Снять значения карточки и доски до закрытия сессии и вернуть корутину рассылки."""
+    hidden = cards_hidden(board)
+    board_snap = SimpleNamespace(
+        id=board.id,
+        active_phase=board.active_phase,
+        hide_cards_until_reveal=board.hide_cards_until_reveal,
+        cards_revealed=board.cards_revealed,
+        anonymous_votes=board.anonymous_votes,
+    )
+    card_snap = SimpleNamespace(
+        id=card.id,
+        column_id=card.column_id,
+        group_id=card.group_id,
+        position=card.position,
+        created_at=card.created_at,
+        text=card.text,
+        author=card.author,
+        author_id=card.author_id,
+        author_kind=card.author_kind,
+        color=card.color,
+        likes=list(card.likes or []),
+    )
+
+    async def _send() -> None:
+        def build(viewer_id: str | None) -> dict:
+            view = card_view(card_snap, board_snap, viewer_id, hidden)
+            return wrap(view) if wrap else view
+
+        await manager.broadcast_each(board_snap.id, event, build)
+
+    return _send
+
+
 async def broadcast_card(
     board: models.Board,
     event: str,
@@ -195,13 +242,7 @@ async def broadcast_card(
 
     `wrap` превращает вид карточки в данные события (для card_moved и подобных).
     """
-    hidden = cards_hidden(board)
-
-    def build(viewer_id: str | None) -> dict:
-        view = card_view(card, board, viewer_id, hidden)
-        return wrap(view) if wrap else view
-
-    await manager.broadcast_each(board.id, event, build)
+    await card_broadcast_action(board, event, card, wrap)()
 
 
 async def broadcast_mood(board: models.Board, mood: models.BoardMood) -> None:

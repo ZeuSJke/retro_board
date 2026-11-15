@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import Dashboard from '../../components/Dashboard'
 import { useAppStore } from '../../store'
 import { showToast } from '../../store/toastStore'
-import type { DashboardActionItem, WsMessage } from '../../types'
+import type { AgentToken, DashboardActionItem, WsMessage } from '../../types'
 import type { HealthTrendPoint } from '../../types/health'
 import type { TeamTheme } from '../../types/themes'
 
@@ -133,6 +133,16 @@ vi.mock('../../api/health', () => ({
       { key: 'quality', title: 'Качество', hint: 'Довольны тем, что выпускаем' },
     ]),
   ),
+}))
+
+const mockGetAgentTokens = vi.fn((): Promise<AgentToken[]> => Promise.resolve([]))
+const mockCreateAgentToken = vi.fn()
+const mockRevokeAgentToken = vi.fn()
+
+vi.mock('../../api/agentTokens', () => ({
+  getAgentTokens: () => mockGetAgentTokens(),
+  createAgentToken: (payload: unknown) => mockCreateAgentToken(payload),
+  revokeAgentToken: (tokenId: string) => mockRevokeAgentToken(tokenId),
 }))
 
 vi.mock('../../store/toastStore', () => ({
@@ -638,5 +648,51 @@ describe('Dashboard — одна реальная задача считаетс�
     expect(screen.queryByText('Fix CI')).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Задачи (1)' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Доски (1)' })).toBeInTheDocument()
+  })
+
+  it('кнопка «Токены агентов» в шапке открывает настройки токенов команды', async () => {
+    const user = userEvent.setup()
+    mockGetAgentTokens.mockResolvedValueOnce([
+      {
+        id: 'tok-team',
+        workspace_id: 'w-1',
+        participant_id: 'p-bot-1',
+        name: 'Team Helper',
+        token_prefix: 'rba_team11',
+        scope: 'read_only',
+        created_by_id: 'p-1',
+        created_at: '2026-11-14T10:00:00Z',
+        last_used_at: null,
+        revoked_at: null,
+      },
+    ])
+
+    render(<Dashboard />)
+    await screen.findByText('Fix CI')
+
+    await user.click(screen.getByTestId('team-settings-btn'))
+    const dialog = await screen.findByTestId('agent-tokens-dialog')
+    expect(within(dialog).getByText('Team A')).toBeInTheDocument()
+    expect(await within(dialog).findByText('Team Helper')).toBeInTheDocument()
+  })
+
+  it('на карточке задачи в дашборде можно прикрепить внешнюю ссылку', async () => {
+    const user = userEvent.setup()
+    render(<Dashboard />)
+    await screen.findByText('Fix CI')
+
+    await user.click(screen.getByTestId('action-item-link-btn-i1'))
+    const input = await screen.findByPlaceholderText('https://tracker.company.ru/TASK-1')
+    await user.type(input, 'https://tracker.yandex.ru/RETRO-42')
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }))
+
+    const api = await import('../../api')
+    await waitFor(() =>
+      expect(api.updateActionItem).toHaveBeenCalledWith('i1', {
+        external_url: 'https://tracker.yandex.ru/RETRO-42',
+      }),
+    )
+    const link = await screen.findByTestId('action-item-external-link')
+    expect(link).toHaveAttribute('href', 'https://tracker.yandex.ru/RETRO-42')
   })
 })

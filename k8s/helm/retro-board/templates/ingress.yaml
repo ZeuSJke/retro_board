@@ -35,6 +35,13 @@ spec:
                 name: {{ $fullName }}-api
                 port:
                   name: http
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullName }}-api
+                port:
+                  name: http
           - path: /
             pathType: Prefix
             backend:

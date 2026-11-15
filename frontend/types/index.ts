@@ -115,6 +115,8 @@ export type ColumnInfo = Omit<Column, 'cards' | 'groups'>
  * массиве могут быть имена. `masked` — чужая карточка до раскрытия: текста, автора и
  * голосов в ней нет.
  */
+export type AuthorKind = 'human' | 'agent'
+
 export interface Card {
   id: string
   column_id: string
@@ -122,6 +124,7 @@ export interface Card {
   text: string
   author: string
   author_id: string | null
+  author_kind?: AuthorKind
   color: string
   position: number
   likes: string[]
@@ -144,6 +147,7 @@ export interface ActionItem {
   title: string
   text: string
   assignee: string | null
+  external_url?: string | null
   source_card_ids: string[]
   status: ActionItemStatus
   completed_at: string | null
@@ -432,4 +436,24 @@ export interface AutoClusterPreviewResult {
   column_id: string
   groups: AutoClusterPreviewGroup[]
   ungrouped_card_ids: string[]
+}
+
+export type AgentTokenScope = 'read_only' | 'read_write'
+
+export interface AgentToken {
+  id: string
+  workspace_id: string
+  participant_id: string
+  name: string
+  token_prefix: string
+  scope: AgentTokenScope
+  created_by_id: string | null
+  last_used_at: string | null
+  revoked_at: string | null
+  created_at: string
+}
+
+export interface AgentTokenCreated {
+  token: AgentToken
+  secret: string
 }

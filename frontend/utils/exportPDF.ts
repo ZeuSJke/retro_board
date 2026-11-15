@@ -8,6 +8,7 @@ import {
   resolveInitialAccent,
 } from '@/lib/board-themes'
 import { escapeHtml, richTextToHtml } from '@/lib/rich-text'
+import { parseSafeExternalUrl } from '@/lib/urls'
 import { showToast } from '@/store/toastStore'
 import type { ActionItem, Board, BoardSummary, Card, Column } from '../types'
 import { initials, userColor } from './theme'
@@ -96,9 +97,11 @@ function pluralizeRu(n: number, one: string, few: string, many: string): string 
 
 function cardHTML(card: Card, anonymousVotes: boolean, accentHex: string): string {
   const tone = resolveCardPrintStyle(card.color)
-  const displayAuthor = anonymousVotes ? 'Участник' : card.author
-  const avatarBg = anonymousVotes ? '#64748B' : userColor(card.author)
-  const avatarText = anonymousVotes ? '•' : initials(card.author)
+  const isAgent = card.author_kind === 'agent' && !card.masked
+  const hideAuthor = anonymousVotes && !isAgent
+  const displayAuthor = isAgent ? `${card.author} (агент)` : hideAuthor ? 'Участник' : card.author
+  const avatarBg = hideAuthor ? '#64748B' : userColor(card.author)
+  const avatarText = hideAuthor ? '•' : initials(card.author)
   const likeCount = (card.likes || []).length
 
   return `
@@ -224,6 +227,7 @@ function actionItemsSectionHTML(actionItems: ActionItem[]): string {
       const assigneeName = item.assignee || 'Не назначен'
       const avatarBg = item.assignee ? userColor(item.assignee) : '#94A3B8'
       const avatarText = item.assignee ? initials(item.assignee) : '—'
+      const safeLink = parseSafeExternalUrl(item.external_url)
 
       return `
         <article class="task-card">
@@ -244,6 +248,11 @@ function actionItemsSectionHTML(actionItems: ActionItem[]): string {
                 ${escapeHtml(assigneeName)}
               </span>
               <span class="task-date">Создано: ${formatDate(item.created_at, true)}</span>
+              ${
+                safeLink
+                  ? `<a class="task-link" href="${escapeHtml(safeLink.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(safeLink.label)}</a>`
+                  : ''
+              }
             </div>
           </div>
         </article>`
@@ -643,6 +652,8 @@ export function buildBoardPDFHtml(
     .task-desc { font-size: 12px; color: #475569; margin-bottom: 8px; word-break: break-word; }
     .task-meta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 11px; color: #64748B; }
     .task-assignee { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: #334155; }
+    .task-link { color: #0284C7; font-weight: 500; text-decoration: none; }
+    .task-link:hover { text-decoration: underline; }
 
     .doc-footer {
       text-align: center;

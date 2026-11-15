@@ -80,7 +80,7 @@ expect_count "staging: StatefulSet postgres" '^kind: StatefulSet$' 1 "${STAGING[
 expect_count "staging: backup CronJob rendered" '^kind: CronJob$' 1 "${STAGING[@]}"
 expect_count "staging: 4 NetworkPolicies (postgres, api, web, backup)" '^kind: NetworkPolicy$' 4 "${STAGING[@]}"
 expect_count "staging: NFS mount on backup CronJob" 'server: "192.168.1.10"' 1 "${STAGING[@]}"
-expect_count "staging: Ingress paths (/api, /ws, /)" '^          - path: /(api|ws)?$' 3 "${STAGING[@]}"
+expect_count "staging: Ingress paths (/api, /ws, /mcp, /)" '^          - path: /(api|ws|mcp)?$' 4 "${STAGING[@]}"
 expect_count "staging: readOnlyRootFilesystem true on api/web/backup" 'readOnlyRootFilesystem: true' 5 "${STAGING[@]}"
 validate_manifests "staging" "${STAGING[@]}"
 

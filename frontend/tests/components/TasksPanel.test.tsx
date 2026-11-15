@@ -314,3 +314,162 @@ describe('SuggestActionItemsDialog — состояния', () => {
     expect(screen.queryByText(/не нашёл достаточно данных/)).not.toBeInTheDocument()
   })
 })
+
+describe('Внешняя ссылка на задачу (external_url)', () => {
+  it('показывает безопасную http(s)-ссылку и отбрасывает небезопасный протокол', () => {
+    renderPanel({
+      actionItems: [
+        task('t-safe', { external_url: 'https://tracker.company.ru/TASK-10' }),
+        task('t-xss', { external_url: 'javascript:alert(1)' }),
+      ],
+    })
+
+    const link = screen.getByTestId('action-item-external-link')
+    expect(link).toHaveAttribute('href', 'https://tracker.company.ru/TASK-10')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(screen.queryAllByTestId('action-item-external-link')).toHaveLength(1)
+  })
+
+  it('на заблокированной доске даёт прикрепить и проверить внешнюю ссылку', async () => {
+    const user = userEvent.setup()
+    api.updateActionItem.mockResolvedValueOnce(
+      task('t-1', { external_url: 'https://jira.company.ru/RETRO-77' }),
+    )
+    const { onUpdated } = renderPanel({
+      readOnly: true,
+      actionItems: [task('t-1', { external_url: null })],
+    })
+
+    // Кнопка привязки ссылки не должна пересекаться с кнопкой «Добавить» задачу по accessible name
+    expect(screen.queryByRole('button', { name: /добавить/i })).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('action-item-link-btn-t-1'))
+    const input = await screen.findByPlaceholderText('https://tracker.company.ru/TASK-1')
+
+    await user.type(input, 'ftp://bad.example.com/1')
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }))
+    expect(screen.getByText('Укажите ссылку http:// или https:// с доменом')).toBeInTheDocument()
+    expect(api.updateActionItem).not.toHaveBeenCalled()
+
+    await user.clear(input)
+    await user.type(input, 'https://jira.company.ru/RETRO-77')
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }))
+
+    await waitFor(() =>
+      expect(api.updateActionItem).toHaveBeenCalledWith('t-1', {
+        external_url: 'https://jira.company.ru/RETRO-77',
+      }),
+    )
+    expect(onUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 't-1', external_url: 'https://jira.company.ru/RETRO-77' }),
+    )
+  })
+
+  it('ручное создание задачи проверяет external_url локально перед отправкой на сервер', async () => {
+    const user = userEvent.setup()
+    api.createActionItem.mockResolvedValueOnce(
+      task('t-new', { text: 'Настроить алерты', external_url: 'https://tracker.company.ru/OPS-9' }),
+    )
+    const { onCreated } = renderPanel({ actionItems: [] })
+
+    await user.click(screen.getByRole('button', { name: 'Добавить' }))
+    await user.type(screen.getByPlaceholderText('Что нужно сделать...'), 'Настроить алерты')
+    const urlInput = screen.getByPlaceholderText('Ссылка в трекере (опционально, https://...)')
+    await user.type(urlInput, 'javascript:alert(1)')
+    await user.click(screen.getByRole('button', { name: 'Создать' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Укажите ссылку http:// или https:// с доменом',
+    )
+    expect(api.createActionItem).not.toHaveBeenCalled()
+
+    await user.clear(urlInput)
+    await user.type(urlInput, 'https://tracker.company.ru/OPS-9')
+    await user.click(screen.getByRole('button', { name: 'Создать' }))
+
+    await waitFor(() =>
+      expect(api.createActionItem).toHaveBeenCalledWith({
+        board_id: 'b-current',
+        title: undefined,
+        text: 'Настроить алерты',
+        assignee: undefined,
+        external_url: 'https://tracker.company.ru/OPS-9',
+      }),
+    )
+    expect(onCreated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 't-new', external_url: 'https://tracker.company.ru/OPS-9' }),
+    )
+  })
+
+  it('перенесённая задача (superseded_by_id) полностью доступна только для чтения', async () => {
+    const user = userEvent.setup()
+    renderPanel({
+      readOnly: false,
+      actionItems: [
+        task('t-carried', {
+          title: 'Перенесённый заголовок',
+          text: 'Перенесённое описание',
+          assignee: null,
+          external_url: 'https://tracker.company.ru/CARRY-1',
+          superseded_by_id: 't-copy',
+        }),
+      ],
+    })
+
+    const carriedReason = 'Задача перенесена на другую доску — изменения доступны в копии'
+    expect(screen.getByTestId('action-item-carried')).toBeInTheDocument()
+    expect(screen.getByTestId('action-item-status')).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Назначить/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Назначить/i })).toHaveAttribute('title', carriedReason)
+
+    // Недоступные действия отключены с причиной, а не скрыты молча
+    const deleteBtn = screen.getByTestId('action-item-delete-btn-t-carried')
+    expect(deleteBtn).toBeDisabled()
+    expect(deleteBtn).toHaveAttribute('title', carriedReason)
+
+    const linkBtn = screen.getByTestId('action-item-link-btn-t-carried')
+    expect(linkBtn).toBeDisabled()
+    expect(linkBtn).toHaveAttribute('title', carriedReason)
+    expect(screen.getByTestId('action-item-external-link')).toHaveAttribute(
+      'href',
+      'https://tracker.company.ru/CARRY-1',
+    )
+
+    const titleEl = screen.getByText('Перенесённый заголовок')
+    const descEl = screen.getByText('Перенесённое описание')
+    expect(titleEl).toHaveAttribute('title', carriedReason)
+    expect(descEl.closest('p')).toHaveAttribute('title', carriedReason)
+
+    await user.click(titleEl)
+    await user.click(descEl)
+    await user.click(screen.getByRole('button', { name: /Назначить/i }))
+    await user.click(linkBtn)
+    await user.click(deleteBtn)
+    expect(screen.queryByDisplayValue('Перенесённый заголовок')).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Перенесённое описание')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Имя участника')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('https://tracker.company.ru/TASK-1')).not.toBeInTheDocument()
+    expect(api.updateActionItem).not.toHaveBeenCalled()
+    expect(api.deleteActionItem).not.toHaveBeenCalled()
+  })
+
+  it('перенесённая задача без внешней ссылки всё равно показывает отключённую кнопку «Ссылка» с причиной', () => {
+    renderPanel({
+      readOnly: false,
+      actionItems: [
+        task('t-carried-no-link', {
+          external_url: null,
+          superseded_by_id: 't-copy-2',
+        }),
+      ],
+    })
+
+    const linkBtn = screen.getByTestId('action-item-link-btn-t-carried-no-link')
+    expect(linkBtn).toBeDisabled()
+    expect(linkBtn).toHaveTextContent('Ссылка')
+    expect(linkBtn).toHaveAttribute(
+      'title',
+      'Задача перенесена на другую доску — изменения доступны в копии',
+    )
+  })
+})

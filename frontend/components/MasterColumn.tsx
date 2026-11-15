@@ -30,6 +30,7 @@ import {
   updateActionItem,
 } from '../api'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import { parseSafeExternalUrl } from '@/lib/urls'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage, getApiErrorStatus } from '../utils/apiError'
@@ -40,6 +41,7 @@ import type {
   DashboardActionItem,
 } from '../types'
 import { RichCardText } from './RichCardText'
+import ActionItemExternalLink from './ActionItemExternalLink'
 import SuggestActionItemsDialog, { type SuggestFailure } from './SuggestActionItemsDialog'
 import {
   AlertDialog,
@@ -140,6 +142,8 @@ export default function MasterColumn({
   const [newTitle, setNewTitle] = useState('')
   const [newText, setNewText] = useState('')
   const [newAssignee, setNewAssignee] = useState('')
+  const [newExternalUrl, setNewExternalUrl] = useState('')
+  const [newExternalUrlError, setNewExternalUrlError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
   const [prevOpenExpanded, setPrevOpenExpanded] = useState(false)
@@ -354,18 +358,27 @@ export default function MasterColumn({
   const handleCreateManual = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newText.trim() || creating || readOnly) return
+    const extTrimmed = newExternalUrl.trim()
+    if (extTrimmed && !parseSafeExternalUrl(extTrimmed)) {
+      setNewExternalUrlError('Укажите ссылку http:// или https:// с доменом')
+      return
+    }
     setCreating(true)
+    setNewExternalUrlError(null)
     try {
       const created = await createActionItem({
         board_id: boardId,
         title: newTitle.trim() || undefined,
         text: newText.trim(),
         assignee: newAssignee.trim() || undefined,
+        external_url: extTrimmed || undefined,
       })
       onCreated?.(created)
       setNewTitle('')
       setNewText('')
       setNewAssignee('')
+      setNewExternalUrl('')
+      setNewExternalUrlError(null)
       setAddingNew(false)
       showToast('Задача создана', 'success')
     } catch (err) {
@@ -575,6 +588,21 @@ export default function MasterColumn({
                 required
                 className="min-h-[56px] text-xs"
               />
+              <Input
+                value={newExternalUrl}
+                onChange={(e) => {
+                  setNewExternalUrl(e.target.value)
+                  if (newExternalUrlError) setNewExternalUrlError(null)
+                }}
+                maxLength={500}
+                placeholder="Ссылка в трекере (опционально, https://...)"
+                className="h-8 text-xs"
+              />
+              {newExternalUrlError && (
+                <p role="alert" className="text-[11px] text-destructive">
+                  {newExternalUrlError}
+                </p>
+              )}
               <div className="flex items-center gap-1.5">
                 <Input
                   value={newAssignee}
@@ -627,6 +655,13 @@ export default function MasterColumn({
               // Задачу перенесли на другую доску: здесь она осталась в истории, а открытой
               // считается её копия — статус меняют там
               const carried = Boolean(item.superseded_by_id)
+              const itemReadOnly = readOnly || carried
+              const carriedReason = 'Задача перенесена на другую доску — изменения доступны в копии'
+              const itemReadOnlyReason = carried
+                ? carriedReason
+                : readOnly
+                  ? 'Доска заблокирована — редактирование отключено'
+                  : undefined
               const StatusIcon = carried ? CornerUpRight : meta.Icon
               const isDone = item.status === 'done'
 
@@ -701,15 +736,16 @@ export default function MasterColumn({
                     ) : (
                       <div
                         onClick={() => {
-                          if (!readOnly) {
+                          if (!itemReadOnly) {
                             setEditingTitleId(item.id)
                             setEditTitle(item.title || '')
                           }
                         }}
+                        title={itemReadOnlyReason}
                         className={cn(
                           'text-xs font-semibold leading-snug',
                           isDone && 'line-through',
-                          !readOnly && 'cursor-text hover:text-primary',
+                          itemReadOnly ? 'cursor-not-allowed' : 'cursor-text hover:text-primary',
                         )}
                       >
                         {item.title || (
@@ -740,116 +776,130 @@ export default function MasterColumn({
                     ) : (
                       <p
                         onClick={() => {
-                          if (!readOnly) {
+                          if (!itemReadOnly) {
                             setEditingDescId(item.id)
                             setEditDesc(item.text)
                           }
                         }}
+                        title={itemReadOnlyReason}
                         className={cn(
                           'whitespace-pre-wrap wrap-break-word text-xs text-muted-foreground',
-                          !readOnly && 'cursor-text hover:text-foreground',
+                          itemReadOnly ? 'cursor-not-allowed' : 'cursor-text hover:text-foreground',
                         )}
                       >
                         <RichCardText text={item.text} />
                       </p>
                     )}
 
-                    <div className="flex items-center justify-between gap-2 pt-1">
-                      <Popover
-                        open={assigneePopoverId === item.id}
-                        onOpenChange={(open) => {
-                          if (open) {
-                            setAssigneeDraft(item.assignee || '')
-                            setAssigneePopoverId(item.id)
-                          } else {
-                            setAssigneePopoverId(null)
-                          }
-                        }}
-                      >
-                        <PopoverTrigger asChild>
-                          <button
-                            type="button"
-                            disabled={readOnly}
-                            className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border/80 px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:cursor-default"
-                          >
-                            {item.assignee ? (
-                              <>
-                                <span
-                                  className={`flex h-4 w-4 items-center justify-center rounded-full bg-linear-to-br/srgb text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
-                                >
-                                  {getUserInitials(item.assignee)}
-                                </span>
-                                <span className="max-w-[120px] truncate">{item.assignee}</span>
-                              </>
-                            ) : (
-                              <>
-                                <UserPlus className="h-3 w-3" />
-                                <span>Назначить</span>
-                              </>
-                            )}
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent align="start" className="w-60 space-y-2 p-3">
-                          <div className="text-xs font-semibold">Ответственный</div>
-                          <div className="flex gap-1.5">
-                            <Input
-                              value={assigneeDraft}
-                              onChange={(e) => setAssigneeDraft(e.target.value)}
-                              placeholder="Имя участника"
-                              className="h-8 text-xs"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  void saveAssignee(item.id, assigneeDraft.trim() || null)
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Popover
+                          open={assigneePopoverId === item.id}
+                          onOpenChange={(open) => {
+                            if (open) {
+                              setAssigneeDraft(item.assignee || '')
+                              setAssigneePopoverId(item.id)
+                            } else {
+                              setAssigneePopoverId(null)
+                            }
+                          }}
+                        >
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              disabled={itemReadOnly}
+                              title={itemReadOnlyReason}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border/80 px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {item.assignee ? (
+                                <>
+                                  <span
+                                    className={`flex h-4 w-4 items-center justify-center rounded-full bg-linear-to-br/srgb text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
+                                  >
+                                    {getUserInitials(item.assignee)}
+                                  </span>
+                                  <span className="max-w-[120px] truncate">{item.assignee}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <UserPlus className="h-3 w-3" />
+                                  <span>Назначить</span>
+                                </>
+                              )}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent align="start" className="w-60 space-y-2 p-3">
+                            <div className="text-xs font-semibold">Ответственный</div>
+                            <div className="flex gap-1.5">
+                              <Input
+                                value={assigneeDraft}
+                                onChange={(e) => setAssigneeDraft(e.target.value)}
+                                placeholder="Имя участника"
+                                className="h-8 text-xs"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    void saveAssignee(item.id, assigneeDraft.trim() || null)
+                                  }
+                                }}
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-8 px-2.5 text-xs"
+                                onClick={() =>
+                                  saveAssignee(item.id, assigneeDraft.trim() || null)
                                 }
-                              }}
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="h-8 px-2.5 text-xs"
-                              onClick={() =>
-                                saveAssignee(item.id, assigneeDraft.trim() || null)
-                              }
-                            >
-                              ОК
-                            </Button>
-                          </div>
-                          {participants.length > 0 && (
-                            <div className="flex flex-wrap gap-1">
-                              {participants.map((p) => (
-                                <button
-                                  key={p}
-                                  type="button"
-                                  onClick={() => saveAssignee(item.id, p)}
-                                  className="rounded-md bg-muted px-2 py-0.5 text-[11px] hover:bg-accent"
-                                >
-                                  {p}
-                                </button>
-                              ))}
+                              >
+                                ОК
+                              </Button>
                             </div>
-                          )}
-                          {item.assignee && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-full text-xs text-muted-foreground"
-                              onClick={() => saveAssignee(item.id, null)}
-                            >
-                              Снять назначение
-                            </Button>
-                          )}
-                        </PopoverContent>
-                      </Popover>
+                            {participants.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {participants.map((p) => (
+                                  <button
+                                    key={p}
+                                    type="button"
+                                    onClick={() => saveAssignee(item.id, p)}
+                                    className="rounded-md bg-muted px-2 py-0.5 text-[11px] hover:bg-accent"
+                                  >
+                                    {p}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {item.assignee && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-full text-xs text-muted-foreground"
+                                onClick={() => saveAssignee(item.id, null)}
+                              >
+                                Снять назначение
+                              </Button>
+                            )}
+                          </PopoverContent>
+                        </Popover>
+
+                        <ActionItemExternalLink
+                          item={item}
+                          editDisabled={carried}
+                          disabledReason={carriedReason}
+                          onUpdated={onUpdated}
+                        />
+                      </div>
 
                       {!readOnly && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          className="h-6 w-6 opacity-80 sm:opacity-0 transition-opacity sm:group-hover/ai:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
+                          disabled={carried}
+                          className="h-6 w-6 opacity-80 sm:opacity-0 transition-opacity sm:group-hover/ai:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-40 sm:group-hover/ai:disabled:opacity-50"
                           onClick={() => setDeleteTarget(item)}
-                          title="Удалить задачу"
+                          title={carried ? carriedReason : 'Удалить задачу'}
+                          aria-label={carried ? carriedReason : 'Удалить задачу'}
+                          data-testid={`action-item-delete-btn-${item.id}`}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
