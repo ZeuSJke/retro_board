@@ -871,6 +871,8 @@ class TestSlowConsumerAndSchema:
         assert parse_ws_event("phase_change", {"phase": "bogus"}) is None
         assert parse_ws_event("reaction", {"emoji": "🤖"}) is None
         assert parse_ws_event("group_collapse", {"group_id": "g1", "collapsed": "yes"}) is None
+        assert parse_ws_event("facilitator_stop", {"lock_board": "false"}) is None
+        assert parse_ws_event("card_typing", {"column_id": "c1", "is_typing": "yes"}) is None
         parsed_ready = parse_ws_event("ready_toggle", {"ready": "invalid"})
         assert parsed_ready is not None and parsed_ready[1].ready is None
         parsed_timer = parse_ws_event("timer_start", {"duration": 60, "remaining": 60, "junk": 1})

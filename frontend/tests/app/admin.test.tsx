@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import AdminPage from '../../app/admin/page'
 import { generateSlugFromName } from '../../app/admin/AdminTeams'
 import { getAdminSessionHint, setAdminSessionHint } from '../../api/admin'
-import { makeQueryClient } from '../../lib/query-client'
+import { makeQueryClient, queryKeys } from '../../lib/query-client'
 import { showToast } from '../../store/toastStore'
 
 const api = vi.hoisted(() => ({
@@ -57,23 +57,24 @@ function httpError(status: number, detail: unknown = '') {
   return Object.assign(new Error(`HTTP ${status}`), { response: { status, data: { detail } } })
 }
 
-function renderAdminPage() {
-  const client = makeQueryClient()
-  return render(<AdminPage />, {
+function renderAdminPage(client = makeQueryClient()) {
+  const result = render(<AdminPage />, {
     wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
   })
+  return { ...result, client }
 }
 
 /** Открыть админку уже вошедшим администратором со списком команд. */
-async function renderSignedIn(workspaces = [platform]) {
+async function renderSignedIn(workspaces = [platform], client = makeQueryClient()) {
   setAdminSessionHint(true)
   api.checkAdminSession.mockImplementation(() => {
     setAdminSessionHint(true)
     return Promise.resolve(true)
   })
   api.getAdminWorkspaces.mockResolvedValue(workspaces)
-  renderAdminPage()
+  renderAdminPage(client)
   await screen.findByRole('heading', { name: 'Команды' })
+  return client
 }
 
 function teamRow(name: string) {
@@ -172,13 +173,15 @@ describe('Админка /admin', () => {
 
     it('«Выйти» возвращает форму входа без сообщения об истёкшей сессии', async () => {
       const user = userEvent.setup()
-      await renderSignedIn()
+      const client = await renderSignedIn()
+      expect(client.getQueryData(queryKeys.adminWorkspaces())).toEqual([platform])
 
       await user.click(screen.getByRole('button', { name: 'Выйти' }))
 
       expect(await screen.findByText('Панель администратора')).toBeInTheDocument()
       expect(api.adminLogout).toHaveBeenCalledTimes(1)
       expect(screen.queryByRole('alert')).toBeNull()
+      expect(client.getQueryData(queryKeys.adminWorkspaces())).toBeUndefined()
     })
 
     it('список не загрузился — ошибка и «Повторить», а не форма входа', async () => {

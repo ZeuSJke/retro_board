@@ -1,8 +1,16 @@
 """Эксплуатация: идентификатор запроса в ответе и журнале, проверка готовности и метрики."""
 
+import importlib.util
 import json
 import logging
+from pathlib import Path
 from unittest.mock import patch
+
+import sqlalchemy as sa
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
+from sqlalchemy import create_engine, text
+from sqlalchemy import exc as sa_exc
 
 import main
 from app.config import settings
@@ -114,3 +122,135 @@ class TestObservabilityMetricsAndJsonLogs:
         finally:
             monkeypatch.delenv("LOG_FORMAT", raising=False)
             configure_logging()
+
+    def test_metrics_collapses_unmatched_403_413_404_routes(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "csrf_enabled", True)
+        assert client.get("/api/unmatched-404-probe-abc").status_code == 404
+        assert client.post("/api/unmatched-csrf-probe-xyz").status_code == 403
+        assert (
+            client.post(
+                "/api/unmatched-size-probe-qrs",
+                content=b"x" * (settings.max_request_body_bytes + 1),
+            ).status_code
+            == 413
+        )
+
+        body = client.get("/metrics").text
+        for probe in (
+            "unmatched-404-probe-abc",
+            "unmatched-csrf-probe-xyz",
+            "unmatched-size-probe-qrs",
+        ):
+            assert probe not in body
+        assert 'retro_http_requests_total{method="GET",route="<unmatched>",status="404"}' in body
+        assert 'retro_http_requests_total{method="POST",route="<unmatched>",status="403"}' in body
+        assert 'retro_http_requests_total{method="POST",route="<unmatched>",status="413"}' in body
+
+
+class TestMigration0015Downgrade:
+    def test_downgrade_deduplicates_conflicting_deleted_and_long_boards(self, tmp_path):
+        mig_path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic"
+            / "versions"
+            / "0015_partial_unique_board_indexes.py"
+        )
+        spec = importlib.util.spec_from_file_location("mig0015_test", mig_path)
+        assert spec is not None and spec.loader is not None
+        mig0015 = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mig0015)
+
+        db_url = f"sqlite:///{tmp_path / 'mig0015.db'}"
+        eng = create_engine(db_url)
+        md = sa.MetaData()
+        sa.Table(
+            "boards",
+            md,
+            sa.Column("id", sa.String(), primary_key=True),
+            sa.Column("workspace_id", sa.String(), nullable=True),
+            sa.Column("name", sa.String(120), nullable=False),
+            sa.Column("slug", sa.String(150), nullable=True),
+            sa.Column("deleted_at", sa.DateTime(), nullable=True),
+            sa.UniqueConstraint("workspace_id", "name", name="uq_board_workspace_name"),
+            sa.UniqueConstraint("workspace_id", "slug", name="uq_board_workspace_slug"),
+        )
+        md.create_all(eng)
+
+        long_name = "L" * 120
+        long_slug = "s" * 150
+        ts = "2026-11-15 12:00:00"
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO boards (id, workspace_id, name, slug, deleted_at) "
+                    "VALUES ('mig-del', 'mig-ws', 'Sprint 1', 'sprint-1', :ts)"
+                ),
+                {"ts": ts},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO boards (id, workspace_id, name, slug, deleted_at) "
+                    "VALUES ('mig-long-del', 'mig-ws', :name, :slug, :ts)"
+                ),
+                {"name": long_name, "slug": long_slug, "ts": ts},
+            )
+
+        with eng.begin() as conn:
+            ctx = MigrationContext.configure(conn)
+            with Operations.context(ctx):
+                mig0015.upgrade()
+
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO boards (id, workspace_id, name, slug, deleted_at) "
+                    "VALUES ('mig-live', 'mig-ws', 'Sprint 1', 'sprint-1', NULL)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO boards (id, workspace_id, name, slug, deleted_at) "
+                    "VALUES ('mig-long-live', 'mig-ws', :name, :slug, NULL)"
+                ),
+                {"name": long_name, "slug": long_slug},
+            )
+
+        # Повторное восстановление/создание живой доски с тем же именем должно падать
+        try:
+            with eng.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO boards (id, workspace_id, name, slug, deleted_at) "
+                        "VALUES ('mig-dup-live', 'mig-ws', 'Sprint 1', 'sprint-1', NULL)"
+                    )
+                )
+            raise AssertionError("Expected IntegrityError for duplicate live board")
+        except sa_exc.IntegrityError:
+            pass
+
+        with eng.begin() as conn:
+            ctx = MigrationContext.configure(conn)
+            with Operations.context(ctx):
+                mig0015.downgrade()
+
+        with eng.connect() as conn:
+            rows = {
+                row.id: (row.name, row.slug)
+                for row in conn.execute(
+                    text("SELECT id, name, slug FROM boards ORDER BY id")
+                ).fetchall()
+            }
+
+        assert rows["mig-live"] == ("Sprint 1", "sprint-1")
+        assert rows["mig-del"] != ("Sprint 1", "sprint-1")
+        assert rows["mig-long-live"] == (long_name, long_slug)
+        assert len(rows["mig-long-del"][0]) <= 120
+        assert len(rows["mig-long-del"][1]) <= 150
+        assert len({v[0] for v in rows.values()}) == 4
+        assert len({v[1] for v in rows.values()}) == 4
+
+        with eng.begin() as conn:
+            ctx = MigrationContext.configure(conn)
+            with Operations.context(ctx):
+                mig0015.upgrade()
+        eng.dispose()

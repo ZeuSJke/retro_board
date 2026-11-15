@@ -2,7 +2,6 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
-    "helpers:pinGitHubActionDigests",
     ":timezone(Europe/Moscow)"
   ],
   "schedule": [
@@ -38,6 +37,15 @@
         "backend/requirements*.in"
       ],
       "groupName": "backend direct dependencies"
+    },
+    {
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchFileNames": [
+        "backend/requirements*.txt"
+      ],
+      "enabled": false
     }
   ]
 }

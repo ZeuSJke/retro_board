@@ -40,12 +40,18 @@ export default function App({ boardId }: AppProps) {
     queryKey: boardsQueryKey,
     queryFn: getBoards,
     enabled: false,
-    initialData: [],
   })
   const updateBoardsCache = useCallback(
     (updater: (prev: BoardListItem[]) => BoardListItem[], targetWorkspaceId?: string) => {
       const id = targetWorkspaceId ?? useAppStore.getState().workspace?.workspaceId ?? 'anonymous'
       queryClient.setQueryData<BoardListItem[]>(queryKeys.boards(id), (prev = []) => updater(prev))
+    },
+    [queryClient],
+  )
+  const invalidateDashboard = useCallback(
+    (targetWorkspaceId?: string) => {
+      const id = targetWorkspaceId ?? useAppStore.getState().workspace?.workspaceId ?? 'anonymous'
+      void queryClient.invalidateQueries({ queryKey: ['dashboard', id] })
     },
     [queryClient],
   )
@@ -270,11 +276,13 @@ export default function App({ boardId }: AppProps) {
                 : b,
             ),
           )
+          invalidateDashboard()
         }}
         onBoardDeleted={(deletedId) => {
           // Доску удалил сам участник: один переход, уведомление уже показал диалог настроек
           const remaining = boards.filter((b) => b.id !== deletedId)
           updateBoardsCache(() => remaining)
+          invalidateDashboard()
           router.replace(remaining.length > 0 ? boardPath(remaining[0]) : FIRST_BOARD_ROUTE)
         }}
         onSelectBoard={(b) => {
@@ -285,6 +293,7 @@ export default function App({ boardId }: AppProps) {
           updateBoardsCache((prev) =>
             prev.some((b) => b.id === created.id) ? prev : [created, ...prev],
           )
+          invalidateDashboard()
         }}
         onBoardsListUpdated={(data: WsBoardUpdatedData) => {
           updateBoardsCache((prev) =>
@@ -299,9 +308,11 @@ export default function App({ boardId }: AppProps) {
                 : b,
             ),
           )
+          invalidateDashboard()
         }}
         onBoardsListDeleted={(deletedId) => {
           updateBoardsCache((prev) => prev.filter((b) => b.id !== deletedId))
+          invalidateDashboard()
           // Событие об удалении приходит и самому удаляющему, причём раньше ответа на его
           // запрос: его переход выполнит onBoardDeleted, второй переход и уведомление не нужны
           if (deletedId === board.id && !isOwnBoardDeletion(deletedId)) {

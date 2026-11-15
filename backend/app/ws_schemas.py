@@ -127,7 +127,7 @@ class TimerResetIn(WsBasePayload):
 
 
 class FacilitatorStopIn(WsBasePayload):
-    lock_board: bool = False
+    lock_board: StrictBool = False
 
 
 class FacilitatorTransferIn(WsBasePayload):
@@ -156,7 +156,7 @@ class ReactionIn(WsBasePayload):
 
 class CardTypingIn(WsBasePayload):
     column_id: object = None
-    is_typing: bool = False
+    is_typing: StrictBool = False
 
     def sanitized_column_id(self) -> str | None:
         if not isinstance(self.column_id, str) or not self.column_id:

@@ -82,7 +82,7 @@ import type {
   WorkspaceInsights,
   WsMessage,
 } from '../types'
-import type { HealthQuestion, HealthTrendPoint } from '../types/health'
+import type { HealthTrendPoint } from '../types/health'
 import ActionItemExternalLink from './ActionItemExternalLink'
 import AgentTokensDialog, { type AgentTokensAdapter } from './AgentTokensDialog'
 import BoardsPanel from './BoardsPanel'
@@ -376,22 +376,22 @@ export default function Dashboard() {
   })
   const trendsQuery = useQuery({
     queryKey: trendsKey,
-    queryFn: () => getActionItemTrends().catch(() => [] as TrendPoint[]),
+    queryFn: getActionItemTrends,
     enabled: queriesEnabled,
   })
   const moodTrendsQuery = useQuery({
     queryKey: moodTrendsKey,
-    queryFn: () => getMoodTrends().catch(() => [] as MoodTrendPoint[]),
+    queryFn: getMoodTrends,
     enabled: queriesEnabled,
   })
   const healthTrendsQuery = useQuery({
     queryKey: healthTrendsKey,
-    queryFn: () => getHealthTrends().catch(() => [] as HealthTrendPoint[]),
+    queryFn: getHealthTrends,
     enabled: queriesEnabled,
   })
   const healthQuestionsQuery = useQuery({
     queryKey: healthQuestionsKey,
-    queryFn: () => getHealthQuestions().catch(() => [] as HealthQuestion[]),
+    queryFn: getHealthQuestions,
     enabled: queriesEnabled,
   })
   const themesQuery = useQuery({
@@ -987,7 +987,6 @@ export default function Dashboard() {
             void queryClient.resetQueries({ queryKey: queryKeys.boards(wsId) })
             void queryClient.resetQueries({ queryKey: ['dashboard', wsId] })
           }
-          void loadData()
         }}
       />
     )

@@ -29,7 +29,9 @@ export function makeQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
-        staleTime: 30_000,
+        // Живые списки и аналитика должны перечитываться при возврате на экран;
+        // статические справочники (например, шаблоны досок) задают свой staleTime явно.
+        staleTime: 0,
         gcTime: 5 * 60_000,
         refetchOnWindowFocus: false,
         retry: shouldRetryQuery,

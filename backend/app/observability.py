@@ -110,8 +110,9 @@ class MetricsMiddleware:
             route = scope.get("route")
             route_path = getattr(route, "path", None)
             if not isinstance(route_path, str):
-                path = scope.get("path", "")
-                route_path = "<unmatched>" if status_code == "404" else str(path)
+                # Запросы, отклоненные до роутера (CSRF 403, BodySizeLimit 413, 404/405),
+                # нельзя помечать сырым URI — иначе неавторизованный клиент раздует метрики.
+                route_path = "<unmatched>"
             HTTP_REQUESTS_TOTAL.labels(
                 method=method, route=route_path, status=status_code
             ).inc()

@@ -45,15 +45,20 @@ export function useBoardSummary({
     async (known = hasSummary) => {
       // Итогов у доски нет и события о них не было: запрос вслепую вернул бы 404
       if (!known) return
+      const targetBoardId = boardId
       setSummaryLoading(true)
       setSummaryError(null)
       try {
-        const data = await getBoardSummary(boardId)
+        const data = await getBoardSummary(targetBoardId)
+        if (boardIdRef.current !== targetBoardId) return
         setSummary(data)
       } catch (err) {
+        if (boardIdRef.current !== targetBoardId) return
         setSummaryError(getApiErrorMessage(err, 'Не удалось загрузить AI-итоги'))
       } finally {
-        setSummaryLoading(false)
+        if (boardIdRef.current === targetBoardId) {
+          setSummaryLoading(false)
+        }
       }
     },
     [boardId, hasSummary],

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, Lock, User } from 'lucide-react'
 import { adminLogin, adminLogout } from '@/api/admin'
 import { BrandMark } from '@/components/BrandLogo'
@@ -23,6 +24,7 @@ import { useAdminSessionHint } from './useAdminSessionHint'
  * с объяснением.
  */
 export default function AdminPage() {
+  const queryClient = useQueryClient()
   const sessionHint = useAdminSessionHint()
   const [seenHint, setSeenHint] = useState(sessionHint)
   const [loggingOut, setLoggingOut] = useState(false)
@@ -46,6 +48,8 @@ export default function AdminPage() {
     } catch (err) {
       // Отметка о входе снята в любом случае — форма входа уже на экране
       markApiErrorReported(err)
+    } finally {
+      queryClient.removeQueries({ queryKey: ['admin'] })
     }
   }
 
