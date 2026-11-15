@@ -134,7 +134,7 @@ describe('Topbar — меню доски (на телефоне в нём всё
     const menu = await screen.findByRole('menu')
 
     expect(within(menu).getByTestId('menu-dashboard-item')).toHaveAttribute('href', '/dashboard')
-    expect(within(menu).getByRole('menuitem', { name: 'Итоги ретро и AI' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Итоги ретроспективы' })).toBeInTheDocument()
     expect(within(menu).getByTestId('menu-mood-item')).toHaveTextContent('4.0')
 
     await user.click(within(menu).getByTestId('menu-mood-item'))

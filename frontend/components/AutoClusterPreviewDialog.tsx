@@ -144,7 +144,7 @@ export default function AutoClusterPreviewDialog({
                           value={cluster.title}
                           onChange={(e) => handleTitleChange(idx, e.target.value)}
                           className="h-8 flex-1 bg-background/80 text-sm font-medium"
-                          maxLength={200}
+                          maxLength={120}
                         />
                         <Badge variant="secondary" className="shrink-0 tabular-nums font-normal">
                           {cluster.cardIds.length} карт.

@@ -32,6 +32,22 @@ def test_admin_login_wrong_login(client):
     assert resp.status_code == 401
 
 
+def test_admin_session_without_login_is_200(client):
+    """Проверка сессии без входа — 200 и authenticated=false, без 401."""
+    resp = client.get("/api/admin/session")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"authenticated": False}
+
+
+def test_admin_session_with_login_is_200(client, admin_headers):
+    """Проверка сессии после входа — 200 и authenticated=true."""
+    resp = client.get("/api/admin/session", headers=admin_headers)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"authenticated": True}
+
+
 def test_admin_list_workspaces_requires_auth(client):
     """GET /api/admin/workspaces без аутентификации → 401."""
     resp = client.get("/api/admin/workspaces")

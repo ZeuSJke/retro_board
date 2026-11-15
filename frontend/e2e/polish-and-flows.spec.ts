@@ -377,7 +377,7 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     await dismissWelcome(page)
 
     await page.getByTestId('export-menu-btn').click()
-    await page.getByText('Итоги ретро и AI').click()
+    await page.getByText('Итоги ретроспективы').click()
     const dialog = page.getByRole('dialog')
     await expect(dialog.getByText('Итоги ретроспективы')).toBeVisible({ timeout: 10000 })
 
@@ -554,7 +554,7 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     await dismissWelcome(page)
 
     await page.getByTestId('export-menu-btn').click()
-    await expect(page.getByRole('menuitem', { name: 'Итоги ретро и AI' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Итоги ретроспективы' })).toBeVisible()
 
     // Direct single click on neighboring button opens settings without being blocked by an overlay
     await page.getByTestId('board-settings-btn').click()

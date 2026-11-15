@@ -339,7 +339,7 @@ export default function Topbar({
               <ShareBoardMenuItem />
               <DropdownMenuItem onClick={onOpenSummary}>
                 <Sparkles className="h-4 w-4 text-primary" />
-                Итоги ретро и AI
+                Итоги ретроспективы
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onExportMarkdown}>

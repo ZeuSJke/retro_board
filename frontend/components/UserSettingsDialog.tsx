@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useTheme } from 'next-themes'
-import { Check, Grid3X3, Loader2, LogOut, Moon, Palette, Sun, User } from 'lucide-react'
+import { Check, Grid3X3, Loader2, LogOut, Moon, Palette, Shield, Sun, User } from 'lucide-react'
 import { logoutWorkspace, renameParticipant } from '@/api'
 import { useAppStore } from '@/store'
 import {
@@ -113,7 +114,7 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSave} className="space-y-5">
+        <form onSubmit={handleSave} className="min-w-0 space-y-5">
           <div className="flex items-center gap-4">
             <div
               className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br/srgb text-base font-bold text-white shadow-sm ${getUserAvatarGradient(
@@ -210,6 +211,26 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
               </Button>
             </div>
           )}
+
+          <div
+            className="flex items-center justify-between gap-3 rounded-xl border bg-muted/40 px-3.5 py-2.5 text-sm"
+            data-testid="admin-panel-row"
+          >
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Shield className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0">
+                <div className="truncate font-medium">Администрирование</div>
+                <div className="text-xs leading-snug text-muted-foreground">
+                  Команды, ключи доступа и токены агентов
+                </div>
+              </div>
+            </div>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/admin" data-testid="admin-panel-link">
+                Открыть
+              </Link>
+            </Button>
+          </div>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

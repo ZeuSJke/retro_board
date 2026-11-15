@@ -144,7 +144,7 @@ test.describe('Участники: личность, скрытый сбор, п
       expect(guestBoardJson).toContain('Мысль гостя')
 
       await guest.page.getByTestId('export-menu-btn').click()
-      await guest.page.getByRole('menuitem', { name: 'Итоги ретро и AI' }).click()
+      await guest.page.getByRole('menuitem', { name: 'Итоги ретроспективы' }).click()
       const summaryDialog = guest.page.getByRole('dialog')
       // AI-резюме до раскрытия недоступно — с объяснением вместо кнопки
       await expect(summaryDialog.getByTestId('ai-unavailable-note')).toBeVisible()

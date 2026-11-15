@@ -48,7 +48,7 @@ export default function WorkspaceInsightsCard({
           <CardTitle className="flex flex-wrap items-center gap-2 text-base">
             <span className="inline-flex items-center gap-2">
               <TitleIcon className="h-4 w-4 shrink-0 text-primary" />
-              {aiOff ? 'Сводка по спринтам' : 'Кросс-спринт AI-аналитика'}
+              {aiOff ? 'Сводка по спринтам' : 'Аналитика по спринтам'}
             </span>
             {insights && (
               <Badge variant={insights.generated_by_ai ? 'default' : 'secondary'} className="text-[10px]">

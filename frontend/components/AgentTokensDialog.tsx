@@ -37,7 +37,7 @@ interface AgentTokensDialogProps {
 }
 
 function formatDate(iso: string | null): string {
-  if (!iso) return 'не использовался'
+  if (!iso) return '—'
   try {
     return new Date(iso).toLocaleString('ru-RU', {
       day: '2-digit',
@@ -188,8 +188,14 @@ function AgentTokensContent({
     showToast('Конфигурация MCP скопирована', 'success')
   }
 
+  const handleReload = () => {
+    setTokens(null)
+    setLoadError(null)
+    setReloadKey((n) => n + 1)
+  }
+
   return (
-    <DialogContent className="sm:max-w-xl" data-testid="agent-tokens-dialog">
+    <DialogContent layout="structured" className="sm:max-w-2xl" data-testid="agent-tokens-dialog">
       <DialogHeader>
         <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <Bot className="h-3.5 w-3.5 text-primary" />
@@ -219,31 +225,32 @@ function AgentTokensContent({
 
         {/* Форма выпуска нового токена */}
         <form onSubmit={handleCreate} className="space-y-3 rounded-xl border bg-muted/25 p-3.5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <Label htmlFor="agent-token-name" className="text-xs">
-                Имя агента
-              </Label>
-              <Input
-                id="agent-token-name"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value)
-                  if (createError) setCreateError(null)
-                }}
-                placeholder="Например, Sprint Bot"
-                maxLength={60}
-                className="h-8 text-xs"
-                data-testid="agent-token-name-input"
-              />
-            </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="agent-token-name" className="block text-xs">
+              Имя агента
+            </Label>
+            <Input
+              id="agent-token-name"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value)
+                if (createError) setCreateError(null)
+              }}
+              placeholder="Например, Sprint Bot"
+              maxLength={60}
+              data-testid="agent-token-name-input"
+            />
+          </div>
 
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <div className="space-y-1.5">
-              <Label className="text-xs">Права доступа</Label>
+              <Label id="agent-token-scope-label" className="block text-xs">
+                Права доступа
+              </Label>
               <div
                 role="radiogroup"
-                aria-label="Права доступа токена"
-                className="inline-flex h-8 rounded-md border bg-background p-0.5"
+                aria-labelledby="agent-token-scope-label"
+                className="inline-flex h-9 rounded-md border bg-background p-0.5"
               >
                 <button
                   type="button"
@@ -251,7 +258,7 @@ function AgentTokensContent({
                   aria-checked={scope === 'read_only'}
                   onClick={() => setScope('read_only')}
                   className={cn(
-                    'rounded-sm px-2.5 text-xs font-medium transition-colors',
+                    'rounded-sm px-3 text-xs font-medium transition-colors',
                     scope === 'read_only'
                       ? 'bg-primary text-primary-foreground'
                       : 'text-muted-foreground hover:text-foreground',
@@ -265,7 +272,7 @@ function AgentTokensContent({
                   aria-checked={scope === 'read_write'}
                   onClick={() => setScope('read_write')}
                   className={cn(
-                    'rounded-sm px-2.5 text-xs font-medium transition-colors',
+                    'rounded-sm px-3 text-xs font-medium transition-colors',
                     scope === 'read_write'
                       ? 'bg-primary text-primary-foreground'
                       : 'text-muted-foreground hover:text-foreground',
@@ -280,7 +287,7 @@ function AgentTokensContent({
               type="submit"
               size="sm"
               disabled={creating}
-              className="h-8 gap-1.5 px-3 text-xs"
+              className="h-9 w-full gap-1.5 px-4 text-xs sm:ml-auto sm:w-auto"
               data-testid="agent-token-create-btn"
             >
               {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
@@ -292,6 +299,9 @@ function AgentTokensContent({
               {createError}
             </p>
           )}
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            Чтение — только просмотр досок, карточек и задач. Чтение и запись — создание и изменение.
+          </p>
         </form>
 
         {/* Одноразовый показ секрета после выпуска */}
@@ -324,7 +334,7 @@ function AgentTokensContent({
               testId="agent-token-secret-input"
             />
 
-            <div className="flex items-center justify-between gap-2 pt-0.5">
+            <div className="flex flex-col gap-2 pt-0.5 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-[11px] text-muted-foreground">
                 Готовый фрагмент для `.mcp.json` / Cursor
               </span>
@@ -332,7 +342,7 @@ function AgentTokensContent({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1.5 text-xs"
+                className="h-7 w-full gap-1.5 text-xs sm:w-auto"
                 onClick={() => void handleCopySnippet()}
               >
                 {snippetCopied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
@@ -344,8 +354,22 @@ function AgentTokensContent({
 
         {/* Список выпущенных токенов */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
             <span>Выпущенные токены {tokens ? `(${tokens.length})` : ''}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleReload}
+              disabled={tokens === null}
+              className="h-7 gap-1 px-2 text-[11px]"
+              aria-label="Обновить список токенов"
+              title="Обновить список токенов"
+              data-testid="agent-tokens-refresh-btn"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', tokens === null && 'animate-spin')} />
+              <span className="hidden sm:inline">Обновить</span>
+            </Button>
           </div>
 
           {loadError ? (
@@ -356,10 +380,7 @@ function AgentTokensContent({
                 size="sm"
                 variant="outline"
                 className="h-7 gap-1 text-xs"
-                onClick={() => {
-                  setLoadError(null)
-                  setReloadKey((n) => n + 1)
-                }}
+                onClick={handleReload}
               >
                 <RefreshCw className="h-3 w-3" />
                 Повторить
@@ -402,9 +423,16 @@ function AgentTokensContent({
                         )}
                       </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-                        <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{tok.token_prefix}…</code>
+                        <code
+                          className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]"
+                          title={tok.token_prefix}
+                        >
+                          {tok.token_prefix}…
+                        </code>
                         <span>Создан: {formatDate(tok.created_at)}</span>
-                        <span>Использовался: {formatDate(tok.last_used_at)}</span>
+                        <span>
+                          Последнее использование: {tok.last_used_at ? formatDate(tok.last_used_at) : 'не было'}
+                        </span>
                       </div>
                     </div>
 

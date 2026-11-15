@@ -214,6 +214,13 @@ describe('UserSettingsDialog — выход и имя', () => {
     await user.click(screen.getByTestId('profile-save-btn'))
     expect(api.renameParticipant).not.toHaveBeenCalled()
   })
+
+  it('из профиля можно перейти в администрирование', () => {
+    render(<UserSettingsDialog open onOpenChange={vi.fn()} />)
+
+    expect(screen.getByTestId('admin-panel-row')).toHaveTextContent('Администрирование')
+    expect(screen.getByRole('link', { name: 'Открыть' })).toHaveAttribute('href', '/admin')
+  })
 })
 
 // ── ведущий: по идентификатору, передача и перехват роли ─────────────────────

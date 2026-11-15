@@ -179,6 +179,24 @@ describe('AgentTokensDialog', () => {
     expect(screen.queryByTestId('agent-token-secret-banner')).not.toBeInTheDocument()
   })
 
+  it('обновляет список по кнопке', async () => {
+    const user = userEvent.setup()
+    const adapter = makeAdapter({
+      list: vi
+        .fn()
+        .mockResolvedValueOnce([tokenFixture({ id: 't-old', name: 'Старый Bot' })])
+        .mockResolvedValueOnce([tokenFixture({ id: 't-new', name: 'Новый Bot' })]),
+    })
+
+    render(<AgentTokensDialog open onOpenChange={vi.fn()} adapter={adapter} />)
+    expect(await screen.findByText('Старый Bot')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('agent-tokens-refresh-btn'))
+
+    expect(await screen.findByText('Новый Bot')).toBeInTheDocument()
+    expect(adapter.list).toHaveBeenCalledTimes(2)
+  })
+
   it('при ошибке загрузки даёт повторить запрос', async () => {
     const user = userEvent.setup()
     const adapter = makeAdapter({

@@ -50,6 +50,8 @@ vi.mock('../../store/toastStore', () => ({
 import {
   adminLogin,
   adminLogout,
+  checkAdminSession,
+  getAdminSession,
   getAdminSessionHint,
   getAdminWorkspaceInvite,
   rotateAdminWorkspaceInvite,
@@ -59,13 +61,11 @@ import {
 import { getApiErrorMessage } from '../../utils/apiError'
 
 const adminApi = () => instances.get('/api/admin')!
-const SESSION_KEY = 'retroboard-admin-session'
 
 describe('api/admin', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    localStorage.clear()
-    setAdminSessionHint(false)
+    setAdminSessionHint(null)
   })
 
   afterEach(() => {
@@ -73,34 +73,72 @@ describe('api/admin', () => {
     vi.restoreAllMocks()
   })
 
-  describe('отметка о входе администратора', () => {
-    it('без входа отметки нет — страница может не спрашивать сервер', () => {
+  describe('состояние сессии администратора', () => {
+    it('до проверки состояние неизвестно', () => {
+      expect(getAdminSessionHint()).toBeNull()
+    })
+
+    it('проверка сессии спрашивает сервер без 401 и запоминает ответ', async () => {
+      adminApi().get.mockResolvedValueOnce({ data: { authenticated: true } })
+
+      await expect(getAdminSession()).resolves.toEqual({ authenticated: true })
+      expect(adminApi().get).toHaveBeenCalledWith('/session')
+
+      adminApi().get.mockResolvedValueOnce({ data: { authenticated: true } })
+      await expect(checkAdminSession()).resolves.toBe(true)
+      expect(getAdminSessionHint()).toBe(true)
+    })
+
+    it('анонимный браузер: 200 и authenticated=false, форма входа', async () => {
+      adminApi().get.mockResolvedValueOnce({ data: { authenticated: false } })
+
+      await expect(checkAdminSession()).resolves.toBe(false)
       expect(getAdminSessionHint()).toBe(false)
     })
 
-    it('вход ставит отметку на срок жизни cookie, выход её снимает', async () => {
+    it('повторные проверки до ответа переиспользуют один запрос', async () => {
+      let resolveRequest!: (value: { data: { authenticated: boolean } }) => void
+      adminApi().get.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveRequest = resolve
+        }),
+      )
+
+      const first = checkAdminSession()
+      const second = checkAdminSession()
+      expect(adminApi().get).toHaveBeenCalledTimes(1)
+
+      resolveRequest({ data: { authenticated: true } })
+      await expect(first).resolves.toBe(true)
+      await expect(second).resolves.toBe(true)
+    })
+
+    it('сеть недоступна — состояние false, без «сессия закончилась»', async () => {
+      adminApi().get.mockRejectedValueOnce(new Error('Network Error'))
+
+      await expect(checkAdminSession()).resolves.toBe(false)
+      expect(getAdminSessionHint()).toBe(false)
+    })
+
+    it('вход ставит состояние true, выход его снимает', async () => {
       adminApi().post.mockResolvedValue({ data: { ok: true } })
 
       await adminLogin({ login: 'admin', password: 'secret' })
       expect(adminApi().post).toHaveBeenCalledWith('/login', { login: 'admin', password: 'secret' })
       expect(getAdminSessionHint()).toBe(true)
-      const expiresAt = Number(localStorage.getItem(SESSION_KEY))
-      expect(expiresAt - Date.now()).toBeGreaterThan(23 * 60 * 60 * 1000)
-      expect(expiresAt - Date.now()).toBeLessThanOrEqual(24 * 60 * 60 * 1000)
 
       await adminLogout()
       expect(getAdminSessionHint()).toBe(false)
-      expect(localStorage.getItem(SESSION_KEY)).toBeNull()
     })
 
-    it('неудачный вход отметку не ставит', async () => {
+    it('неудачный вход состояние не ставит', async () => {
       adminApi().post.mockRejectedValueOnce({ response: { status: 401 } })
 
       await expect(adminLogin({ login: 'admin', password: 'wrong' })).rejects.toBeTruthy()
-      expect(getAdminSessionHint()).toBe(false)
+      expect(getAdminSessionHint()).toBeNull()
     })
 
-    it('выход снимает отметку, даже если запрос не дошёл до сервера', async () => {
+    it('выход снимает состояние, даже если запрос не дошёл до сервера', async () => {
       setAdminSessionHint(true)
       adminApi().post.mockRejectedValueOnce(new Error('Network Error'))
 
@@ -108,32 +146,18 @@ describe('api/admin', () => {
       expect(getAdminSessionHint()).toBe(false)
     })
 
-    it('просроченная отметка не считается входом', () => {
-      localStorage.setItem(SESSION_KEY, String(Date.now() - 1000))
-      expect(getAdminSessionHint()).toBe(false)
-    })
-
-    it('работает и без localStorage: отметка живёт в памяти вкладки', () => {
-      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-        throw new Error('QuotaExceededError')
-      })
-
-      setAdminSessionHint(true)
-      expect(getAdminSessionHint()).toBe(true)
-    })
-
-    it('подписчики узнают о смене отметки и о входе в другой вкладке', () => {
+    it('подписчики узнают о смене состояния', () => {
       const listener = vi.fn()
       const unsubscribe = subscribeAdminSessionHint(listener)
 
       setAdminSessionHint(true)
       expect(listener).toHaveBeenCalledTimes(1)
 
-      window.dispatchEvent(new StorageEvent('storage', { key: SESSION_KEY }))
+      setAdminSessionHint(false)
       expect(listener).toHaveBeenCalledTimes(2)
 
       unsubscribe()
-      setAdminSessionHint(false)
+      setAdminSessionHint(true)
       expect(listener).toHaveBeenCalledTimes(2)
     })
   })
