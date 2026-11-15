@@ -78,6 +78,11 @@ class Participant(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc
     )
+    # Выход завершает сессию на сервере: токен участника перестаёт приниматься,
+    # даже если его сохранили. Карточки и голоса остаются за участником.
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
     workspace: Mapped["Workspace"] = relationship(
         "Workspace", back_populates="participants"

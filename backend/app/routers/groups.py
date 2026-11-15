@@ -267,6 +267,7 @@ async def _apply_groups_to_column(
     groups_spec: list[dict],
     ungrouped_ids: list[str],
     username: str | None,
+    participant_id: str | None,
     db: Session,
 ) -> schemas.AutoClusterResult:
     """Persist proposed cluster groups into DB and broadcast WS updates."""
@@ -333,6 +334,8 @@ async def _apply_groups_to_column(
             "column_id": col.id,
             "groups_count": len(created_groups),
             "username": username,
+            # Инициатора клиенты узнают по идентификатору: тёзки не путаются
+            "participant_id": participant_id,
         },
     )
 
@@ -354,6 +357,7 @@ async def auto_cluster(
     """AI-кластеризация негруппированных карточек в колонке."""
     workspace_id = workspace.id
     username = participant.name
+    participant_id = participant.id
     result = await _compute_column_clusters(body.column_id, db, workspace_id)
     # Пока модель думала, колонку могли удалить, а доску — заблокировать
     col, board = _unlocked_column(db, body.column_id, workspace_id)
@@ -363,6 +367,7 @@ async def auto_cluster(
         groups_spec=result["groups"],
         ungrouped_ids=result["ungrouped"],
         username=username,
+        participant_id=participant_id,
         db=db,
     )
 
@@ -413,5 +418,6 @@ async def apply_clusters(
         groups_spec=groups_spec,
         ungrouped_ids=remaining,
         username=participant.name,
+        participant_id=participant.id,
         db=db,
     )

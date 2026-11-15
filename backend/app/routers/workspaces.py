@@ -4,7 +4,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_db, release_connection
 from app import models, schemas
 from app.models import now_utc
 from app.workspace_auth import (
@@ -13,8 +13,10 @@ from app.workspace_auth import (
     get_current_workspace,
     issue_session_token,
     new_invite_token,
+    revoke_session,
     session_needs_renewal,
     set_session_cookie,
+    token_from_request,
     verify_access_key,
 )
 from app.config import settings
@@ -124,8 +126,14 @@ def get_invite(
 
 
 @router.post("/logout", status_code=204)
-def workspace_logout(response: Response):
-    """Завершить сессию: браузер перестаёт присылать токен."""
+async def workspace_logout(
+    request: Request, response: Response, db: Session = Depends(get_db)
+):
+    """Завершить сессию: токен участника больше не принимается, cookie сбрасывается."""
+    participant_id = revoke_session(db, token_from_request(request))
+    release_connection(db)
+    if participant_id is not None:
+        await manager.disconnect_participant(participant_id)
     clear_session_cookie(response)
     response.status_code = 204
 

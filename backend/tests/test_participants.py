@@ -119,6 +119,62 @@ class TestSession:
         assert cookie.startswith('workspace_token=""') or cookie.startswith("workspace_token=;")
         assert "Max-Age=0" in cookie
 
+    def test_logout_ends_the_session_on_the_server(self, client, test_workspace):
+        """После выхода токен не принимается, даже если его сохранили."""
+        anna = login_headers(client, "Анна")
+        boris = login_headers(client, "Борис")
+        assert client.get("/api/boards/", headers=anna).status_code == 200
+
+        assert client.post("/api/workspaces/logout", headers=anna).status_code == 204
+
+        assert client.get("/api/boards/", headers=anna).status_code == 401
+        assert client.get("/api/workspaces/me", headers=anna).status_code == 401
+        # Чужая сессия не затронута
+        assert client.get("/api/boards/", headers=boris).status_code == 200
+        # Повторный выход тем же токеном — не ошибка
+        assert client.post("/api/workspaces/logout", headers=anna).status_code == 204
+
+    def test_logout_by_cookie_ends_that_session(self, client, test_workspace):
+        resp = client.post(
+            "/api/workspaces/login",
+            json={"workspace_slug": "test-team", "access_key": "testkey123", "name": "Вера"},
+        )
+        token = resp.cookies["workspace_token"]
+        # Тестовый клиент ходит по http и сам Secure-cookie не возвращает — кладём явно
+        client.cookies.clear()
+        client.cookies.set("workspace_token", token)
+        assert client.get("/api/workspaces/me").status_code == 200
+
+        assert client.post("/api/workspaces/logout").status_code == 204
+        client.cookies.clear()
+
+        assert client.get("/api/workspaces/me", headers={"X-Workspace-Token": token}).status_code == 401
+
+    def test_logout_without_session_is_harmless(self, client, test_workspace):
+        boris = login_headers(client, "Борис")
+        for headers in ({}, {"X-Workspace-Token": "not.a.token"}):
+            assert client.post("/api/workspaces/logout", headers=headers).status_code == 204
+        assert client.get("/api/boards/", headers=boris).status_code == 200
+
+    def test_cards_stay_with_the_participant_after_logout(self, client, test_workspace):
+        """Выход не стирает сделанное: карточка остаётся с автором."""
+        anna = login_headers(client, "Анна")
+        anna_id = participant_id_of(client, anna)
+        board = client.post("/api/boards/", json={"name": "Спринт"}, headers=anna).json()
+        column = board["columns"][0]["id"]
+        card = client.post(
+            "/api/cards/", json={"column_id": column, "text": "Моя карточка"}, headers=anna
+        ).json()
+
+        client.post("/api/workspaces/logout", headers=anna)
+
+        boris = login_headers(client, "Борис")
+        seen = client.get(f"/api/boards/{board['id']}", headers=boris).json()
+        cards = [c for col in seen["columns"] for c in col["cards"]]
+        assert [(c["id"], c["author_id"], c["author"]) for c in cards] == [
+            (card["id"], anna_id, "Анна")
+        ]
+
     def test_token_issued_before_participants_is_rejected(self, client, test_workspace):
         """Старый токен личности не несёт: разовый повторный вход после обновления."""
         legacy = jwt.encode(
@@ -528,6 +584,29 @@ class TestHiddenCollection:
             texts = {c["id"]: c["text"] for c in _cards(_get_board(client, workspace_headers, board["id"]))}
             assert texts[created["id"]] == "Только для Ани"
 
+    def test_anonymity_switch_tells_clients_to_reload(self, client, workspace_headers, login_as):
+        """Анонимность меняет имена и голоса у каждого получателя — одного board_updated мало."""
+        anya = login_as("Аня")
+        board = _board(client, workspace_headers, "Анонимность")
+        with _ws(client, board["id"], anya) as ws_anya:
+            resp = client.patch(
+                f"/api/boards/{board['id']}", json={"anonymous_votes": True}, headers=workspace_headers
+            )
+            assert resp.status_code == 200
+            _recv(ws_anya, "cards_visibility_changed")
+
+            # Правка, не затрагивающая видимость, лишнего перечитывания не вызывает
+            client.patch(f"/api/boards/{board['id']}", json={"max_votes": 7}, headers=workspace_headers)
+            client.patch(
+                f"/api/boards/{board['id']}", json={"anonymous_votes": False}, headers=workspace_headers
+            )
+            events = []
+            while "cards_visibility_changed" not in events:
+                events.append(ws_anya.receive_json()["event"])
+            # board_updated приходит дважды на правку (канал команды и канал доски);
+            # будь у правки max_votes своё событие видимости, цикл оборвался бы раньше
+            assert events == ["board_updated"] * 4 + ["cards_visibility_changed"]
+
     def test_session_brainstorm_masks_live_and_reveal_phase_opens(self, client, workspace_headers, login_as):
         anya = login_as("Аня")
         board = _board(client, workspace_headers, "Сессия")
@@ -716,6 +795,26 @@ class TestCarryForward:
         # История на исходной доске сохраняется и видна по запросу
         with_history = client.get("/api/action-items/all?include_carried=true", headers=workspace_headers).json()
         assert len([i for i in with_history if i["title"] == "Починить флейки"]) == 2
+
+    def test_board_trends_count_a_carried_task_once(self, client, workspace_headers, sample_board):
+        self._task(client, workspace_headers, sample_board["id"], "Переносимая")
+        self._task(client, workspace_headers, sample_board["id"], "Остаётся")
+        target = _board(client, workspace_headers, "Цель")
+        carried = self._task(client, workspace_headers, sample_board["id"], "Третья")
+        client.post(
+            "/api/action-items/carry-forward",
+            json={
+                "source_board_id": sample_board["id"],
+                "target_board_id": target["id"],
+                "item_ids": [carried["id"]],
+            },
+            headers=workspace_headers,
+        )
+        points = {
+            p["board_id"]: p["action_items_total"]
+            for p in client.get("/api/boards/mood-trends", headers=workspace_headers).json()
+        }
+        assert points == {sample_board["id"]: 2, target["id"]: 1}
 
     def test_second_carry_does_not_duplicate(self, client, workspace_headers, sample_board):
         """Кнопка «На доску» раньше создавала новую копию при каждом нажатии."""

@@ -205,6 +205,24 @@ class ConnectionManager:
             "participants": [{"id": peer.id, "name": peer.name} for peer in users],
         }
 
+    async def disconnect_participant(self, participant_id: str) -> None:
+        """Закрыть все сокеты участника (выход из команды).
+
+        Обычную уборку — присутствие, готовность, роль ведущего — делает
+        обработчик разрыва в самом эндпоинте.
+        """
+        sockets = [
+            ws
+            for room in self.rooms.values()
+            for ws in room
+            if (peer := self.peers.get(id(ws))) is not None and peer.id == participant_id
+        ]
+        for ws in sockets:
+            try:
+                await ws.close(code=1008, reason="Session ended")
+            except Exception:
+                logger.debug("Socket of participant %s is already closed", participant_id)
+
     def name_of(self, participant_id: str) -> str:
         return self.names.get(participant_id, "Участник")
 

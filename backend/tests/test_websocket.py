@@ -9,6 +9,7 @@ import time
 from contextlib import contextmanager
 
 import pytest
+from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
 from app.ws_manager import manager
@@ -588,6 +589,23 @@ class TestAuth:
         ws_board.deleted_at = datetime.now(timezone.utc)
         db_session.commit()
         assert expect_rejected(lambda: connect(client, ws_board.id, ws_token)) == 1008
+
+    def test_logout_closes_sockets_and_blocks_reconnect(self, client, ws_token_for, ws_board):
+        """Выход завершает сессию целиком: открытый сокет закрывается, новый не откроется."""
+        anna, boris = ws_token_for("Анна"), ws_token_for("Борис")
+        with connect(client, ws_board.id, boris) as observer:
+            with connect(client, ws_board.id, anna) as ws:
+                recv_event(observer, "presence_update")
+                resp = client.post("/api/workspaces/logout", headers={"X-Workspace-Token": anna})
+                assert resp.status_code == 204
+                with pytest.raises(WebSocketDisconnect) as closed:
+                    for _ in range(10):
+                        ws.receive_json()
+                assert closed.value.code == 1008
+            # Остальные видят, что участник ушёл
+            presence = recv_event(observer, "presence_update")
+            assert [p["name"] for p in presence["data"]["participants"]] == ["Борис"]
+        assert expect_rejected(lambda: connect(client, ws_board.id, anna)) == 1008
 
     def test_unknown_board_ws_rejected(self, client, ws_token):
         """Раньше под SQLite проверка доски пропускалась — теперь она одна для всех СУБД."""

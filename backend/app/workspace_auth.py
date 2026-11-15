@@ -129,8 +129,8 @@ def resolve_session(
     """По содержимому токена найти команду и участника или ответить 401.
 
     Сессия недействительна, если токен выпущен до появления участников
-    (нет `pid`), участник или команда удалены либо ключ доступа команды
-    сменили после выдачи токена (поколение не совпадает).
+    (нет `pid`), участник или команда удалены, участник вышел либо ключ
+    доступа команды сменили после выдачи токена (поколение не совпадает).
     """
     participant_id = payload.get("pid")
     if not participant_id or not isinstance(participant_id, str):
@@ -138,6 +138,8 @@ def resolve_session(
     participant = db.get(models.Participant, participant_id)
     if participant is None or participant.workspace_id != payload.get("workspace_id"):
         raise HTTPException(status_code=401, detail="Сессия устарела, войдите снова")
+    if participant.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Сессия завершена, войдите снова")
     workspace = db.get(models.Workspace, participant.workspace_id)
     if workspace is None:
         raise HTTPException(status_code=401, detail="Команда не найдена")
@@ -168,6 +170,23 @@ def get_current_workspace(
 ) -> models.Workspace:
     """Dependency: команда текущей сессии."""
     return request.state.workspace
+
+
+def revoke_session(db: Session, token: str | None) -> str | None:
+    """Завершить сессию участника по его токену. Возвращает идентификатор участника.
+
+    Недействительный или чужой токен — не ошибка: выходить всё равно нечем.
+    """
+    participant_id = participant_key_from_token(token)
+    if participant_id is None:
+        return None
+    participant = db.get(models.Participant, participant_id)
+    if participant is None:
+        return None
+    if participant.revoked_at is None:
+        participant.revoked_at = datetime.now(UTC)
+        db.commit()
+    return participant.id
 
 
 def session_needs_renewal(payload: dict) -> bool:

@@ -698,6 +698,19 @@ class TestThemesApi:
         assert summary["summary_text"] == "Итоги без тем команды"
         assert [s["name"] for s in summary["theme_stats"]] == [REVIEW]
 
+    def test_board_snapshot_says_whether_summary_exists(
+        self, client, sample_board, workspace_headers, model
+    ):
+        """Клиент не спрашивает итоги вслепую: без них GET …/summary отвечает 404."""
+        board_url = f"/api/boards/{sample_board['id']}"
+        assert client.get(board_url, headers=workspace_headers).json()["has_summary"] is False
+        assert client.get(f"{board_url}/summary", headers=workspace_headers).status_code == 404
+
+        summarize(client, workspace_headers, sample_board["id"], model, [new_theme(REVIEW)])
+
+        assert client.get(board_url, headers=workspace_headers).json()["has_summary"] is True
+        assert client.get(f"{board_url}/summary", headers=workspace_headers).status_code == 200
+
     def test_regenerate_broadcasts_theme_stats(self, client, sample_board, workspace_headers, model):
         from app.ws_manager import manager
 

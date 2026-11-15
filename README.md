@@ -244,7 +244,7 @@ retro_board/
 |---|---|---|
 | `POST` | `/api/workspaces/login` | Вход в команду (`workspace_slug` + `access_key` + `name`): создаёт участника и выставляет `httpOnly` cookie `workspace_token`; в теле ответа токена нет |
 | `POST` | `/api/workspaces/join` | Вход по ссылке-приглашению (`invite_token` + `name`) |
-| `POST` | `/api/workspaces/logout` | Выход: сбрасывает cookie сессии |
+| `POST` | `/api/workspaces/logout` | Выход: сессия участника завершается на сервере (его токен больше не принимается, сокеты закрываются с кодом 1008), cookie сбрасывается |
 | `GET` | `/api/workspaces/me` | Текущая сессия: команда, участник (`participant`), признак `ai_enabled`; продлевает сессию и обновляет `csrf_token` cookie |
 | `PATCH` | `/api/workspaces/me/participant` | Сменить имя участника — карточки, голоса и роль ведущего остаются за ним |
 | `GET` | `/api/workspaces/invite` | Токен ссылки-приглашения в команду (создаётся при первом обращении) |
@@ -375,7 +375,7 @@ retro_board/
 | `participant_renamed` | Участник сменил имя (`participant_id`, `name`) |
 | `health_check_requested` / `health_updated` | Запрос пройти health check и обновлённая сводка по доске (без личных ответов) |
 | `roti_requested` | Сессия завершена — запрос оценить встречу |
-| `cards_visibility_changed` | Изменилась видимость чужих карточек (начало / конец «Штурма», раскрытие скрытого сбора) — клиент перечитывает доску |
+| `cards_visibility_changed` | Изменилась видимость чужих карточек (начало / конец «Штурма», раскрытие скрытого сбора, смена анонимного режима) — клиент перечитывает доску |
 | `phase_update` | Смена фазы ретро |
 | `cursor_move` / `cursor_leave` | Позиции курсоров других участников |
 | `timer_start` / `timer_pause` / `timer_reset` | Синхронизация таймера |
@@ -389,7 +389,7 @@ retro_board/
 | `card_created` / `card_updated` / `card_moved` / `card_deleted` | CRUD и перемещение карточек |
 | `group_created` / `group_updated` / `group_moved` / `group_deleted` / `group_collapse` | CRUD, перемещение и сворачивание групп |
 | `action_item_created` / `action_item_updated` / `action_item_deleted` | CRUD Action Items |
-| `auto_cluster_completed` | Завершение AI-кластеризации |
+| `auto_cluster_completed` | Завершение AI-кластеризации; `participant_id` — кто запустил |
 | `summary_generated` / `summary_failed` | Результат генерации AI-резюме; `regenerated: true` — повторная генерация по кнопке (окно итогов у остальных не открывается) |
 
 ---

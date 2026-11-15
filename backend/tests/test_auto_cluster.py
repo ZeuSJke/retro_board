@@ -199,6 +199,41 @@ class TestAutoCluster:
         assert set(data["created_groups"][0]["card_ids"]) == {card_ids[0], card_ids[1]}
         assert card_ids[2] in data["ungrouped_card_ids"]
 
+    def test_completion_event_names_the_initiator_by_id(
+        self, client, sample_column, workspace_headers
+    ):
+        """Клиент узнаёт «это запустил я» по идентификатору: тёзки не путаются."""
+        from unittest.mock import AsyncMock
+
+        from app.ws_manager import manager
+        from tests.conftest import participant_id_of
+
+        cards = self._create_cards(
+            client, sample_column["id"], ["Сборка упала", "Деплой упал"], workspace_headers
+        )
+        ai_response = json.dumps(
+            {"groups": [{"title": "Сборка", "card_ids": [c["id"] for c in cards]}], "ungrouped": []}
+        )
+        with patch("app.ai.clustering.ai_client") as mock_ai, \
+             patch.object(settings, "ai_base_url", "http://llm.test/v1"), \
+             patch.object(manager, "broadcast", AsyncMock()) as broadcast:
+            mock_ai.generate.return_value = ai_response
+            resp = client.post(
+                "/api/groups/auto-cluster",
+                json={"column_id": sample_column["id"]},
+                headers=workspace_headers,
+            )
+        assert resp.status_code == 200, resp.text
+        completed = [c.args[2] for c in broadcast.await_args_list if c.args[1] == "auto_cluster_completed"]
+        assert completed == [
+            {
+                "column_id": sample_column["id"],
+                "groups_count": 1,
+                "username": "Tester",
+                "participant_id": participant_id_of(client, workspace_headers),
+            }
+        ]
+
     def test_column_with_less_than_2_ungrouped_cards_returns_400(
         self, client, sample_column, workspace_headers
     ):

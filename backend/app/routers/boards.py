@@ -237,7 +237,11 @@ def get_mood_trends(
                 func.count(models.ActionItem.id),
                 func.count(case((models.ActionItem.status == "done", 1))),
             )
-            .filter(models.ActionItem.board_id.in_(board_ids))
+            .filter(
+                models.ActionItem.board_id.in_(board_ids),
+                # Перенесённая задача считается там, куда её перенесли
+                models.ActionItem.superseded_by_id.is_(None),
+            )
             .group_by(models.ActionItem.board_id)
             .all()
         )
@@ -580,6 +584,7 @@ async def update_board(
     board = get_or_404(db, models.Board, board_id, "Доска не найдена")
     require_live_board(board, workspace.id)
     was_hidden = cards_hidden(board)
+    was_anonymous = board.anonymous_votes
     if body.name is not None:
         existing = (
             db.query(models.Board)
@@ -618,7 +623,9 @@ async def update_board(
     payload = board_settings_payload(board)
     await manager.broadcast_workspace(workspace.id, "board_updated", payload)
     await manager.broadcast(board.id, "board_updated", payload)
-    if cards_hidden(board) != was_hidden:
+    # Скрытие и анонимность меняют то, что сервер отдаёт каждому получателю:
+    # клиенты перечитывают доску.
+    if cards_hidden(board) != was_hidden or board.anonymous_votes != was_anonymous:
         await manager.broadcast(board.id, "cards_visibility_changed", {})
     return board_view(board, participant.id)
 

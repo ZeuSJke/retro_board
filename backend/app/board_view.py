@@ -6,6 +6,7 @@ REST, ни в WebSocket-событии. Скрывать уже отправле
 """
 
 from fastapi import HTTPException
+from sqlalchemy.orm import object_session
 
 from app import models
 from app.ws_manager import manager
@@ -93,6 +94,19 @@ def mood_view(mood: models.BoardMood, board: models.Board, viewer_id: str | None
     }
 
 
+def has_summary(board: models.Board) -> bool:
+    """Есть ли у доски сохранённые итоги (клиенту незачем спрашивать их вслепую)."""
+    session = object_session(board)
+    if session is None:
+        return False
+    return (
+        session.query(models.BoardSummary.id)
+        .filter(models.BoardSummary.board_id == board.id)
+        .first()
+        is not None
+    )
+
+
 def board_view(board: models.Board, viewer_id: str | None) -> dict:
     """Доска целиком для участника: колонки, группы, карточки, настроение."""
     hidden = cards_hidden(board)
@@ -115,6 +129,7 @@ def board_view(board: models.Board, viewer_id: str | None) -> dict:
         "created_by_id": board.created_by_id,
         "cards_revealed": board.cards_revealed,
         "cards_hidden": hidden,
+        "has_summary": has_summary(board),
         # Номер последнего события доски на момент ответа: события с номером не
         # больше этого в снимок уже вошли, пропуск в номерах — повод перечитать доску
         "event_seq": manager.current_seq(board.id),
