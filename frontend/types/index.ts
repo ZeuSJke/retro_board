@@ -159,6 +159,8 @@ export interface DashboardActionItem extends ActionItem {
 export interface CarryForwardRequest {
   source_board_id: string
   target_board_id: string
+  /** Перенести только эти задачи; без поля — все незакрытые задачи исходной доски. */
+  item_ids?: string[]
 }
 
 export interface TrendPoint {

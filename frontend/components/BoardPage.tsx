@@ -131,7 +131,9 @@ function triggerConfetti() {
   if (typeof window === 'undefined') return
   import('canvas-confetti')
     .then((mod) => {
-      void mod.default?.({
+      // Без воркера: по умолчанию библиотека создаёт его из blob:, а CSP (script-src 'self')
+      // это запрещает — браузер писал ошибку в консоль при каждом салюте
+      void mod.default?.create(undefined, { resize: true })({
         particleCount: 70,
         spread: 65,
         origin: { y: 0.65 },
@@ -351,7 +353,9 @@ export default function BoardPage({
     handlePhaseChanged,
   } = useFacilitator(sendWs, timer.duration, handleTimerReset)
 
-  const loadSummary = useCallback(async () => {
+  const loadSummary = useCallback(async (known = Boolean(board.has_summary)) => {
+    // Итогов у доски нет и события о них не было: запрос вслепую вернул бы 404
+    if (!known) return
     setSummaryLoading(true)
     setSummaryError(null)
     try {
@@ -362,41 +366,34 @@ export default function BoardPage({
     } finally {
       setSummaryLoading(false)
     }
-  }, [board.id])
+  }, [board.id, board.has_summary])
 
   const boardRef = useRef(board)
   boardRef.current = board
 
-  const handleSummaryGenerated = useCallback(
-    ({ regenerated }: { regenerated: boolean }) => {
-      // Итоги появились: теперь их есть смысл запрашивать
-      if (!boardRef.current.has_summary) onBoardUpdated({ ...boardRef.current, has_summary: true })
-      void loadSummary()
-      // Пересоздание по кнопке — окно у остальных не открываем, только обновляем содержимое
-      if (regenerated) return
-      setSummaryOpen(true)
-      triggerConfetti()
-    },
-    [loadSummary, onBoardUpdated],
-  )
+  const handleSummaryGenerated = useCallback((regenerated: boolean) => {
+    void loadSummary(true)
+    if (!board.has_summary) onBoardUpdated({ ...board, has_summary: true })
+    // Итоги пересоздали кнопкой: у остальных окно не открываем, только обновляем содержимое
+    if (regenerated) return
+    setSummaryOpen(true)
+    triggerConfetti()
+  }, [board, loadSummary, onBoardUpdated])
 
-  // Открыть окно итогов. Сами итоги запрашиваем, только если они есть: без них сервер
-  // отвечает 404, а окно и так покажет, что итогов пока нет.
-  const hasSummary = Boolean(board.has_summary)
+  // Открыть окно итогов; запрашивать ли сами итоги, решает loadSummary (по has_summary)
   const openSummary = useCallback(() => {
     setSummaryOpen(true)
-    if (hasSummary) void loadSummary()
-  }, [hasSummary, loadSummary])
+    void loadSummary()
+  }, [loadSummary])
 
   const handleSummaryFailed = useCallback((msg?: string) => {
     setSummaryLoading(false)
-    // Без настроенного AI это не сбой, а ожидаемое состояние: причина написана в окне итогов
-    if (useAppStore.getState().aiEnabled === false) {
-      showToast('AI не настроен: итоги ретро доступны без AI-резюме', 'info')
-      return
+    // Не одинокий тост: окно итогов объясняет, что случилось, и предлагает повторить или
+    // открыть экспорт. Без настроенного AI это не сбой — причина написана в самом окне
+    if (useAppStore.getState().aiEnabled !== false) {
+      setSummaryError(msg || 'Не удалось сгенерировать итоги')
     }
-    setSummaryError(msg || 'Ошибка генерации AI-итогов')
-    showToast(msg || 'Не удалось сгенерировать AI-итоги', 'error')
+    setSummaryOpen(true)
   }, [])
 
   // Доска перечитана с сервера (после переподключения, пропуска событий, смены видимости
@@ -1323,7 +1320,7 @@ export default function BoardPage({
       },
       {
         id: 'toggle-master',
-        label: masterOpen ? 'Скрыть панель «Итоги»' : 'Показать панель «Итоги»',
+        label: masterOpen ? 'Скрыть панель «Задачи»' : 'Показать панель «Задачи»',
         keywords: 'action items задачи итоги',
         shortcut: 'M',
         onSelect: handleToggleMaster,
@@ -1558,7 +1555,6 @@ export default function BoardPage({
         facilitatorId={effectiveFacilitator.id}
         onTransferFacilitator={isFacilitator ? handleFacilitatorTransfer : undefined}
         connected={connected}
-        openActionItemsCount={actionItems.filter((i) => i.status !== 'done').length}
         onOpenBoardsDrawer={() => setBoardsPanelOpen(true)}
         onOpenCommandPalette={() => setCommandOpen(true)}
         onOpenBoardSettings={() => setBoardSettingsOpen(true)}
@@ -1782,7 +1778,7 @@ export default function BoardPage({
               <div
                 role="separator"
                 aria-orientation="vertical"
-                aria-label="Изменить ширину панели Итоги"
+                aria-label="Изменить ширину панели задач"
                 title="Потяните для изменения ширины (двойной клик — сброс)"
                 onPointerDown={startMasterResize}
                 onDoubleClick={resetMasterWidth}
@@ -1832,7 +1828,7 @@ export default function BoardPage({
       <Sheet open={mobileMasterOpen} onOpenChange={setMobileMasterOpen}>
         <SheetContent side="right" className="w-[340px] p-0 sm:max-w-sm">
           <SheetHeader className="sr-only">
-            <SheetTitle>Итоги доски</SheetTitle>
+            <SheetTitle>Задачи доски</SheetTitle>
           </SheetHeader>
           <MasterColumn
             boardId={board.id}

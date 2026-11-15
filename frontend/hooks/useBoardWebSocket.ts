@@ -101,8 +101,8 @@ interface UseBoardWebSocketParams {
   onTimerAbsent?: () => void
   onFacilitatorChanged?: (facilitator: FacilitatorInfo, phase: string | null) => void
   onPhaseChanged?: (phase: string) => void
-  /** Итоги готовы. `regenerated` — их пересоздали по кнопке: окно открывать не нужно. */
-  onSummaryGenerated?: (info: { regenerated: boolean }) => void
+  /** `regenerated` — итоги пересоздали кнопкой: окно итогов у остальных открывать не нужно. */
+  onSummaryGenerated?: (regenerated: boolean) => void
   onSummaryFailed?: (message?: string) => void
   onBoardCreated?: (board: BoardListItem) => void
   onBoardUpdated?: (board: WsBoardUpdatedData) => void
@@ -614,7 +614,7 @@ export function useBoardWebSocket({
       }
 
       if (event === 'summary_generated') {
-        callbacks.onSummaryGenerated?.({ regenerated: data.regenerated === true })
+        callbacks.onSummaryGenerated?.(data.regenerated === true)
         return
       }
 

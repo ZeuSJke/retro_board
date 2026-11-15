@@ -117,6 +117,22 @@ def _sync_board_session_db(
             pass
 
 
+def _board_is_locked(websocket: WebSocket, board_id: str) -> bool:
+    db_gen = _open_ws_db(websocket)
+    try:
+        db = next(db_gen)
+        board = db.get(models.Board, board_id)
+        return bool(board is not None and board.is_locked)
+    except Exception:
+        logger.warning("Failed to read lock state of board %s", board_id, exc_info=True)
+        return False
+    finally:
+        try:
+            next(db_gen)
+        except StopIteration:
+            pass
+
+
 def _dump_state(board_id: str) -> str | None:
     state = manager.export_state(board_id)
     return json.dumps(state) if state else None
@@ -213,10 +229,11 @@ async def _trigger_summary_generation(
         )
         if summary_data:
             logger.info("Summary generated for board %s, broadcasting", board_id)
+            # Та же форма, что у перегенерации по кнопке (см. boards.py)
             await manager.broadcast(
                 board_id,
                 "summary_generated",
-                summary_data,
+                {"summary": summary_data, "board_id": board_id, "regenerated": False},
             )
         else:
             logger.warning("Summary generation returned None for board %s", board_id)
@@ -498,6 +515,10 @@ async def websocket_endpoint(
 
                 elif event == "facilitator_start":
                     if facilitator_id:
+                        continue
+                    # Заблокированная доска — архив: новая сессия скрыла бы её
+                    # карточки у всех («Штурм»). Сначала доску нужно разблокировать.
+                    if _board_is_locked(websocket, board_id):
                         continue
                     had_ready, had_spot = manager.set_facilitator(board_id, peer)
                     _sync_board_session_db(

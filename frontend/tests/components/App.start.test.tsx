@@ -122,13 +122,15 @@ describe('App — адрес /board/start', () => {
     expect(router.replace).not.toHaveBeenCalled()
   })
 
-  it('первая доска создаётся, если досок нет, и адрес ведёт на неё', async () => {
-    api.getBoards.mockResolvedValue([])
-    api.createBoard.mockResolvedValue({ ...board, id: 'b-new', slug: 'moia-pervaia', name: 'Моя первая ретро-доска' })
+  it('доска со служебным slug «start» открывается по этому адресу без перенаправления', async () => {
+    // Старые данные: у доски slug совпал со служебным адресом — она уже открыта по своему адресу
+    api.getBoards.mockResolvedValue([{ ...listItem, slug: 'start' }])
+    api.getBoard.mockResolvedValue({ ...board, slug: 'start' })
 
     render(<App boardId="start" />)
 
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/board/moia-pervaia'))
-    expect(boardMounts.count).toBe(0)
+    expect(await screen.findByTestId('board-page')).toHaveTextContent('Спринт')
+    expect(router.replace).not.toHaveBeenCalled()
+    expect(boardMounts.count).toBe(1)
   })
 })

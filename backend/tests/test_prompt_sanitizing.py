@@ -75,3 +75,41 @@ class TestTitlePrompt:
     def test_long_answer_fits_the_title_field(self, client, workspace_headers):
         _, title = self._generate(client, workspace_headers, "Текст", "я" * 1000)
         assert len(title) == 200
+
+
+class TestInsightTextForPeople:
+    """Тексты сводки по спринтам показываются человеку: резать их посреди слова нельзя."""
+
+    def _clip(self, text: str, limit: int) -> str:
+        from app.ai.prompts.workspace_insights import _clip_sentence
+
+        return _clip_sentence(text, limit)
+
+    def test_short_text_is_kept_as_is(self):
+        assert self._clip("Договориться о сроке ревью.", 320) == "Договориться о сроке ревью."
+
+    def test_long_text_is_cut_on_a_word_with_ellipsis(self):
+        text = "Внедрить лимиты на количество открытых пулреквестов для одного ревьюера и установить срок ответа"
+        clipped = self._clip(text, 60)
+        assert len(clipped) <= 60
+        assert clipped.endswith("…")
+        # Обрезка прошла по границе слова: всё до многоточия — целые слова исходной фразы
+        assert text.startswith(clipped[:-1]) and text[len(clipped) - 1] == " "
+
+    def test_one_very_long_word_is_still_limited(self):
+        clipped = self._clip("х" * 500, 50)
+        assert len(clipped) == 50 and clipped.endswith("…")
+
+    def test_markup_and_line_breaks_are_removed(self):
+        assert self._clip("<b>Шаг</b>\nвторой", 320) == "bШаг/b второй"
+
+    def test_real_length_recommendation_is_not_cut(self):
+        """Настоящая модель пишет рекомендацию в 200–250 знаков — она должна доходить целиком."""
+        from app.ai.prompts.workspace_insights import MAX_RECOMMENDATION_CHARS
+
+        text = (
+            "Внедрить лимиты на количество открытых пулреквестов для одного ревьюера и установить "
+            "SLA на время ответа (например, не более 24 часов), чтобы разорвать цикл задержек и "
+            "вернуть предсказуемость релизов."
+        )
+        assert self._clip(text, MAX_RECOMMENDATION_CHARS) == text

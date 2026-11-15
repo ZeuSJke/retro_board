@@ -345,6 +345,13 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
   }) => {
     const board = await createBoardViaAPI(request, 'Summary Layout Board', workspaceToken)
 
+    // Итоги создаёт AI, которого в тестовом окружении нет. Окно спрашивает их, только когда
+    // доска сообщает has_summary, — помечаем доску в ответе и подменяем сами итоги.
+    await page.route(`**/api/boards/by-slug/${board.slug}`, async (route) => {
+      const response = await route.fetch()
+      const json = (await response.json()) as Record<string, unknown>
+      await route.fulfill({ response, json: { ...json, has_summary: true } })
+    })
     await page.route(`**/api/boards/${board.id}/summary`, async (route) => {
       await route.fulfill({
         status: 200,
@@ -504,7 +511,7 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     expect(initialBox).not.toBeNull()
 
     // Drag separator left to widen sidebar
-    const separator = page.getByRole('separator', { name: 'Изменить ширину панели Итоги' })
+    const separator = page.getByRole('separator', { name: 'Изменить ширину панели задач' })
     const sepBox = await separator.boundingBox()
     expect(sepBox).not.toBeNull()
 
@@ -528,9 +535,9 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
       -1,
     )
 
-    // Toggle Итоги off -> master column hides & columns reclaim space
+    // Toggle «Задачи» off -> master column hides & columns reclaim space
     const col0Before = (await page.getByTestId('board-column').first().boundingBox())!.width
-    await page.getByRole('button', { name: /Итоги/ }).click()
+    await page.getByRole('button', { name: /^Задачи/ }).click()
     await expect(masterCol).not.toBeVisible({ timeout: 5000 })
     await page.waitForTimeout(260)
     const col0After = (await page.getByTestId('board-column').first().boundingBox())!.width

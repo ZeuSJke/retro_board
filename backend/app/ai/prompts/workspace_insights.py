@@ -59,6 +59,9 @@ WORKSPACE_INSIGHTS_CONFIG = AIModelConfig(
 # Тема считается повторяющейся, если названа в итогах хотя бы двух досок
 RECURRING_MIN_BOARDS = 2
 MAX_RECURRING_THEMES = 5
+# Модель пишет рекомендацию в одно-два предложения — около 200–250 знаков
+MAX_RECOMMENDATION_CHARS = 320
+MAX_INSIGHT_SUMMARY_CHARS = 700
 # Сколько тем команды со счётчиками уходит в запрос к модели
 MAX_THEMES_IN_PROMPT = 10
 
@@ -67,6 +70,21 @@ def _sanitize_text(value: str, limit: int = 140) -> str:
     cleaned = re.sub(r"[\r\n\t]+", " ", str(value)).strip()
     cleaned = re.sub(r"[<>]", "", cleaned)
     return cleaned[:limit]
+
+
+def _clip_sentence(value: str, limit: int) -> str:
+    """Текст для показа человеку: очищенный и, если длиннее лимита, обрезанный по слову.
+
+    Обычная обрезка по символам рвала рекомендацию модели посреди слова.
+    """
+    cleaned = _sanitize_text(value, limit * 4)
+    if len(cleaned) <= limit:
+        return cleaned
+    head = cleaned[: limit - 1]
+    cut = head.rfind(" ")
+    if cut > limit // 2:
+        head = head[:cut]
+    return head.rstrip(" ,;:—-") + "…"
 
 
 def _extract_json(raw: str) -> dict[str, Any] | None:
@@ -238,12 +256,12 @@ def generate_workspace_insights(
                 themes = _recurring_names(team_themes)
             raw_recs = parsed.get("recommendations")
             recs = [
-                _sanitize_text(r, 160)
+                _clip_sentence(r, MAX_RECOMMENDATION_CHARS)
                 for r in (raw_recs if isinstance(raw_recs, list) else [])
                 if isinstance(r, str) and r.strip()
             ][:5]
             return {
-                "summary_text": _sanitize_text(parsed["summary_text"], 600),
+                "summary_text": _clip_sentence(parsed["summary_text"], MAX_INSIGHT_SUMMARY_CHARS),
                 "recurring_themes": themes,
                 "recommendations": recs,
                 "boards_analyzed": len(sanitized_snapshot),

@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import type { BoardListItem } from '@/types'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 
 export interface CommandBoardAction {
   id: string
@@ -81,7 +81,15 @@ export default function CommandPalette({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent layout="structured" className="max-w-xl" hideClose>
-        <Command className="flex min-w-0 flex-1 flex-col overflow-hidden bg-popover text-popover-foreground">
+        {/* Заголовок и описание — для экранных дикторов: зрячим окно понятно по полю поиска */}
+        <DialogTitle className="sr-only">Палитра команд</DialogTitle>
+        <DialogDescription className="sr-only">
+          Поиск досок, карточек и команд. Стрелки — выбор, Enter — открыть, Esc — закрыть.
+        </DialogDescription>
+        <Command
+          label="Палитра команд"
+          className="flex min-w-0 flex-1 flex-col overflow-hidden bg-popover text-popover-foreground"
+        >
           <div className="flex shrink-0 items-center gap-2.5 border-b border-border/70 px-4">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <Command.Input
@@ -121,7 +129,7 @@ export default function CommandPalette({
               >
                 <span className="flex items-center gap-2.5">
                   <BarChart3 className="h-4 w-4 shrink-0 text-primary" />
-                  <span>Панель управления и задачи</span>
+                  <span>Панель управления</span>
                 </span>
               </Command.Item>
               <Command.Item

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
 import { ChevronLeft, ChevronRight, ListTodo, Sparkles, ThumbsUp, User } from 'lucide-react'
 import { getCardColorPreset, getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
@@ -13,6 +13,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -28,6 +29,10 @@ interface SpotlightModalProps {
   card: Card | null
   column?: Column
   anonymous: boolean
+  /**
+   * Участник управляет фокусом (ведущий сессии, а вне сессии — любой): для него закрытие окна
+   * снимает фокус у всех (`onClose`). Остальные закрывают окно только у себя.
+   */
   isFacilitator: boolean
   /** Идентификатор текущего участника: по нему считаются «мои» голоса и «моя» карточка. */
   currentUserId: string
@@ -62,6 +67,17 @@ export default function SpotlightModal({
   onCreateActionItem,
   onLike,
 }: SpotlightModalProps) {
+  // Участник закрыл окно у себя: фокус ведущего остаётся, доска снова доступна. Пока ведущий
+  // листает карточки, окно не всплывает заново; новый фокус (после снятия) откроет его снова.
+  const hasCard = Boolean(card)
+  const [dismissed, setDismissed] = useState(false)
+  const [hadCard, setHadCard] = useState(hasCard)
+  if (hasCard !== hadCard) {
+    setHadCard(hasCard)
+    if (!hasCard) setDismissed(false)
+  }
+  const hiddenLocally = dismissed && !isFacilitator
+
   const currentIdx = card ? queueCards.findIndex((item) => item.card.id === card.id) : -1
   const prevItem =
     currentIdx >= 0 && queueCards.length > 1
@@ -105,12 +121,47 @@ export default function SpotlightModal({
   const voteDisabled = readOnly || limitReached
   const showAuthor = !anonymous || isOwnCard(card, currentUserId)
 
+  // Крестик, Esc и клик по фону: у управляющего фокусом снимают его для всех,
+  // у остальных только прячут окно на своём экране
+  const handleDismiss = () => {
+    if (isFacilitator) onClose()
+    else setDismissed(true)
+  }
+
+  if (hiddenLocally) {
+    // Строка в потоке страницы, а не плавающая плашка: доска — колонка на всю высоту экрана,
+    // и строка встаёт под ней, ничего не перекрывая (ни карточки, ни «Добавить карточку»)
+    return (
+      <div
+        role="status"
+        data-testid="spotlight-minimized"
+        className="no-print flex shrink-0 items-center justify-center gap-2 border-t bg-primary/5 px-3 py-1.5 text-xs"
+      >
+        <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <span className="min-w-0 truncate">
+          <span className="font-medium">В фокусе обсуждения: </span>
+          <span className="text-muted-foreground">
+            <RichCardText text={card.text} />
+          </span>
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-6 shrink-0 px-2.5 text-[11px]"
+          onClick={() => setDismissed(false)}
+        >
+          Открыть
+        </Button>
+      </div>
+    )
+  }
+
   return (
-    <Dialog open={Boolean(card)} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && handleDismiss()}>
       <DialogContent
         layout="structured"
         className="max-w-2xl"
-        hideClose={!isFacilitator}
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <DialogHeader className="gap-3">
@@ -135,6 +186,12 @@ export default function SpotlightModal({
               </Badge>
             )}
           </div>
+
+          <DialogDescription className="text-xs">
+            {isFacilitator
+              ? 'Карточку видят все участники. Закрытие окна снимает фокус у всех.'
+              : 'Карточку показывает ведущий. Окно можно закрыть у себя — фокус останется, пока ведущий его не снимет.'}
+          </DialogDescription>
 
           {isFacilitator && queueCards.length > 1 && onSelectCard && (
             <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
@@ -302,9 +359,19 @@ export default function SpotlightModal({
               </Button>
             )}
           </div>
-          {isFacilitator && (
+          {isFacilitator ? (
             <Button type="button" onClick={onClose} className="shrink-0">
               Снять фокус для всех
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleDismiss}
+              className="shrink-0"
+              data-testid="spotlight-close-local-btn"
+            >
+              Закрыть у себя
             </Button>
           )}
         </DialogFooter>

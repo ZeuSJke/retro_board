@@ -794,10 +794,10 @@ describe('useBoardWebSocket', () => {
     setup({ onSummaryGenerated })
 
     emit('summary_generated', { summary_text: 'Итоги' })
-    expect(onSummaryGenerated).toHaveBeenLastCalledWith({ regenerated: false })
+    expect(onSummaryGenerated).toHaveBeenLastCalledWith(false)
 
     emit('summary_generated', { summary: {}, board_id: 'board-1', regenerated: true })
-    expect(onSummaryGenerated).toHaveBeenLastCalledWith({ regenerated: true })
+    expect(onSummaryGenerated).toHaveBeenLastCalledWith(true)
   })
 
   it('при подключении запрашивает состав доски, не называя себя: личность задаёт сессия', () => {
