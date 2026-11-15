@@ -131,7 +131,7 @@ export default function HealthSummaryView({ summary, myAnswers }: HealthSummaryV
       )}
 
       <p className="text-xs text-muted-foreground">
-        Ответы анонимны: команда видит только общее распределение.
+        Команда видит только общее распределение ответов, без имён.
       </p>
     </div>
   )

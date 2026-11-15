@@ -155,7 +155,7 @@ function HealthCheckBody({
           })}
         </ul>
         <p className="mt-3 text-xs text-muted-foreground">
-          Ответы анонимны: команда видит только общую сводку.
+          Команда видит только общую сводку, без имён.
           {summary.participants > 0 && ` Уже ответили: ${summary.participants}.`}
         </p>
       </DialogBody>

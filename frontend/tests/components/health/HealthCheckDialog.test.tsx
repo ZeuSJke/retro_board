@@ -116,7 +116,7 @@ describe('HealthCheckDialog', () => {
     expect(within(summary).getByTestId('health-summary-clarity')).toHaveTextContent('Ясность целей')
     // В сводке только распределение — имён участников нет
     expect(summary.textContent).not.toContain('Анна')
-    expect(within(summary).getByText(/Ответы анонимны/)).toBeInTheDocument()
+    expect(within(summary).getByText(/без имён/)).toBeInTheDocument()
   })
 
   it('сводка обновляется по событию health_updated, пока окно открыто', async () => {
