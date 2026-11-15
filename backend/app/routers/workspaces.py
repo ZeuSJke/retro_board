@@ -211,11 +211,20 @@ async def rename_participant(
     return out
 
 
+def _require_human_participant(
+    participant: models.Participant = Depends(get_current_participant),
+) -> models.Participant:
+    if (participant.kind or "human") != "human":
+        raise HTTPException(403, "Агенты не могут управлять токенами")
+    return participant
+
+
 @router.get("/agent-tokens", response_model=list[schemas.AgentTokenOut])
 @limiter.limit(TEAM_READ_LIMIT)
 def list_workspace_agent_tokens(
     request: Request,
     db: Session = Depends(get_db),
+    _participant: models.Participant = Depends(_require_human_participant),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Список токенов MCP-агентов текущей команды."""
@@ -228,12 +237,10 @@ def create_workspace_agent_token(
     request: Request,
     body: schemas.AgentTokenCreate,
     db: Session = Depends(get_db),
-    participant: models.Participant = Depends(get_current_participant),
+    participant: models.Participant = Depends(_require_human_participant),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Выпустить новый токен MCP-агента для текущей команды."""
-    if (participant.kind or "human") != "human":
-        raise HTTPException(403, "Агенты не могут выпускать новые токены")
     token, secret = agent_token_service.create_agent_token(
         db,
         workspace.id,
@@ -253,6 +260,7 @@ def revoke_workspace_agent_token(
     request: Request,
     token_id: str,
     db: Session = Depends(get_db),
+    _participant: models.Participant = Depends(_require_human_participant),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Отозвать токен MCP-агента текущей команды."""

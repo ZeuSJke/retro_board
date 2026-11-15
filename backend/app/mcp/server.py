@@ -2,9 +2,10 @@
 
 from contextlib import asynccontextmanager
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
+import anyio
 from fastapi import HTTPException
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -32,7 +33,7 @@ from app.services import action_items as action_items_service
 from app.services import agent_tokens as agent_token_service
 from app.services import boards as boards_service
 from app.services import cards as cards_service
-from app.services.common import find_live_board
+from app.services.common import BroadcastAction, dispatch_broadcasts, find_live_board
 
 logger = logging.getLogger(__name__)
 
@@ -138,15 +139,23 @@ def _run_sync_tool(fn: Callable[[Any, AgentContext], Any]):
         raise ToolError(_format_validation_error(exc)) from exc
 
 
-async def _run_async_tool(fn: Callable[[Any, AgentContext], Awaitable[Any]]):
+async def _run_write_tool(
+    fn: Callable[[Any, AgentContext], tuple[Any, list[BroadcastAction]]],
+):
     ctx = get_agent_context()
-    try:
-        with open_db_session() as db:
-            return await fn(db, ctx)
-    except HTTPException as exc:
-        raise ToolError(str(exc.detail)) from exc
-    except ValidationError as exc:
-        raise ToolError(_format_validation_error(exc)) from exc
+
+    def _run_db() -> tuple[Any, list[BroadcastAction]]:
+        try:
+            with open_db_session() as db:
+                return fn(db, ctx)
+        except HTTPException as exc:
+            raise ToolError(str(exc.detail)) from exc
+        except ValidationError as exc:
+            raise ToolError(_format_validation_error(exc)) from exc
+
+    result, broadcasts = await anyio.to_thread.run_sync(_run_db)
+    await dispatch_broadcasts(broadcasts)
+    return result
 
 
 def _require_write_scope(ctx: AgentContext, tool_name: str) -> None:
@@ -421,7 +430,7 @@ async def create_board(
 ) -> dict[str, Any]:
     """Создать новую доску ретроспективы (при `carry_forward_items=True` переносит нерешённые задачи)."""
 
-    async def _op(db, ctx: AgentContext):
+    def _op(db, ctx: AgentContext):
         _require_write_scope(ctx, "create_board")
         participant = _load_agent_participant(db, ctx)
         body = schemas.BoardCreate(
@@ -435,16 +444,16 @@ async def create_board(
             allow_multiple_votes_per_card=allow_multiple_votes_per_card,
             custom_columns=custom_columns,
         )
-        view = await boards_service.create_board_for_workspace(
+        view, broadcasts = boards_service.create_board_sync(
             db,
             ctx.workspace_id,
             participant,
             body,
             source_board_id_or_slug=source_board_id_or_slug,
         )
-        return schemas.BoardOut.model_validate(view).model_dump(mode="json")
+        return schemas.BoardOut.model_validate(view).model_dump(mode="json"), broadcasts
 
-    return await _run_async_tool(_op)
+    return await _run_write_tool(_op)
 
 
 @mcp.tool(annotations=_WRITE_ADDITIVE_ANNOTATIONS)
@@ -455,11 +464,11 @@ async def create_card(
 ) -> dict[str, Any]:
     """Добавить карточку в колонку от имени агента (`author_kind="agent"`)."""
 
-    async def _op(db, ctx: AgentContext):
+    def _op(db, ctx: AgentContext):
         _require_write_scope(ctx, "create_card")
         participant = _load_agent_participant(db, ctx)
         body = schemas.CardCreate(column_id=column_id, text=text, color=color)
-        view = await cards_service.create_card_for_participant(
+        view, broadcasts = cards_service.create_card_sync(
             db,
             ctx.workspace_id,
             participant,
@@ -467,9 +476,9 @@ async def create_card(
             text=body.text,
             color=body.color,
         )
-        return schemas.CardOut.model_validate(view).model_dump(mode="json")
+        return schemas.CardOut.model_validate(view).model_dump(mode="json"), broadcasts
 
-    return await _run_async_tool(_op)
+    return await _run_write_tool(_op)
 
 
 @mcp.tool(annotations=_WRITE_UPDATE_ANNOTATIONS)
@@ -484,7 +493,7 @@ async def group_cards(
     заблокирована или карточки ещё скрыты до раскрытия.
     """
 
-    async def _op(db, ctx: AgentContext):
+    def _op(db, ctx: AgentContext):
         _require_write_scope(ctx, "group_cards")
         if group_title is None and group_id is None:
             raise ToolError(
@@ -507,7 +516,7 @@ async def group_cards(
             group_id=normalized_gid,
         )
         participant = _load_agent_participant(db, ctx)
-        views = await cards_service.bulk_update_cards_for_workspace(
+        views, broadcasts = cards_service.bulk_update_cards_sync(
             db,
             ctx.workspace_id,
             participant,
@@ -517,9 +526,9 @@ async def group_cards(
             group_id=payload.group_id,
             require_visible_for_grouping=True,
         )
-        return [schemas.CardOut.model_validate(v).model_dump(mode="json") for v in views]
+        return [schemas.CardOut.model_validate(v).model_dump(mode="json") for v in views], broadcasts
 
-    return await _run_async_tool(_op)
+    return await _run_write_tool(_op)
 
 
 @mcp.tool(annotations=_WRITE_ADDITIVE_ANNOTATIONS)
@@ -534,7 +543,7 @@ async def create_action_item(
 ) -> dict[str, Any]:
     """Создать action item на незаблокированной доске (с опциональной внешней ссылкой)."""
 
-    async def _op(db, ctx: AgentContext):
+    def _op(db, ctx: AgentContext):
         _require_write_scope(ctx, "create_action_item")
         body = schemas.ActionItemCreate(
             board_id=board_id_or_slug,
@@ -545,7 +554,7 @@ async def create_action_item(
             source_card_ids=list(source_card_ids or []),
             status=status,
         )
-        out = await action_items_service.create_action_item_for_workspace(
+        out, broadcasts = action_items_service.create_action_item_sync(
             db,
             ctx.workspace_id,
             board_id_or_slug=board_id_or_slug,
@@ -557,9 +566,9 @@ async def create_action_item(
             status=body.status,
             require_unlocked=True,
         )
-        return out.model_dump(mode="json")
+        return out.model_dump(mode="json"), broadcasts
 
-    return await _run_async_tool(_op)
+    return await _run_write_tool(_op)
 
 
 @mcp.tool(annotations=_WRITE_UPDATE_ANNOTATIONS)
@@ -577,7 +586,7 @@ async def update_action_item(
     На заблокированной доске (`is_locked=True`) разрешено менять только `status` и `external_url`.
     """
 
-    async def _op(db, ctx: AgentContext):
+    def _op(db, ctx: AgentContext):
         _require_write_scope(ctx, "update_action_item")
         provided: set[str] = set()
         patch_data: dict[str, Any] = {}
@@ -601,7 +610,7 @@ async def update_action_item(
             raise ToolError("Укажите хотя бы одно поле для обновления")
 
         body = schemas.ActionItemUpdate(**patch_data)
-        out = await action_items_service.update_action_item_for_workspace(
+        out, broadcasts = action_items_service.update_action_item_sync(
             db,
             ctx.workspace_id,
             item_id=item_id,
@@ -613,9 +622,9 @@ async def update_action_item(
             status=body.status,
             restrict_locked_fields=True,
         )
-        return out.model_dump(mode="json")
+        return out.model_dump(mode="json"), broadcasts
 
-    return await _run_async_tool(_op)
+    return await _run_write_tool(_op)
 
 
 @mcp.tool(annotations=_WRITE_UPDATE_ANNOTATIONS)
@@ -632,14 +641,22 @@ async def save_summary(
     иначе обновляется последний сохранённый итог доски или создаётся первый.
     """
 
-    async def _op(db, ctx: AgentContext):
+    def _op(db, ctx: AgentContext):
         _require_write_scope(ctx, "save_summary")
         cleaned_text = summary_text.strip()
         if not cleaned_text:
             raise ToolError("Текст итогов не должен быть пустым")
         if len(cleaned_text) > 10000:
             raise ToolError("Текст итогов не должен превышать 10000 символов")
-        cleaned_recs = [r.strip() for r in (recommendations or []) if isinstance(r, str) and r.strip()][:20]
+        cleaned_recs: list[str] = []
+        for raw_rec in recommendations or []:
+            if isinstance(raw_rec, str) and raw_rec.strip():
+                rec = raw_rec.strip()
+                if len(rec) > 500:
+                    raise ToolError("Каждая рекомендация не должна превышать 500 символов")
+                cleaned_recs.append(rec)
+                if len(cleaned_recs) >= 20:
+                    break
         cleaned_keys = [k.strip() for k in (key_themes or []) if isinstance(k, str) and k.strip()][:12]
         cleaned_themes: list[dict[str, str]] = []
         for item in themes_payload or []:
@@ -651,7 +668,7 @@ async def save_summary(
                 if len(cleaned_themes) >= 12:
                     break
 
-        out = await boards_service.save_board_summary_for_workspace(
+        out, broadcasts = boards_service.save_board_summary_sync(
             db,
             ctx.workspace_id,
             board_id_or_slug=board_id_or_slug,
@@ -661,9 +678,9 @@ async def save_summary(
             recommendations=cleaned_recs,
             require_unlocked=True,
         )
-        return out.model_dump(mode="json")
+        return out.model_dump(mode="json"), broadcasts
 
-    return await _run_async_tool(_op)
+    return await _run_write_tool(_op)
 
 
 # ── MCP Prompts ──────────────────────────────────────────────────────────────
@@ -743,6 +760,23 @@ async def mcp_lifespan():
         _state.session_manager = None
 
 
+def _authenticate_agent_sync(raw_token: str) -> AgentContext | None:
+    with open_db_session() as db:
+        resolved = agent_token_service.resolve_agent_token(db, raw_token)
+        if resolved is None:
+            return None
+        token_row, workspace, participant = resolved
+        return AgentContext(
+            token_id=token_row.id,
+            workspace_id=workspace.id,
+            workspace_slug=workspace.slug,
+            workspace_name=workspace.name,
+            participant_id=participant.id,
+            agent_name=token_row.name,
+            scope=token_row.scope,
+        )
+
+
 class MCPASGIApp:
     """ASGI-шлюз `/mcp`: Bearer-аутентификация, rate-limit и защита GET в stateless-режиме."""
 
@@ -756,9 +790,9 @@ class MCPASGIApp:
         method = (scope.get("method") or "GET").upper()
         if method == "GET":
             response = JSONResponse(
-                {"detail": "Method Not Allowed: stateless MCP endpoint supports POST and DELETE"},
+                {"detail": "Method Not Allowed: stateless MCP endpoint supports POST"},
                 status_code=405,
-                headers={"Allow": "POST, DELETE", "Cache-Control": "no-store"},
+                headers={"Allow": "POST", "Cache-Control": "no-store"},
             )
             await response(scope, receive, send)
             return
@@ -783,35 +817,23 @@ class MCPASGIApp:
             await resp(scope, receive, send)
             return
 
-        with open_db_session() as db:
-            resolved = agent_token_service.resolve_agent_token(db, raw_token)
-            if resolved is None:
-                if not mcp_rate_limiter.allow_auth_failure(client_ip):
-                    resp = JSONResponse(
-                        {"detail": "Слишком много неудачных попыток входа"},
-                        status_code=429,
-                        headers={"Retry-After": "60"},
-                    )
-                    await resp(scope, receive, send)
-                    return
+        agent_ctx = await anyio.to_thread.run_sync(_authenticate_agent_sync, raw_token)
+        if agent_ctx is None:
+            if not mcp_rate_limiter.allow_auth_failure(client_ip):
                 resp = JSONResponse(
-                    {"detail": "Токен агента недействителен или отозван"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": 'Bearer realm="RetroBoard MCP"'},
+                    {"detail": "Слишком много неудачных попыток входа"},
+                    status_code=429,
+                    headers={"Retry-After": "60"},
                 )
                 await resp(scope, receive, send)
                 return
-
-            token_row, workspace, participant = resolved
-            agent_ctx = AgentContext(
-                token_id=token_row.id,
-                workspace_id=workspace.id,
-                workspace_slug=workspace.slug,
-                workspace_name=workspace.name,
-                participant_id=participant.id,
-                agent_name=token_row.name,
-                scope=token_row.scope,
+            resp = JSONResponse(
+                {"detail": "Токен агента недействителен или отозван"},
+                status_code=401,
+                headers={"WWW-Authenticate": 'Bearer realm="RetroBoard MCP"'},
             )
+            await resp(scope, receive, send)
+            return
 
         if not mcp_rate_limiter.allow_token(agent_ctx.token_id):
             resp = JSONResponse(

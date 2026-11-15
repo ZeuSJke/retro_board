@@ -258,3 +258,66 @@ def test_csrf_protects_agent_token_routes_when_enabled(db_session, test_workspac
     finally:
         settings.csrf_enabled = prev_csrf
         app.dependency_overrides.clear()
+
+
+def test_agent_participant_cannot_manage_agent_tokens_via_workspace_api(
+    client, db_session, test_workspace, workspace_headers
+):
+    from app.workspace_auth import create_workspace_token
+
+    created = client.post(
+        "/api/workspaces/agent-tokens",
+        json={"name": "Bot", "scope": "read_write"},
+        headers=workspace_headers,
+    ).json()
+    bot_pid = created["token"]["participant_id"]
+    token_id = created["token"]["id"]
+
+    bot_jwt = create_workspace_token(
+        test_workspace.id,
+        test_workspace.slug,
+        test_workspace.name,
+        bot_pid,
+        test_workspace.token_epoch,
+    )
+    bot_headers = {"X-Workspace-Token": bot_jwt}
+
+    assert client.get("/api/workspaces/agent-tokens", headers=bot_headers).status_code == 403
+    assert (
+        client.post(
+            "/api/workspaces/agent-tokens",
+            json={"name": "Nested", "scope": "read_only"},
+            headers=bot_headers,
+        ).status_code
+        == 403
+    )
+    assert client.delete(f"/api/workspaces/agent-tokens/{token_id}", headers=bot_headers).status_code == 403
+
+
+def test_mcp_sliding_window_limiter_prunes_stale_and_bounds_buckets(monkeypatch):
+    from app.limiter import limiter
+    from app.mcp import rate_limit
+
+    prev_enabled = limiter.enabled
+    limiter.enabled = True
+    try:
+        clock = [100.0]
+        monkeypatch.setattr(rate_limit.time, "monotonic", lambda: clock[0])
+
+        sw = rate_limit.SlidingWindowLimiter(max_buckets=3)
+        assert sw.allow_auth_failure("10.0.0.1")
+        assert sw.allow_auth_failure("10.0.0.2")
+        assert sw.allow_auth_failure("10.0.0.3")
+        assert len(sw._buckets) == 3
+
+        # 4-й активный ключ вытесняет самый старый, словарь не растёт
+        assert sw.allow_auth_failure("10.0.0.4")
+        assert len(sw._buckets) == 3
+        assert "auth-fail:10.0.0.1" not in sw._buckets
+
+        # По истечении окна просроченные бакеты вычищаются при следующем обращении
+        clock[0] = 200.0
+        assert sw.allow_auth_failure("10.0.0.5")
+        assert list(sw._buckets.keys()) == ["auth-fail:10.0.0.5"]
+    finally:
+        limiter.enabled = prev_enabled

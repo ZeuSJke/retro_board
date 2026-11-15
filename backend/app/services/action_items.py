@@ -7,8 +7,9 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+from app.database import release_connection
 from app.models import now_utc
-from app.services.common import find_live_board
+from app.services.common import BroadcastAction, dispatch_broadcasts, find_live_board
 from app.utils import get_or_404, require_live_board
 from app.ws_manager import manager
 
@@ -112,7 +113,7 @@ def list_workspace_action_items(
     return items, total
 
 
-async def create_action_item_for_workspace(
+def create_action_item_sync(
     db: Session,
     workspace_id: str,
     *,
@@ -124,18 +125,19 @@ async def create_action_item_for_workspace(
     source_card_ids: list[str] | None = None,
     status: str = "open",
     require_unlocked: bool = False,
-) -> schemas.ActionItemOut:
-    """Создать задачу на доске (по ID или slug) и разослать событие по WebSocket."""
+) -> tuple[schemas.ActionItemOut, list[BroadcastAction]]:
+    """Создать задачу на доске (по ID или slug) в синхронной транзакции."""
     board = find_live_board(
         db, board_id_or_slug, workspace_id, require_unlocked=require_unlocked
     )
+    board_id = board.id
     card_ids = list(source_card_ids or [])
     if card_ids:
         valid_cards = (
             db.query(models.Card.id)
             .join(models.Column, models.Card.column_id == models.Column.id)
             .filter(
-                models.Column.board_id == board.id,
+                models.Column.board_id == board_id,
                 models.Card.id.in_(card_ids),
             )
             .all()
@@ -150,7 +152,7 @@ async def create_action_item_for_workspace(
 
     item = models.ActionItem(
         id=str(uuid.uuid4()),
-        board_id=board.id,
+        board_id=board_id,
         title=title,
         text=text,
         assignee=assignee,
@@ -163,13 +165,46 @@ async def create_action_item_for_workspace(
     db.commit()
     db.refresh(item)
     out = schemas.ActionItemOut.model_validate(item)
-    await manager.broadcast(
-        board.id, "action_item_created", out.model_dump(mode="json")
+    payload = out.model_dump(mode="json")
+
+    async def _send() -> None:
+        await manager.broadcast(board_id, "action_item_created", payload)
+
+    return out, [_send]
+
+
+async def create_action_item_for_workspace(
+    db: Session,
+    workspace_id: str,
+    *,
+    board_id_or_slug: str,
+    title: str,
+    text: str,
+    assignee: str | None = None,
+    external_url: str | None = None,
+    source_card_ids: list[str] | None = None,
+    status: str = "open",
+    require_unlocked: bool = False,
+) -> schemas.ActionItemOut:
+    """Создать задачу на доске (по ID или slug) и разослать событие по WebSocket."""
+    out, broadcasts = create_action_item_sync(
+        db,
+        workspace_id,
+        board_id_or_slug=board_id_or_slug,
+        title=title,
+        text=text,
+        assignee=assignee,
+        external_url=external_url,
+        source_card_ids=source_card_ids,
+        status=status,
+        require_unlocked=require_unlocked,
     )
+    release_connection(db)
+    await dispatch_broadcasts(broadcasts)
     return out
 
 
-async def update_action_item_for_workspace(
+def update_action_item_sync(
     db: Session,
     workspace_id: str,
     *,
@@ -181,12 +216,14 @@ async def update_action_item_for_workspace(
     external_url: str | None = None,
     status: str | None = None,
     restrict_locked_fields: bool = False,
-) -> schemas.ActionItemOut:
-    """Обновить задачу и разослать `action_item_updated` по WebSocket."""
+) -> tuple[schemas.ActionItemOut, list[BroadcastAction]]:
+    """Обновить задачу в синхронной транзакции."""
     item = get_or_404(db, models.ActionItem, item_id, "Задача не найдена")
     board = require_live_board(
         db.get(models.Board, item.board_id), workspace_id, "Задача не найдена"
     )
+    if item.superseded_by_id is not None:
+        raise HTTPException(409, "Перенесённую задачу нельзя изменять")
     if restrict_locked_fields and board.is_locked:
         forbidden = _LOCKED_ACTION_ITEM_FIELDS & provided_fields
         if forbidden:
@@ -207,10 +244,44 @@ async def update_action_item_for_workspace(
         item.status = status
         item.completed_at = now_utc() if status == "done" else None
 
+    board_id = item.board_id
     db.commit()
     db.refresh(item)
     out = schemas.ActionItemOut.model_validate(item)
-    await manager.broadcast(
-        item.board_id, "action_item_updated", out.model_dump(mode="json")
+    payload = out.model_dump(mode="json")
+
+    async def _send() -> None:
+        await manager.broadcast(board_id, "action_item_updated", payload)
+
+    return out, [_send]
+
+
+async def update_action_item_for_workspace(
+    db: Session,
+    workspace_id: str,
+    *,
+    item_id: str,
+    provided_fields: set[str],
+    title: str | None = None,
+    text: str | None = None,
+    assignee: str | None = None,
+    external_url: str | None = None,
+    status: str | None = None,
+    restrict_locked_fields: bool = False,
+) -> schemas.ActionItemOut:
+    """Обновить задачу и разослать `action_item_updated` по WebSocket."""
+    out, broadcasts = update_action_item_sync(
+        db,
+        workspace_id,
+        item_id=item_id,
+        provided_fields=provided_fields,
+        title=title,
+        text=text,
+        assignee=assignee,
+        external_url=external_url,
+        status=status,
+        restrict_locked_fields=restrict_locked_fields,
     )
+    release_connection(db)
+    await dispatch_broadcasts(broadcasts)
     return out

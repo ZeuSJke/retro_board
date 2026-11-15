@@ -104,4 +104,66 @@ describe('экспорт — задачи', () => {
     // Статус «Открыто» остался только у первой задачи
     expect(html.match(/>Открыто</g)).toHaveLength(1)
   })
+
+  it('сохраняет имя агента в анонимном режиме и выводит только безопасные external_url', () => {
+    const anonBoard: Board = {
+      ...board,
+      anonymous_votes: true,
+      columns: [
+        {
+          id: 'c1',
+          board_id: 'b-1',
+          title: 'Итоги',
+          color: '#006E1C',
+          position: 0,
+          groups: [],
+          cards: [
+            {
+              id: 'k-human',
+              column_id: 'c1',
+              group_id: null,
+              text: 'Нужен CI',
+              author: 'Участник',
+              author_id: null,
+              author_kind: 'human',
+              color: '#FFFFFF',
+              position: 0,
+              likes: [],
+              masked: false,
+              created_at: '2026-03-01T10:00:00Z',
+            },
+            {
+              id: 'k-agent',
+              column_id: 'c1',
+              group_id: null,
+              text: 'Снижен flakiness',
+              author: 'Retro Bot',
+              author_id: null,
+              author_kind: 'agent',
+              color: '#FFFFFF',
+              position: 1,
+              likes: [],
+              masked: false,
+              created_at: '2026-03-01T10:01:00Z',
+            },
+          ],
+        },
+      ],
+    }
+    const items = [
+      task('safe', { external_url: 'https://tracker.yandex.ru/RETRO-88' }),
+      task('unsafe', { external_url: 'javascript:alert(1)' }),
+    ]
+
+    const md = formatBoardMarkdown(anonBoard, items)
+    expect(md).toContain('- Нужен CI\n')
+    expect(md).toContain('- Снижен flakiness — *Retro Bot (агент)*')
+    expect(md).toContain('[tracker.yandex.ru/RETRO-88](https://tracker.yandex.ru/RETRO-88)')
+    expect(md).not.toContain('javascript:')
+
+    const html = buildBoardPDFHtml(anonBoard, anonBoard.columns, items)
+    expect(html).toContain('Retro Bot (агент)')
+    expect(html).toContain('href="https://tracker.yandex.ru/RETRO-88"')
+    expect(html).not.toContain('javascript:alert')
+  })
 })

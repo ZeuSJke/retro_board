@@ -166,6 +166,7 @@ function AgentTokensContent({
       const updated = await adapter.revoke(tokenId)
       setTokens((prev) => (prev ?? []).map((t) => (t.id === tokenId ? updated : t)))
       setConfirmRevokeId(null)
+      setJustCreated((prev) => (prev?.token.id === tokenId ? null : prev))
       showToast('Токен отозван и сразу перестал работать', 'success')
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Не удалось отозвать токен'), 'error')

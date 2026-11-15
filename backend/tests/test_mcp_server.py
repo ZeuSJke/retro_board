@@ -95,7 +95,7 @@ def test_mcp_transport_auth_and_csrf_rules(client, test_workspace, workspace_hea
     # GET /mcp запрещён (stateless mode -> без открытого SSE-потока)
     get_resp = client.get("/mcp")
     assert get_resp.status_code == 405
-    assert "POST" in get_resp.headers.get("allow", "")
+    assert get_resp.headers.get("allow") == "POST"
 
     # Без Bearer или с неверным/cookie-токеном -> 401
     init_body = {
@@ -642,11 +642,146 @@ def test_mcp_workspace_isolation(
     )
     assert err_board
 
+    # DELETE /mcp в stateless_http=True отклоняется по протоколу (405 Method Not Allowed)
+    del_resp = client.delete(
+        "/mcp",
+        headers={
+            **_MCP_HEADERS_BASE,
+            "Authorization": f"Bearer {other_token}",
+            "MCP-Protocol-Version": "2025-11-25",
+        },
+    )
+    assert del_resp.status_code == 405
+
     col_id = client.get(f"/api/boards/{sample_board['id']}", headers=workspace_headers).json()["columns"][0]["id"]
     err_card, _, _ = _call_tool(
         client, other_token, "create_card", {"column_id": col_id, "text": "Чужая доска"}
     )
     assert err_card
+
+
+def test_mcp_summary_merges_themes_caps_rec_and_handles_race(
+    client, db_session, workspace_headers, sample_board
+):
+    from sqlalchemy.exc import IntegrityError
+
+    from app.services import boards as boards_service
+
+    secret = _create_token(client, workspace_headers, "Summary Bot", "read_write")["secret"]
+
+    # Слишком длинная рекомендация отклоняется явной ошибкой
+    err_long, long_msg, _ = _call_tool(
+        client,
+        secret,
+        "save_summary",
+        {
+            "board_id_or_slug": sample_board["id"],
+            "summary_text": "Итоги спринта",
+            "recommendations": ["x" * 501],
+        },
+    )
+    assert err_long
+    assert "500" in str(long_msg)
+
+    # Одновременная передача themes_payload и key_themes сохраняет оба источника без дублей
+    err_ok, summary, _ = _call_tool(
+        client,
+        secret,
+        "save_summary",
+        {
+            "board_id_or_slug": sample_board["id"],
+            "summary_text": "Релиз прошёл стабильно",
+            "themes_payload": [{"name": "Автотесты", "description": "Нужны e2e"}],
+            "key_themes": ["Автотесты", "Мониторинг"],
+            "recommendations": ["Добавить алерты на латентность"],
+        },
+    )
+    assert not err_ok
+    assert summary["key_themes"] == ["Автотесты", "Мониторинг"]
+
+    # Имитация гонки INSERT при одинаковом (board_id, session_id): IntegrityError -> обновление существующей записи
+    board = db_session.get(models.Board, sample_board["id"])
+    assert board is not None
+    orig_commit = db_session.commit
+    failed_once = False
+
+    def _race_once_commit():
+        nonlocal failed_once
+        if not failed_once:
+            failed_once = True
+            raise IntegrityError("INSERT INTO board_summaries", {}, Exception("duplicate key"))
+        return orig_commit()
+
+    db_session.commit = _race_once_commit
+    try:
+        out, _broadcasts = boards_service.persist_board_summary_sync(
+            db_session,
+            board,
+            board.workspace_id,
+            summary_text="Обновлённый после гонки итог",
+            key_themes=["Мониторинг"],
+            recommendations=["Проверить логи"],
+            update_latest_when_no_session=True,
+        )
+    finally:
+        db_session.commit = orig_commit
+
+    assert failed_once
+    assert out.summary_text == "Обновлённый после гонки итог"
+    assert out.key_themes == ["Мониторинг"]
+
+
+def test_mcp_and_rest_block_updating_superseded_action_item(
+    client, workspace_headers, sample_board
+):
+    secret = _create_token(client, workspace_headers, "Carry Bot", "read_write")["secret"]
+
+    created_task = client.post(
+        "/api/action-items/",
+        json={
+            "board_id": sample_board["id"],
+            "title": "Старая задача",
+            "text": "Перенести в следующий спринт",
+        },
+        headers=workspace_headers,
+    )
+    assert created_task.status_code == 201
+    old_item_id = created_task.json()["id"]
+
+    # Создаём новую доску с переносом открытых задач -> оригинал получает superseded_by_id
+    err_b, new_board, _ = _call_tool(
+        client,
+        secret,
+        "create_board",
+        {
+            "name": "Следующий спринт",
+            "source_board_id_or_slug": sample_board["id"],
+            "carry_forward_items": True,
+        },
+    )
+    assert not err_b
+    err_items, carried_items, _ = _call_tool(
+        client, secret, "list_action_items", {"board_id_or_slug": new_board["id"]}
+    )
+    assert not err_items
+    assert len(carried_items["items"]) == 1
+
+    # Попытка обновить перенесённый оригинал отклоняется и по MCP, и по REST (409)
+    err_upd, err_msg, _ = _call_tool(
+        client,
+        secret,
+        "update_action_item",
+        {"item_id": old_item_id, "status": "done"},
+    )
+    assert err_upd
+    assert "Перенесённую задачу" in str(err_msg)
+
+    rest_resp = client.patch(
+        f"/api/action-items/{old_item_id}",
+        json={"status": "done"},
+        headers=workspace_headers,
+    )
+    assert rest_resp.status_code == 409
 
 
 @pytest.mark.anyio

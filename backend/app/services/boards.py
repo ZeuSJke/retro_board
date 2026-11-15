@@ -11,9 +11,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas, themes
 from app.board_view import board_view, require_cards_visible
+from app.database import release_connection
 from app.models import now_utc
 from app.services.action_items import copy_unresolved_action_items
-from app.services.common import find_live_board
+from app.services.common import BroadcastAction, dispatch_broadcasts, find_live_board
 from app.ws_manager import manager
 
 DEFAULT_COLUMNS = [
@@ -312,15 +313,15 @@ def get_board_view(
     return board_view(board, viewer_id, event_seq=seq_before)
 
 
-async def create_board_for_workspace(
+def create_board_sync(
     db: Session,
     workspace_id: str,
     participant: models.Participant,
     body: schemas.BoardCreate,
     *,
     source_board_id_or_slug: str | None = None,
-) -> dict:
-    """Создать доску команды, перенести открытые задачи и разослать `board_created`."""
+) -> tuple[dict, list[BroadcastAction]]:
+    """Создать доску команды в синхронной транзакции и вернуть вид + отложенную WS-рассылку."""
     existing = (
         db.query(models.Board)
         .filter(
@@ -371,6 +372,7 @@ async def create_board_for_workspace(
 
     slug = resolve_unique_slug(db, body.name, workspace_id)
     uid = str(uuid.uuid4())
+    participant_id = participant.id
     board = models.Board(
         id=uid,
         name=body.name,
@@ -382,7 +384,7 @@ async def create_board_for_workspace(
         allow_multiple_votes_per_card=body.allow_multiple_votes_per_card,
         workspace_id=workspace_id,
         # Агент не бывает ведущим в браузере — доской, подготовленной агентом, может управлять любой человек команды
-        created_by_id=None if (participant.kind or "human") == "agent" else participant.id,
+        created_by_id=None if (participant.kind or "human") == "agent" else participant_id,
     )
     db.add(board)
     try:
@@ -426,12 +428,33 @@ async def create_board_for_workspace(
     list_item = schemas.BoardListItem.model_validate(board)
     list_item.action_items_total = carried_count
     list_item.action_items_open = carried_count
-    await manager.broadcast_workspace(
+    payload = list_item.model_dump(mode="json")
+
+    async def _send() -> None:
+        await manager.broadcast_workspace(workspace_id, "board_created", payload)
+
+    return board_view(board, participant_id), [_send]
+
+
+async def create_board_for_workspace(
+    db: Session,
+    workspace_id: str,
+    participant: models.Participant,
+    body: schemas.BoardCreate,
+    *,
+    source_board_id_or_slug: str | None = None,
+) -> dict:
+    """Создать доску команды, перенести открытые задачи и разослать `board_created`."""
+    view, broadcasts = create_board_sync(
+        db,
         workspace_id,
-        "board_created",
-        list_item.model_dump(mode="json"),
+        participant,
+        body,
+        source_board_id_or_slug=source_board_id_or_slug,
     )
-    return board_view(board, participant.id)
+    release_connection(db)
+    await dispatch_broadcasts(broadcasts)
+    return view
 
 
 def get_board_summary_for_workspace(
@@ -459,7 +482,7 @@ def get_board_summary_for_workspace(
     return themes.summary_out(db, summary, workspace_id)
 
 
-async def persist_board_summary(
+def persist_board_summary_sync(
     db: Session,
     board: models.Board,
     workspace_id: str,
@@ -469,23 +492,25 @@ async def persist_board_summary(
     key_themes: list[str] | None = None,
     recommendations: list[str] | None = None,
     update_latest_when_no_session: bool = False,
-) -> schemas.BoardSummaryOut:
-    """Применить темы команды, сохранить или обновить BoardSummary и разослать WS."""
+) -> tuple[schemas.BoardSummaryOut, list[BroadcastAction]]:
+    """Применить темы команды, сохранить или обновить BoardSummary (синхронная транзакция)."""
+    board_id = board.id
+    recs = list(recommendations or [])
     ai_result = {
         "summary_text": summary_text,
         "themes": list(themes_payload or []),
         "key_themes": list(key_themes or []),
-        "recommendations": list(recommendations or []),
+        "recommendations": recs,
     }
-    theme_names = themes.apply_board_themes(db, workspace_id, board.id, ai_result)
+    theme_names = themes.apply_board_themes(db, workspace_id, board_id, ai_result)
 
-    active_session_id = manager.get_session_id(board.id) or board.active_session_id
+    active_session_id = manager.get_session_id(board_id) or board.active_session_id
     summary: models.BoardSummary | None = None
     if active_session_id is not None:
         summary = (
             db.query(models.BoardSummary)
             .filter(
-                models.BoardSummary.board_id == board.id,
+                models.BoardSummary.board_id == board_id,
                 models.BoardSummary.session_id == active_session_id,
             )
             .order_by(models.BoardSummary.created_at.desc())
@@ -496,7 +521,7 @@ async def persist_board_summary(
         if update_latest_when_no_session:
             summary = (
                 db.query(models.BoardSummary)
-                .filter(models.BoardSummary.board_id == board.id)
+                .filter(models.BoardSummary.board_id == board_id)
                 .order_by(models.BoardSummary.created_at.desc())
                 .first()
             )
@@ -509,28 +534,104 @@ async def persist_board_summary(
     if summary is not None:
         summary.summary_text = summary_text
         summary.key_themes = theme_names
-        summary.recommendations = list(recommendations or [])
+        summary.recommendations = recs
         summary.created_at = now_utc()
     else:
         summary = models.BoardSummary(
             id=str(uuid.uuid4()),
-            board_id=board.id,
+            board_id=board_id,
             session_id=session_id,
             summary_text=summary_text,
             key_themes=theme_names,
-            recommendations=list(recommendations or []),
+            recommendations=recs,
         )
         db.add(summary)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = (
+            db.query(models.BoardSummary)
+            .filter(
+                models.BoardSummary.board_id == board_id,
+                models.BoardSummary.session_id == session_id,
+            )
+            .first()
+        )
+        if existing is None:
+            raise
+        theme_names = themes.apply_board_themes(db, workspace_id, board_id, ai_result)
+        existing.summary_text = summary_text
+        existing.key_themes = theme_names
+        existing.recommendations = recs
+        existing.created_at = now_utc()
+        summary = existing
+        db.commit()
+
     db.refresh(summary)
     out = themes.summary_out(db, summary, workspace_id)
-    await manager.broadcast(
-        board.id,
-        "summary_generated",
-        {"summary": out.model_dump(mode="json"), "board_id": board.id, "regenerated": True},
+    payload = {"summary": out.model_dump(mode="json"), "board_id": board_id, "regenerated": True}
+
+    async def _send() -> None:
+        await manager.broadcast(board_id, "summary_generated", payload)
+
+    return out, [_send]
+
+
+async def persist_board_summary(
+    db: Session,
+    board: models.Board,
+    workspace_id: str,
+    *,
+    summary_text: str,
+    themes_payload: list[dict] | None = None,
+    key_themes: list[str] | None = None,
+    recommendations: list[str] | None = None,
+    update_latest_when_no_session: bool = False,
+) -> schemas.BoardSummaryOut:
+    """Применить темы команды, сохранить или обновить BoardSummary и разослать WS."""
+    out, broadcasts = persist_board_summary_sync(
+        db,
+        board,
+        workspace_id,
+        summary_text=summary_text,
+        themes_payload=themes_payload,
+        key_themes=key_themes,
+        recommendations=recommendations,
+        update_latest_when_no_session=update_latest_when_no_session,
     )
+    release_connection(db)
+    await dispatch_broadcasts(broadcasts)
     return out
+
+
+def save_board_summary_sync(
+    db: Session,
+    workspace_id: str,
+    *,
+    board_id_or_slug: str,
+    summary_text: str,
+    key_themes: list[str] | None = None,
+    themes_payload: list[dict] | None = None,
+    recommendations: list[str] | None = None,
+    require_unlocked: bool = True,
+) -> tuple[schemas.BoardSummaryOut, list[BroadcastAction]]:
+    """Сохранить или обновить итоги доски от агента (синхронная транзакция)."""
+    board = find_live_board(
+        db, board_id_or_slug, workspace_id, require_unlocked=require_unlocked
+    )
+    require_cards_visible(board)
+    return persist_board_summary_sync(
+        db,
+        board,
+        workspace_id,
+        summary_text=summary_text,
+        themes_payload=themes_payload,
+        key_themes=key_themes,
+        recommendations=recommendations,
+        update_latest_when_no_session=True,
+    )
 
 
 async def save_board_summary_for_workspace(
@@ -545,17 +646,16 @@ async def save_board_summary_for_workspace(
     require_unlocked: bool = True,
 ) -> schemas.BoardSummaryOut:
     """Сохранить или обновить итоги доски от агента и синхронизировать темы."""
-    board = find_live_board(
-        db, board_id_or_slug, workspace_id, require_unlocked=require_unlocked
-    )
-    require_cards_visible(board)
-    return await persist_board_summary(
+    out, broadcasts = save_board_summary_sync(
         db,
-        board,
         workspace_id,
+        board_id_or_slug=board_id_or_slug,
         summary_text=summary_text,
         themes_payload=themes_payload,
         key_themes=key_themes,
         recommendations=recommendations,
-        update_latest_when_no_session=True,
+        require_unlocked=require_unlocked,
     )
+    release_connection(db)
+    await dispatch_broadcasts(broadcasts)
+    return out

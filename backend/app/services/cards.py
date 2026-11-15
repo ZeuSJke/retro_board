@@ -8,12 +8,13 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas
 from app.board_view import (
-    broadcast_card,
+    card_broadcast_action,
     card_view,
     cards_hidden,
     require_cards_visible,
 )
-from app.services.common import find_live_board
+from app.database import release_connection
+from app.services.common import BroadcastAction, dispatch_broadcasts, find_live_board
 from app.utils import get_or_404, require_unlocked_board
 from app.ws_manager import manager
 
@@ -63,6 +64,45 @@ def prune_empty_groups(db: Session, group_ids: set[str]) -> list[dict]:
     return deleted_payloads
 
 
+def create_card_sync(
+    db: Session,
+    workspace_id: str,
+    participant: models.Participant,
+    *,
+    column_id: str,
+    text: str,
+    color: str = "#FFFFFF",
+) -> tuple[dict, list[BroadcastAction]]:
+    """Создать карточку от имени участника в синхронной транзакции."""
+    col = get_or_404(db, models.Column, column_id, "Колонка не найдена")
+    board = require_unlocked_board(
+        db.get(models.Board, col.board_id), workspace_id, "Колонка не найдена"
+    )
+    max_pos = (
+        db.query(func.max(models.Card.position))
+        .filter(models.Card.column_id == column_id)
+        .scalar()
+    )
+    participant_id = participant.id
+    card = models.Card(
+        id=str(uuid.uuid4()),
+        column_id=column_id,
+        text=text,
+        author=participant.name,
+        author_id=participant_id,
+        author_kind=participant.kind or "human",
+        color=color,
+        position=(max_pos if max_pos is not None else -1) + 1,
+        likes=[],
+    )
+    db.add(card)
+    db.commit()
+    db.refresh(card)
+    return card_view(card, board, participant_id), [
+        card_broadcast_action(board, "card_created", card)
+    ]
+
+
 async def create_card_for_participant(
     db: Session,
     workspace_id: str,
@@ -73,34 +113,20 @@ async def create_card_for_participant(
     color: str = "#FFFFFF",
 ) -> dict:
     """Создать карточку от имени участника (человека или агента) и разослать WS."""
-    col = get_or_404(db, models.Column, column_id, "Колонка не найдена")
-    board = require_unlocked_board(
-        db.get(models.Board, col.board_id), workspace_id, "Колонка не найдена"
-    )
-    max_pos = (
-        db.query(func.max(models.Card.position))
-        .filter(models.Card.column_id == column_id)
-        .scalar()
-    )
-    card = models.Card(
-        id=str(uuid.uuid4()),
+    view, broadcasts = create_card_sync(
+        db,
+        workspace_id,
+        participant,
         column_id=column_id,
         text=text,
-        author=participant.name,
-        author_id=participant.id,
-        author_kind=participant.kind or "human",
         color=color,
-        position=(max_pos if max_pos is not None else -1) + 1,
-        likes=[],
     )
-    db.add(card)
-    db.commit()
-    db.refresh(card)
-    await broadcast_card(board, "card_created", card)
-    return card_view(card, board, participant.id)
+    release_connection(db)
+    await dispatch_broadcasts(broadcasts)
+    return view
 
 
-async def bulk_update_cards_for_workspace(
+def bulk_update_cards_sync(
     db: Session,
     workspace_id: str,
     participant: models.Participant,
@@ -112,14 +138,15 @@ async def bulk_update_cards_for_workspace(
     group_id: str | None = None,
     color: str | None = None,
     require_visible_for_grouping: bool = False,
-) -> list[dict]:
-    """Массово переместить/сгруппировать/перекрасить карточки с WS-рассылкой."""
+) -> tuple[list[dict], list[BroadcastAction]]:
+    """Массово переместить/сгруппировать/перекрасить карточки (синхронная транзакция)."""
     board, cards, _col_map = load_board_cards(db, card_ids, workspace_id)
     if require_visible_for_grouping and (
         group_title is not None or "group_id" in provided_fields
     ):
         require_cards_visible(board)
 
+    participant_id = participant.id
     touched_group_ids: set[str] = set()
     created_group: models.CardGroup | None = None
 
@@ -186,22 +213,62 @@ async def bulk_update_cards_for_workspace(
     deleted_groups = prune_empty_groups(db, touched_group_ids)
     db.commit()
 
+    board_id = board.id
+    broadcasts: list[BroadcastAction] = []
     if created_group is not None:
         db.refresh(created_group)
-        group_out = schemas.CardGroupOut.model_validate(created_group)
-        await manager.broadcast(
-            board.id, "group_created", group_out.model_dump(mode="json")
-        )
+        group_payload = schemas.CardGroupOut.model_validate(created_group).model_dump(mode="json")
 
+        async def _send_group(p=group_payload, bid=board_id) -> None:
+            await manager.broadcast(bid, "group_created", p)
+
+        broadcasts.append(_send_group)
+
+    hidden = cards_hidden(board)
     results: list[dict] = []
     for card in cards:
         db.refresh(card)
-        results.append(card_view(card, board, participant.id))
-        await broadcast_card(board, "card_updated", card)
+        results.append(card_view(card, board, participant_id, hidden=hidden))
+        broadcasts.append(card_broadcast_action(board, "card_updated", card))
 
     for deleted_payload in deleted_groups:
-        await manager.broadcast(board.id, "group_deleted", deleted_payload)
 
+        async def _send_deleted(p=deleted_payload, bid=board_id) -> None:
+            await manager.broadcast(bid, "group_deleted", p)
+
+        broadcasts.append(_send_deleted)
+
+    return results, broadcasts
+
+
+async def bulk_update_cards_for_workspace(
+    db: Session,
+    workspace_id: str,
+    participant: models.Participant,
+    *,
+    card_ids: list[str],
+    provided_fields: set[str],
+    column_id: str | None = None,
+    group_title: str | None = None,
+    group_id: str | None = None,
+    color: str | None = None,
+    require_visible_for_grouping: bool = False,
+) -> list[dict]:
+    """Массово переместить/сгруппировать/перекрасить карточки с WS-рассылкой."""
+    results, broadcasts = bulk_update_cards_sync(
+        db,
+        workspace_id,
+        participant,
+        card_ids=card_ids,
+        provided_fields=provided_fields,
+        column_id=column_id,
+        group_title=group_title,
+        group_id=group_id,
+        color=color,
+        require_visible_for_grouping=require_visible_for_grouping,
+    )
+    release_connection(db)
+    await dispatch_broadcasts(broadcasts)
     return results
 
 

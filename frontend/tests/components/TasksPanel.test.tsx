@@ -362,4 +362,40 @@ describe('Внешняя ссылка на задачу (external_url)', () => {
       expect.objectContaining({ id: 't-1', external_url: 'https://jira.company.ru/RETRO-77' }),
     )
   })
+
+  it('ручное создание задачи проверяет external_url локально перед отправкой на сервер', async () => {
+    const user = userEvent.setup()
+    api.createActionItem.mockResolvedValueOnce(
+      task('t-new', { text: 'Настроить алерты', external_url: 'https://tracker.company.ru/OPS-9' }),
+    )
+    const { onCreated } = renderPanel({ actionItems: [] })
+
+    await user.click(screen.getByRole('button', { name: 'Добавить' }))
+    await user.type(screen.getByPlaceholderText('Что нужно сделать...'), 'Настроить алерты')
+    const urlInput = screen.getByPlaceholderText('Ссылка в трекере (опционально, https://...)')
+    await user.type(urlInput, 'javascript:alert(1)')
+    await user.click(screen.getByRole('button', { name: 'Создать' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Укажите ссылку http:// или https:// с доменом',
+    )
+    expect(api.createActionItem).not.toHaveBeenCalled()
+
+    await user.clear(urlInput)
+    await user.type(urlInput, 'https://tracker.company.ru/OPS-9')
+    await user.click(screen.getByRole('button', { name: 'Создать' }))
+
+    await waitFor(() =>
+      expect(api.createActionItem).toHaveBeenCalledWith({
+        board_id: 'b-current',
+        title: undefined,
+        text: 'Настроить алерты',
+        assignee: undefined,
+        external_url: 'https://tracker.company.ru/OPS-9',
+      }),
+    )
+    expect(onCreated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 't-new', external_url: 'https://tracker.company.ru/OPS-9' }),
+    )
+  })
 })

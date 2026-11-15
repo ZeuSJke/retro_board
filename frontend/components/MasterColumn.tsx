@@ -30,6 +30,7 @@ import {
   updateActionItem,
 } from '../api'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import { parseSafeExternalUrl } from '@/lib/urls'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage, getApiErrorStatus } from '../utils/apiError'
@@ -142,6 +143,7 @@ export default function MasterColumn({
   const [newText, setNewText] = useState('')
   const [newAssignee, setNewAssignee] = useState('')
   const [newExternalUrl, setNewExternalUrl] = useState('')
+  const [newExternalUrlError, setNewExternalUrlError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
   const [prevOpenExpanded, setPrevOpenExpanded] = useState(false)
@@ -356,20 +358,27 @@ export default function MasterColumn({
   const handleCreateManual = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newText.trim() || creating || readOnly) return
+    const extTrimmed = newExternalUrl.trim()
+    if (extTrimmed && !parseSafeExternalUrl(extTrimmed)) {
+      setNewExternalUrlError('Укажите ссылку http:// или https:// с доменом')
+      return
+    }
     setCreating(true)
+    setNewExternalUrlError(null)
     try {
       const created = await createActionItem({
         board_id: boardId,
         title: newTitle.trim() || undefined,
         text: newText.trim(),
         assignee: newAssignee.trim() || undefined,
-        external_url: newExternalUrl.trim() || undefined,
+        external_url: extTrimmed || undefined,
       })
       onCreated?.(created)
       setNewTitle('')
       setNewText('')
       setNewAssignee('')
       setNewExternalUrl('')
+      setNewExternalUrlError(null)
       setAddingNew(false)
       showToast('Задача создана', 'success')
     } catch (err) {
@@ -581,10 +590,19 @@ export default function MasterColumn({
               />
               <Input
                 value={newExternalUrl}
-                onChange={(e) => setNewExternalUrl(e.target.value)}
+                onChange={(e) => {
+                  setNewExternalUrl(e.target.value)
+                  if (newExternalUrlError) setNewExternalUrlError(null)
+                }}
+                maxLength={500}
                 placeholder="Ссылка в трекере (опционально, https://...)"
                 className="h-8 text-xs"
               />
+              {newExternalUrlError && (
+                <p role="alert" className="text-[11px] text-destructive">
+                  {newExternalUrlError}
+                </p>
+              )}
               <div className="flex items-center gap-1.5">
                 <Input
                   value={newAssignee}

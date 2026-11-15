@@ -1,12 +1,20 @@
 """Общие вспомогательные выборки для домена и MCP."""
 
-from typing import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models
 from app.utils import require_live_board, require_unlocked_board
+
+BroadcastAction = Callable[[], Awaitable[None]]
+
+
+async def dispatch_broadcasts(actions: Sequence[BroadcastAction]) -> None:
+    """Выполнить отложенные WebSocket-рассылки после закрытия транзакции БД."""
+    for action in actions:
+        await action()
 
 
 def find_live_board(

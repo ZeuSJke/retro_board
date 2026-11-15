@@ -148,14 +148,25 @@ describe('AgentTokensDialog', () => {
 
   it('отзывает токен в два шага и сразу помечает строку отозванной', async () => {
     const user = userEvent.setup()
+    const created: AgentTokenCreated = {
+      token: tokenFixture({ id: 'tok-1', name: 'Review Bot' }),
+      secret: 'rba_abc123_secret',
+    }
     const revokedToken = tokenFixture({ revoked_at: '2026-11-15T12:00:00Z' })
     const adapter = makeAdapter({
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockResolvedValue(created),
       revoke: vi.fn().mockResolvedValue(revokedToken),
     })
 
     render(<AgentTokensDialog open onOpenChange={vi.fn()} adapter={adapter} />)
-    const row = await screen.findByTestId('agent-token-row-tok-1')
+    await screen.findByText('Пока нет ни одного токена агента.')
 
+    await user.type(screen.getByTestId('agent-token-name-input'), 'Review Bot')
+    await user.click(screen.getByTestId('agent-token-create-btn'))
+    expect(await screen.findByTestId('agent-token-secret-banner')).toBeInTheDocument()
+
+    const row = await screen.findByTestId('agent-token-row-tok-1')
     await user.click(within(row).getByTestId('agent-token-revoke-tok-1'))
     expect(adapter.revoke).not.toHaveBeenCalled()
 
@@ -164,6 +175,7 @@ describe('AgentTokensDialog', () => {
 
     expect(row).toHaveTextContent('Отозван')
     expect(within(row).queryByTestId('agent-token-revoke-tok-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('agent-token-secret-banner')).not.toBeInTheDocument()
   })
 
   it('при ошибке загрузки даёт повторить запрос', async () => {

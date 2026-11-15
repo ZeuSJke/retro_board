@@ -20,9 +20,18 @@ _WINDOW_SECONDS = 60.0
 
 
 class SlidingWindowLimiter:
-    def __init__(self) -> None:
+    _PRUNE_THRESHOLD = 256
+    _MAX_BUCKETS = 10_000
+
+    def __init__(self, max_buckets: int = _MAX_BUCKETS) -> None:
         self._lock = Lock()
         self._buckets: dict[str, deque[float]] = {}
+        self._max_buckets = max_buckets
+
+    def _prune_stale(self, cutoff: float) -> None:
+        stale = [k for k, dq in self._buckets.items() if not dq or dq[-1] <= cutoff]
+        for k in stale:
+            del self._buckets[k]
 
     def _allow(self, key: str, limit: int) -> bool:
         if not limiter.enabled:
@@ -30,12 +39,18 @@ class SlidingWindowLimiter:
         now = time.monotonic()
         cutoff = now - _WINDOW_SECONDS
         with self._lock:
-            bucket = self._buckets.get(key)
+            bucket = self._buckets.pop(key, None)
             if bucket is None:
+                if len(self._buckets) >= min(self._PRUNE_THRESHOLD, self._max_buckets):
+                    self._prune_stale(cutoff)
+                while len(self._buckets) >= self._max_buckets:
+                    oldest_key = next(iter(self._buckets))
+                    del self._buckets[oldest_key]
                 bucket = deque()
-                self._buckets[key] = bucket
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
+            else:
+                while bucket and bucket[0] <= cutoff:
+                    bucket.popleft()
+            self._buckets[key] = bucket
             if len(bucket) >= limit:
                 return False
             bucket.append(now)
