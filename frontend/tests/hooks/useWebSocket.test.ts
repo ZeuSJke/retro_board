@@ -75,13 +75,15 @@ describe('useWebSocket', () => {
     vi.clearAllMocks()
   })
 
+  // По умолчанию — сокет доски: сервер отвечает на ping
   function setup(
     boardId = 'board-1',
     onMessage = vi.fn(),
     onOpen = vi.fn(),
     onClose = vi.fn(),
+    expectPong = true,
   ) {
-    const hook = renderHook(() => useWebSocket(boardId, onMessage, onOpen, { onClose }))
+    const hook = renderHook(() => useWebSocket(boardId, onMessage, onOpen, { onClose, expectPong }))
     const ws = MockWebSocket.instances[0]
     return { ...hook, ws, onMessage, onOpen, onClose }
   }
@@ -357,6 +359,65 @@ describe('useWebSocket', () => {
       act(() => ws.open())
       act(() => ws.receive({ event: 'pong', data: {} }))
       expect(onMessage).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('сокет команды: сервер на ping не отвечает', () => {
+    const setupWorkspace = () => setup('workspace', vi.fn(), vi.fn(), vi.fn(), false)
+
+    it('ping отправляется, но молчание в ответ не считается обрывом', () => {
+      const { ws } = setupWorkspace()
+      act(() => ws.open())
+
+      act(() => {
+        vi.advanceTimersByTime(25000)
+      })
+      expect(pingsSent(ws)).toBe(1)
+
+      // Пять минут без единого сообщения: соединение то же
+      act(() => {
+        vi.advanceTimersByTime(300_000)
+      })
+      expect(MockWebSocket.instances).toHaveLength(1)
+      expect(ws.close).not.toHaveBeenCalled()
+      expect(pingsSent(ws)).toBeGreaterThan(5)
+    })
+
+    it('возврат на вкладку и online не рвут открытое соединение', () => {
+      const { ws } = setupWorkspace()
+      act(() => ws.open())
+
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'))
+        window.dispatchEvent(new Event('online'))
+        vi.advanceTimersByTime(30_000)
+      })
+
+      expect(MockWebSocket.instances).toHaveLength(1)
+      expect(ws.close).not.toHaveBeenCalled()
+    })
+
+    it('потерянное соединение по-прежнему восстанавливается сразу при online', () => {
+      const { ws } = setupWorkspace()
+      act(() => ws.open())
+      act(() => ws.drop())
+
+      act(() => {
+        window.dispatchEvent(new Event('online'))
+      })
+
+      expect(MockWebSocket.instances).toHaveLength(2)
+    })
+
+    it('без настроек (как у панели управления) проверка по pong выключена', () => {
+      const hook = renderHook(() => useWebSocket('workspace', vi.fn()))
+      const ws = MockWebSocket.instances[0]
+      act(() => ws.open())
+      act(() => {
+        vi.advanceTimersByTime(120_000)
+      })
+      expect(MockWebSocket.instances).toHaveLength(1)
+      hook.unmount()
     })
   })
 

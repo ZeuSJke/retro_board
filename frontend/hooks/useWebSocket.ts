@@ -51,6 +51,12 @@ export interface WsCloseInfo {
 export interface UseWebSocketOptions {
   /** Сокет закрылся не по нашей инициативе. */
   onClose?: (info: WsCloseInfo) => void
+  /**
+   * Сервер отвечает на `ping` событием `pong` — молчание в ответ означает зависшее соединение.
+   * Так делает сокет доски (`/ws/{board_id}`). Сокет команды (`/ws/workspace`) на `ping` не
+   * отвечает: для него проверка выключена, иначе он переподключался бы каждые полминуты.
+   */
+  expectPong?: boolean
 }
 
 interface QueuedMessage {
@@ -85,6 +91,7 @@ export function useWebSocket(
     onOpenRef.current = onOpen
     onCloseRef.current = options?.onClose
   })
+  const expectPong = Boolean(options?.expectPong)
 
   const wsRef = useRef<WebSocket | null>(null)
   const pendingQueueRef = useRef<QueuedMessage[]>([])
@@ -245,11 +252,13 @@ export function useWebSocket(
 
     // Проверить, что соединение живо: сервер отвечает на текстовый ping событием pong.
     // Молчание дольше timeoutMs — соединение зависло (полуоткрытый TCP после сна или смены сети).
+    // Если сервер на ping не отвечает (сокет команды), ping только поддерживает соединение.
     const probe = (timeoutMs: number) => {
       const ws = wsRef.current
       if (!ws || ws.readyState !== WebSocket.OPEN) return
       const sentAt = Date.now()
       ws.send('ping')
+      if (!expectPong) return
       clearPong()
       pongTimer = setTimeout(() => {
         pongTimer = null
@@ -312,7 +321,7 @@ export function useWebSocket(
       dropSocket()
       setStatus('connecting')
     }
-  }, [boardId, sessionKey])
+  }, [boardId, sessionKey, expectPong])
 
   const reconnect = useCallback(() => controlsRef.current?.reconnect(), [])
   const stop = useCallback(() => controlsRef.current?.stop(), [])

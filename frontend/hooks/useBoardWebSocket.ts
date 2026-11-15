@@ -879,6 +879,8 @@ export function useBoardWebSocket({
       [sequencer],
     ),
     {
+      // Сокет доски отвечает на ping: по молчанию видно зависшее соединение
+      expectPong: true,
       onClose: useCallback(
         (info: WsCloseInfo) => {
           if (info.wasOpen) setRecovering(true)
