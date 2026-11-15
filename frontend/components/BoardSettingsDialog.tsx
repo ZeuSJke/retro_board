@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { EyeOff, Loader2, Lock, Shield, Trash2 } from 'lucide-react'
 import { deleteBoard, updateBoard } from '@/api'
+import { markOwnBoardDeletion, unmarkOwnBoardDeletion } from '@/lib/board-list-signals'
 import { showToast } from '@/store/toastStore'
 import { getApiErrorMessage } from '@/utils/apiError'
 import { CANNOT_DELETE_BOARD_HINT } from '@/lib/participants'
@@ -94,6 +95,9 @@ export default function BoardSettingsDialog({
   }
 
   const handleDelete = async () => {
+    // Событие об удалении придёт по WebSocket раньше ответа на запрос: приложение должно
+    // знать, что доску удаляем мы сами, — иначе будет второй переход и лишнее уведомление
+    markOwnBoardDeletion(board.id)
     try {
       await deleteBoard(board.id)
       showToast('Доска удалена', 'success')
@@ -101,6 +105,7 @@ export default function BoardSettingsDialog({
       onOpenChange(false)
       onBoardDeleted(board.id)
     } catch (err) {
+      unmarkOwnBoardDeletion(board.id)
       showToast(getApiErrorMessage(err, 'Не удалось удалить доску'), 'error')
     }
   }
@@ -148,7 +153,7 @@ export default function BoardSettingsDialog({
                     Заблокировать доску (архив)
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Запретить создание, редактирование карточек и голосование
+                    Карточки, колонки и голоса менять нельзя. Статусы задач отмечать можно.
                   </p>
                 </div>
                 <Switch checked={isLocked} onCheckedChange={setIsLocked} />

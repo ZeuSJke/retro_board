@@ -8,7 +8,7 @@ import { BrandMark } from '@/components/BrandLogo'
 import { useAppStore } from '@/store'
 import { loginToWorkspace } from '@/api'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
-import { getApiErrorStatus, markApiErrorReported, RATE_LIMIT_MESSAGE } from '@/utils/apiError'
+import { getApiErrorMessage, getApiErrorStatus } from '@/utils/apiError'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -62,17 +62,16 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
       setSession(session)
       onConfirm(session.participant.name)
     } catch (err: unknown) {
-      // Ошибка показана в форме — общий тост не нужен
-      markApiErrorReported(err)
-      const status = getApiErrorStatus(err)
+      // Ошибка показана в форме: общий разбор помечает её показанной, второго тоста не будет.
+      // Ответ 422 он разбирает по полям («Имя: не длиннее 60 символов»), остальное берёт у сервера.
+      const message = getApiErrorMessage(
+        err,
+        'Не удалось подключиться к команде. Проверьте соединение и попробуйте ещё раз.',
+        { name: 'Имя' },
+      )
+      // 401 при входе — не «сессия истекла», а неверные код или ключ
       setError(
-        status === 401
-          ? 'Неверный код команды или ключ доступа'
-          : status === 422
-            ? 'Проверьте имя и код команды: в имени не должно быть HTML-тегов'
-            : status === 429
-              ? RATE_LIMIT_MESSAGE
-              : 'Ошибка при подключении к команде',
+        getApiErrorStatus(err) === 401 ? 'Неверный код команды или ключ доступа' : message,
       )
     } finally {
       setLoading(false)
@@ -112,7 +111,7 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
           <div className="space-y-1">
             <CardTitle className="text-2xl font-bold">Добро пожаловать!</CardTitle>
             <CardDescription>
-              Подключитесь к командному пространству, чтобы начать ретроспективу.
+              Войдите в свою команду, чтобы начать ретроспективу.
             </CardDescription>
           </div>
         </CardHeader>
@@ -203,7 +202,7 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
           <div className="mt-5 border-t pt-4 text-center text-xs text-muted-foreground">
             Нужно создать новую команду?{' '}
             <Link href="/admin" className="font-medium text-primary hover:underline">
-              Открыть админ-панель
+              Открыть администрирование
             </Link>
           </div>
         </CardContent>

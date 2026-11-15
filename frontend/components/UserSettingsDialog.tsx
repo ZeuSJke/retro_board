@@ -15,7 +15,7 @@ import {
 } from '@/lib/board-themes'
 import { avatarSeed } from '@/lib/participants'
 import { showToast } from '@/store/toastStore'
-import { getApiErrorMessage, getApiErrorStatus } from '@/utils/apiError'
+import { getApiErrorMessage } from '@/utils/apiError'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -77,12 +77,8 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
       showToast(`Имя изменено на «${updated.name}»`, 'success')
       onOpenChange(false)
     } catch (err) {
-      showToast(
-        getApiErrorStatus(err) === 422
-          ? 'Имя не должно быть пустым или содержать HTML-теги'
-          : getApiErrorMessage(err, 'Не удалось изменить имя'),
-        'error',
-      )
+      // Ответ 422 разбирается по полям: «Имя: не длиннее 60 символов», «Имя не должно содержать HTML-теги»
+      showToast(getApiErrorMessage(err, 'Не удалось изменить имя', { name: 'Имя' }), 'error')
     } finally {
       setSaving(false)
     }
@@ -191,9 +187,11 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
 
           {workspace && (
             <div className="flex items-center justify-between rounded-xl border bg-muted/40 px-3.5 py-2.5 text-sm">
-              <div>
-                <div className="font-medium">{workspace.workspaceName}</div>
-                <div className="text-xs text-muted-foreground">/{workspace.workspaceSlug}</div>
+              <div className="min-w-0">
+                <div className="truncate font-medium">{workspace.workspaceName}</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  Код команды: {workspace.workspaceSlug}
+                </div>
               </div>
               <Button
                 type="button"

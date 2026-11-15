@@ -1,7 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, Lock, Plus, Search, Sparkles } from 'lucide-react'
+import { requestBoardsRefresh } from '@/lib/board-list-signals'
 import type { BoardListItem } from '@/types'
 import { BrandMark } from '@/components/BrandLogo'
 import { Badge } from '@/components/ui/badge'
@@ -36,6 +37,12 @@ export default function BoardsPanel({
   onNavigateDashboard,
 }: BoardsPanelProps) {
   const [query, setQuery] = useState('')
+
+  // Счётчики карточек и задач считает сервер: при каждом открытии просим владельца списка
+  // перечитать его, иначе у доски так и остаётся «0 карт.» с момента загрузки страницы
+  useEffect(() => {
+    if (open) requestBoardsRefresh()
+  }, [open])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -102,7 +109,10 @@ export default function BoardsPanel({
                       <span className="truncate">{b.name}</span>
                     </span>
                     {b.has_summary && (
-                      <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+                      <Sparkles
+                        className="h-3.5 w-3.5 shrink-0 text-primary"
+                        aria-label="Есть итоги ретро"
+                      />
                     )}
                   </div>
 
@@ -113,9 +123,15 @@ export default function BoardsPanel({
                         month: 'short',
                       })}
                     </span>
-                    {typeof b.cards_count === 'number' && <span>• {b.cards_count} карт.</span>}
+                    {typeof b.cards_count === 'number' && (
+                      <span data-testid="board-cards-count">• {b.cards_count} карт.</span>
+                    )}
                     {b.action_items_open > 0 && (
-                      <Badge variant="warning" className="px-1.5 py-0 text-[10px]">
+                      <Badge
+                        variant="warning"
+                        className="px-1.5 py-0 text-[10px]"
+                        title="Открытые задачи доски"
+                      >
                         {b.action_items_open} открыт.
                       </Badge>
                     )}
@@ -143,7 +159,7 @@ export default function BoardsPanel({
             }}
           >
             <BarChart3 className="h-4 w-4 text-primary" />
-            Панель управления и отчёты
+            Панель управления
           </Button>
         </div>
       </SheetContent>

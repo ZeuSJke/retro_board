@@ -82,11 +82,14 @@ export function formatBoardMarkdown(
   }
 
   if (actionItems.length > 0) {
-    lines.push(`## Задачи по итогам (${actionItems.length})`)
+    lines.push(`## Задачи (${actionItems.length})`)
     for (const item of actionItems) {
       const title = item.title || item.text
       const assignee = item.assignee ? ` (@${item.assignee})` : ''
-      const status = STATUS_LABELS[item.status] || item.status
+      // Перенесённая задача живёт на другой доске: здесь она в истории, а не «открыта»
+      const status = item.superseded_by_id
+        ? 'Перенесена на другую доску'
+        : STATUS_LABELS[item.status] || item.status
       lines.push(`- [${item.status === 'done' ? 'x' : ' '}] **${title}**${assignee} — ${status}`)
     }
     lines.push('')
