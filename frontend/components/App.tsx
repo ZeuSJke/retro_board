@@ -52,6 +52,8 @@ export default function App({ boardId }: AppProps) {
     if (!hasHydrated || !participantId) return
     setLoading(true)
     setError(null)
+    // «start» — только перенаправление: индикатор загрузки остаётся до смены адреса
+    let redirecting = false
     try {
       // Источник правды о сессии — сервер: участник, команда и признак ai_enabled
       await refreshWorkspaceSession()
@@ -64,9 +66,13 @@ export default function App({ boardId }: AppProps) {
 
       let target: Board | null = null
       if (!boardId || boardId === 'start') {
+        // Доску здесь не монтируем: смена сегмента [id] пересоздаёт страницу, и доска
+        // загрузилась бы дважды, а её сокет открылся бы, закрылся и открылся снова.
+        // Её загрузит страница по настоящему адресу.
         const first = list[0]
-        target = await getBoard(first.id)
-        router.replace(`/board/${target.slug || target.id}`)
+        redirecting = true
+        router.replace(`/board/${first.slug || first.id}`)
+        return
       } else {
         const isUuid =
           /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -97,7 +103,7 @@ export default function App({ boardId }: AppProps) {
       }
       setError(getApiErrorMessage(err, 'Не удалось загрузить доску'))
     } finally {
-      setLoading(false)
+      if (!redirecting) setLoading(false)
     }
   }, [hasHydrated, participantId, boardId, router, setCurrentBoard, setBoard])
 
