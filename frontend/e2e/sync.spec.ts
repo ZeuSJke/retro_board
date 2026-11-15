@@ -1,6 +1,7 @@
 import { test, expect, type APIRequestContext, type Browser, type Page } from '@playwright/test'
 import {
   API,
+  BASE_URL,
   DEFAULT_USER_NAME,
   type E2ESession,
   cleanupBoards,
@@ -312,7 +313,7 @@ test.describe('Синхронизация доски', () => {
         {
           name: 'workspace_token',
           value: session.token,
-          domain: new URL(page.url() === 'about:blank' ? (process.env.E2E_BASE_URL || 'http://localhost:3080') : page.url()).hostname,
+          domain: new URL(BASE_URL).hostname,
           path: '/',
           httpOnly: true,
           sameSite: 'Lax',
