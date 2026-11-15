@@ -69,6 +69,28 @@ class TestGetBoard:
         resp = client.get("/api/boards/by-slug/no-such-slug", headers=workspace_headers)
         assert resp.status_code == 404
 
+    def test_id_and_slug_collision_uses_strict_rest_lookup(
+        self, client, workspace_headers
+    ):
+        board_a = client.post(
+            "/api/boards/", json={"name": "Original Board"}, headers=workspace_headers
+        ).json()
+        board_b = client.post(
+            "/api/boards/", json={"name": board_a["id"]}, headers=workspace_headers
+        ).json()
+        assert board_b["slug"] == board_a["id"]
+        assert board_b["id"] != board_a["id"]
+
+        by_id = client.get(f"/api/boards/{board_a['id']}", headers=workspace_headers)
+        assert by_id.status_code == 200
+        assert by_id.json()["id"] == board_a["id"]
+
+        by_slug = client.get(
+            f"/api/boards/by-slug/{board_a['id']}", headers=workspace_headers
+        )
+        assert by_slug.status_code == 200
+        assert by_slug.json()["id"] == board_b["id"]
+
 
 class TestBoardMaxVotes:
     def test_default_max_votes(self, client, workspace_headers):
@@ -307,3 +329,88 @@ class TestBoardListHasSummary:
         boards = resp.json()
         board = next(b for b in boards if b["id"] == sample_board["id"])
         assert board["has_summary"] is True
+
+
+class TestCardBroadcastActionParity:
+    def test_snapshot_matches_card_view_across_modes(self, db_session, test_workspace, monkeypatch):
+        import asyncio
+        import uuid
+        from app import models
+        from app.board_view import card_broadcast_action, card_view, cards_hidden
+        from app.ws_manager import manager
+
+        board = models.Board(
+            id=str(uuid.uuid4()),
+            name="Broadcast Parity",
+            slug="broadcast-parity",
+            workspace_id=test_workspace.id,
+        )
+        p_human = models.Participant(
+            id="p-human",
+            workspace_id=test_workspace.id,
+            name="Алиса",
+        )
+        p_agent = models.Participant(
+            id="p-agent",
+            workspace_id=test_workspace.id,
+            name="Ретро-бот",
+        )
+        p_other = models.Participant(
+            id="p-other",
+            workspace_id=test_workspace.id,
+            name="Боб",
+        )
+        col = models.Column(id=str(uuid.uuid4()), board_id=board.id, title="Good", position=0)
+        human_card = models.Card(
+            id=str(uuid.uuid4()),
+            column_id=col.id,
+            text="Human text",
+            author="Алиса",
+            author_id=p_human.id,
+            author_kind="human",
+            color="#FFFFFF",
+            likes=[p_human.id, p_other.id],
+            position=0,
+        )
+        agent_card = models.Card(
+            id=str(uuid.uuid4()),
+            column_id=col.id,
+            text="Agent text",
+            author="Ретро-бот",
+            author_id=p_agent.id,
+            author_kind="agent",
+            color="#E8F5E9",
+            likes=[p_other.id],
+            position=1,
+        )
+        db_session.add_all([board, p_human, p_agent, p_other, col, human_card, agent_card])
+        db_session.commit()
+
+        scenarios = [
+            {"hide_cards_until_reveal": False, "cards_revealed": False, "anonymous_votes": False},
+            {"hide_cards_until_reveal": True, "cards_revealed": False, "anonymous_votes": False},
+            {"hide_cards_until_reveal": False, "cards_revealed": False, "anonymous_votes": True},
+            {"hide_cards_until_reveal": True, "cards_revealed": True, "anonymous_votes": True},
+        ]
+        viewers = ["p-human", "p-agent", "p-other", None]
+
+        for flags in scenarios:
+            board.hide_cards_until_reveal = flags["hide_cards_until_reveal"]
+            board.cards_revealed = flags["cards_revealed"]
+            board.anonymous_votes = flags["anonymous_votes"]
+            hidden = cards_hidden(board)
+
+            for card in (human_card, agent_card):
+                captured_build = None
+
+                async def _fake_broadcast_each(board_id, event, build_fn):
+                    nonlocal captured_build
+                    assert board_id == board.id
+                    captured_build = build_fn
+
+                monkeypatch.setattr(manager, "broadcast_each", _fake_broadcast_each)
+                action = card_broadcast_action(board, "card_created", card)
+                asyncio.run(action())
+                assert captured_build is not None
+                for viewer_id in viewers:
+                    assert captured_build(viewer_id) == card_view(card, board, viewer_id, hidden)

@@ -1,8 +1,10 @@
 """Тесты Streamable HTTP MCP-сервера (`/mcp`), 15 инструментов, 3 промптов и инвариантов."""
 
 import asyncio
+from datetime import UTC, datetime
 import json
 
+import anyio
 import httpx
 import pytest
 from mcp.client.session import ClientSession
@@ -10,9 +12,9 @@ from mcp.client.streamable_http import streamable_http_client
 
 from app import models
 from app.config import settings
-from app.database import get_db
 from app.limiter import limiter
-from app.mcp import mcp_lifespan
+from app.mcp import mcp_lifespan, set_db_session_factory
+from app.mcp import server as mcp_server
 from app.mcp.rate_limit import (
     MCP_AUTH_FAIL_LIMIT_PER_MINUTE,
     MCP_TOKEN_LIMIT_PER_MINUTE,
@@ -182,7 +184,9 @@ def test_mcp_dns_rebinding_protection(client, test_workspace, workspace_headers)
     assert bad_origin.status_code == 403
 
 
-def test_mcp_rate_limits_per_token_and_auth_failures(client, test_workspace, workspace_headers):
+def test_mcp_rate_limits_per_token_and_auth_failures(
+    client, test_workspace, workspace_headers, monkeypatch
+):
     secret_a = _create_token(client, workspace_headers, name="Bot A", scope="read_only")["secret"]
     secret_b = _create_token(client, workspace_headers, name="Bot B", scope="read_only")["secret"]
 
@@ -196,7 +200,20 @@ def test_mcp_rate_limits_per_token_and_auth_failures(client, test_workspace, wor
         limited = _mcp_post(client, secret_a, "tools/list", req_id=999)
         assert limited.status_code == 429
 
-        # Другой валидный токен (и даже после auth-fail того же IP!) не блокируется корзиной Bot A
+        # На том же IP до блокировки по auth-fail другой валидный токен (Bot B) не затронут квотой Bot A
+        assert _mcp_post(client, secret_b, "tools/list").status_code == 200
+
+        # После порога auth-fail IP блокируется ДО обращения к БД/_authenticate_agent_sync
+        auth_calls = 0
+        orig_auth = mcp_server._authenticate_agent_sync
+
+        def _spy_auth(raw_token: str):
+            nonlocal auth_calls
+            auth_calls += 1
+            return orig_auth(raw_token)
+
+        monkeypatch.setattr(mcp_server, "_authenticate_agent_sync", _spy_auth)
+
         for _ in range(MCP_AUTH_FAIL_LIMIT_PER_MINUTE):
             r = client.post(
                 "/mcp",
@@ -204,18 +221,66 @@ def test_mcp_rate_limits_per_token_and_auth_failures(client, test_workspace, wor
                 json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
             )
             assert r.status_code == 401
+        assert auth_calls == MCP_AUTH_FAIL_LIMIT_PER_MINUTE
+
         auth_limited = client.post(
             "/mcp",
             headers={**_MCP_HEADERS_BASE, "Authorization": "Bearer rba_wrong"},
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
         )
         assert auth_limited.status_code == 429
+        assert auth_calls == MCP_AUTH_FAIL_LIMIT_PER_MINUTE
 
-        # У Bot B собственная квота -> 200
-        assert _mcp_post(client, secret_b, "tools/list").status_code == 200
+        # Заблокированный IP отсекается до БД даже при валидном токене Bot B
+        assert _mcp_post(client, secret_b, "tools/list").status_code == 429
+        assert auth_calls == MCP_AUTH_FAIL_LIMIT_PER_MINUTE
+
+        # Другой IP с валидным Bot B проходит нормально (200)
+        async def _call_other_ip() -> int:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app, client=("10.0.0.99", 12345)),
+                base_url="http://testserver",
+            ) as async_client:
+                resp = await async_client.post(
+                    "/mcp",
+                    headers={**_MCP_HEADERS_BASE, "Authorization": f"Bearer {secret_b}"},
+                    json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                )
+                return resp.status_code
+
+        assert anyio.run(_call_other_ip) == 200
+        assert auth_calls == MCP_AUTH_FAIL_LIMIT_PER_MINUTE + 1
     finally:
         limiter.enabled = prev_enabled
         mcp_rate_limiter.reset()
+
+
+def test_mcp_tool_annotations_and_write_tools_match(client, workspace_headers):
+    rw_secret = _create_token(client, workspace_headers, name="Annotator", scope="read_write")["secret"]
+    tools = _mcp_post(client, rw_secret, "tools/list").json()["result"]["tools"]
+
+    non_readonly_tools: set[str] = set()
+    by_name = {}
+    for tool in tools:
+        ann = tool.get("annotations") or {}
+        ro = ann.get("readOnlyHint")
+        assert isinstance(ro, bool), f"readOnlyHint must be explicit bool for {tool['name']}"
+        by_name[tool["name"]] = ann
+        if ro is not True:
+            non_readonly_tools.add(tool["name"])
+            assert tool["name"] in mcp_server._WRITE_TOOLS
+
+    assert non_readonly_tools == set(mcp_server._WRITE_TOOLS)
+
+    for update_tool in ("group_cards", "update_action_item", "save_summary"):
+        assert by_name[update_tool]["destructiveHint"] is True
+        assert by_name[update_tool]["idempotentHint"] is True
+    for add_tool in ("create_board", "create_card", "create_action_item"):
+        assert by_name[add_tool]["destructiveHint"] is False
+    for name, ann in by_name.items():
+        if name not in mcp_server._WRITE_TOOLS:
+            assert ann["readOnlyHint"] is True
+            assert ann["destructiveHint"] is False
 
 
 # ── Права read_only / read_write ─────────────────────────────────────────────
@@ -254,33 +319,26 @@ def test_mcp_scope_enforcement_lists_and_calls(client, test_workspace, workspace
     assert body["error"]["code"] == -32602
 
 
-# ── Полный цикл инструментов + приватность + блокировка + промпты ────────────
+# ── Раздельные тесты инструментов MCP, приватности, блокировки и промптов ──────
 
 
-def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
-    client, db_session, test_workspace, workspace_headers, login_as
+def test_mcp_boards_cards_search_and_grouping(
+    client, test_workspace, workspace_headers, login_as
 ):
     other_headers = login_as("Алиса")
     rw_secret = _create_token(client, workspace_headers, name="Спринт-агент", scope="read_write")["secret"]
 
-    # 1. create_board + колонки + карточки (человек и агент)
     err, b1, _ = _call_tool(
         client,
         rw_secret,
         "create_board",
-        {
-            "name": "Ретро 42",
-            "template": "classic",
-            "carry_forward_items": False,
-        },
+        {"name": "Ретро 42", "template": "classic", "carry_forward_items": False},
     )
     assert not err
-    board_id = b1["id"]
     board_slug = b1["slug"]
     col1_id = b1["columns"][0]["id"]
     col2_id = b1["columns"][1]["id"]
 
-    # Вторая доска для проверки пагинации list_boards
     err, b2, _ = _call_tool(
         client,
         rw_secret,
@@ -288,6 +346,7 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
         {"name": "Ретро 43", "custom_columns": [{"title": "Фокус", "color": "#112233"}]},
     )
     assert not err
+    assert b2["id"] != b1["id"]
 
     err, boards_page1, _ = _call_tool(client, rw_secret, "list_boards", {"limit": 1, "offset": 0})
     assert not err
@@ -295,7 +354,6 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
     assert len(boards_page1["items"]) == 1
     assert boards_page1["has_more"] is True
 
-    # Создаём две карточки агента и одну человеческую
     err, c_agent1, _ = _call_tool(
         client,
         rw_secret,
@@ -322,7 +380,7 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
     assert human_card.status_code == 201
     human_card_id = human_card.json()["id"]
 
-    # 2. search_cards поддерживает кириллицу без учёта регистра
+    # search_cards поддерживает кириллицу без учёта регистра
     err, hits_cyr, _ = _call_tool(
         client,
         rw_secret,
@@ -333,7 +391,7 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
     assert hits_cyr["total"] == 2
     assert {h["id"] for h in hits_cyr["items"]} == {c_agent1["id"], human_card_id}
 
-    # 3. group_cards: создать группу, добавить по group_id, затем разгруппировать ('')
+    # group_cards: создать группу и разгруппировать ('')
     err, grouped, _ = _call_tool(
         client,
         rw_secret,
@@ -341,8 +399,7 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
         {"card_ids": [c_agent1["id"], c_agent2["id"]], "group_title": "Качество релизов"},
     )
     assert not err
-    gid = grouped[0]["group_id"]
-    assert gid is not None
+    assert grouped[0]["group_id"] is not None
 
     err, ungrouped, _ = _call_tool(
         client,
@@ -353,8 +410,19 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
     assert not err
     assert ungrouped[0]["group_id"] is None
 
-    # 4. action_items + external_url + carry-forward + list_action_items
-    err, item_bad_url, _ = _call_tool(
+
+def test_mcp_action_items_external_url_and_carry_forward(client, workspace_headers):
+    rw_secret = _create_token(client, workspace_headers, name="Task Bot", scope="read_write")["secret"]
+    err, b1, _ = _call_tool(
+        client,
+        rw_secret,
+        "create_board",
+        {"name": "Спринт 10", "carry_forward_items": False},
+    )
+    assert not err
+    board_slug = b1["slug"]
+
+    err_bad_url, _, _ = _call_tool(
         client,
         rw_secret,
         "create_action_item",
@@ -365,7 +433,7 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
             "external_url": "javascript:alert(1)",
         },
     )
-    assert item_bad_url
+    assert err_bad_url
 
     err, item1, _ = _call_tool(
         client,
@@ -382,64 +450,65 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
     assert not err
     assert item1["external_url"] == "https://jira.example.com/browse/RETRO-42"
 
-    # 5. save_summary: обновление без дубликатов (с сессией и без) + синхронизация тем
-    err, sum1, _ = _call_tool(
+    err, carried_board, _ = _call_tool(
         client,
         rw_secret,
-        "save_summary",
+        "create_board",
         {
-            "board_id_or_slug": board_slug,
-            "summary_text": "Черновой итог",
-            "themes_payload": [{"name": "Автодеплой", "description": "Ускорение CI"}],
-            "recommendations": ["Убрать ручные шаги"],
+            "name": "Спринт 11",
+            "source_board_id_or_slug": board_slug,
+            "carry_forward_items": True,
         },
     )
     assert not err
-    err, sum2, _ = _call_tool(
+    err, active_items, _ = _call_tool(
         client,
         rw_secret,
-        "save_summary",
-        {
-            "board_id_or_slug": board_id,
-            "summary_text": "Финальный итог",
-            "key_themes": ["Автодеплой", "Наблюдаемость"],
-            "recommendations": ["Включить канареечный релиз"],
-        },
+        "list_action_items",
+        {"board_id_or_slug": carried_board["id"], "include_carried": False},
     )
     assert not err
-    assert sum2["id"] == sum1["id"]
-    assert sum2["summary_text"] == "Финальный итог"
+    assert active_items["total"] == 1
+    assert active_items["items"][0]["external_url"] == "https://jira.example.com/browse/RETRO-42"
+
+
+def test_mcp_privacy_anonymous_and_hidden_modes(client, workspace_headers, login_as, sample_board):
+    other_headers = login_as("Алиса")
+    rw_secret = _create_token(client, workspace_headers, name="Privacy Bot", scope="read_write")["secret"]
+    board_id = sample_board["id"]
+    col1_id = sample_board["columns"][0]["id"]
+    col2_id = sample_board["columns"][1]["id"]
+
+    err, c_agent, _ = _call_tool(
+        client,
+        rw_secret,
+        "create_card",
+        {"column_id": col1_id, "text": "Автоанализ релиза"},
+    )
+    assert not err
+
+    human_card = client.post(
+        "/api/cards/",
+        json={"column_id": col2_id, "text": "Проблема релиза у команды"},
+        headers=other_headers,
+    )
+    assert human_card.status_code == 201
+    human_card_id = human_card.json()["id"]
+
+    # Анонимный режим: люди скрыты, карточка агента сохраняет имя и author_kind="agent"
     assert (
-        db_session.query(models.BoardSummary)
-        .filter(models.BoardSummary.board_id == board_id)
-        .count()
-        == 1
+        client.patch(
+            f"/api/boards/{board_id}",
+            json={"anonymous_votes": True, "hide_cards_until_reveal": False},
+            headers=workspace_headers,
+        ).status_code
+        == 200
     )
 
-    err, fetched_sum, _ = _call_tool(
-        client, rw_secret, "get_board_summary", {"board_id_or_slug": board_slug}
-    )
-    assert not err
-    assert fetched_sum["summary_text"] == "Финальный итог"
-
-    err, themes_list, _ = _call_tool(client, rw_secret, "list_workspace_themes")
-    assert not err
-    assert any(t["name"] == "Автодеплой" for t in themes_list)
-
-    # 6. Режимы приватности: anonymous_votes сохраняет агента; hide_cards_until_reveal скрывает чужие
-    upd_anon = client.patch(
-        f"/api/boards/{board_id}",
-        json={"anonymous_votes": True, "hide_cards_until_reveal": False},
-        headers=workspace_headers,
-    )
-    assert upd_anon.status_code == 200
-
-    # Человек и агент видят карточку агента с именем и author_kind="agent",
-    # а человеческая карточка анонимизирована для агента
     human_board_view = client.get(f"/api/boards/{board_id}", headers=workspace_headers).json()
     cards_for_human = {c["id"]: c for col in human_board_view["columns"] for c in col["cards"]}
-    assert cards_for_human[c_agent1["id"]]["author"] == "Спринт-агент"
-    assert cards_for_human[c_agent1["id"]]["author_kind"] == "agent"
+    assert cards_for_human[c_agent["id"]]["author"] == "Privacy Bot"
+    assert cards_for_human[c_agent["id"]]["author_kind"] == "agent"
     assert cards_for_human[human_card_id]["author"] == "Участник"
     assert cards_for_human[human_card_id]["author_kind"] == "human"
 
@@ -447,10 +516,9 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
     assert not err
     cards_for_agent = {c["id"]: c for col in mcp_board_anon["columns"] for c in col["cards"]}
     assert cards_for_agent[human_card_id]["author"] == "Участник"
-    assert cards_for_agent[c_agent1["id"]]["author_kind"] == "agent"
+    assert cards_for_agent[c_agent["id"]]["author_kind"] == "agent"
 
-    # Включаем скрытый сбор (hide_cards_until_reveal): чужая карточка маскируется в get_board и выпадает из search_cards,
-    # а group_cards и save_summary запрещены до раскрытия
+    # Скрытый сбор: чужая карточка маскируется в get_board и выпадает из search_cards
     assert (
         client.patch(
             f"/api/boards/{board_id}",
@@ -470,10 +538,10 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
         client, rw_secret, "search_cards", {"query": "релиз", "board_id_or_slug": board_id}
     )
     assert not err
-    assert [h["id"] for h in hidden_search["items"]] == [c_agent1["id"]]
+    assert [h["id"] for h in hidden_search["items"]] == [c_agent["id"]]
 
     err_grp_hidden, _, _ = _call_tool(
-        client, rw_secret, "group_cards", {"card_ids": [c_agent1["id"]], "group_title": "Нельзя"}
+        client, rw_secret, "group_cards", {"card_ids": [c_agent["id"]], "group_title": "Нельзя"}
     )
     assert err_grp_hidden
     err_sum_hidden, _, _ = _call_tool(
@@ -484,11 +552,28 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
     )
     assert err_sum_hidden
 
-    # Раскрываем карточки -> включаем блокировку доски (is_locked=True)
+
+def test_mcp_locked_board_allows_only_status_and_external_url(client, workspace_headers, sample_board):
+    rw_secret = _create_token(client, workspace_headers, name="Lock Bot", scope="read_write")["secret"]
+    board_id = sample_board["id"]
+    col1_id = sample_board["columns"][0]["id"]
+
+    err, card, _ = _call_tool(
+        client, rw_secret, "create_card", {"column_id": col1_id, "text": "До блокировки"}
+    )
+    assert not err
+    err, item, _ = _call_tool(
+        client,
+        rw_secret,
+        "create_action_item",
+        {"board_id_or_slug": board_id, "title": "Задача", "text": "Описание"},
+    )
+    assert not err
+
     assert (
         client.patch(
             f"/api/boards/{board_id}",
-            json={"hide_cards_until_reveal": False, "is_locked": True},
+            json={"is_locked": True},
             headers=workspace_headers,
         ).status_code
         == 200
@@ -496,22 +581,21 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
 
     for bad_call in [
         ("create_card", {"column_id": col1_id, "text": "Заблокировано"}),
-        ("group_cards", {"card_ids": [c_agent1["id"]], "group_title": "Заблокировано"}),
+        ("group_cards", {"card_ids": [card["id"]], "group_title": "Заблокировано"}),
         ("create_action_item", {"board_id_or_slug": board_id, "text": "Заблокировано"}),
         ("save_summary", {"board_id_or_slug": board_id, "summary_text": "Заблокировано"}),
-        ("update_action_item", {"item_id": item1["id"], "title": "Нельзя менять title"}),
-        ("update_action_item", {"item_id": item1["id"], "status": "done", "assignee": "Боб"}),
+        ("update_action_item", {"item_id": item["id"], "title": "Нельзя менять title"}),
+        ("update_action_item", {"item_id": item["id"], "status": "done", "assignee": "Боб"}),
     ]:
         err_flag, _, _ = _call_tool(client, rw_secret, bad_call[0], bad_call[1])
         assert err_flag, f"Ожидалась ошибка на заблокированной доске для {bad_call}"
 
-    # А status и external_url разрешено менять даже на заблокированной доске (решение 3A)!
     err, item_upd, _ = _call_tool(
         client,
         rw_secret,
         "update_action_item",
         {
-            "item_id": item1["id"],
+            "item_id": item["id"],
             "status": "in_progress",
             "external_url": "https://tracker.yandex.ru/RETRO-42",
         },
@@ -520,46 +604,21 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
     assert item_upd["status"] == "in_progress"
     assert item_upd["external_url"] == "https://tracker.yandex.ru/RETRO-42"
 
-    # Проверка очистки external_url
     err, item_cleared, _ = _call_tool(
         client,
         rw_secret,
         "update_action_item",
-        {"item_id": item1["id"], "external_url": ""},
+        {"item_id": item["id"], "external_url": ""},
     )
     assert not err
     assert item_cleared["external_url"] is None
 
-    # Возвращаем external_url и проверяем carry-forward в новую доску + list_action_items
-    err, _, _ = _call_tool(
-        client,
-        rw_secret,
-        "update_action_item",
-        {"item_id": item1["id"], "external_url": "https://github.com/org/repo/issues/7"},
-    )
-    assert not err
-    err, carried_board, _ = _call_tool(
-        client,
-        rw_secret,
-        "create_board",
-        {
-            "name": "Ретро 44",
-            "source_board_id_or_slug": board_slug,
-            "carry_forward_items": True,
-        },
-    )
-    assert not err
-    err, active_items, _ = _call_tool(
-        client,
-        rw_secret,
-        "list_action_items",
-        {"board_id_or_slug": carried_board["id"], "include_carried": False},
-    )
-    assert not err
-    assert active_items["total"] == 1
-    assert active_items["items"][0]["external_url"] == "https://github.com/org/repo/issues/7"
 
-    # 7. Аналитические инструменты: health и mood trends
+def test_mcp_health_mood_trends_and_prompts(client, workspace_headers, sample_board):
+    rw_secret = _create_token(client, workspace_headers, name="Trend Bot", scope="read_write")["secret"]
+    board_id = sample_board["id"]
+    board_slug = sample_board["slug"]
+
     questions = client.get("/api/boards/health/questions", headers=workspace_headers).json()
     q_key = questions[0]["key"]
     assert (
@@ -602,7 +661,6 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
     assert not err
     assert any(p["board_id"] == board_id and p["mood_count"] == 1 for p in m_trends)
 
-    # 8. MCP prompts (list + get)
     plist = _mcp_post(client, rw_secret, "prompts/list").json()["result"]["prompts"]
     assert {p["name"] for p in plist} == {"prepare_retro", "analyze_board", "sprint_followups"}
 
@@ -621,6 +679,178 @@ def test_mcp_tools_lifecycle_privacy_locking_and_prompts(
         msgs = p_resp.json()["result"]["messages"]
         assert len(msgs) == 1
         assert msgs[0]["content"]["text"]
+
+
+def test_mcp_id_or_slug_collision_prefers_board_id_and_isolates_tools(client, workspace_headers):
+    rw_secret = _create_token(client, workspace_headers, name="Lookup Bot", scope="read_write")["secret"]
+    err, board_a, _ = _call_tool(
+        client, rw_secret, "create_board", {"name": "Alpha", "carry_forward_items": False}
+    )
+    assert not err
+    err, board_b, _ = _call_tool(
+        client,
+        rw_secret,
+        "create_board",
+        {"name": board_a["id"], "carry_forward_items": False},
+    )
+    assert not err
+    assert board_b["slug"] == board_a["id"]
+
+    _call_tool(
+        client,
+        rw_secret,
+        "create_card",
+        {"column_id": board_a["columns"][0]["id"], "text": "Общий поиск Alpha"},
+    )
+    _call_tool(
+        client,
+        rw_secret,
+        "create_card",
+        {"column_id": board_b["columns"][0]["id"], "text": "Общий поиск Beta"},
+    )
+    _call_tool(
+        client,
+        rw_secret,
+        "create_action_item",
+        {"board_id_or_slug": board_a["id"], "title": "Task A", "text": "Alpha task"},
+    )
+    _call_tool(
+        client,
+        rw_secret,
+        "create_action_item",
+        {"board_id_or_slug": board_b["id"], "title": "Task B", "text": "Beta task"},
+    )
+
+    err, got, _ = _call_tool(client, rw_secret, "get_board", {"board_id_or_slug": board_a["id"]})
+    assert not err
+    assert got["id"] == board_a["id"]
+
+    err, tasks, _ = _call_tool(
+        client, rw_secret, "list_action_items", {"board_id_or_slug": board_a["id"]}
+    )
+    assert not err
+    assert [t["title"] for t in tasks["items"]] == ["Task A"]
+
+    err, hits, _ = _call_tool(
+        client,
+        rw_secret,
+        "search_cards",
+        {"query": "общий поиск", "board_id_or_slug": board_a["id"]},
+    )
+    assert not err
+    assert [h["board_id"] for h in hits["items"]] == [board_a["id"]]
+
+
+def test_mcp_pagination_tie_breaker_stable_on_equal_created_at(
+    client, db_session, test_workspace, workspace_headers
+):
+    rw_secret = _create_token(client, workspace_headers, name="Page Bot", scope="read_write")["secret"]
+    fixed_ts = datetime(2026, 11, 15, 12, 0, 0, tzinfo=UTC)
+    boards = [
+        models.Board(
+            id=f"board-page-{idx}",
+            name=f"Page Board {idx}",
+            slug=f"page-board-{idx}",
+            workspace_id=test_workspace.id,
+            created_at=fixed_ts,
+        )
+        for idx in (1, 2, 3)
+    ]
+    db_session.add_all(boards)
+    db_session.flush()
+    items = [
+        models.ActionItem(
+            id=f"item-page-{idx}",
+            board_id=boards[0].id,
+            title=f"Item {idx}",
+            text="Body",
+            status="open",
+            created_at=fixed_ts,
+        )
+        for idx in (1, 2, 3)
+    ]
+    db_session.add_all(items)
+    db_session.commit()
+
+    board_ids: list[str] = []
+    item_ids: list[str] = []
+    for offset in range(3):
+        err, page_b, _ = _call_tool(client, rw_secret, "list_boards", {"limit": 1, "offset": offset})
+        assert not err
+        board_ids.append(page_b["items"][0]["id"])
+
+        err, page_i, _ = _call_tool(
+            client, rw_secret, "list_action_items", {"limit": 1, "offset": offset}
+        )
+        assert not err
+        item_ids.append(page_i["items"][0]["id"])
+
+    assert board_ids == ["board-page-3", "board-page-2", "board-page-1"]
+    assert item_ids == ["item-page-3", "item-page-2", "item-page-1"]
+
+
+def test_mcp_save_summary_preserves_omitted_fields_and_clears_explicit_empty(
+    client, db_session, workspace_headers, sample_board
+):
+    secret = _create_token(client, workspace_headers, "Preserve Bot", "read_write")["secret"]
+    board_id = sample_board["id"]
+
+    err, s1, _ = _call_tool(
+        client,
+        secret,
+        "save_summary",
+        {
+            "board_id_or_slug": board_id,
+            "summary_text": "Первый вариант",
+            "themes_payload": [{"name": "Автодеплой", "description": "Ускорение CI"}],
+            "recommendations": ["Убрать ручные шаги"],
+        },
+    )
+    assert not err
+    assert s1["key_themes"] == ["Автодеплой"]
+    assert s1["recommendations"] == ["Убрать ручные шаги"]
+
+    # Передача только summary_text (остальное None) сохраняет темы и рекомендации
+    err, s2, _ = _call_tool(
+        client,
+        secret,
+        "save_summary",
+        {"board_id_or_slug": board_id, "summary_text": "Обновлённый текст"},
+    )
+    assert not err
+    assert s2["id"] == s1["id"]
+    assert s2["summary_text"] == "Обновлённый текст"
+    assert s2["key_themes"] == ["Автодеплой"]
+    assert s2["recommendations"] == ["Убрать ручные шаги"]
+
+    err, fetched, _ = _call_tool(
+        client, secret, "get_board_summary", {"board_id_or_slug": board_id}
+    )
+    assert not err
+    assert fetched["key_themes"] == ["Автодеплой"]
+    assert fetched["recommendations"] == ["Убрать ручные шаги"]
+    err, ws_themes, _ = _call_tool(client, secret, "list_workspace_themes")
+    assert not err
+    assert any(t["name"] == "Автодеплой" for t in ws_themes)
+
+    # Явная передача пустых списков очищает и темы, и рекомендации
+    err, s3, _ = _call_tool(
+        client,
+        secret,
+        "save_summary",
+        {
+            "board_id_or_slug": board_id,
+            "summary_text": "Без тем и рекомендаций",
+            "key_themes": [],
+            "recommendations": [],
+        },
+    )
+    assert not err
+    assert s3["key_themes"] == []
+    assert s3["recommendations"] == []
+    err, ws_themes_after, _ = _call_tool(client, secret, "list_workspace_themes")
+    assert not err
+    assert not any(t["name"] == "Автодеплой" for t in ws_themes_after)
 
 
 def test_mcp_workspace_isolation(
@@ -808,13 +1038,6 @@ async def test_mcp_real_streamable_http_client_and_concurrent_context_isolation(
         Base.metadata.create_all(bind=file_engine)
         SessionFactory = sessionmaker(autocommit=False, autoflush=False, bind=file_engine)
 
-    def _override():
-        db = SessionFactory()
-        try:
-            yield db
-        finally:
-            db.close()
-
     with SessionFactory() as seed_db:
         ws_a = models.Workspace(
             id="ws-mcp-a",
@@ -838,7 +1061,7 @@ async def test_mcp_real_streamable_http_client_and_concurrent_context_isolation(
         _, secret_a = create_agent_token(seed_db, ws_a.id, name="AlphaBot", scope="read_only")
         _, secret_b = create_agent_token(seed_db, ws_b.id, name="BetaBot", scope="read_write")
 
-    app.dependency_overrides[get_db] = _override
+    set_db_session_factory(SessionFactory)
     try:
         async with mcp_lifespan():
             async def _fetch_boards(secret: str) -> tuple[list[str], list[str]]:
@@ -868,6 +1091,6 @@ async def test_mcp_real_streamable_http_client_and_concurrent_context_isolation(
             assert boards_a == ["Доска Alpha"]
             assert boards_b == ["Доска Beta"]
     finally:
-        app.dependency_overrides.clear()
+        set_db_session_factory(None)
         if file_engine is not None:
             file_engine.dispose()

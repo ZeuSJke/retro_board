@@ -380,7 +380,7 @@ RetroBoard предоставляет встроенный **MCP (Model Context 
 }
 ```
 
-- **Cursor** (`.cursor/mcp.json`): аналогичный блок с `"url": "https://retro.example.com/mcp"` и `"headers": { "Authorization": "Bearer <токен>" }`.
+- **Cursor** (`.cursor/mcp.json`): аналогичный блок из диалога («Скопировать конфиг MCP») с `"type": "http"`, `"url": "https://retro.example.com/mcp"` и `"headers": { "Authorization": "Bearer <токен>" }`.
 - **Codex CLI** (`~/.codex/config.toml`):
 
 ```toml

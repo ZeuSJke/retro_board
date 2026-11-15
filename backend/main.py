@@ -30,7 +30,7 @@ from starlette.routing import Route
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from app.limiter import limiter
-from app.mcp import bind_fastapi_app, mcp_asgi_app, mcp_lifespan
+from app.mcp import mcp_asgi_app, mcp_lifespan
 
 logger = logging.getLogger("retroboard")
 configure_logging()
@@ -163,10 +163,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*", "x-csrf-token"],
-    expose_headers=["Mcp-Session-Id"],
 )
-
-bind_fastapi_app(app)
 
 app.routes.extend(
     [

@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import HTTPException
 from slugify import slugify
-from sqlalchemy import and_, case, exists, func, or_
+from sqlalchemy import and_, case, exists, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -14,7 +14,13 @@ from app.board_view import board_view, require_cards_visible
 from app.database import release_connection
 from app.models import now_utc
 from app.services.action_items import copy_unresolved_action_items
-from app.services.common import BroadcastAction, dispatch_broadcasts, find_live_board
+from app.services.common import (
+    BoardLookupMode,
+    BroadcastAction,
+    apply_board_lookup,
+    dispatch_broadcasts,
+    find_live_board,
+)
 from app.ws_manager import manager
 
 DEFAULT_COLUMNS = [
@@ -254,7 +260,7 @@ def list_workspace_boards(
             models.Board.workspace_id == workspace_id,
         )
         .group_by(models.Board.id)
-        .order_by(models.Board.created_at.desc())
+        .order_by(models.Board.created_at.desc(), models.Board.id.desc())
     )
     if offset:
         q = q.offset(offset)
@@ -287,18 +293,17 @@ def get_board_view(
     board_id_or_slug: str,
     *,
     board_query_fn=None,
+    lookup: BoardLookupMode = "id_or_slug",
 ) -> dict:
     """Снимок доски (по ID или slug) для конкретного участника/агента."""
     board_id = (
-        db.query(models.Board.id)
-        .filter(
-            or_(
-                models.Board.id == board_id_or_slug,
-                models.Board.slug == board_id_or_slug,
-            ),
-            models.Board.deleted_at.is_(None),
-            models.Board.workspace_id == workspace_id,
+        apply_board_lookup(
+            db.query(models.Board.id),
+            board_id_or_slug,
+            workspace_id,
+            lookup=lookup,
         )
+        .limit(1)
         .scalar()
     )
     if not board_id:
@@ -337,19 +342,15 @@ def create_board_sync(
     src_lookup = source_board_id_or_slug or body.source_board_id
     src_board: models.Board | None = None
     if src_lookup:
-        src_board = (
-            db.query(models.Board)
-            .options(selectinload(models.Board.columns))
-            .filter(
-                or_(
-                    models.Board.id == src_lookup,
-                    models.Board.slug == src_lookup,
-                ),
-                models.Board.deleted_at.is_(None),
-                models.Board.workspace_id == workspace_id,
-            )
-            .first()
+        src_lookup_mode: BoardLookupMode = (
+            "id_or_slug" if source_board_id_or_slug is not None else "id"
         )
+        src_board = apply_board_lookup(
+            db.query(models.Board).options(selectinload(models.Board.columns)),
+            src_lookup,
+            workspace_id,
+            lookup=src_lookup_mode,
+        ).first()
         if not src_board:
             raise HTTPException(404, "Исходная доска не найдена")
 
@@ -458,10 +459,14 @@ async def create_board_for_workspace(
 
 
 def get_board_summary_for_workspace(
-    db: Session, workspace_id: str, board_id_or_slug: str
+    db: Session,
+    workspace_id: str,
+    board_id_or_slug: str,
+    *,
+    lookup: BoardLookupMode = "id_or_slug",
 ) -> schemas.BoardSummaryOut:
     """Последние итоги доски (предпочитая активную сессию)."""
-    board = find_live_board(db, board_id_or_slug, workspace_id)
+    board = find_live_board(db, board_id_or_slug, workspace_id, lookup=lookup)
     session_id = manager.get_session_id(board.id)
 
     query = db.query(models.BoardSummary).filter(
@@ -493,16 +498,19 @@ def persist_board_summary_sync(
     recommendations: list[str] | None = None,
     update_latest_when_no_session: bool = False,
 ) -> tuple[schemas.BoardSummaryOut, list[BroadcastAction]]:
-    """Применить темы команды, сохранить или обновить BoardSummary (синхронная транзакция)."""
+    """Применить темы команды, сохранить или обновить BoardSummary (синхронная транзакция).
+
+    Если `themes_payload`/`key_themes` или `recommendations` равны `None`,
+    при обновлении существующего итога соответствующие поля сохраняются без изменений.
+    """
     board_id = board.id
-    recs = list(recommendations or [])
+    update_themes = (themes_payload is not None) or (key_themes is not None)
+    update_recs = recommendations is not None
     ai_result = {
         "summary_text": summary_text,
         "themes": list(themes_payload or []),
         "key_themes": list(key_themes or []),
-        "recommendations": recs,
     }
-    theme_names = themes.apply_board_themes(db, workspace_id, board_id, ai_result)
 
     active_session_id = manager.get_session_id(board_id) or board.active_session_id
     summary: models.BoardSummary | None = None
@@ -533,17 +541,26 @@ def persist_board_summary_sync(
 
     if summary is not None:
         summary.summary_text = summary_text
-        summary.key_themes = theme_names
-        summary.recommendations = recs
+        if update_themes:
+            summary.key_themes = themes.apply_board_themes(
+                db, workspace_id, board_id, ai_result
+            )
+        if update_recs:
+            summary.recommendations = list(recommendations or [])
         summary.created_at = now_utc()
     else:
+        theme_names = (
+            themes.apply_board_themes(db, workspace_id, board_id, ai_result)
+            if update_themes
+            else []
+        )
         summary = models.BoardSummary(
             id=str(uuid.uuid4()),
             board_id=board_id,
             session_id=session_id,
             summary_text=summary_text,
             key_themes=theme_names,
-            recommendations=recs,
+            recommendations=list(recommendations or []),
         )
         db.add(summary)
 
@@ -561,10 +578,13 @@ def persist_board_summary_sync(
         )
         if existing is None:
             raise
-        theme_names = themes.apply_board_themes(db, workspace_id, board_id, ai_result)
         existing.summary_text = summary_text
-        existing.key_themes = theme_names
-        existing.recommendations = recs
+        if update_themes:
+            existing.key_themes = themes.apply_board_themes(
+                db, workspace_id, board_id, ai_result
+            )
+        if update_recs:
+            existing.recommendations = list(recommendations or [])
         existing.created_at = now_utc()
         summary = existing
         db.commit()

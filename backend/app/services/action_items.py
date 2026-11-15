@@ -3,13 +3,18 @@
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.database import release_connection
 from app.models import now_utc
-from app.services.common import BroadcastAction, dispatch_broadcasts, find_live_board
+from app.services.common import (
+    BoardLookupMode,
+    BroadcastAction,
+    apply_board_lookup,
+    dispatch_broadcasts,
+    find_live_board,
+)
 from app.utils import get_or_404, require_live_board
 from app.ws_manager import manager
 
@@ -71,6 +76,7 @@ def list_workspace_action_items(
     include_carried: bool = False,
     limit: int | None = None,
     offset: int = 0,
+    lookup: BoardLookupMode = "id_or_slug",
 ) -> tuple[list[schemas.DashboardActionItem], int]:
     """Вернуть задачи команды с фильтрами и опциональной пагинацией."""
     q = (
@@ -86,17 +92,31 @@ def list_workspace_action_items(
     if status:
         q = q.filter(models.ActionItem.status == status)
     if board_id_or_slug:
-        q = q.filter(
-            or_(
-                models.Board.id == board_id_or_slug,
-                models.Board.slug == board_id_or_slug,
+        if lookup == "id_or_slug":
+            matched_board_id = (
+                apply_board_lookup(
+                    db.query(models.Board.id),
+                    board_id_or_slug,
+                    workspace_id,
+                    lookup="id_or_slug",
+                )
+                .limit(1)
+                .scalar()
             )
-        )
+            if matched_board_id is None:
+                return [], 0
+            q = q.filter(models.Board.id == matched_board_id)
+        elif lookup == "id":
+            q = q.filter(models.Board.id == board_id_or_slug)
+        elif lookup == "slug":
+            q = q.filter(models.Board.slug == board_id_or_slug)
     if assignee:
         q = q.filter(models.ActionItem.assignee == assignee)
 
     total = q.count()
-    ordered = q.order_by(models.ActionItem.created_at.desc())
+    ordered = q.order_by(
+        models.ActionItem.created_at.desc(), models.ActionItem.id.desc()
+    )
     if offset:
         ordered = ordered.offset(offset)
     if limit is not None:

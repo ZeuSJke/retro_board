@@ -180,6 +180,7 @@ def _reset_ws_manager():
 @pytest.fixture()
 def client():
     """FastAPI TestClient with the DB dependency overridden to use SQLite."""
+    from app.mcp import set_db_session_factory
 
     def _override():
         db = TestSessionLocal()
@@ -189,8 +190,10 @@ def client():
             db.close()
 
     app.dependency_overrides[get_db] = _override
+    set_db_session_factory(TestSessionLocal)
     with TestClient(app) as c:
         yield c
+    set_db_session_factory(None)
     app.dependency_overrides.clear()
 
 

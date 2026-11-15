@@ -96,6 +96,7 @@ def list_all_action_items(
         board_id_or_slug=board_id,
         assignee=assignee,
         include_carried=include_carried,
+        lookup="id",
     )
     return items
 

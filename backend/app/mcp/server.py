@@ -51,7 +51,7 @@ _WRITE_ADDITIVE_ANNOTATIONS = ToolAnnotations(
 )
 _WRITE_UPDATE_ANNOTATIONS = ToolAnnotations(
     read_only_hint=False,
-    destructive_hint=False,
+    destructive_hint=True,
     idempotent_hint=True,
     open_world_hint=False,
 )
@@ -639,6 +639,8 @@ async def save_summary(
 
     Если на доске активна сессия, обновляется (или создаётся) итог этой сессии;
     иначе обновляется последний сохранённый итог доски или создаётся первый.
+    Опущенные параметры (`None`) при обновлении сохраняют прежние темы/рекомендации;
+    передача пустого списка `[]` явно очищает соответствующее поле.
     """
 
     def _op(db, ctx: AgentContext):
@@ -648,25 +650,33 @@ async def save_summary(
             raise ToolError("Текст итогов не должен быть пустым")
         if len(cleaned_text) > 10000:
             raise ToolError("Текст итогов не должен превышать 10000 символов")
-        cleaned_recs: list[str] = []
-        for raw_rec in recommendations or []:
-            if isinstance(raw_rec, str) and raw_rec.strip():
-                rec = raw_rec.strip()
-                if len(rec) > 500:
-                    raise ToolError("Каждая рекомендация не должна превышать 500 символов")
-                cleaned_recs.append(rec)
-                if len(cleaned_recs) >= 20:
-                    break
-        cleaned_keys = [k.strip() for k in (key_themes or []) if isinstance(k, str) and k.strip()][:12]
-        cleaned_themes: list[dict[str, str]] = []
-        for item in themes_payload or []:
-            if isinstance(item, dict) and isinstance(item.get("name"), str) and item["name"].strip():
-                entry = {"name": item["name"].strip()}
-                if isinstance(item.get("description"), str) and item["description"].strip():
-                    entry["description"] = item["description"].strip()
-                cleaned_themes.append(entry)
-                if len(cleaned_themes) >= 12:
-                    break
+        cleaned_recs: list[str] | None = None
+        if recommendations is not None:
+            cleaned_recs = []
+            for raw_rec in recommendations:
+                if isinstance(raw_rec, str) and raw_rec.strip():
+                    rec = raw_rec.strip()
+                    if len(rec) > 500:
+                        raise ToolError("Каждая рекомендация не должна превышать 500 символов")
+                    cleaned_recs.append(rec)
+                    if len(cleaned_recs) >= 20:
+                        break
+        cleaned_keys = (
+            [k.strip() for k in key_themes if isinstance(k, str) and k.strip()][:12]
+            if key_themes is not None
+            else None
+        )
+        cleaned_themes: list[dict[str, str]] | None = None
+        if themes_payload is not None:
+            cleaned_themes = []
+            for item in themes_payload:
+                if isinstance(item, dict) and isinstance(item.get("name"), str) and item["name"].strip():
+                    entry = {"name": item["name"].strip()}
+                    if isinstance(item.get("description"), str) and item["description"].strip():
+                        entry["description"] = item["description"].strip()
+                    cleaned_themes.append(entry)
+                    if len(cleaned_themes) >= 12:
+                        break
 
         out, broadcasts = boards_service.save_board_summary_sync(
             db,
@@ -746,18 +756,34 @@ _state = _SessionState()
 @asynccontextmanager
 async def mcp_lifespan():
     """Запускает свежий StreamableHTTPSessionManager на время lifespan приложения."""
-    session_manager = StreamableHTTPSessionManager(
-        app=mcp._lowlevel_server,
+    mcp.streamable_http_app(
         json_response=True,
-        stateless=True,
-        security_settings=_build_transport_security(),
+        stateless_http=True,
+        transport_security=_build_transport_security(),
     )
+    session_manager = mcp.session_manager
     _state.session_manager = session_manager
     try:
         async with session_manager.run():
             yield
     finally:
         _state.session_manager = None
+
+
+def _rate_limit_response(detail: str) -> JSONResponse:
+    return JSONResponse(
+        {"detail": detail},
+        status_code=429,
+        headers={"Retry-After": "60"},
+    )
+
+
+def _unauthorized_response(detail: str) -> JSONResponse:
+    return JSONResponse(
+        {"detail": detail},
+        status_code=401,
+        headers={"WWW-Authenticate": 'Bearer realm="RetroBoard MCP"'},
+    )
 
 
 def _authenticate_agent_sync(raw_token: str) -> AgentContext | None:
@@ -800,47 +826,30 @@ class MCPASGIApp:
         raw_token = _extract_bearer_token(scope)
         client_ip = get_remote_address(Request(scope))
 
+        if mcp_rate_limiter.is_auth_failure_blocked(client_ip):
+            resp = _rate_limit_response("Слишком много неудачных попыток входа")
+            await resp(scope, receive, send)
+            return
+
         if not raw_token:
-            if not mcp_rate_limiter.allow_auth_failure(client_ip):
-                resp = JSONResponse(
-                    {"detail": "Слишком много неудачных попыток входа"},
-                    status_code=429,
-                    headers={"Retry-After": "60"},
-                )
-                await resp(scope, receive, send)
-                return
-            resp = JSONResponse(
-                {"detail": "Требуется Bearer-токен агента"},
-                status_code=401,
-                headers={"WWW-Authenticate": 'Bearer realm="RetroBoard MCP"'},
-            )
+            if not mcp_rate_limiter.record_auth_failure(client_ip):
+                resp = _rate_limit_response("Слишком много неудачных попыток входа")
+            else:
+                resp = _unauthorized_response("Требуется Bearer-токен агента")
             await resp(scope, receive, send)
             return
 
         agent_ctx = await anyio.to_thread.run_sync(_authenticate_agent_sync, raw_token)
         if agent_ctx is None:
-            if not mcp_rate_limiter.allow_auth_failure(client_ip):
-                resp = JSONResponse(
-                    {"detail": "Слишком много неудачных попыток входа"},
-                    status_code=429,
-                    headers={"Retry-After": "60"},
-                )
-                await resp(scope, receive, send)
-                return
-            resp = JSONResponse(
-                {"detail": "Токен агента недействителен или отозван"},
-                status_code=401,
-                headers={"WWW-Authenticate": 'Bearer realm="RetroBoard MCP"'},
-            )
+            if not mcp_rate_limiter.record_auth_failure(client_ip):
+                resp = _rate_limit_response("Слишком много неудачных попыток входа")
+            else:
+                resp = _unauthorized_response("Токен агента недействителен или отозван")
             await resp(scope, receive, send)
             return
 
         if not mcp_rate_limiter.allow_token(agent_ctx.token_id):
-            resp = JSONResponse(
-                {"detail": "Превышен лимит запросов к MCP для этого токена"},
-                status_code=429,
-                headers={"Retry-After": "60"},
-            )
+            resp = _rate_limit_response("Превышен лимит запросов к MCP для этого токена")
             await resp(scope, receive, send)
             return
 

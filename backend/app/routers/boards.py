@@ -181,7 +181,12 @@ def get_board_by_slug(
     participant: models.Participant = Depends(get_current_participant),
 ):
     return boards_service.get_board_view(
-        db, workspace.id, participant.id, slug, board_query_fn=_board_query
+        db,
+        workspace.id,
+        participant.id,
+        slug,
+        board_query_fn=_board_query,
+        lookup="slug",
     )
 
 
@@ -195,7 +200,12 @@ def get_board(
     participant: models.Participant = Depends(get_current_participant),
 ):
     return boards_service.get_board_view(
-        db, workspace.id, participant.id, board_id, board_query_fn=_board_query
+        db,
+        workspace.id,
+        participant.id,
+        board_id,
+        board_query_fn=_board_query,
+        lookup="id",
     )
 
 
@@ -515,7 +525,7 @@ async def upsert_mood(
     participant: models.Participant = Depends(get_current_participant),
 ):
     """Сохранить или обновить оценку настроения участника сессии для доски."""
-    board = find_live_board(db, board_id, workspace.id)
+    board = find_live_board(db, board_id, workspace.id, lookup="id")
     mood = (
         db.query(models.BoardMood)
         .filter(
@@ -557,7 +567,9 @@ def get_summary(
 
     Returns the most recent summary for the current or last session.
     """
-    return boards_service.get_board_summary_for_workspace(db, workspace.id, board_id)
+    return boards_service.get_board_summary_for_workspace(
+        db, workspace.id, board_id, lookup="id"
+    )
 
 
 @router.post("/{board_id}/summary/regenerate", response_model=schemas.BoardSummaryOut)
@@ -569,7 +581,7 @@ async def regenerate_summary(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Принудительно перегенерировать AI-резюме для доски."""
-    board = find_live_board(db, board_id, workspace.id)
+    board = find_live_board(db, board_id, workspace.id, lookup="id")
     if not settings.ai_configured:
         raise HTTPException(503, "AI сервис не настроен")
     require_cards_visible(board)
@@ -590,7 +602,7 @@ async def regenerate_summary(
         raise HTTPException(502, "Не удалось сгенерировать AI-резюме") from exc
 
     # Пока модель думала, доску могли удалить — перечитываем
-    board = find_live_board(db, board_pk, workspace_pk)
+    board = find_live_board(db, board_pk, workspace_pk, lookup="id")
     return await boards_service.persist_board_summary(
         db,
         board,

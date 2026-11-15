@@ -1,5 +1,6 @@
 """Контекст аутентифицированного MCP-агента и доступ к сессии БД."""
 
+from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
@@ -7,7 +8,7 @@ from typing import Iterator
 
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import SessionLocal
 
 
 @dataclass(frozen=True)
@@ -22,13 +23,13 @@ class AgentContext:
 
 
 _agent_ctx_var: ContextVar[AgentContext | None] = ContextVar("mcp_agent_ctx", default=None)
-_app_ref = None
+_session_factory: Callable[[], Session] = SessionLocal
 
 
-def bind_fastapi_app(fastapi_app) -> None:
-    """Привязать FastAPI-приложение, чтобы MCP-хендлеры видели dependency_overrides."""
-    global _app_ref
-    _app_ref = fastapi_app
+def set_db_session_factory(factory: Callable[[], Session] | None) -> None:
+    """Настроить фабрику DB-сессий для MCP (`None` возвращает `SessionLocal`)."""
+    global _session_factory
+    _session_factory = factory if factory is not None else SessionLocal
 
 
 def set_agent_context(ctx: AgentContext) -> Token[AgentContext | None]:
@@ -48,18 +49,9 @@ def get_agent_context() -> AgentContext:
 
 @contextmanager
 def open_db_session() -> Iterator[Session]:
-    """Открыть DB-сессию с учётом FastAPI dependency_overrides[get_db] в тестах."""
-    dep = get_db
-    if _app_ref is not None and get_db in _app_ref.dependency_overrides:
-        dep = _app_ref.dependency_overrides[get_db]
-    gen = dep()
-    db = next(gen)
+    """Открыть DB-сессию через настроенную фабрику сессий."""
+    db = _session_factory()
     try:
         yield db
     finally:
-        try:
-            next(gen)
-        except StopIteration:
-            pass
-        else:
-            gen.close()
+        db.close()

@@ -2,7 +2,10 @@
 
 Разделён на две независимые корзины:
 - на валидный `token_id` (чтобы активный агент не мешал остальной команде за NAT);
-- на IP при неуспешной аутентификации (тормозит перебор без блокировки валидных токенов).
+- на IP при неуспешной аутентификации: по достижении порога IP блокируется в
+  cooldown-корзине до обращения к БД/threadpool (`is_auth_failure_blocked`), а
+  неудачи записываются после отказа (`record_auth_failure`); валидные токены с
+  других IP и неблокированных адресов не затрагиваются.
 
 Автоматически повторяет состояние `app.limiter.limiter.enabled`, поэтому в
 `TESTING=true` выключен до тех пор, пока тест не включит `limiter.enabled = True`.
@@ -33,6 +36,10 @@ class SlidingWindowLimiter:
         for k in stale:
             del self._buckets[k]
 
+    @staticmethod
+    def _auth_fail_key(client_ip: str) -> str:
+        return f"auth-fail:{client_ip or 'unknown'}"
+
     def _allow(self, key: str, limit: int) -> bool:
         if not limiter.enabled:
             return True
@@ -59,8 +66,26 @@ class SlidingWindowLimiter:
     def allow_token(self, token_id: str) -> bool:
         return self._allow(f"token:{token_id}", MCP_TOKEN_LIMIT_PER_MINUTE)
 
-    def allow_auth_failure(self, client_ip: str) -> bool:
-        return self._allow(f"auth-fail:{client_ip or 'unknown'}", MCP_AUTH_FAIL_LIMIT_PER_MINUTE)
+    def is_auth_failure_blocked(self, client_ip: str) -> bool:
+        """Проверить без обращения к БД, исчерпан ли IP-лимит ошибок входа."""
+        if not limiter.enabled:
+            return False
+        cutoff = time.monotonic() - _WINDOW_SECONDS
+        key = self._auth_fail_key(client_ip)
+        with self._lock:
+            bucket = self._buckets.get(key)
+            if bucket is None:
+                return False
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+            if not bucket:
+                del self._buckets[key]
+                return False
+            return len(bucket) >= MCP_AUTH_FAIL_LIMIT_PER_MINUTE
+
+    def record_auth_failure(self, client_ip: str) -> bool:
+        """Записать неудачную попытку входа для IP (`False`, если лимит уже исчерпан)."""
+        return self._allow(self._auth_fail_key(client_ip), MCP_AUTH_FAIL_LIMIT_PER_MINUTE)
 
     def reset(self) -> None:
         with self._lock:

@@ -305,19 +305,25 @@ def test_mcp_sliding_window_limiter_prunes_stale_and_bounds_buckets(monkeypatch)
         monkeypatch.setattr(rate_limit.time, "monotonic", lambda: clock[0])
 
         sw = rate_limit.SlidingWindowLimiter(max_buckets=3)
-        assert sw.allow_auth_failure("10.0.0.1")
-        assert sw.allow_auth_failure("10.0.0.2")
-        assert sw.allow_auth_failure("10.0.0.3")
+        assert sw.record_auth_failure("10.0.0.1")
+        assert sw.record_auth_failure("10.0.0.2")
+        assert sw.record_auth_failure("10.0.0.3")
         assert len(sw._buckets) == 3
 
         # 4-й активный ключ вытесняет самый старый, словарь не растёт
-        assert sw.allow_auth_failure("10.0.0.4")
+        assert sw.record_auth_failure("10.0.0.4")
         assert len(sw._buckets) == 3
         assert "auth-fail:10.0.0.1" not in sw._buckets
 
         # По истечении окна просроченные бакеты вычищаются при следующем обращении
         clock[0] = 200.0
-        assert sw.allow_auth_failure("10.0.0.5")
+        assert sw.record_auth_failure("10.0.0.5")
         assert list(sw._buckets.keys()) == ["auth-fail:10.0.0.5"]
+
+        for _ in range(rate_limit.MCP_AUTH_FAIL_LIMIT_PER_MINUTE):
+            sw.record_auth_failure("10.0.0.6")
+        assert sw.is_auth_failure_blocked("10.0.0.6")
+        clock[0] = 300.0
+        assert not sw.is_auth_failure_blocked("10.0.0.6")
     finally:
         limiter.enabled = prev_enabled
