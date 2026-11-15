@@ -14,18 +14,20 @@
 
 ## Возможности
 
-- **Workspaces и Admin-панель** — изолированные рабочие пространства команд (`/admin` для создания, переименования, смены ключа доступа и удаления)
-- **Доски и шаблоны** — создание доски из 6 встроенных шаблонов (`classic`, `start_stop_continue`, `4ls`, `sailboat`, `mad_sad_glad`, `empty`), человекочитаемые slug, soft delete (`deleted_at`), блокировка изменений (`is_locked`), скрытие карточек до этапа раскрытия (`hide_cards_until_reveal`), анонимное голосование (`anonymous_votes`), множественные голоса на одну карточку (`allow_multiple_votes_per_card`), сброс голосов (`reset-votes`)
+- **Команды и Admin-панель** — изолированные пространства команд (`/admin`: создание, переименование, смена ключа доступа, ссылка-приглашение и её перевыпуск, удаление)
+- **Участники и вход** — вошёл по коду команды и ключу либо по ссылке-приглашению (или QR с доски), ввёл имя — и работаешь: сервер заводит участника, его личность живёт в `httpOnly`-cookie сессии, а не в имени (тёзки — разные участники). Текст карточки правит автор; удаляют чужое и управляют доской её создатель и ведущий. «Выйти» завершает сессию на сервере
+- **Скрытый сбор и анонимный режим** — доску можно открыть заранее: каждый видит только свои карточки, пока создатель или ведущий не нажмёт «Раскрыть» (`hide_cards_until_reveal`); в анонимном режиме (`anonymous_votes`) скрыты авторы и имена голосовавших. Что кому отдать, решает сервер — чужой текст до раскрытия не уходит ни по REST, ни по WebSocket, ни в экспорт
+- **Доски и шаблоны** — создание доски из 6 встроенных шаблонов (`classic`, `start_stop_continue`, `4ls`, `sailboat`, `mad_sad_glad`, `empty`), человекочитаемые slug, soft delete (`deleted_at`), блокировка изменений (`is_locked`), множественные голоса на одну карточку (`allow_multiple_votes_per_card`), сброс голосов (`reset-votes`)
 - **Колонки, карточки и группы** — настройка колонок и цветов, стикеры с поддержкой Markdown-ссылок и кода, фильтрация/поиск, голосование с лимитом на участника (`max_votes`), drag & drop карточек и целых групп (`@dnd-kit`), массовое редактирование/удаление (`bulk-update`, `bulk-delete`) и объединение карточек (`merge`)
-- **Real-time и фасилитация** — WebSocket-синхронизация состояния доски и списка досок workspace (`/ws/{board_id}`, `/ws/workspace`), режим фасилитатора с фазами (`brainstorm` → `reveal` → `discuss` → `vote` → `summary`), общий таймер, статус готовности (`ready_toggle`), индикатор набора текста (`card_typing`), spotlight карточки, живые курсоры и быстрые реакции
+- **Real-time и сессия ведущего** — WebSocket-синхронизация состояния доски и списка досок команды (`/ws/{board_id}`, `/ws/workspace`) с номерами событий и сверкой после переподключения, режим ведущего с фазами (`brainstorm` → `reveal` → `discuss` → `vote` → `summary`), передача и перехват роли ведущего, общий таймер (переживает рестарт сервера), статус готовности (`ready_toggle`), индикатор набора текста (`card_typing`), spotlight карточки, живые курсоры и быстрые реакции
 - **AI-функции** *(опционально, через любой OpenAI-совместимый `/v1` API — OpenAI, LiteLLM, vLLM, Ollama и т.д.; при подключении задайте `AI_MODEL` и при необходимости `AI_DISABLE_THINKING=false`)*:
   - **Кластеризация** — автогруппировка похожих карточек в колонке и предпросмотр кластеров до применения (`auto-cluster`, `auto-cluster-preview`, `apply-clusters`)
   - **Резюме ретро** — генерация и перегенерация итогов, ключевых тем и рекомендаций (`summary`, `summary/regenerate`)
   - **Action Items** — генерация заголовков и подбор задач из карточек (`generate-title`, `suggest`)
-  - **Кросс-спринт инсайты** — анализ повторяющихся тем по workspace (`workspace-insights`) с детерминистическим fallback при отсутствии AI
-- **Итоги, Mood и Dashboard** — колонка Action Items на доске, перенос незакрытых задач между досками (`carry-forward`), оценка настроения участников (`mood`), графики трендов задач и настроения на `/dashboard`
+  - **Темы команды и кросс-спринт инсайты** — темы из итогов досок получают постоянные названия и счётчики повторов между спринтами (`themes`); сводка по последним доскам (`workspace-insights`) опирается на них, с детерминистическим fallback при отсутствии AI
+- **Задачи, health check и панель управления** — колонка задач на доске, перенос незакрытых задач между досками без дублей (`carry-forward`), оценка настроения (`mood`), health check команды (пять вопросов светофором, запускается у всех одной кнопкой) и оценка встречи; на `/dashboard` — динамика задач, настроения и health check, темы команды со счётчиком «N-й спринт подряд»
 - **Экспорт и UX** — экспорт доски в PDF и Markdown, палитра команд (`Ctrl+K` / `Cmd+K`), горячие клавиши, светлая и тёмная темы, настройка цветовых акцентов
-- **Безопасность** — `httpOnly` JWT-куки, CSRF double-submit защита (`csrf_token` + `X-CSRF-Token`), rate limiting (`slowapi` + лимиты WebSocket), проверка `Origin` при подключении WebSocket, санитизация пользовательского текста для AI и security headers
+- **Безопасность** — `httpOnly` JWT-куки, CSRF double-submit защита (`csrf_token` + `X-CSRF-Token`), rate limiting (`slowapi` + лимиты WebSocket), проверка `Origin` при подключении WebSocket, отзыв сессий (выход, смена ключа доступа), валидация и лимит размера сообщений WebSocket и тел запросов, санитизация пользовательского текста для AI, security headers и CSP с соединениями только на свой хост
 
 ---
 
@@ -100,7 +102,7 @@ make lock           # пересобрать backend/requirements*.txt из requ
 make audit          # известные уязвимости в зависимостях бэкенда и фронтенда
 ```
 
-Для запуска сквозных Playwright E2E-тестов (`cd frontend && npx playwright install chromium && npx playwright test`) требуется запущенный за прокси стек (`http://localhost:3080` → `:3000` / `:8000`, образец конфига — [ci/e2e-nginx.conf](ci/e2e-nginx.conf)) с `TESTING=true` на бэкенде и корневым `.env` на базе `.env.example` (замените плейсхолдеры `ADMIN_LOGIN`/`ADMIN_PASSWORD` на реальные учётные данные бэкенда).
+Для запуска сквозных Playwright E2E-тестов (`cd frontend && npx playwright install chromium && npx playwright test`) требуется запущенный за прокси стек (`http://localhost:3080` → `:3000` / `:8000`, образец конфига — [ci/e2e-nginx.conf](ci/e2e-nginx.conf)) с `TESTING=true` на бэкенде и корневым `.env` на базе `.env.example` (замените плейсхолдеры `ADMIN_LOGIN`/`ADMIN_PASSWORD` на реальные учётные данные бэкенда: перед прогоном тесты пересоздают команду `e2e-team` через админку). Стенд на других портах задаётся переменными `E2E_BASE_URL` (прокси) и `E2E_API_URL` (бэкенд).
 
 ---
 
@@ -118,7 +120,7 @@ docker build -t <registry>/retro-board/web:1.0.0 -f frontend/Dockerfile frontend
 ### Архитектурные требования к окружению
 
 1. **Единый Reverse Proxy / Ingress и сохранение `Host`**: прокси обязан направлять `/api` и `/ws` на `api:8000`, а `/` на `web:3000`, сохраняя оригинальный заголовок `Host`. Иначе редиректы FastAPI (`redirect_slashes`) уведут браузер мимо домена с cookie `csrf_token`.
-2. **Single-worker backend (`api.replicas = 1`)**: `ConnectionManager` хранит активные комнаты, фасилитаторов, фазы и таймеры в памяти процесса. Бэкенд должен работать строго в одном процессе (`WEB_CONCURRENCY=1`, стратегия деплоя `Recreate`).
+2. **Single-worker backend (`api.replicas = 1`)**: `ConnectionManager` хранит активные комнаты, ведущих, фазы и таймеры в памяти процесса. Бэкенд должен работать строго в одном процессе (`WEB_CONCURRENCY=1`, стратегия деплоя `Recreate`).
 3. **Миграции до старта API**: в Kubernetes-чарте миграции `alembic upgrade head` запускаются в `initContainer` до поднятия `api`, а основной контейнер стартует с `SKIP_MIGRATIONS=true`.
 
 ### Деплой через Helm (`k8s/helm/retro-board`)
@@ -207,10 +209,10 @@ retro_board/
     ├── eslint.config.mjs            # ESLint 10 (flat config) + typescript-eslint
     ├── tsconfig.json
     ├── api/                         # HTTP-клиенты (workspace/board Axios + CSRF/auth interceptors, admin API)
-    ├── app/                         # App Router: /, /admin, /board/[id], /dashboard
-    ├── components/                  # UI-компоненты доски, дашборда, диалоги и shadcn/ui примитивы
+    ├── app/                         # App Router: /, /admin, /board/[id], /dashboard, /join/[token]
+    ├── components/                  # UI-компоненты доски, панели управления (dashboard/), health check (health/), диалоги и shadcn/ui примитивы
     ├── hooks/                       # useWebSocket, useBoardWebSocket, useBoardDragDrop, useFacilitator, useTimer
-    ├── lib/                         # board-themes, export-markdown, rich-text, utils
+    ├── lib/                         # board-events (применение событий доски), participants (права и «моё»), board-themes, export-markdown, rich-text, utils
     ├── store/                       # Zustand-стор и уведомления (sonner)
     ├── types/index.ts
     ├── utils/                       # Обработка ошибок, мапперы, экспорт PDF, темы, WS-события
@@ -359,7 +361,7 @@ retro_board/
 | `facilitator_takeover` | Участник забирает роль, если ведущий не в сети дольше 15 секунд |
 | `health_check_start` | Запустить health check у всех участников (в сессии — только ведущий) |
 | `phase_change` | Смена фазы (`brainstorm`, `reveal`, `discuss`, `vote`, `summary`) |
-| `timer_start` / `timer_pause` / `timer_reset` | Управление таймером (в активной сессии — только фасилитатор) |
+| `timer_start` / `timer_pause` / `timer_reset` | Управление таймером (в активной сессии — только ведущий) |
 | `group_collapse` | Свернуть / развернуть группу |
 | `ready_toggle` | Переключить статус готовности участника |
 | `spotlight_card` | Выделить карточку в фокус (или сбросить) |
