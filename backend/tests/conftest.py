@@ -78,7 +78,10 @@ import main as _main_module
 
 @asynccontextmanager
 async def _test_lifespan(app):
-    yield
+    from app.mcp import mcp_lifespan
+
+    async with mcp_lifespan():
+        yield
 
 
 _main_module.app.router.lifespan_context = _test_lifespan
@@ -164,11 +167,14 @@ def _reset_ws_manager():
     phases/timers/session_ids иначе протекают из теста в тест и дают
     ложные presence/facilitator/timer-состояния.
     """
+    from app.mcp import mcp_rate_limiter
     from app.ws_manager import manager as _ws_manager
 
     _ws_manager.reset()
+    mcp_rate_limiter.reset()
     yield
     _ws_manager.reset()
+    mcp_rate_limiter.reset()
 
 
 @pytest.fixture()

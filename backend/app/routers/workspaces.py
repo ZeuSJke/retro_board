@@ -27,6 +27,7 @@ from app.limiter import (
     entry_limit_key,
     limiter,
 )
+from app.services import agent_tokens as agent_token_service
 from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -208,3 +209,51 @@ async def rename_participant(
                 board_id, "facilitator_update", manager.facilitator_payload(board_id)
             )
     return out
+
+
+@router.get("/agent-tokens", response_model=list[schemas.AgentTokenOut])
+@limiter.limit(TEAM_READ_LIMIT)
+def list_workspace_agent_tokens(
+    request: Request,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Список токенов MCP-агентов текущей команды."""
+    return agent_token_service.list_agent_tokens(db, workspace.id)
+
+
+@router.post("/agent-tokens", response_model=schemas.AgentTokenCreatedOut, status_code=201)
+@limiter.limit(TEAM_WRITE_LIMIT)
+def create_workspace_agent_token(
+    request: Request,
+    body: schemas.AgentTokenCreate,
+    db: Session = Depends(get_db),
+    participant: models.Participant = Depends(get_current_participant),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Выпустить новый токен MCP-агента для текущей команды."""
+    if (participant.kind or "human") != "human":
+        raise HTTPException(403, "Агенты не могут выпускать новые токены")
+    token, secret = agent_token_service.create_agent_token(
+        db,
+        workspace.id,
+        name=body.name,
+        scope=body.scope,
+        created_by_id=participant.id,
+    )
+    return schemas.AgentTokenCreatedOut(
+        token=schemas.AgentTokenOut.model_validate(token),
+        secret=secret,
+    )
+
+
+@router.delete("/agent-tokens/{token_id}", response_model=schemas.AgentTokenOut)
+@limiter.limit(TEAM_WRITE_LIMIT)
+def revoke_workspace_agent_token(
+    request: Request,
+    token_id: str,
+    db: Session = Depends(get_db),
+    workspace: models.Workspace = Depends(get_current_workspace),
+):
+    """Отозвать токен MCP-агента текущей команды."""
+    return agent_token_service.revoke_agent_token(db, workspace.id, token_id)

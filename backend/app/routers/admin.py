@@ -15,6 +15,7 @@ from app.workspace_auth import (
 )
 from app.config import settings
 from app.limiter import entry_limit_key, limiter
+from app.services import agent_tokens as agent_token_service
 from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -200,3 +201,70 @@ def delete_workspace(
     db.delete(ws)
     db.commit()
     background.add_task(manager.disconnect_workspace_sessions, workspace_id)
+
+
+@router.get(
+    "/workspaces/{workspace_id}/agent-tokens",
+    response_model=list[schemas.AgentTokenOut],
+)
+@limiter.limit("30/minute")
+def admin_list_agent_tokens(
+    request: Request,
+    workspace_id: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Список токенов MCP-агентов команды (для администратора)."""
+    ws = db.get(models.Workspace, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Команда не найдена")
+    return agent_token_service.list_agent_tokens(db, ws.id)
+
+
+@router.post(
+    "/workspaces/{workspace_id}/agent-tokens",
+    response_model=schemas.AgentTokenCreatedOut,
+    status_code=201,
+)
+@limiter.limit("30/minute")
+def admin_create_agent_token(
+    request: Request,
+    workspace_id: str,
+    body: schemas.AgentTokenCreate,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Выпустить токен MCP-агента для команды (от имени администратора)."""
+    ws = db.get(models.Workspace, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Команда не найдена")
+    token, secret = agent_token_service.create_agent_token(
+        db,
+        ws.id,
+        name=body.name,
+        scope=body.scope,
+        created_by_id=None,
+    )
+    return schemas.AgentTokenCreatedOut(
+        token=schemas.AgentTokenOut.model_validate(token),
+        secret=secret,
+    )
+
+
+@router.delete(
+    "/workspaces/{workspace_id}/agent-tokens/{token_id}",
+    response_model=schemas.AgentTokenOut,
+)
+@limiter.limit("30/minute")
+def admin_revoke_agent_token(
+    request: Request,
+    workspace_id: str,
+    token_id: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Отозвать токен MCP-агента команды (от имени администратора)."""
+    ws = db.get(models.Workspace, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Команда не найдена")
+    return agent_token_service.revoke_agent_token(db, ws.id, token_id)
