@@ -233,6 +233,9 @@ class Card(Base):
         index=True,
         default=None,
     )
+    author_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="human", default="human"
+    )
     color: Mapped[str] = mapped_column(String(20), default="#FFFFFF")
     position: Mapped[int] = mapped_column(Integer, default=0)
     # Голоса: идентификаторы участников (по одному на голос). У старых карточек
@@ -255,6 +258,7 @@ class ActionItem(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     text: Mapped[str] = mapped_column(Text, nullable=False)
     assignee: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    external_url: Mapped[str | None] = mapped_column(String(500), nullable=True, default=None)
     source_card_ids: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
     completed_at: Mapped[datetime | None] = mapped_column(
@@ -393,4 +397,41 @@ class BoardHealthAnswer(Base):
     value: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=now_utc
+    )
+
+
+class AgentToken(Base):
+    """Токен MCP-агента команды.
+
+    Хранит только SHA-256 хэш секрета (`token_hash`) и короткий префикс для UI.
+    Каждый токен жёстко связан со своим `Participant(kind="agent")`, поэтому
+    созданные агентом карточки, голоса и итоги имеют стабильного автора. При
+    отзыве помечаются и сам токен, и `Participant.revoked_at`, но ротация ключа
+    команды (`token_epoch`) на агентские токены не влияет.
+    """
+
+    __tablename__ = "agent_tokens"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    workspace_id: Mapped[str] = mapped_column(
+        String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    participant_id: Mapped[str] = mapped_column(
+        String, ForeignKey("participants.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    name: Mapped[str] = mapped_column(String(60), nullable=False)
+    token_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, default="read_only")
+    created_by_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("participants.id", ondelete="SET NULL"), nullable=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=now_utc
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
     )

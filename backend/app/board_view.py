@@ -56,6 +56,7 @@ def card_view(
             "text": "",
             "author": "",
             "author_id": None,
+            "author_kind": "human",
             "color": "#FFFFFF",
             "likes": [],
             "masked": True,
@@ -63,9 +64,12 @@ def card_view(
     likes = list(card.likes or [])
     author = card.author
     author_id = card.author_id
+    author_kind = card.author_kind or "human"
     if board.anonymous_votes:
         likes = [voter if voter == viewer_id else ANON_VOTER for voter in likes]
-        if not own:
+        # Агент в анонимном режиме остаётся явно подписанным, чтобы команда
+        # видела авторство и бейдж агента, пока человеческие карточки скрыты.
+        if not own and author_kind != "agent":
             author = ANON_AUTHOR
             author_id = None
     return {
@@ -73,6 +77,7 @@ def card_view(
         "text": card.text,
         "author": author,
         "author_id": author_id,
+        "author_kind": author_kind,
         "color": card.color,
         "likes": likes,
         "masked": False,

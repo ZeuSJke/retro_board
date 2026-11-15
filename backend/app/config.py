@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Example: "http://localhost:3000,http://localhost:5173"
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
+    # Optional extra Host headers accepted by MCP Streamable HTTP DNS rebinding protection
+    mcp_allowed_hosts: str = ""  # env MCP_ALLOWED_HOSTS
+
     # CSRF protection (disable for E2E tests via CSRF_ENABLED=false)
     csrf_enabled: bool = True
 

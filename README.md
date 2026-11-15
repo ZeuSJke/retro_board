@@ -25,7 +25,8 @@
   - **Резюме ретро** — генерация и перегенерация итогов, ключевых тем и рекомендаций (`summary`, `summary/regenerate`)
   - **Action Items** — генерация заголовков и подбор задач из карточек (`generate-title`, `suggest`)
   - **Темы команды и кросс-спринт инсайты** — темы из итогов досок получают постоянные названия и счётчики повторов между спринтами (`themes`); сводка по последним доскам (`workspace-insights`) опирается на них, с детерминистическим fallback при отсутствии AI
-- **Задачи, health check и панель управления** — колонка задач на доске, перенос незакрытых задач между досками без дублей (`carry-forward`), оценка настроения (`mood`), health check команды (пять вопросов светофором, запускается у всех одной кнопкой) и оценка встречи; на `/dashboard` — динамика задач, настроения и health check, темы команды со счётчиком «N-й спринт подряд»
+- **Задачи, health check и панель управления** — колонка задач на доске (включая внешние ссылки `external_url` на Jira/GitLab/YouTrack), перенос незакрытых задач между досками без дублей (`carry-forward`), оценка настроения (`mood`), health check команды (пять вопросов светофором, запускается у всех одной кнопкой) и оценка встречи; на `/dashboard` — динамика задач, настроения и health check, темы команды со счётчиком «N-й спринт подряд»
+- **MCP-сервер для AI-агентов (`/mcp`)** — встроенный Streamable HTTP MCP-сервер с изолированными командными Bearer-токенами (`read_only` / `read_write`), 15 инструментами чтения и записи, 3 промпт-шаблонами, защитой приватности скрытого сбора / анонимного режима и визуальным бейджем агента на карточках
 - **Экспорт и UX** — экспорт доски в PDF и Markdown, палитра команд (`Ctrl+K` / `Cmd+K`), горячие клавиши, светлая и тёмная темы, настройка цветовых акцентов
 - **Безопасность** — `httpOnly` JWT-куки, CSRF double-submit защита (`csrf_token` + `X-CSRF-Token`), rate limiting (`slowapi` + лимиты WebSocket), проверка `Origin` при подключении WebSocket, отзыв сессий (выход, смена ключа доступа), валидация и лимит размера сообщений WebSocket и тел запросов, санитизация пользовательского текста для AI, security headers и CSP с соединениями только на свой хост
 
@@ -253,6 +254,9 @@ retro_board/
 | `PATCH` | `/api/workspaces/me/participant` | Сменить имя участника — карточки, голоса и роль ведущего остаются за ним |
 | `GET` | `/api/workspaces/invite` | Токен ссылки-приглашения в команду (создаётся при первом обращении) |
 | `GET` | `/api/workspaces/invite/{token}` | Название команды для страницы приглашения (без входа) |
+| `GET` | `/api/workspaces/agent-tokens` | Список токенов MCP-агентов текущей команды |
+| `POST` | `/api/workspaces/agent-tokens` | Выпустить токен MCP-агента (`read_only` / `read_write`); секрет отдаётся один раз |
+| `DELETE` | `/api/workspaces/agent-tokens/{token_id}` | Отозвать токен агента и связанного с ним участника |
 
 ### Admin (`/api/admin/*`, отдельная cookie `admin_token`)
 
@@ -266,6 +270,9 @@ retro_board/
 | `GET` | `/api/admin/workspaces/{workspace_id}/invite` | Токен ссылки-приглашения команды |
 | `POST` | `/api/admin/workspaces/{workspace_id}/invite/rotate` | Перевыпустить ссылку-приглашение (старая перестаёт работать) |
 | `DELETE` | `/api/admin/workspaces/{workspace_id}` | Удалить workspace |
+| `GET` | `/api/admin/workspaces/{workspace_id}/agent-tokens` | Список токенов MCP-агентов команды |
+| `POST` | `/api/admin/workspaces/{workspace_id}/agent-tokens` | Выпустить токен MCP-агента команды |
+| `DELETE` | `/api/admin/workspaces/{workspace_id}/agent-tokens/{token_id}` | Отозвать токен агента команды |
 
 ### Boards (`/api/boards/*`)
 
@@ -338,8 +345,58 @@ retro_board/
 | `POST` | `/api/action-items/generate-title` | Сгенерировать заголовок задачи через AI |
 | `POST` | `/api/action-items/suggest` | Предложить список Action Items по итогам доски через AI |
 | `POST` | `/api/action-items/` | Создать задачу |
-| `PATCH` | `/api/action-items/{item_id}` | Обновить заголовок / текст / ответственного / статус |
+| `PATCH` | `/api/action-items/{item_id}` | Обновить заголовок / текст / ответственного / статус / `external_url` |
 | `DELETE` | `/api/action-items/{item_id}` | Удалить задачу |
+
+---
+
+## MCP-сервер для AI-агентов (`/mcp`)
+
+RetroBoard предоставляет встроенный **MCP (Model Context Protocol)** сервер поверх Streamable HTTP по пути `/mcp` (`stateless_http=True`, `json_response=True`).
+
+### Выпуск токена агента
+
+1. Откройте **«Настройки команды → Токены агентов»** на странице `/dashboard` (или откройте управление токенами команды в `/admin`).
+2. Укажите имя агента (отображается автором карточек с бейджем **«Агент»**) и права:
+   - **`read_only`** — агент видит только инструменты чтения (`readOnlyHint=true`); любые вызовы записи отклоняются протокольной ошибкой.
+   - **`read_write`** — чтение + создание досок, карточек, группировка, задачи и сохранение итогов.
+3. Скопируйте одноразовый Bearer-токен вида `rba_...` (сервер хранит только SHA-256 хэш и короткий префикс). При отзыве токена агент блокируется мгновенно; смена общего ключа команды выданным агентским токенам не мешает.
+
+### Подключение к MCP-клиентам
+
+- **Claude Code** (`.mcp.json` или `claude mcp add`):
+
+```json
+{
+  "mcpServers": {
+    "retroboard": {
+      "type": "http",
+      "url": "https://retro.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${RETROBOARD_MCP_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+- **Cursor** (`.cursor/mcp.json`): аналогичный блок с `"url": "https://retro.example.com/mcp"` и `"headers": { "Authorization": "Bearer <токен>" }`.
+- **Codex CLI** (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.retroboard]
+url = "https://retro.example.com/mcp"
+bearer_token_env_var = "RETROBOARD_MCP_TOKEN"
+```
+
+### Возможности, приватность и ограничения
+
+- **Изоляция команды**: токен привязан строго к одному workspace и не даёт доступа к чужим доскам и задачам.
+- **Скрытый сбор и анонимность**: пока карточки скрыты (`cards_hidden=true`), чужие карточки маскируются (`masked=true`) и не попадают в `search_cards` и `group_cards`; в анонимном режиме (`anonymous_votes=true`) авторы-люди и голосующие остаются анонимными, но карточки агентов сохраняют подпись агента и бейдж для прозрачности перед командой.
+- **Заблокированные доски (`is_locked=true`)**: создание досок допустимо, но правка карточек, группировка, создание задач и перезапись итогов запрещены; для `update_action_item` разрешено обновлять только `status` и `external_url`.
+- **Безопасность промптов**: тексты карточек, итогов и задач принадлежат участникам команды; агентам передаются инструкции воспринимать их строго как недоверенные данные.
+- **Инструменты (15)**: `list_boards`, `get_board`, `list_action_items`, `search_cards`, `get_board_summary`, `list_workspace_themes`, `get_board_health`, `get_health_trends`, `get_mood_trends`, `create_board`, `create_card`, `group_cards`, `create_action_item`, `update_action_item`, `save_summary`.
+- **Промпты (3)**: `prepare_retro`, `analyze_board`, `sprint_followups`.
 
 ---
 
@@ -406,6 +463,7 @@ retro_board/
 |---|---|---|
 | `DATABASE_URL` | Да | Строка подключения PostgreSQL (`postgresql://...`; драйвер psycopg 3 подставляется автоматически) |
 | `CORS_ORIGINS` | Для prod / Helm | Разрешённые origin'ы через запятую (локальный дефолт: `http://localhost:3000,http://localhost:5173`; в Helm запрещены пустое значение, `*` и `null`) |
+| `MCP_ALLOWED_HOSTS` | Нет | Дополнительные допустимые значения заголовка `Host` для защиты `/mcp` от DNS rebinding (поверх доменов из `CORS_ORIGINS` и loopback) |
 | `ADMIN_LOGIN` | Да | Логин администратора (`/admin`, `>= 3` символов, не `"admin"`) |
 | `ADMIN_PASSWORD` | Да | Пароль администратора (`>= 8` символов, не `"changeme"`) |
 | `WORKSPACE_JWT_SECRET` | Да | Секрет подписи JWT workspace (`>= 32` символов) |
