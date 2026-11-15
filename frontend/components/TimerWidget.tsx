@@ -26,6 +26,8 @@ function formatTime(sec: number): string {
 interface TimerWidgetProps {
   timer: TimerState
   canControl: boolean
+  /** Есть ли что переключать: авто-переход работает только в сессии ведущего. */
+  autoAdvanceAvailable?: boolean
   autoAdvance: boolean
   soundMuted: boolean
   onToggleSoundMuted: () => void
@@ -39,6 +41,7 @@ interface TimerWidgetProps {
 export default function TimerWidget({
   timer,
   canControl,
+  autoAdvanceAvailable = true,
   autoAdvance,
   soundMuted,
   onToggleSoundMuted,
@@ -205,9 +208,21 @@ export default function TimerWidget({
                 ))}
               </div>
 
-              <div className="flex items-center justify-between border-t pt-2.5 text-xs">
-                <span className="text-muted-foreground">Авто-переход после 00:00</span>
-                <Switch checked={autoAdvance} onCheckedChange={onAutoAdvanceChange} />
+              <div className="flex items-center justify-between gap-3 border-t pt-2.5 text-xs">
+                <span className="text-muted-foreground">
+                  Авто-переход после 00:00
+                  {!autoAdvanceAvailable && (
+                    <span className="block text-[11px]" data-testid="auto-advance-hint">
+                      Работает в сессии ведущего: переключает этапы
+                    </span>
+                  )}
+                </span>
+                <Switch
+                  checked={autoAdvanceAvailable && autoAdvance}
+                  disabled={!autoAdvanceAvailable}
+                  onCheckedChange={onAutoAdvanceChange}
+                  aria-label="Авто-переход после 00:00"
+                />
               </div>
             </>
           ) : (
