@@ -2,16 +2,18 @@
 
 import { useMemo, useState } from 'react'
 import {
+  AlertTriangle,
   Check,
   Copy,
   Download,
+  FileText,
   Lightbulb,
   Loader2,
   RefreshCw,
   Sparkles,
   Tag,
 } from 'lucide-react'
-import { regenerateBoardSummary } from '@/api'
+import { getBoardSummary, regenerateBoardSummary } from '@/api'
 import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown'
 import { useAppStore } from '@/store'
 import { showToast } from '@/store/toastStore'
@@ -37,9 +39,12 @@ interface SummaryModalProps {
   actionItems: ActionItem[]
   summary: BoardSummary | null
   loading: boolean
+  /** Почему итогов нет: не удалось загрузить сохранённые или сгенерировать новые. */
   error: string | null
   onSummaryUpdated: (summary: BoardSummary) => void
 }
+
+type SummaryTab = 'summary' | 'markdown'
 
 export default function SummaryModal({
   open,
@@ -53,17 +58,38 @@ export default function SummaryModal({
 }: SummaryModalProps) {
   const aiEnabled = useAppStore((s) => s.aiEnabled)
   const [regenerating, setRegenerating] = useState(false)
+  const [reloading, setReloading] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [exportTab, setExportTab] = useState<'summary' | 'markdown'>('summary')
+  const [exportTab, setExportTab] = useState<SummaryTab>('summary')
+  // Ошибка, которую уже исправил повтор: владелец состояния (доска, панель управления)
+  // хранит её текст и дальше, а показывать её рядом с готовыми итогами незачем
+  const [resolvedError, setResolvedError] = useState<string | null>(null)
+
+  // Каждое открытие начинается с вкладки итогов и без памяти о прошлых ошибках
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) {
+      setExportTab('summary')
+      setResolvedError(null)
+    }
+  }
 
   // Почему AI-резюме сейчас недоступно: сервер ответил бы 503 (AI не настроен)
   // или 409 (карточки скрыты), поэтому кнопку не показываем, а объясняем причину
   const aiBlockedReason =
     aiEnabled === false
-      ? 'AI на этом сервере не настроен, поэтому AI-резюме недоступно. Карточки, голоса и задачи есть на вкладке «Markdown и Slack».'
+      ? 'AI на этом сервере не настроен, поэтому итоги (AI-резюме) не формируются. Карточки, голоса и задачи можно выгрузить без AI — на вкладке «Markdown и Slack».'
       : board.cards_hidden
-        ? 'Карточки ещё скрыты: AI-резюме можно будет создать после их раскрытия.'
+        ? 'Карточки ещё скрыты: итоги можно будет сформировать после их раскрытия.'
         : null
+
+  const shownError = error && error !== resolvedError ? error : null
+  const busy = loading || regenerating || reloading
+  // Итоги на сервере есть, но показать их не удалось — повтор перечитывает сохранённое.
+  // Если сохранённых итогов нет, повторять нечего, кроме самой генерации.
+  const canReload = Boolean(board.has_summary) && !summary
+  const canGenerate = !aiBlockedReason
 
   const fullMarkdown = useMemo(
     () => formatBoardMarkdown(board, actionItems, summary),
@@ -79,9 +105,11 @@ export default function SummaryModal({
       lines.push('', '*Ключевые темы:*')
       summary.key_themes.forEach((t) => lines.push(`• ${t}`))
     }
-    if (actionItems.length > 0) {
-      lines.push('', `*Задачи по итогам (${actionItems.length}):*`)
-      actionItems.forEach((a) => {
+    // Перенесённая задача живёт на другой доске: в сводке этой доски ей не место
+    const tasks = actionItems.filter((a) => !a.superseded_by_id)
+    if (tasks.length > 0) {
+      lines.push('', `*Задачи (${tasks.length}):*`)
+      tasks.forEach((a) => {
         const who = a.assignee ? ` — @${a.assignee}` : ''
         lines.push(`• ${a.title || a.text}${who}`)
       })
@@ -101,18 +129,39 @@ export default function SummaryModal({
   }
 
   const handleRegenerate = async () => {
-    if (regenerating || aiBlockedReason) return
+    if (busy || aiBlockedReason) return
     setRegenerating(true)
     try {
       const fresh = await regenerateBoardSummary(board.id)
+      setResolvedError(error)
       onSummaryUpdated(fresh)
-      showToast('Итоги обновлены', 'success')
+      showToast(summary ? 'Итоги обновлены' : 'Итоги сформированы', 'success')
     } catch (err) {
-      showToast(getApiErrorMessage(err, 'Не удалось перегенерировать итоги'), 'error')
+      showToast(getApiErrorMessage(err, 'Не удалось сформировать итоги'), 'error')
     } finally {
       setRegenerating(false)
     }
   }
+
+  const handleReload = async () => {
+    if (busy) return
+    setReloading(true)
+    try {
+      const saved = await getBoardSummary(board.id)
+      if (saved) {
+        setResolvedError(error)
+        onSummaryUpdated(saved)
+      } else {
+        showToast('Сохранённых итогов у этой доски нет', 'info')
+      }
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось загрузить итоги'), 'error')
+    } finally {
+      setReloading(false)
+    }
+  }
+
+  const openExport = () => setExportTab('markdown')
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -127,7 +176,7 @@ export default function SummaryModal({
 
         <Tabs
           value={exportTab}
-          onValueChange={(v) => setExportTab(v as 'summary' | 'markdown')}
+          onValueChange={(v) => setExportTab(v as SummaryTab)}
           className="flex min-h-0 flex-1 flex-col"
         >
           <div className="shrink-0 border-b border-border/60 bg-muted/20 px-6 py-2.5">
@@ -140,30 +189,81 @@ export default function SummaryModal({
           {/* Высота модалки зафиксирована на DialogContent — flex-1 на DialogBody заполняет окно без скачков и лишнего скролла */}
           <DialogBody>
             <TabsContent value="summary" className="mt-0 flex min-h-full flex-col space-y-4">
-              {(loading || regenerating) && (
+              {busy && (
                 <div className="flex min-h-[260px] flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  <p className="text-sm">Анализируем карточки и формируем выводы...</p>
+                  <p className="text-sm">
+                    {reloading
+                      ? 'Загружаем итоги...'
+                      : 'Анализируем карточки и формируем выводы...'}
+                  </p>
                 </div>
               )}
 
-              {!loading && !regenerating && error && (
-                <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
-                  {error}
+              {/* Итогов нет и взять их не получилось: объясняем и даём действие, а не один красный текст */}
+              {!busy && shownError && !summary && (
+                <div
+                  role="alert"
+                  data-testid="summary-error-state"
+                  className="flex min-h-[260px] flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-destructive/40 bg-destructive/5 px-6 text-center"
+                >
+                  <AlertTriangle className="h-7 w-7 text-destructive" aria-hidden="true" />
+                  <p className="text-sm font-semibold text-foreground">{shownError}</p>
+                  <p className="max-w-md text-sm text-muted-foreground">
+                    {canReload
+                      ? 'Итоги этой доски сохранены на сервере, но загрузить их не получилось. Попробуйте ещё раз.'
+                      : (aiBlockedReason ??
+                        'AI-сервис не ответил или вернул ошибку. Попробуйте ещё раз — а карточки, голоса и задачи можно выгрузить и без AI-резюме.')}
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    {(canReload || canGenerate) && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={canReload ? handleReload : handleRegenerate}
+                        data-testid="summary-retry-btn"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        Повторить
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={openExport}
+                      data-testid="summary-open-export-btn"
+                    >
+                      <FileText className="h-4 w-4" />
+                      Открыть экспорт
+                    </Button>
+                  </div>
                 </div>
               )}
 
-              {!loading && !regenerating && !error && !summary && (
+              {!busy && !shownError && !summary && (
                 <div className="flex min-h-[260px] flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 text-center">
                   {aiBlockedReason ? (
-                    <p className="max-w-md text-sm text-muted-foreground" data-testid="ai-unavailable-note">
-                      {aiBlockedReason}
-                    </p>
+                    <>
+                      <p className="max-w-md text-sm text-muted-foreground" data-testid="ai-unavailable-note">
+                        {aiBlockedReason}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={openExport}
+                        data-testid="summary-open-export-btn"
+                      >
+                        <FileText className="h-4 w-4" />
+                        Открыть экспорт
+                      </Button>
+                    </>
                   ) : (
                     <>
                       <p className="max-w-md text-sm text-muted-foreground">
-                        AI-резюме для этой доски ещё не создано. Переведите сессию на этап «Итоги»
-                        или сгенерируйте его вручную.
+                        Итоги для этой доски ещё не сформированы. Они появятся, когда ведущий
+                        переведёт сессию на этап «Итоги», — или сформируйте их сейчас.
                       </p>
                       <Button
                         variant="outline"
@@ -179,8 +279,33 @@ export default function SummaryModal({
                 </div>
               )}
 
-              {!loading && !regenerating && summary && (
+              {!busy && summary && (
                 <div className="space-y-4">
+                  {/* Новые итоги сформировать не удалось, но прошлые есть: показываем их с пояснением */}
+                  {shownError && (
+                    <div
+                      role="alert"
+                      data-testid="summary-stale-note"
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-sm"
+                    >
+                      <span className="min-w-0 flex-1 text-foreground">
+                        {shownError.replace(/[.\s]+$/, '')}. Ниже — итоги, сохранённые раньше.
+                      </span>
+                      {canGenerate && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={handleRegenerate}
+                          data-testid="summary-retry-btn"
+                        >
+                          <RefreshCw className="h-4 w-4" />
+                          Повторить
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
                   <div className="rounded-xl border bg-muted/40 p-3.5">
                     <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       Общий вывод
@@ -290,14 +415,14 @@ export default function SummaryModal({
         </Tabs>
 
         <DialogFooter className="sm:justify-between">
-          {/* Перегенерировать можно только готовое резюме и только когда AI доступен:
-              для первого создания есть кнопка «Сгенерировать» выше */}
+          {/* Одно действие на состояние: без итогов — «Сгенерировать» в теле окна, с итогами —
+              «Перегенерировать» здесь. На вкладке экспорта и без AI кнопки генерации нет. */}
           {summary && exportTab === 'summary' && aiEnabled !== false ? (
             <Button
               type="button"
               variant="outline"
               onClick={handleRegenerate}
-              disabled={regenerating || Boolean(aiBlockedReason)}
+              disabled={busy || Boolean(aiBlockedReason)}
               title={aiBlockedReason ?? undefined}
               data-testid="regenerate-summary-btn"
             >
