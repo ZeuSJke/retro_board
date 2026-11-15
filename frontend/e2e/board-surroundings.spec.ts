@@ -395,7 +395,7 @@ test.describe('Итоги без AI', () => {
     try {
       // Окно итогов у доски без итогов: ни запроса, ни 404 в консоли
       await fac.page.getByTestId('export-menu-btn').click()
-      await fac.page.getByRole('menuitem', { name: 'Итоги ретро и AI' }).click()
+      await fac.page.getByRole('menuitem', { name: 'Итоги ретроспективы' }).click()
       await expect(fac.page.getByRole('dialog').getByTestId('ai-unavailable-note')).toBeVisible()
       await fac.page.getByRole('dialog').getByRole('button', { name: 'Готово' }).click()
 
@@ -485,7 +485,7 @@ test.describe('Итоги: событие summary_generated', () => {
       await expect(page.locator('body > canvas')).toHaveCount(0)
 
       await page.getByTestId('export-menu-btn').click()
-      await page.getByRole('menuitem', { name: 'Итоги ретро и AI' }).click()
+      await page.getByRole('menuitem', { name: 'Итоги ретроспективы' }).click()
       const dialog = page.getByRole('dialog')
       await expect(dialog).toContainText('Подменные итоги №')
       await dialog.getByRole('button', { name: 'Готово' }).click()

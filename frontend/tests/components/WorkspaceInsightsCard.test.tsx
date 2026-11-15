@@ -19,7 +19,7 @@ describe('WorkspaceInsightsCard', () => {
     const onRefresh = vi.fn()
     render(<WorkspaceInsightsCard insights={null} loading={false} onRefresh={onRefresh} aiEnabled />)
 
-    expect(screen.getByText('Кросс-спринт AI-аналитика')).toBeInTheDocument()
+    expect(screen.getByText('Аналитика по спринтам')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Собрать инсайты' }))
     expect(onRefresh).toHaveBeenCalledTimes(1)
   })

@@ -12,6 +12,7 @@ from app.workspace_auth import (
     get_admin_user,
     hash_access_key,
     new_invite_token,
+    verify_admin_token,
 )
 from app.config import settings
 from app.limiter import entry_limit_key, limiter
@@ -53,6 +54,22 @@ def admin_logout(response: Response):
     """Выход администратора."""
     response.delete_cookie("admin_token")
     return {"ok": True}
+
+
+@router.get("/session", response_model=schemas.AdminSessionOut)
+@limiter.limit("30/minute")
+def admin_session(request: Request, response: Response):
+    """Проверить сессию администратора без 401.
+
+    Эндпоинт нужен странице `/admin`, чтобы отличить «не входил» от «сессия
+    закончилась», не получая 401 в консоли браузера. Ответ всегда 200:
+    признак входа — в теле.
+    """
+    token = request.cookies.get("admin_token")
+    response.headers["Cache-Control"] = "no-store"
+    return schemas.AdminSessionOut(
+        authenticated=bool(token and verify_admin_token(token))
+    )
 
 
 @router.get("/workspaces", response_model=list[schemas.WorkspaceListItem])

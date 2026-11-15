@@ -35,7 +35,15 @@ vi.mock('next-themes', () => ({
 }))
 
 vi.mock('next/link', () => ({
-  default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
+  default: ({
+    children,
+    href,
+    ...props
+  }: { children: React.ReactNode; href: string } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a href={href} {...props}>
+      {children}
+    </a>
+  ),
 }))
 
 const workspace = { workspaceId: 'w-1', workspaceSlug: 'team', workspaceName: 'Команда' }
@@ -213,6 +221,15 @@ describe('UserSettingsDialog — выход и имя', () => {
     render(<UserSettingsDialog open onOpenChange={vi.fn()} />)
     await user.click(screen.getByTestId('profile-save-btn'))
     expect(api.renameParticipant).not.toHaveBeenCalled()
+  })
+
+  it('из профиля можно перейти в администрирование', () => {
+    render(<UserSettingsDialog open onOpenChange={vi.fn()} />)
+
+    expect(screen.getByTestId('admin-panel-row')).toHaveTextContent('Администрирование')
+    expect(
+      screen.getByRole('link', { name: 'Администрирование — открыть панель' }),
+    ).toHaveAttribute('href', '/admin')
   })
 })
 

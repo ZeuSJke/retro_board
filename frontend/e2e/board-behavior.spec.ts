@@ -440,7 +440,7 @@ test.describe('Поведение доски', () => {
       })
 
       await page.getByTestId('export-menu-btn').click()
-      await page.getByText('Итоги ретро и AI').click()
+      await page.getByText('Итоги ретроспективы').click()
       await expect(page.getByRole('dialog').getByText('Итоги ретроспективы')).toBeVisible({ timeout: 10000 })
       await page.waitForTimeout(800)
 

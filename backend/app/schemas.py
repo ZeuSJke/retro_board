@@ -211,6 +211,12 @@ class AdminLoginRequest(BaseModel):
         return _utf8_encodable(v)
 
 
+class AdminSessionOut(BaseModel):
+    """Признак действующей сессии администратора; ответ всегда 200."""
+
+    authenticated: bool
+
+
 # ── Card ──────────────────────────────────────────────────────────────────────
 
 

@@ -264,6 +264,7 @@ retro_board/
 |---|---|---|
 | `POST` | `/api/admin/login` | Вход администратора |
 | `POST` | `/api/admin/logout` | Выход администратора |
+| `GET` | `/api/admin/session` | Проверка сессии администратора: всегда `200` и `{authenticated}` (без ответа `401`); `Cache-Control: no-store` |
 | `GET` | `/api/admin/workspaces` | Список всех workspaces |
 | `POST` | `/api/admin/workspaces` | Создать workspace |
 | `PATCH` | `/api/admin/workspaces/{workspace_id}` | Переименовать / сменить ключ доступа (смена ключа отзывает все сессии команды и ссылку-приглашение) |

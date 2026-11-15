@@ -243,6 +243,7 @@ function CardGroupWidget({
                 value={titleDraft}
                 onChange={(e) => setTitleDraft(e.target.value)}
                 autoFocus
+                maxLength={120}
                 className="h-6 px-2 text-xs font-semibold"
                 onBlur={saveTitle}
                 onKeyDown={(e) => {

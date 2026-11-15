@@ -342,6 +342,9 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
       >
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm">Проверка доступа...</p>
+        <Link href="/" className="text-xs underline-offset-4 hover:text-foreground hover:underline">
+          Вернуться к доскам
+        </Link>
       </div>
     )
   }

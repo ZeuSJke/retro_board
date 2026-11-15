@@ -3,12 +3,13 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import AdminPage from '../../app/admin/page'
 import { generateSlugFromName } from '../../app/admin/AdminTeams'
-import { setAdminSessionHint } from '../../api/admin'
+import { getAdminSessionHint, setAdminSessionHint } from '../../api/admin'
 import { showToast } from '../../store/toastStore'
 
 const api = vi.hoisted(() => ({
   adminLogin: vi.fn(),
   adminLogout: vi.fn(),
+  checkAdminSession: vi.fn(),
   getAdminWorkspaces: vi.fn(),
   createAdminWorkspace: vi.fn(),
   updateAdminWorkspace: vi.fn(),
@@ -20,7 +21,7 @@ const api = vi.hoisted(() => ({
   revokeAdminAgentToken: vi.fn(),
 }))
 
-// Сетевые вызовы подменены, отметка о входе (localStorage) — настоящая
+// Сетевые вызовы подменены, состояние сессии — настоящий модуль api/admin
 vi.mock('../../api/admin', async () => {
   const actual = await vi.importActual<typeof import('../../api/admin')>('../../api/admin')
   return { ...actual, ...api }
@@ -57,6 +58,10 @@ function httpError(status: number, detail: unknown = '') {
 /** Открыть админку уже вошедшим администратором со списком команд. */
 async function renderSignedIn(workspaces = [platform]) {
   setAdminSessionHint(true)
+  api.checkAdminSession.mockImplementation(() => {
+    setAdminSessionHint(true)
+    return Promise.resolve(true)
+  })
   api.getAdminWorkspaces.mockResolvedValue(workspaces)
   render(<AdminPage />)
   await screen.findByRole('heading', { name: 'Команды' })
@@ -69,8 +74,11 @@ function teamRow(name: string) {
 describe('Админка /admin', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    localStorage.clear()
-    setAdminSessionHint(false)
+    setAdminSessionHint(null)
+    api.checkAdminSession.mockImplementation(() => {
+      setAdminSessionHint(false)
+      return Promise.resolve(false)
+    })
     api.adminLogin.mockImplementation(() => {
       setAdminSessionHint(true)
       return Promise.resolve()
@@ -82,11 +90,29 @@ describe('Админка /admin', () => {
   })
 
   describe('вход', () => {
-    it('без отметки о входе сразу показывает форму и не спрашивает сервер (нет 401 в консоли)', () => {
+    it('без сессии показывает форму входа, проверив cookie без 401', async () => {
       render(<AdminPage />)
 
-      expect(screen.getByText('Панель администратора')).toBeInTheDocument()
+      expect(await screen.findByText('Панель администратора')).toBeInTheDocument()
+      expect(api.checkAdminSession).toHaveBeenCalledTimes(1)
       expect(api.getAdminWorkspaces).not.toHaveBeenCalled()
+    })
+
+    it('пока проверяет сессию, можно вернуться к доскам', () => {
+      api.checkAdminSession.mockImplementation(() => new Promise(() => {}))
+      render(<AdminPage />)
+
+      expect(screen.getByText('Проверка доступа...')).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Вернуться к доскам' })).toHaveAttribute('href', '/')
+    })
+
+    it('перепроверяет сессию при возврате на вкладку', async () => {
+      await renderSignedIn()
+      expect(api.checkAdminSession).toHaveBeenCalledTimes(1)
+
+      document.dispatchEvent(new Event('visibilitychange'))
+
+      await waitFor(() => expect(api.checkAdminSession).toHaveBeenCalledTimes(2))
     })
 
     it('успешный вход открывает список команд', async () => {
@@ -117,8 +143,11 @@ describe('Админка /admin', () => {
       expect(api.getAdminWorkspaces).not.toHaveBeenCalled()
     })
 
-    it('отметка есть, а сервер сессию уже не принимает: форма входа с объяснением', async () => {
+    it('состояние есть, а сервер сессию уже не принимает: форма входа с объяснением', async () => {
       setAdminSessionHint(true)
+      expect(getAdminSessionHint()).toBe(true)
+      // Проверка сессии ещё идёт — состояние снимает только 401 от данных
+      api.checkAdminSession.mockImplementation(() => new Promise(() => {}))
       api.getAdminWorkspaces.mockImplementationOnce(() => {
         // Так ведёт себя перехватчик api/admin.ts на ответ 401
         setAdminSessionHint(false)
@@ -146,6 +175,10 @@ describe('Админка /admin', () => {
     it('список не загрузился — ошибка и «Повторить», а не форма входа', async () => {
       const user = userEvent.setup()
       setAdminSessionHint(true)
+      api.checkAdminSession.mockImplementation(() => {
+        setAdminSessionHint(true)
+        return Promise.resolve(true)
+      })
       api.getAdminWorkspaces.mockRejectedValueOnce(httpError(500, 'Внутренняя ошибка сервера'))
       render(<AdminPage />)
 
@@ -445,8 +478,11 @@ describe('generateSlugFromName', () => {
 describe('токены агентов в админке', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    localStorage.clear()
-    setAdminSessionHint(false)
+    setAdminSessionHint(null)
+    api.checkAdminSession.mockImplementation(() => {
+      setAdminSessionHint(false)
+      return Promise.resolve(false)
+    })
   })
 
   it('открывает диалог токенов команды, выпускает и отзывает токен через admin API', async () => {

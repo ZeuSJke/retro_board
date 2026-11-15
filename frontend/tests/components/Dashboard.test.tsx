@@ -188,7 +188,7 @@ describe('Dashboard', () => {
     })
 
     expect(screen.getByText('Доски команды')).toBeInTheDocument()
-    expect(screen.getByText('Кросс-спринт AI-аналитика')).toBeInTheDocument()
+    expect(screen.getByText('Аналитика по спринтам')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Задачи/i })).toBeInTheDocument()
   })
 
@@ -428,7 +428,7 @@ describe('Dashboard — темы команды, AI и health check', () => {
     render(<Dashboard />)
 
     expect(await screen.findByText('Сводка по спринтам')).toBeInTheDocument()
-    expect(screen.queryByText('Кросс-спринт AI-аналитика')).not.toBeInTheDocument()
+    expect(screen.queryByText('Аналитика по спринтам')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Собрать сводку' })).toBeInTheDocument()
     expect(screen.getByTestId('team-themes-ai-off')).toBeInTheDocument()
   })

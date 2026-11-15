@@ -146,7 +146,7 @@ export default function BulkActionsBar({
                     placeholder="Например: CI/CD"
                     autoFocus
                     className="h-8 text-xs"
-                    maxLength={200}
+                    maxLength={120}
                   />
                   <Button type="submit" size="sm" className="h-8 w-full text-xs" disabled={busy}>
                     <Check className="mr-1 h-3.5 w-3.5" />

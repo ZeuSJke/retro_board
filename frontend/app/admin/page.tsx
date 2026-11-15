@@ -14,12 +14,13 @@ import AdminTeams from './AdminTeams'
 import { useAdminSessionHint } from './useAdminSessionHint'
 
 /**
- * Админка: вход администратора и управление командами.
+ * Админка: проверка сессии администратора и управление командами.
  *
- * Что показывать, решает отметка о входе в этом браузере (`useAdminSessionHint`): без неё
- * форма входа появляется сразу, без запроса к серверу — и без ответа 401 в консоли. С отметкой
- * открывается список команд; если сервер сессию уже не принимает, перехватчик снимает отметку
- * и страница возвращается к форме входа.
+ * Сессия — httpOnly-cookie `admin_token`, поэтому признак входа спрашиваем
+ * эндпоинтом `GET /api/admin/session`: он отвечает 200 и `{authenticated}`,
+ * без ответа 401 в консоли. Пока ответа нет — «Проверка доступа...»; если
+ * сервер сессию уже не принимает, страница возвращается к форме входа
+ * с объяснением.
  */
 export default function AdminPage() {
   const sessionHint = useAdminSessionHint()
@@ -56,6 +57,9 @@ export default function AdminPage() {
       >
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm">Проверка доступа...</p>
+        <Link href="/" className="text-xs underline-offset-4 hover:text-foreground hover:underline">
+          Вернуться к доскам
+        </Link>
       </div>
     )
   }

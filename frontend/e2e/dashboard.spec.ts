@@ -316,7 +316,7 @@ test.describe('Dashboard: графики, темы и health check', () => {
     await expect(card).toContainText('Темы берутся из итогов досок')
 
     if (aiEnabled) {
-      await expect(page.getByTestId('workspace-insights-card')).toContainText('Кросс-спринт AI-аналитика')
+      await expect(page.getByTestId('workspace-insights-card')).toContainText('Аналитика по спринтам')
     } else {
       // Без AI блоки не обещают того, чего сервер не умеет
       await expect(page.getByTestId('team-themes-ai-off')).toBeVisible()

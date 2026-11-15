@@ -1,6 +1,7 @@
 import axios, { type AxiosError } from 'axios'
 import type { AgentToken, AgentTokenCreated, AgentTokenScope } from '../types'
-import { isApiErrorReported } from '../utils/apiError'
+import { showToast } from '../store/toastStore'
+import { isApiErrorReported, markApiErrorReported } from '../utils/apiError'
 import { getCsrfToken, handleCommonHttpError } from './index'
 
 const adminApi = axios.create({
@@ -9,61 +10,76 @@ const adminApi = axios.create({
   timeout: 15000,
 })
 
-// ── Признак входа администратора ────────────────────────────────────────────
+// ── Состояние сессии администратора ─────────────────────────────────────────
 //
-// Сессия администратора — httpOnly-cookie `admin_token`: из JS её не видно, а спросить сервер
-// «вошёл ли я» можно только запросом, который без входа отвечает 401 (и браузер пишет это в
-// консоль как ошибку). Поэтому при входе запоминаем срок сессии в localStorage: нет отметки —
-// страница сразу показывает форму входа и сервер не спрашивает. Отметка — подсказка, а не
-// доступ: проверяет сессию по-прежнему сервер.
+// Сессия администратора — httpOnly-cookie `admin_token`: из JS её не видно.
+// Признак входа спрашиваем у сервера эндпоинтом `GET /api/admin/session`:
+// он отвечает 200 и `{authenticated}`, поэтому в консоли нет ответа 401.
+// Пока ответа нет — `null` (страница показывает «Проверка доступа...»).
+// `setAdminSessionHint` меняет состояние после входа, выхода и ответа 401.
 
-const ADMIN_SESSION_KEY = 'retroboard-admin-session'
-/** Срок жизни cookie `admin_token` (`max_age=86400` в `backend/app/routers/admin.py`). */
-const ADMIN_SESSION_TTL_MS = 24 * 60 * 60 * 1000
+export type AdminSessionHint = boolean | null
 
-const hintListeners = new Set<() => void>()
-// Запасное хранение на случай, когда localStorage недоступен (запрещён или переполнен)
-let memoryExpiresAt = 0
-let storageBroken = false
-
-function readSessionExpiry(): number {
-  if (storageBroken) return memoryExpiresAt
-  try {
-    return Number(window.localStorage.getItem(ADMIN_SESSION_KEY)) || 0
-  } catch {
-    return memoryExpiresAt
-  }
+export interface AdminSessionInfo {
+  authenticated: boolean
 }
 
-/** Есть ли отметка о действующей сессии администратора в этом браузере. */
-export function getAdminSessionHint(): boolean {
-  return typeof window !== 'undefined' && readSessionExpiry() > Date.now()
+const sessionListeners = new Set<() => void>()
+let sessionHint: AdminSessionHint = null
+let checkPromise: Promise<boolean> | null = null
+
+function publishSessionHint(active: AdminSessionHint): void {
+  sessionHint = active
+  sessionListeners.forEach((listener) => listener())
 }
 
-/** Поставить или снять отметку: после входа, выхода и ответа 401. */
-export function setAdminSessionHint(active: boolean): void {
-  memoryExpiresAt = active ? Date.now() + ADMIN_SESSION_TTL_MS : 0
-  try {
-    if (active) {
-      window.localStorage.setItem(ADMIN_SESSION_KEY, String(memoryExpiresAt))
-    } else {
-      window.localStorage.removeItem(ADMIN_SESSION_KEY)
-    }
-    storageBroken = false
-  } catch {
-    storageBroken = true
-  }
-  hintListeners.forEach((listener) => listener())
+/** Текущее знание о сессии: `null` — ещё не проверяли. */
+export function getAdminSessionHint(): AdminSessionHint {
+  return sessionHint
 }
 
-/** Подписка на отметку (для `useSyncExternalStore`), в том числе на вход и выход в другой вкладке. */
+/** Поставить или снять состояние: после входа, выхода и ответа 401. */
+export function setAdminSessionHint(active: AdminSessionHint): void {
+  publishSessionHint(active)
+}
+
+/** Подписка на состояние (для `useSyncExternalStore`). */
 export function subscribeAdminSessionHint(listener: () => void): () => void {
-  hintListeners.add(listener)
-  window.addEventListener('storage', listener)
+  sessionListeners.add(listener)
   return () => {
-    hintListeners.delete(listener)
-    window.removeEventListener('storage', listener)
+    sessionListeners.delete(listener)
   }
+}
+
+/** Спросить сервер, действует ли cookie администратора. Ответ всегда 200. */
+export const getAdminSession = (): Promise<AdminSessionInfo> =>
+  adminApi.get<AdminSessionInfo>('/session').then((r) => r.data)
+
+/**
+ * Проверить сессию один раз и записать результат в состояние.
+ * Пока запрос в пути, повторные вызовы ждут его же.
+ */
+export function checkAdminSession(): Promise<AdminSessionHint> {
+  if (checkPromise) return checkPromise.then(() => sessionHint)
+  checkPromise = getAdminSession()
+    .then(({ authenticated }) => {
+      publishSessionHint(authenticated)
+      return authenticated
+    })
+    .catch((error: unknown) => {
+      // Сеть или 5xx — это не «сессия закончилась». Если состояние уже
+      // известно, не трогаем его; иначе показываем форму входа с пояснением.
+      markApiErrorReported(error)
+      if (sessionHint === null) publishSessionHint(false)
+      showToast('Не удалось проверить сессию администратора', 'error', {
+        description: 'Сервер не ответил. Проверьте соединение и откройте страницу снова.',
+      })
+      return sessionHint ?? false
+    })
+    .finally(() => {
+      checkPromise = null
+    })
+  return checkPromise.then(() => sessionHint)
 }
 
 adminApi.interceptors.request.use((config) => {
@@ -121,10 +137,11 @@ interface InviteResponse {
   invite_token: string
 }
 
+/** Вход: после успешного ответа страница переключается на список команд. */
 export const adminLogin = (data: { login: string; password: string }): Promise<void> =>
   adminApi.post('/login', data).then(() => setAdminSessionHint(true))
 
-/** Выход: отметка о сессии снимается, даже если запрос не дошёл до сервера. */
+/** Выход: состояние снимается, даже если запрос не дошёл до сервера. */
 export const adminLogout = (): Promise<void> =>
   adminApi
     .post('/logout')
