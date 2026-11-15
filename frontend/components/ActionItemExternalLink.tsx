@@ -93,7 +93,7 @@ export default function ActionItemExternalLink({
           <PopoverTrigger asChild>
             <button
               type="button"
-              aria-label={safeLink ? 'Изменить внешнюю ссылку' : 'Добавить внешнюю ссылку'}
+              aria-label={safeLink ? 'Изменить внешнюю ссылку' : 'Указать внешнюю ссылку'}
               title={safeLink ? 'Изменить внешнюю ссылку' : 'Ссылка в Jira / Tracker / GitHub'}
               data-testid={`action-item-link-btn-${item.id}`}
               className="inline-flex items-center gap-1 rounded-full border border-dashed border-border/80 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"

@@ -341,6 +341,8 @@ describe('Внешняя ссылка на задачу (external_url)', () => {
       actionItems: [task('t-1', { external_url: null })],
     })
 
+    // Кнопка привязки ссылки не должна пересекаться с кнопкой «Добавить» задачу по accessible name
+    expect(screen.queryByRole('button', { name: /добавить/i })).not.toBeInTheDocument()
     await user.click(screen.getByTestId('action-item-link-btn-t-1'))
     const input = await screen.findByPlaceholderText('https://tracker.company.ru/TASK-1')
 
