@@ -196,6 +196,10 @@ test.describe('Dashboard: шапка', () => {
   test('список досок, профиль и выход доступны из шапки', async ({ page, request }) => {
     const wsData = await ensureE2EWorkspace(request)
     await createBoardViaAPI(request, 'Доска из шапки', wsData.token)
+    // Выход завершает сессию на сервере, поэтому выходит отдельный участник:
+    // общий участник спеков должен остаться в строю для остальных тестов.
+    await setUsername(page, 'Уходящий с панели')
+    const leaving = await loginWorkspace(page, request)
 
     await page.goto('/dashboard')
 
@@ -207,7 +211,7 @@ test.describe('Dashboard: шапка', () => {
 
     await page.getByTestId('user-settings-btn').click()
     await expect(page.getByText('Профиль и оформление')).toBeVisible()
-    await expect(page.getByLabel('Имя участника')).toHaveValue(wsData.participant.name)
+    await expect(page.getByLabel('Имя участника')).toHaveValue(leaving.participant.name)
 
     await page.getByTestId('logout-btn').click()
     await expect(page.getByText('Войти на доску')).toBeVisible()
