@@ -369,8 +369,8 @@ export default function MasterColumn({
 
   return (
     <div data-testid="master-column" className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+      {/* Header. До 1024 px панель живёт в выезжающей шторке: справа оставлено место под её крестик */}
+      <div className="flex items-center justify-between gap-2 border-b py-3 pl-4 pr-12 lg:pr-4">
         <div className="flex items-center gap-2">
           <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
             <ListTodo className="h-3.5 w-3.5" />

@@ -1,4 +1,11 @@
-import { test, expect, type APIRequestContext, type Browser, type Page } from '@playwright/test'
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type Browser,
+  type Page,
+  type WebSocketRoute,
+} from '@playwright/test'
 import {
   API,
   DEFAULT_USER_NAME,
@@ -414,6 +421,85 @@ test.describe('Итоги без AI', () => {
     } finally {
       await fac.ctx.close()
       await guest.ctx.close()
+    }
+  })
+})
+
+test.describe('Итоги: событие summary_generated', () => {
+  test('перегенерация другим участником не открывает окно итогов, итоги фазы — открывают', async ({
+    browser,
+    request,
+  }) => {
+    const board = (await createBoardViaAPI(request, 'Итоги по событию', shared.token)) as BoardData
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    const page = await ctx.newPage()
+    await setUsername(page)
+    await loginWorkspace(page, request)
+    const consoleErrors: string[] = []
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(msg.text())
+    })
+
+    // Сокет доски работает с сервером как обычно; тест может дослать странице событие от его имени.
+    // Итоги создаёт AI, которого в тестовом окружении нет, поэтому событие и сами итоги — подменные.
+    let boardSocket: WebSocketRoute | null = null
+    await page.routeWebSocket(
+      (url) => url.pathname === `/ws/${board.id}`,
+      (ws) => {
+        ws.connectToServer()
+        boardSocket = ws
+      },
+    )
+    let summaryNumber = 0
+    await page.route(`**/api/boards/${board.id}/summary`, async (route) => {
+      summaryNumber += 1
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'sum-1',
+          board_id: board.id,
+          session_id: null,
+          summary_text: `Подменные итоги №${summaryNumber}`,
+          key_themes: [],
+          recommendations: [],
+          created_at: new Date().toISOString(),
+        }),
+      })
+    })
+    const fromServer = (data: Record<string, unknown>) => {
+      expect(boardSocket, 'сокет доски перехвачен').not.toBeNull()
+      boardSocket!.send(JSON.stringify({ event: 'summary_generated', data }))
+    }
+
+    try {
+      await page.goto(`/board/${board.slug}`)
+      await expect(page.getByTitle('Подключено (Live)')).toBeVisible({ timeout: 15000 })
+
+      // Кто-то перегенерировал итоги кнопкой: окно не всплывает, содержимое обновляется в фоне
+      const refreshed = page.waitForResponse((r) => r.url().endsWith(`/boards/${board.id}/summary`))
+      fromServer({ summary: { id: 'sum-1' }, board_id: board.id, regenerated: true })
+      await refreshed
+      await page.waitForTimeout(500)
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect(page.locator('body > canvas')).toHaveCount(0)
+
+      await page.getByTestId('export-menu-btn').click()
+      await page.getByRole('menuitem', { name: 'Итоги ретро и AI' }).click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toContainText('Подменные итоги №')
+      await dialog.getByRole('button', { name: 'Готово' }).click()
+      await expect(dialog).toHaveCount(0)
+
+      // Итоги фазы «Итоги» (без признака перегенерации): окно открывается у всех
+      fromServer({ id: 'sum-1', board_id: board.id, summary_text: 'Подменные итоги' })
+      await expect(dialog).toContainText('Подменные итоги №', { timeout: 10000 })
+
+      // Салют не нарушает CSP: в консоли нет ошибок (раньше — запрет воркера из blob:)
+      await page.waitForTimeout(500)
+      expect(consoleErrors).toEqual([])
+    } finally {
+      await ctx.close()
     }
   })
 })
