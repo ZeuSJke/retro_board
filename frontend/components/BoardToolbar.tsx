@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import {
-  Activity,
   ArrowDownWideNarrow,
   ArrowUpDown,
   ChevronsDownUp,
@@ -45,8 +44,6 @@ interface BoardToolbarProps {
    * `null` — можно. Показывается рядом с фильтрами, чтобы отключение не было молчаливым.
    */
   dragDisabledReason?: string | null
-  /** Открыть health check. Кнопка видна только на телефоне: на широком экране она в шапке. */
-  onOpenHealthCheck?: () => void
 }
 
 export default function BoardToolbar({
@@ -68,7 +65,6 @@ export default function BoardToolbar({
   actionItemsCount,
   onAddColumn,
   dragDisabledReason = null,
-  onOpenHealthCheck,
 }: BoardToolbarProps) {
   const [colPopoverOpen, setColPopoverOpen] = useState(false)
   const [colTitle, setColTitle] = useState('')
@@ -245,20 +241,6 @@ export default function BoardToolbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
-        {onOpenHealthCheck && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 text-xs sm:hidden"
-            onClick={onOpenHealthCheck}
-            aria-label="Health check команды"
-            title="Health check команды"
-            data-testid="health-check-btn-mobile"
-          >
-            <Activity className="h-3.5 w-3.5 text-emerald-500" />
-          </Button>
-        )}
         {!readOnly && (
           <Popover open={colPopoverOpen} onOpenChange={setColPopoverOpen}>
             <PopoverTrigger asChild>

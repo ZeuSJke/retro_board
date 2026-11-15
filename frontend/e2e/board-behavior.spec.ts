@@ -481,9 +481,13 @@ test.describe('Поведение доски', () => {
       await expect(page.getByTestId('column-rename-item')).toBeVisible()
       await expect(page.getByTestId('column-move-right-item')).toBeVisible()
       await page.keyboard.press('Escape')
+      // Меню закрылось и вернуло фокус своей кнопке — только после этого открываем следующее
+      await expect(page.getByTestId('column-rename-item')).toHaveCount(0)
 
-      // Health check на телефоне открывается из панели доски
-      await page.getByTestId('health-check-btn-mobile').tap()
+      // Health check на телефоне открывается из меню шапки: кнопка там не помещается
+      await expect(page.getByTestId('health-check-btn')).toBeHidden()
+      await page.getByTestId('export-menu-btn').tap()
+      await page.getByTestId('menu-health-check-item').tap()
       await expect(page.getByTestId('health-check-dialog')).toBeVisible()
     } finally {
       await ctx.close()

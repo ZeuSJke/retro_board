@@ -22,7 +22,7 @@ import {
   Users,
 } from 'lucide-react'
 import { BrandMark } from '@/components/BrandLogo'
-import HealthCheckButton from '@/components/HealthCheckButton'
+import HealthCheckButton, { HealthCheckMenuItem } from '@/components/HealthCheckButton'
 import { ShareBoardButton, ShareBoardMenuItem } from '@/components/ShareBoardDialog'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import { avatarSeed } from '@/lib/participants'
@@ -328,6 +328,7 @@ export default function Topbar({
                 Настроение команды
                 {moodAvg && <span className="ml-auto font-mono text-xs">{moodAvg}</span>}
               </DropdownMenuItem>
+              <HealthCheckMenuItem />
               <DropdownMenuItem asChild className="sm:hidden">
                 <Link href="/dashboard" data-testid="menu-dashboard-item">
                   <BarChart3 className="h-4 w-4 text-primary" />

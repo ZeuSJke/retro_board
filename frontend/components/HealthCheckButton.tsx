@@ -2,6 +2,7 @@
 
 import { Activity } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 /**
@@ -19,8 +20,8 @@ export function openHealthCheck(): void {
  * Кнопка «Health check» для шапки доски. Окно опроса открывается у нажавшего; запустить опрос
  * у всей команды можно из самого окна («Запустить у всех» — ведущему, а вне сессии любому).
  *
- * На телефоне шапка и так не вмещает свои кнопки, поэтому там кнопка скрыта: опрос
- * открывается из панели доски (`BoardToolbar`).
+ * На телефоне кнопки шапки, которые не помещаются, живут в её меню: там кнопка скрыта,
+ * а опрос открывает пункт `HealthCheckMenuItem`.
  */
 export default function HealthCheckButton() {
   return (
@@ -41,5 +42,19 @@ export default function HealthCheckButton() {
       </TooltipTrigger>
       <TooltipContent>Health check команды: короткий опрос о спринте</TooltipContent>
     </Tooltip>
+  )
+}
+
+/** Пункт «Health check» для меню шапки: виден на телефоне, где кнопка скрыта. */
+export function HealthCheckMenuItem() {
+  return (
+    <DropdownMenuItem
+      className="sm:hidden"
+      onClick={openHealthCheck}
+      data-testid="menu-health-check-item"
+    >
+      <Activity className="h-4 w-4 text-emerald-500" />
+      Health check команды
+    </DropdownMenuItem>
   )
 }

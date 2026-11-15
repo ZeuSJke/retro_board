@@ -6,7 +6,15 @@ import CardGroupWidget from '../../components/CardGroupWidget'
 import CardWidget from '../../components/CardWidget'
 import Column from '../../components/Column'
 import ConnectionBanner from '../../components/ConnectionBanner'
-import HealthCheckButton, { HEALTH_CHECK_OPEN_EVENT } from '../../components/HealthCheckButton'
+import HealthCheckButton, {
+  HEALTH_CHECK_OPEN_EVENT,
+  HealthCheckMenuItem,
+} from '../../components/HealthCheckButton'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '../../components/ui/dropdown-menu'
 import TimerWidget from '../../components/TimerWidget'
 import { TooltipProvider } from '../../components/ui/tooltip'
 import { runningTimer, stoppedTimer } from '../../lib/timer'
@@ -754,6 +762,34 @@ describe('HealthCheckButton', () => {
     )
 
     await user.click(screen.getByRole('button', { name: 'Health check команды' }))
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    window.removeEventListener(HEALTH_CHECK_OPEN_EVENT, listener)
+  })
+
+  it('на телефоне кнопка скрыта, а опрос открывает пункт меню шапки', async () => {
+    const user = userEvent.setup()
+    const listener = vi.fn()
+    window.addEventListener(HEALTH_CHECK_OPEN_EVENT, listener)
+    render(
+      <TooltipProvider>
+        <HealthCheckButton />
+        <DropdownMenu>
+          <DropdownMenuTrigger>Меню</DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <HealthCheckMenuItem />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </TooltipProvider>,
+    )
+
+    // Кнопка видна от ширины sm, пункт меню — только до неё
+    expect(screen.getByTestId('health-check-btn').className).toContain('hidden')
+    expect(screen.getByTestId('health-check-btn').className).toContain('sm:inline-flex')
+    await user.click(screen.getByText('Меню'))
+    const item = await screen.findByTestId('menu-health-check-item')
+    expect(item.className).toContain('sm:hidden')
+    await user.click(item)
 
     expect(listener).toHaveBeenCalledTimes(1)
     window.removeEventListener(HEALTH_CHECK_OPEN_EVENT, listener)

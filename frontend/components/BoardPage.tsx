@@ -1619,7 +1619,6 @@ export default function BoardPage({
         actionItemsCount={actionItems.length}
         onAddColumn={handleAddColumn}
         dragDisabledReason={readOnly ? null : dragDisabledReason}
-        onOpenHealthCheck={openHealthCheck}
       />
 
       <ConnectionBanner connection={connection} onReconnect={reconnect} />
