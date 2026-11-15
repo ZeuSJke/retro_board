@@ -176,6 +176,10 @@ e2e-tests:
     # в джобе: каталог смонтирован раннером с хоста, и браузер должен лежать
     # именно там, чтобы переживать джобы (а не в /root/.cache контейнера).
     PLAYWRIGHT_BROWSERS_PATH: /cache/playwright
+    # Браузер должен работать в UTF-8-локали, как у пользователей: в локали C
+    # Chromium заменяет кириллическое имя скачиваемого файла на «download».
+    LANG: C.UTF-8
+    LC_ALL: C.UTF-8
   script:
     - cd backend
     # То же, что в backend-tests: Python в образе управляется uv, ставим в venv.
