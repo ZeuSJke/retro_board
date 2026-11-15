@@ -1365,7 +1365,7 @@ export default function BoardPage({
       },
       {
         id: 'ai-summary',
-        label: aiEnabled === false ? 'Итоги ретро и экспорт' : 'AI-резюме спринта',
+        label: aiEnabled === false ? 'Итоги ретроспективы и экспорт' : 'AI-резюме ретроспективы',
         keywords: 'summary итоги отчет',
         onSelect: openSummary,
       },

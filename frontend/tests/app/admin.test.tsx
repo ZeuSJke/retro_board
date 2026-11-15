@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import AdminPage from '../../app/admin/page'
 import { generateSlugFromName } from '../../app/admin/AdminTeams'
-import { setAdminSessionHint } from '../../api/admin'
+import { getAdminSessionHint, setAdminSessionHint } from '../../api/admin'
 import { showToast } from '../../store/toastStore'
 
 const api = vi.hoisted(() => ({
@@ -98,6 +98,23 @@ describe('Админка /admin', () => {
       expect(api.getAdminWorkspaces).not.toHaveBeenCalled()
     })
 
+    it('пока проверяет сессию, можно вернуться к доскам', () => {
+      api.checkAdminSession.mockImplementation(() => new Promise(() => {}))
+      render(<AdminPage />)
+
+      expect(screen.getByText('Проверка доступа...')).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Вернуться к доскам' })).toHaveAttribute('href', '/')
+    })
+
+    it('перепроверяет сессию при возврате на вкладку', async () => {
+      await renderSignedIn()
+      expect(api.checkAdminSession).toHaveBeenCalledTimes(1)
+
+      document.dispatchEvent(new Event('visibilitychange'))
+
+      await waitFor(() => expect(api.checkAdminSession).toHaveBeenCalledTimes(2))
+    })
+
     it('успешный вход открывает список команд', async () => {
       const user = userEvent.setup()
       api.getAdminWorkspaces.mockResolvedValue([platform])
@@ -128,6 +145,9 @@ describe('Админка /admin', () => {
 
     it('состояние есть, а сервер сессию уже не принимает: форма входа с объяснением', async () => {
       setAdminSessionHint(true)
+      expect(getAdminSessionHint()).toBe(true)
+      // Проверка сессии ещё идёт — состояние снимает только 401 от данных
+      api.checkAdminSession.mockImplementation(() => new Promise(() => {}))
       api.getAdminWorkspaces.mockImplementationOnce(() => {
         // Так ведёт себя перехватчик api/admin.ts на ответ 401
         setAdminSessionHint(false)

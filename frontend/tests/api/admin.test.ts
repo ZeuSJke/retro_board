@@ -113,11 +113,24 @@ describe('api/admin', () => {
       await expect(second).resolves.toBe(true)
     })
 
-    it('сеть недоступна — состояние false, без «сессия закончилась»', async () => {
+    it('сеть недоступна на первом заходе — false и пояснение', async () => {
       adminApi().get.mockRejectedValueOnce(new Error('Network Error'))
 
       await expect(checkAdminSession()).resolves.toBe(false)
       expect(getAdminSessionHint()).toBe(false)
+      expect(showToast).toHaveBeenCalledWith(
+        'Не удалось проверить сессию администратора',
+        'error',
+        expect.objectContaining({ description: expect.any(String) }),
+      )
+    })
+
+    it('сбой сети не снимает уже известное состояние true', async () => {
+      setAdminSessionHint(true)
+      adminApi().get.mockRejectedValueOnce(new Error('Network Error'))
+
+      await expect(checkAdminSession()).resolves.toBe(true)
+      expect(getAdminSessionHint()).toBe(true)
     })
 
     it('вход ставит состояние true, выход его снимает', async () => {

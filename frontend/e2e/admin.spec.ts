@@ -34,7 +34,7 @@ test.describe('Admin — управление командами', () => {
     await expect(page.getByPlaceholder(/пароль/i)).toBeVisible()
   })
 
-  test('без входа страница не спрашивает сервер о сессии: в консоли нет ошибки 401', async ({ page }) => {
+  test('без входа проверка сессии отвечает 200: в консоли нет ошибки 401', async ({ page }) => {
     const consoleErrors: string[] = []
     const unauthorized: string[] = []
     page.on('console', (msg) => {
@@ -64,7 +64,7 @@ test.describe('Admin — управление командами', () => {
     await signIn(page)
     await expect(page.getByRole('button', { name: 'Создать команду' })).toBeVisible()
 
-    // После перезагрузки вход сохраняется: отметка о сессии — в этом браузере
+    // После перезагрузки вход сохраняется: cookie admin_token в этом браузере
     await page.reload()
     await expect(page.getByRole('heading', { name: 'Команды' })).toBeVisible({ timeout: 5000 })
   })

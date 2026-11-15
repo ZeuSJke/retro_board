@@ -1,6 +1,7 @@
 import axios, { type AxiosError } from 'axios'
 import type { AgentToken, AgentTokenCreated, AgentTokenScope } from '../types'
-import { isApiErrorReported } from '../utils/apiError'
+import { showToast } from '../store/toastStore'
+import { isApiErrorReported, markApiErrorReported } from '../utils/apiError'
 import { getCsrfToken, handleCommonHttpError } from './index'
 
 const adminApi = axios.create({
@@ -65,10 +66,15 @@ export function checkAdminSession(): Promise<AdminSessionHint> {
       publishSessionHint(authenticated)
       return authenticated
     })
-    .catch(() => {
-      // Сеть недоступна — показываем форму входа, а не «сессия закончилась».
-      publishSessionHint(false)
-      return false
+    .catch((error: unknown) => {
+      // Сеть или 5xx — это не «сессия закончилась». Если состояние уже
+      // известно, не трогаем его; иначе показываем форму входа с пояснением.
+      markApiErrorReported(error)
+      if (sessionHint === null) publishSessionHint(false)
+      showToast('Не удалось проверить сессию администратора', 'error', {
+        description: 'Сервер не ответил. Проверьте соединение и откройте страницу снова.',
+      })
+      return sessionHint ?? false
     })
     .finally(() => {
       checkPromise = null

@@ -36,19 +36,16 @@ interface AgentTokensDialogProps {
   adapter: AgentTokensAdapter | null
 }
 
-function formatDate(iso: string | null): string {
-  if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleString('ru-RU', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return iso
-  }
+function formatDate(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function buildMcpSnippet(origin: string, secret: string): string {
@@ -105,6 +102,7 @@ function AgentTokensContent({
   const [tokens, setTokens] = useState<AgentToken[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
 
   const [name, setName] = useState('')
   const [scope, setScope] = useState<AgentTokenScope>('read_only')
@@ -127,11 +125,13 @@ function AgentTokensContent({
         if (!cancelled) {
           setTokens(list)
           setLoadError(null)
+          setRefreshing(false)
         }
       })
       .catch((err: unknown) => {
         if (cancelled) return
         setLoadError(getApiErrorMessage(err, 'Не удалось загрузить токены агентов'))
+        setRefreshing(false)
       })
     return () => {
       cancelled = true
@@ -189,7 +189,7 @@ function AgentTokensContent({
   }
 
   const handleReload = () => {
-    setTokens(null)
+    setRefreshing(true)
     setLoadError(null)
     setReloadKey((n) => n + 1)
   }
@@ -361,18 +361,18 @@ function AgentTokensContent({
               variant="ghost"
               size="sm"
               onClick={handleReload}
-              disabled={tokens === null}
+              disabled={refreshing || tokens === null}
               className="h-7 gap-1 px-2 text-[11px]"
               aria-label="Обновить список токенов"
               title="Обновить список токенов"
               data-testid="agent-tokens-refresh-btn"
             >
-              <RefreshCw className={cn('h-3.5 w-3.5', tokens === null && 'animate-spin')} />
+              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
               <span className="hidden sm:inline">Обновить</span>
             </Button>
           </div>
 
-          {loadError ? (
+          {loadError && (
             <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed p-5 text-center text-xs text-muted-foreground">
               <p className="text-destructive">{loadError}</p>
               <Button
@@ -386,16 +386,21 @@ function AgentTokensContent({
                 Повторить
               </Button>
             </div>
-          ) : tokens === null ? (
-            <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              Загружаем токены...
-            </div>
+          )}
+          {tokens === null ? (
+            !loadError && (
+              <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                Загружаем токены...
+              </div>
+            )
           ) : tokens.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-6 text-center text-xs text-muted-foreground">
-              <KeyRound className="mb-1.5 h-5 w-5 opacity-45" />
-              Пока нет ни одного токена агента.
-            </div>
+            !loadError && (
+              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-6 text-center text-xs text-muted-foreground">
+                <KeyRound className="mb-1.5 h-5 w-5 opacity-45" />
+                Пока нет ни одного токена агента.
+              </div>
+            )
           ) : (
             <div className="space-y-2" data-testid="agent-tokens-list">
               {tokens.map((tok) => {

@@ -38,6 +38,16 @@ def test_admin_session_without_login_is_200(client):
 
     assert resp.status_code == 200
     assert resp.json() == {"authenticated": False}
+    assert resp.headers["cache-control"] == "no-store"
+
+
+def test_admin_session_with_bad_token_is_200(client):
+    """Испорченный admin_token не роняет проверку: 200 и authenticated=false."""
+    resp = client.get("/api/admin/session", headers={"Cookie": "admin_token=broken"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"authenticated": False}
+    assert resp.headers["cache-control"] == "no-store"
 
 
 def test_admin_session_with_login_is_200(client, admin_headers):
@@ -46,6 +56,7 @@ def test_admin_session_with_login_is_200(client, admin_headers):
 
     assert resp.status_code == 200
     assert resp.json() == {"authenticated": True}
+    assert resp.headers["cache-control"] == "no-store"
 
 
 def test_admin_list_workspaces_requires_auth(client):

@@ -58,7 +58,7 @@ def admin_logout(response: Response):
 
 @router.get("/session", response_model=schemas.AdminSessionOut)
 @limiter.limit("30/minute")
-def admin_session(request: Request):
+def admin_session(request: Request, response: Response):
     """Проверить сессию администратора без 401.
 
     Эндпоинт нужен странице `/admin`, чтобы отличить «не входил» от «сессия
@@ -66,6 +66,7 @@ def admin_session(request: Request):
     признак входа — в теле.
     """
     token = request.cookies.get("admin_token")
+    response.headers["Cache-Control"] = "no-store"
     return schemas.AdminSessionOut(
         authenticated=bool(token and verify_admin_token(token))
     )

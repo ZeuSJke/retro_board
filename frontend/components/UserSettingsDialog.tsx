@@ -226,7 +226,11 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
               </div>
             </div>
             <Button asChild variant="outline" size="sm">
-              <Link href="/admin" data-testid="admin-panel-link">
+              <Link
+                href="/admin"
+                aria-label="Администрирование — открыть панель"
+                data-testid="admin-panel-link"
+              >
                 Открыть
               </Link>
             </Button>

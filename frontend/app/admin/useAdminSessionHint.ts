@@ -26,6 +26,13 @@ export function useAdminSessionHint(): AdminSessionHint {
 
   useEffect(() => {
     void checkAdminSession()
+    // Возврат на вкладку — повод перепроверить httpOnly-cookie: выход в другой
+    // вкладке иначе остался бы незамеченным до первого запроса с 401.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void checkAdminSession()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
   }, [])
 
   return hint
