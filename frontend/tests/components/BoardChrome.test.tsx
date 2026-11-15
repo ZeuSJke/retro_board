@@ -109,7 +109,7 @@ function renderTopbar(props: Partial<React.ComponentProps<typeof Topbar>> = {}) 
 
 describe('Topbar — кнопка «Панель управления»', () => {
   it('ведёт к задачам всей команды и не несёт счётчика задач этой доски', () => {
-    renderTopbar({ openActionItemsCount: 7 })
+    renderTopbar()
 
     const link = screen.getByTestId('dashboard-nav-link')
     expect(link).toHaveAttribute('href', '/dashboard')

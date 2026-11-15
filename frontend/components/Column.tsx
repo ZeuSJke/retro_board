@@ -1,17 +1,33 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { AnimatePresence, motion } from 'motion/react'
-import { Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { autoClusterColumn, createCard, deleteColumn, updateColumn } from '../api'
-import { CARD_COLOR_PRESETS, COLUMN_COLOR_PALETTE, getCardColorPreset } from '@/lib/board-themes'
+import {
+  CARD_COLOR_PRESETS,
+  COLUMN_COLOR_PALETTE,
+  getCardColorPreset,
+  getColumnColorName,
+} from '@/lib/board-themes'
+import { sameExceptVoteCount } from '@/lib/memo'
 import { CANNOT_DELETE_COLUMN_HINT, isOwnCard } from '@/lib/participants'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage } from '../utils/apiError'
-import type { Card, CardGroup, Column as ColumnType } from '../types'
+import type { Card, CardGroup, Column as ColumnType, ColumnInfo } from '../types'
 import CardWidget from './CardWidget'
 import CardGroupWidget from './CardGroupWidget'
 import {
@@ -26,6 +42,13 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
@@ -42,14 +65,32 @@ interface ColumnProps {
   isModerator?: boolean
   /** Имена участников по идентификатору — для подписи голосов. */
   voterNames?: Record<string, string>
-  onUpdate: (col: ColumnType) => void
+  /**
+   * Изменились свойства колонки (название, цвет). Передаются только изменённые поля;
+   * `'rest'` — это ответ сервера, без него — оптимистичная правка или её откат.
+   */
+  onUpdate: (col: Partial<ColumnInfo> & { id: string }, source?: 'rest') => void
   onDelete: (colId: string) => void
+  /** Сервер колонку не удалил: вернуть её на место. */
+  onRestore?: (column: ColumnType, error?: unknown) => void
+  /** Сдвинуть колонку на одно место влево (-1) или вправо (1); задаётся только модератору. */
+  onMove?: (columnId: string, direction: -1 | 1) => void
+  canMoveLeft?: boolean
+  canMoveRight?: boolean
   onCardCreated: (card: Card) => void
   onCardUpdated: (card: Card) => void
+  /** Точечная правка карточки в её текущем состоянии (оптимистичное обновление и откат). */
+  onCardPatched?: (cardId: string, patch: (card: Card) => Card) => void
   onCardDeleted: (cardId: string) => void
+  /** Сервер карточку не удалил: вернуть её на место. */
+  onCardRestored?: (card: Card, error?: unknown) => void
+  /** Сервер отклонил изменение карточки (голос, цвет); локальная правка уже снята. */
+  onCardRejected?: (error: unknown) => void
   onGroupCreated: (group: CardGroup, cardIds: string[]) => void
   onGroupUpdated: (group: CardGroup) => void
   onGroupDeleted: (groupId: string) => void
+  /** Сервер группу не расформировал: вернуть её вместе с карточками. */
+  onGroupRestored?: (group: CardGroup, cardIds: string[], error?: unknown) => void
   groupTargetId: string | null
   collapsedGroups: Record<string, boolean>
   onToggleCollapse: (groupId: string) => void
@@ -57,6 +98,8 @@ interface ColumnProps {
   cardsHidden?: boolean
   anonymous?: boolean
   dragDisabled?: boolean
+  /** Почему перетаскивание отключено — подсказка на ручке карточки. */
+  dragDisabledReason?: string | null
   readOnly?: boolean
   cardCreationDisabled?: boolean
   searchQuery?: string
@@ -78,7 +121,7 @@ interface ColumnProps {
   onTypingChange?: (columnId: string, isTyping: boolean) => void
 }
 
-export default function Column({
+function Column({
   column,
   maxVotes = 0,
   userTotalVotes = 0,
@@ -87,18 +130,27 @@ export default function Column({
   voterNames,
   onUpdate,
   onDelete,
+  onRestore,
+  onMove,
+  canMoveLeft = false,
+  canMoveRight = false,
   onCardCreated,
   onCardUpdated,
+  onCardPatched,
   onCardDeleted,
+  onCardRestored,
+  onCardRejected,
   onGroupCreated,
   onGroupUpdated,
   onGroupDeleted,
+  onGroupRestored,
   groupTargetId,
   collapsedGroups,
   onToggleCollapse,
   cardsHidden = false,
   anonymous = false,
   dragDisabled = false,
+  dragDisabledReason = null,
   readOnly = false,
   cardCreationDisabled = false,
   searchQuery = '',
@@ -129,6 +181,16 @@ export default function Column({
   const [titleDraft, setTitleDraft] = useState(column.title)
   const [clustering, setClustering] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  // «Переименовать» выбрано в меню: когда меню закроется, фокус уходит в поле названия,
+  // а не возвращается к кнопке меню (иначе поле тут же потеряет фокус и закроется)
+  const renameFromMenuRef = useRef(false)
+  const titleInputRef = useRef<HTMLInputElement>(null)
+
+  const startRename = () => {
+    if (readOnly) return
+    setTitleDraft(column.title)
+    setEditingTitle(true)
+  }
 
   // Inline card creation
   const [composerOpen, setComposerOpen] = useState(false)
@@ -236,6 +298,7 @@ export default function Column({
 
   const { setNodeRef, isOver } = useDroppable({
     id: `col-${column.id}`,
+    data: { type: 'column', title: column.title },
   })
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -324,34 +387,40 @@ export default function Column({
     setEditingTitle(false)
     const trimmed = titleDraft.trim()
     if (!trimmed || trimmed === column.title) return
-    onUpdate({ ...column, title: trimmed })
+    const previous = column.title
+    onUpdate({ id: column.id, title: trimmed })
     try {
       const updated = await updateColumn(column.id, { title: trimmed })
-      onUpdate({ ...column, ...updated })
+      onUpdate(updated, 'rest')
     } catch (err) {
-      onUpdate(column)
+      // Возвращается только название: позиция и карточки могли измениться за это время
+      onUpdate({ id: column.id, title: previous })
       showToast(getApiErrorMessage(err, 'Не удалось переименовать колонку'), 'error')
     }
   }
 
   const handleColorChange = async (color: string) => {
-    if (readOnly) return
-    onUpdate({ ...column, color })
+    if (readOnly || color === column.color) return
+    const previous = column.color
+    onUpdate({ id: column.id, color })
     try {
       const updated = await updateColumn(column.id, { color })
-      onUpdate({ ...column, ...updated })
+      onUpdate(updated, 'rest')
     } catch (err) {
-      onUpdate(column)
+      onUpdate({ id: column.id, color: previous })
       showToast(getApiErrorMessage(err, 'Не удалось изменить цвет колонки'), 'error')
     }
   }
 
   const handleConfirmDelete = async () => {
     setDeleteOpen(false)
+    const removed = column
     onDelete(column.id)
     try {
       await deleteColumn(column.id)
     } catch (err) {
+      // Сервер колонку не удалил: возвращаем её вместе с карточками
+      onRestore?.(removed, err)
       showToast(getApiErrorMessage(err, 'Не удалось удалить колонку'), 'error')
     }
   }
@@ -450,19 +519,23 @@ export default function Column({
                 <button
                   type="button"
                   title="Изменить цвет"
-                  className="h-3.5 w-3.5 shrink-0 rounded-full ring-2 ring-transparent transition-transform hover:scale-110 hover:ring-border"
+                  aria-label={`Цвет колонки: ${getColumnColorName(column.color || '#6366F1')}. Изменить`}
+                  className="h-3.5 w-3.5 shrink-0 rounded-full ring-2 ring-transparent transition-transform hover:scale-110 hover:ring-border focus-visible:outline-hidden focus-visible:ring-primary"
                   style={{ backgroundColor: column.color || '#6366F1' }}
                 />
               </PopoverTrigger>
               <PopoverContent align="start" className="w-auto p-2.5">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5" role="group" aria-label="Цвет колонки">
                   {COLUMN_COLOR_PALETTE.map((c) => (
                     <button
                       key={c}
                       type="button"
                       onClick={() => handleColorChange(c)}
+                      title={getColumnColorName(c)}
+                      aria-label={`Цвет колонки: ${getColumnColorName(c)}`}
+                      aria-pressed={column.color === c}
                       className={cn(
-                        'h-5 w-5 rounded-full transition-transform hover:scale-110',
+                        'h-5 w-5 rounded-full transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
                         column.color === c && 'ring-2 ring-primary ring-offset-2',
                       )}
                       style={{ backgroundColor: c }}
@@ -475,9 +548,11 @@ export default function Column({
 
           {editingTitle ? (
             <Input
+              ref={titleInputRef}
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
               autoFocus
+              aria-label="Название колонки"
               className="h-7 flex-1 px-2 text-sm font-semibold"
               onBlur={saveTitle}
               onKeyDown={(e) => {
@@ -490,13 +565,8 @@ export default function Column({
             />
           ) : (
             <h3
-              title={readOnly ? undefined : 'Двойной клик чтобы редактировать'}
-              onDoubleClick={() => {
-                if (!readOnly) {
-                  setTitleDraft(column.title)
-                  setEditingTitle(true)
-                }
-              }}
+              title={readOnly ? undefined : 'Двойной клик или меню колонки — переименовать'}
+              onDoubleClick={startRename}
               className={cn(
                 'min-w-0 flex-1 truncate text-sm font-semibold text-foreground',
                 !readOnly && 'cursor-text',
@@ -540,6 +610,69 @@ export default function Column({
                   : 'Сгруппировать похожие (AI)'}
               </TooltipContent>
             </Tooltip>
+          )}
+
+          {!readOnly && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-7 w-7 shrink-0 text-muted-foreground"
+                  aria-label={`Действия с колонкой «${column.title}»`}
+                  title="Действия с колонкой"
+                  data-testid="column-menu-btn"
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-52"
+                onCloseAutoFocus={(e) => {
+                  if (renameFromMenuRef.current) {
+                    renameFromMenuRef.current = false
+                    e.preventDefault()
+                    titleInputRef.current?.focus()
+                    titleInputRef.current?.select()
+                  }
+                }}
+              >
+                <DropdownMenuItem
+                  onSelect={() => {
+                    renameFromMenuRef.current = true
+                    startRename()
+                  }}
+                  data-testid="column-rename-item"
+                >
+                  <Pencil className="mr-2 h-3.5 w-3.5" />
+                  Переименовать
+                </DropdownMenuItem>
+                {/* Порядок колонок общий для всей команды: его меняет модератор доски */}
+                {onMove && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      disabled={!canMoveLeft}
+                      onSelect={() => onMove(column.id, -1)}
+                      data-testid="column-move-left-item"
+                    >
+                      <ArrowLeft className="mr-2 h-3.5 w-3.5" />
+                      Сдвинуть влево
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!canMoveRight}
+                      onSelect={() => onMove(column.id, 1)}
+                      data-testid="column-move-right-item"
+                    >
+                      <ArrowRight className="mr-2 h-3.5 w-3.5" />
+                      Сдвинуть вправо
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
 
           {!readOnly && (
@@ -589,7 +722,7 @@ export default function Column({
                   group={group}
                   cards={groupCards}
                   collapsed={Boolean(collapsedGroups[group.id])}
-                  onToggleCollapse={() => onToggleCollapse(group.id)}
+                  onToggleCollapse={onToggleCollapse}
                   currentUserId={myId}
                   isModerator={isModerator}
                   voterNames={voterNames}
@@ -597,10 +730,15 @@ export default function Column({
                   userTotalVotes={userTotalVotes}
                   onUpdated={onGroupUpdated}
                   onDeleted={onGroupDeleted}
+                  onRestored={onGroupRestored}
                   onCardUpdated={onCardUpdated}
+                  onCardPatched={onCardPatched}
                   onCardDeleted={onCardDeleted}
+                  onCardRestored={onCardRestored}
+                  onCardRejected={onCardRejected}
                   groupTargetId={groupTargetId}
                   dragDisabled={dragDisabled}
+                  dragDisabledReason={dragDisabledReason}
                   anonymous={anonymous}
                   readOnly={readOnly}
                   spotlightCardId={spotlightCardId}
@@ -628,9 +766,13 @@ export default function Column({
                 maxVotes={maxVotes}
                 userTotalVotes={userTotalVotes}
                 onUpdated={onCardUpdated}
+                onPatched={onCardPatched}
                 onDeleted={onCardDeleted}
+                onRestored={onCardRestored}
+                onRejected={onCardRejected}
                 isGroupTarget={groupTargetId === card.id}
                 dragDisabled={dragDisabled}
+                dragDisabledReason={dragDisabledReason}
                 anonymous={anonymous}
                 readOnly={readOnly}
                 isSpotlighted={spotlightCardId === card.id}
@@ -724,8 +866,10 @@ export default function Column({
                         type="button"
                         onClick={() => setDraftColor(c.hex)}
                         title={c.name}
+                        aria-label={`Цвет карточки: ${c.name}`}
+                        aria-pressed={draftColor.toLowerCase() === c.hex.toLowerCase()}
                         className={cn(
-                          'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110',
+                          'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
                           c.swatchClass,
                           draftColor.toLowerCase() === c.hex.toLowerCase() &&
                             'ring-2 ring-primary ring-offset-1 ring-offset-background',
@@ -810,3 +954,9 @@ export default function Column({
     </>
   )
 }
+
+/**
+ * Колонка перерисовывается, только когда меняется то, что она показывает: чужой лайк
+ * в соседней колонке её не трогает (объект `column` остаётся прежним).
+ */
+export default memo(Column, sameExceptVoteCount)

@@ -8,6 +8,7 @@ let wsOpenHandler: (() => void) | null = null
 const mockSendMessage = vi.fn()
 
 vi.mock('../../hooks/useWebSocket', () => ({
+  WS_CLOSE_POLICY_VIOLATION: 1008,
   useWebSocket: (
     _boardId: string,
     onMessage: (msg: { event: string; data: unknown }) => void,
@@ -15,7 +16,13 @@ vi.mock('../../hooks/useWebSocket', () => ({
   ) => {
     wsMessageHandler = onMessage
     wsOpenHandler = onOpen ?? null
-    return { sendMessage: mockSendMessage }
+    return {
+      sendMessage: mockSendMessage,
+      connected: true,
+      status: 'open',
+      reconnect: vi.fn(),
+      stop: vi.fn(),
+    }
   },
 }))
 
@@ -31,6 +38,8 @@ vi.mock('../../store/toastStore', () => ({
 
 vi.mock('../../api', () => ({
   getActionItems: vi.fn().mockResolvedValue([]),
+  // Перечитывание доски проверяется отдельно (useBoardWebSocket.sync.test.ts)
+  getBoard: vi.fn(() => new Promise(() => {})),
 }))
 
 vi.mock('../../utils/wsData', () => ({
@@ -41,6 +50,7 @@ vi.mock('../../utils/wsData', () => ({
 }))
 
 import { showToast } from '../../store/toastStore'
+import { getBoard } from '../../api'
 
 const COLUMN = { id: 'col-1', board_id: 'board-1', title: 'Good', color: '#6750A4', position: 0 }
 
@@ -689,13 +699,12 @@ describe('useBoardWebSocket', () => {
     expect(result.current.columns[0].cards[0]).toMatchObject({ masked: false, text: 'Секрет' })
   })
 
-  it('cards_visibility_changed просит перечитать доску', () => {
-    const onCardsVisibilityChanged = vi.fn()
-    setup({ onCardsVisibilityChanged })
+  it('cards_visibility_changed перечитывает доску с сервера', () => {
+    setup()
 
     emit('cards_visibility_changed', {})
 
-    expect(onCardsVisibilityChanged).toHaveBeenCalledTimes(1)
+    expect(getBoard).toHaveBeenCalledWith('board-1')
   })
 
   it('participant_renamed обновляет имя у карточек этого участника, в составе доски и у ведущего', () => {
@@ -739,12 +748,56 @@ describe('useBoardWebSocket', () => {
   it('auto_cluster_completed: чужая группировка — уведомление, своя — без него', () => {
     setup()
 
-    emit('auto_cluster_completed', { column_id: 'col-1', groups_count: 2, username: 'Alice' })
+    emit('auto_cluster_completed', {
+      column_id: 'col-1',
+      groups_count: 2,
+      username: 'Alice',
+      participant_id: 'p-alice',
+    })
     expect(showToast).toHaveBeenCalledWith('Alice сгруппировал(а) карточки', 'info')
 
     vi.mocked(showToast).mockClear()
-    emit('auto_cluster_completed', { column_id: 'col-1', groups_count: 2, username: 'TestUser' })
+    emit('auto_cluster_completed', {
+      column_id: 'col-1',
+      groups_count: 2,
+      username: 'TestUser',
+      participant_id: 'p-me',
+    })
     expect(showToast).not.toHaveBeenCalled()
+  })
+
+  it('auto_cluster_completed: «это запустил я» — по идентификатору, а не по имени', () => {
+    setup()
+
+    // Тёзка: имя совпадает с моим, но это другой участник — уведомление нужно
+    emit('auto_cluster_completed', {
+      column_id: 'col-1',
+      groups_count: 1,
+      username: 'TestUser',
+      participant_id: 'p-namesake',
+    })
+    expect(showToast).toHaveBeenCalledWith('TestUser сгруппировал(а) карточки', 'info')
+
+    // Моя группировка под другим именем (сменил имя в другой вкладке) — уведомления нет
+    vi.mocked(showToast).mockClear()
+    emit('auto_cluster_completed', {
+      column_id: 'col-1',
+      groups_count: 1,
+      username: 'Старое имя',
+      participant_id: 'p-me',
+    })
+    expect(showToast).not.toHaveBeenCalled()
+  })
+
+  it('summary_generated сообщает, были ли итоги пересозданы по кнопке', () => {
+    const onSummaryGenerated = vi.fn()
+    setup({ onSummaryGenerated })
+
+    emit('summary_generated', { summary_text: 'Итоги' })
+    expect(onSummaryGenerated).toHaveBeenLastCalledWith(false)
+
+    emit('summary_generated', { summary: {}, board_id: 'board-1', regenerated: true })
+    expect(onSummaryGenerated).toHaveBeenLastCalledWith(true)
   })
 
   it('при подключении запрашивает состав доски, не называя себя: личность задаёт сессия', () => {
@@ -774,13 +827,26 @@ describe('useBoardWebSocket', () => {
     expect(mockSendMessage).toHaveBeenCalledWith({ event: 'cursor_leave', data: {} })
   })
 
-  it('неизвестные события (seq/epoch, health check и т. п.) не ломают состояние', () => {
+  it('неизвестные события (health check и т. п.) не ломают состояние', () => {
     const { result } = setupWithCards(['A'])
 
     emit('health_check_requested', { requested_by: 'Alice', participant_id: 'p-alice' })
     emit('roti_requested', {})
     emit('pong', {})
 
+    expect(cardIds(result)).toEqual(['A'])
+  })
+
+  it('события health check уходят владельцу и дальше не разбираются', () => {
+    const onServerEvent = vi.fn((msg: { event: string }) => msg.event.startsWith('health_') || msg.event === 'roti_requested')
+    const { result } = setupWithCards(['A'], { onServerEvent })
+
+    emit('health_check_requested', { requested_by: 'Alice', participant_id: 'p-alice' })
+    emit('health_updated', { board_id: 'board-1', questions: [] })
+    emit('roti_requested', {})
+
+    const seen = onServerEvent.mock.calls.map(([msg]) => msg.event)
+    expect(seen).toEqual(expect.arrayContaining(['health_check_requested', 'health_updated', 'roti_requested']))
     expect(cardIds(result)).toEqual(['A'])
   })
 })

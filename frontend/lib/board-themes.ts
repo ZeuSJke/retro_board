@@ -228,6 +228,22 @@ export const COLUMN_COLOR_PALETTE = [
   '#64748B', // Графит
 ]
 
+/** Названия цветов колонок — подписи образцов для клавиатуры и экранного диктора. */
+export const COLUMN_COLOR_NAMES: Record<string, string> = {
+  '#10B981': 'Изумруд',
+  '#EF4444': 'Красный',
+  '#F59E0B': 'Янтарь',
+  '#3B82F6': 'Синий',
+  '#6366F1': 'Индиго',
+  '#EC4899': 'Розовый',
+  '#14B8A6': 'Бирюза',
+  '#64748B': 'Графит',
+}
+
+export function getColumnColorName(hex: string): string {
+  return COLUMN_COLOR_NAMES[hex.toUpperCase()] ?? hex
+}
+
 export const QUICK_REACTIONS = ['❤️', '👍', '🔥', '🎉', '💡', '👏', '😂'] as const
 
 export const MOOD_OPTIONS = [

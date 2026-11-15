@@ -374,7 +374,6 @@ function renderTopbar(props: Partial<React.ComponentProps<typeof Topbar>> = {}) 
         readyIds={['p-2']}
         facilitatorId="p-me"
         connected
-        openActionItemsCount={0}
         onOpenBoardsDrawer={vi.fn()}
         onOpenBoardSettings={vi.fn()}
         onOpenUserSettings={vi.fn()}

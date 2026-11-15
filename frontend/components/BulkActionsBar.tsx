@@ -199,12 +199,13 @@ export default function BulkActionsBar({
                       key={c.id}
                       type="button"
                       title={c.name}
+                      aria-label={`Цвет карточек: ${c.name}`}
                       onClick={async () => {
                         await onBulkColor(c.hex)
                         setColorOpen(false)
                       }}
                       className={cn(
-                        'flex h-6 w-6 items-center justify-center rounded-full border transition-transform hover:scale-110',
+                        'flex h-6 w-6 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
                         c.swatchClass,
                       )}
                     >

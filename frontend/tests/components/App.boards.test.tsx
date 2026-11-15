@@ -145,33 +145,43 @@ describe('App — команда без досок', () => {
 
   it('доску создал коллега — она открывается без перезагрузки', async () => {
     api.getBoards.mockResolvedValueOnce([])
-    render(<App boardId="start" />)
+    const { rerender } = render(<App boardId="start" />)
     await screen.findByTestId('no-boards-screen')
 
     api.getBoards.mockResolvedValue([listItem('b-1', 'Спринт 1', 'sprint-1')])
-    api.getBoard.mockResolvedValue(boardOf('b-1', 'Спринт 1', 'sprint-1'))
+    api.getBoardBySlug.mockResolvedValue(boardOf('b-1', 'Спринт 1', 'sprint-1'))
     act(() => {
       workspaceSocket.onMessage?.({ event: 'board_created', data: { id: 'b-1' } })
     })
 
+    // Приложение само переходит на адрес появившейся доски…
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/board/sprint-1'))
+    expect(screen.queryByTestId('no-boards-screen')).not.toBeInTheDocument()
+    // …и страница по этому адресу её открывает
+    rerender(<App boardId="sprint-1" />)
     expect(await screen.findByTestId('board-name')).toHaveTextContent('Спринт 1')
-    expect(router.replace).toHaveBeenCalledWith('/board/sprint-1')
   })
 })
 
 describe('App — адрес /board/start и доска «Start»', () => {
-  it('/board/start открывает первую доску и подставляет её адрес', async () => {
+  it('/board/start перенаправляет на адрес первой доски, а открывает её страница по этому адресу', async () => {
     api.getBoards.mockResolvedValue([
       listItem('b-2', 'Спринт 2', 'sprint-2'),
       listItem('b-1', 'Спринт 1', 'sprint-1'),
     ])
-    api.getBoard.mockResolvedValue(boardOf('b-2', 'Спринт 2', 'sprint-2'))
+    api.getBoardBySlug.mockResolvedValue(boardOf('b-2', 'Спринт 2', 'sprint-2'))
 
-    render(<App boardId="start" />)
+    const { rerender } = render(<App boardId="start" />)
 
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/board/sprint-2'))
+    // По служебному адресу доска не монтируется: смена адреса пересоздаёт страницу, и доска
+    // загрузилась бы второй раз, а её сокет открылся бы дважды
+    expect(screen.queryByTestId('board-name')).not.toBeInTheDocument()
+    expect(api.getBoard).not.toHaveBeenCalled()
+
+    rerender(<App boardId="sprint-2" />)
     expect(await screen.findByTestId('board-name')).toHaveTextContent('Спринт 2')
-    expect(api.getBoard).toHaveBeenCalledWith('b-2')
-    expect(router.replace).toHaveBeenCalledWith('/board/sprint-2')
+    expect(api.getBoardBySlug).toHaveBeenCalledWith('sprint-2')
   })
 
   it('доска «Start» открывается по своему адресу start-xxxxxx', async () => {

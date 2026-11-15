@@ -74,10 +74,17 @@ export default function App({ boardId }: AppProps) {
       let target: Board
       if (!boardId || boardId === FIRST_BOARD_REF) {
         const first = resolveStartBoard(list) ?? list[0]
+        if (first.slug !== FIRST_BOARD_REF) {
+          // Служебный адрес — только перенаправление на адрес доски. Монтировать доску здесь
+          // нельзя: смена сегмента [id] пересоздаёт страницу, и доска загрузилась бы дважды,
+          // а её сокет открылся бы, закрылся и открылся снова. Доску загрузит страница по
+          // её адресу; до смены адреса остаётся индикатор загрузки.
+          router.replace(boardPath(first))
+          return
+        }
+        // Доска, у которой slug совпал со служебным адресом, уже открыта по своему адресу
         target = await getBoard(first.id)
         if (stale()) return
-        // Доска, у которой slug совпал со служебным адресом, уже открыта по своему адресу
-        if (target.slug !== FIRST_BOARD_REF) router.replace(boardPath(target))
       } else {
         const isUuid = UUID_RE.test(boardId)
         try {

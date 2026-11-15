@@ -22,6 +22,7 @@ import {
   Users,
 } from 'lucide-react'
 import { BrandMark } from '@/components/BrandLogo'
+import HealthCheckButton, { HealthCheckMenuItem } from '@/components/HealthCheckButton'
 import { ShareBoardButton, ShareBoardMenuItem } from '@/components/ShareBoardDialog'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import { avatarSeed } from '@/lib/participants'
@@ -54,12 +55,6 @@ interface TopbarProps {
   /** Передать роль ведущего участнику; задаётся, только когда ведущий — текущий участник. */
   onTransferFacilitator?: (participantId: string) => void
   connected: boolean
-  /**
-   * Не используется. Раньше число открытых задач этой доски стояло на кнопке «Панель
-   * управления», которая ведёт к задачам всей команды; счётчик задач доски показывает кнопка
-   * «Задачи» в панели инструментов. Поле оставлено, чтобы не менять вызов в `BoardPage`.
-   */
-  openActionItemsCount?: number
   onOpenBoardsDrawer: () => void
   onOpenCommandPalette?: () => void
   onOpenBoardSettings: () => void
@@ -285,6 +280,8 @@ export default function Topbar({
           </Tooltip>
         )}
 
+        {board && <HealthCheckButton />}
+
         {/* Кнопка ведёт к задачам и отчётам всей команды, поэтому счётчика задач этой доски на ней нет */}
         <Button
           asChild
@@ -331,6 +328,7 @@ export default function Topbar({
                 Настроение команды
                 {moodAvg && <span className="ml-auto font-mono text-xs">{moodAvg}</span>}
               </DropdownMenuItem>
+              <HealthCheckMenuItem />
               <DropdownMenuItem asChild className="sm:hidden">
                 <Link href="/dashboard" data-testid="menu-dashboard-item">
                   <BarChart3 className="h-4 w-4 text-primary" />
