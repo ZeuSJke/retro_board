@@ -107,8 +107,16 @@ def has_summary(board: models.Board) -> bool:
     )
 
 
-def board_view(board: models.Board, viewer_id: str | None) -> dict:
-    """Доска целиком для участника: колонки, группы, карточки, настроение."""
+def board_view(
+    board: models.Board, viewer_id: str | None, event_seq: int | None = None
+) -> dict:
+    """Доска целиком для участника: колонки, группы, карточки, настроение.
+
+    `event_seq` — номер последнего события, прочитанный ДО загрузки доски из БД.
+    Снимок вправе содержать больше, чем заявляет (повторное событие клиент применит
+    безвредно), но не меньше: событие с заявленным номером клиент пропустит.
+    Без аргумента берётся текущий номер — годится для ответов на собственные правки.
+    """
     hidden = cards_hidden(board)
     return {
         "id": board.id,
@@ -132,7 +140,7 @@ def board_view(board: models.Board, viewer_id: str | None) -> dict:
         "has_summary": has_summary(board),
         # Номер последнего события доски на момент ответа: события с номером не
         # больше этого в снимок уже вошли, пропуск в номерах — повод перечитать доску
-        "event_seq": manager.current_seq(board.id),
+        "event_seq": manager.current_seq(board.id) if event_seq is None else event_seq,
         "event_epoch": manager.epoch,
         "columns": [
             {

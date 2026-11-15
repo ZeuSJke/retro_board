@@ -341,7 +341,9 @@ async def workspace_websocket_endpoint(
     await manager.connect_workspace(workspace_id, websocket)
     try:
         while True:
-            await websocket.receive_text()
+            # Клиент ничего, кроме ping, сюда не шлёт; ответ отличает живое соединение от зависшего
+            if await websocket.receive_text() == "ping":
+                await _send(websocket, "pong", {})
     except WebSocketDisconnect:
         pass
     finally:

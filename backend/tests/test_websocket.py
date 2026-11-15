@@ -654,6 +654,20 @@ class TestWorkspaceSocket:
             assert ev_deleted["data"]["id"] == board["id"]
 
 
+class TestWorkspaceSocketHeartbeat:
+    def test_workspace_socket_answers_ping(self, client, ws_token):
+        """Панель управления тоже должна отличать живое соединение от зависшего."""
+        with client.websocket_connect(
+            f"/ws/workspace?workspace_token={ws_token}", headers={"origin": TEST_ORIGIN}
+        ) as ws:
+            ws.send_text("ping")
+            assert ws.receive_json() == {"event": "pong", "data": {}}
+            # Прочие сообщения сокет команды по-прежнему молча пропускает
+            ws.send_text("что угодно")
+            ws.send_text("ping")
+            assert ws.receive_json()["event"] == "pong"
+
+
 class TestLockedBoardSession:
     def test_session_cannot_start_on_a_locked_board(self, client, ws_token, ws_board, db_session):
         """Заблокированная доска — архив: «Штурм» новой сессии скрыл бы её карточки у всех."""

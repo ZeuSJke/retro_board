@@ -534,18 +534,24 @@ def get_board_by_slug(
     workspace: models.Workspace = Depends(get_current_workspace),
     participant: models.Participant = Depends(get_current_participant),
 ):
-    board = (
-        _board_query(db)
+    # Сначала узнаём идентификатор и номер последнего события, потом читаем доску:
+    # иначе событие, случившееся между чтением строк и чтением номера, потерялось бы.
+    board_id = (
+        db.query(models.Board.id)
         .filter(
             models.Board.slug == slug,
             models.Board.deleted_at.is_(None),
             models.Board.workspace_id == workspace.id,
         )
-        .first()
+        .scalar()
     )
-    if not board:
+    if not board_id:
         raise HTTPException(404, "Доска не найдена")
-    return board_view(board, participant.id)
+    seq_before = manager.current_seq(board_id)
+    board = _board_query(db).filter(models.Board.id == board_id).first()
+    if not board or board.deleted_at is not None:
+        raise HTTPException(404, "Доска не найдена")
+    return board_view(board, participant.id, event_seq=seq_before)
 
 
 @router.get("/{board_id}", response_model=schemas.BoardOut)
@@ -557,6 +563,8 @@ def get_board(
     workspace: models.Workspace = Depends(get_current_workspace),
     participant: models.Participant = Depends(get_current_participant),
 ):
+    # Номер читается до доски — см. get_board_by_slug
+    seq_before = manager.current_seq(board_id)
     board = (
         _board_query(db)
         .filter(
@@ -568,7 +576,7 @@ def get_board(
     )
     if not board:
         raise HTTPException(404, "Доска не найдена")
-    return board_view(board, participant.id)
+    return board_view(board, participant.id, event_seq=seq_before)
 
 
 @router.patch("/{board_id}", response_model=schemas.BoardOut)

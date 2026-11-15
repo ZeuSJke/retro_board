@@ -59,6 +59,32 @@ class TestEventNumbers:
         after = client.get(f"/api/boards/{board_id}", headers=workspace_headers).json()
         assert after["event_seq"] == 2
 
+    def test_snapshot_number_is_read_before_the_rows(
+        self, client, workspace_headers, sample_board, monkeypatch
+    ):
+        """Событие, случившееся пока доска читалась из БД, не должно попасть в номер снимка.
+
+        Иначе клиент счёл бы его уже учтённым и пропустил, хотя в снимке его данных нет.
+        Обратная ошибка безвредна: событие, применённое поверх снимка повторно, ничего не портит.
+        """
+        from app.routers import boards as boards_router
+
+        board_id = sample_board["id"]
+        real_query = boards_router._board_query
+
+        def query_with_concurrent_event(db):
+            # Пока запрос готовится, другой участник успевает сделать правку
+            manager.seq[board_id] = manager.current_seq(board_id) + 1
+            return real_query(db)
+
+        monkeypatch.setattr(boards_router, "_board_query", query_with_concurrent_event)
+        by_id = client.get(f"/api/boards/{board_id}", headers=workspace_headers).json()
+        assert by_id["event_seq"] == 0
+        by_slug = client.get(
+            f"/api/boards/by-slug/{sample_board['slug']}", headers=workspace_headers
+        ).json()
+        assert by_slug["event_seq"] == 1 and manager.current_seq(board_id) == 2
+
     def test_numbers_are_per_board(self, client, workspace_headers, sample_board, sample_column):
         other = client.post("/api/boards/", json={"name": "Другая"}, headers=workspace_headers).json()
         _card(client, workspace_headers, sample_column["id"])

@@ -62,16 +62,20 @@ async def update_column(
         col.title = body.title
     if body.color is not None:
         col.color = body.color
-    if body.position is not None and body.position != col.position:
+    if body.position is not None:
+        # Место — номер в списке колонок. Сохранённые позиции после удалений идут
+        # с пропусками, поэтому сравнивать запрос с ними нельзя: колонки каждый раз
+        # перенумеровываются подряд.
         siblings = (
             db.query(models.Column)
             .filter(models.Column.board_id == col.board_id, models.Column.id != col.id)
-            .order_by(models.Column.position)
+            .order_by(models.Column.position, models.Column.id)
             .all()
         )
         siblings.insert(min(body.position, len(siblings)), col)
         for i, c in enumerate(siblings):
-            c.position = i
+            if c.position != i:
+                c.position = i
     db.commit()
     db.refresh(col)
     # Только свойства колонки: карточки приходят своими событиями и собираются
