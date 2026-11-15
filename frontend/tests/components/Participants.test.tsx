@@ -500,6 +500,48 @@ describe('BoardSettingsDialog — скрытый сбор, анонимност�
     )
   })
 
+  it('не модератору переключатели приватности недоступны — с объяснением, а остальное сохраняется', async () => {
+    const user = userEvent.setup()
+    api.updateBoard.mockResolvedValue(board)
+    render(
+      <BoardSettingsDialog
+        open
+        onOpenChange={vi.fn()}
+        board={board}
+        canModerate={false}
+        onBoardUpdated={vi.fn()}
+        onBoardDeleted={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByTestId('hide-cards-switch')).toBeDisabled()
+    expect(screen.getByTestId('anonymous-switch')).toBeDisabled()
+    expect(screen.getByTestId('privacy-settings-hint')).toHaveTextContent(
+      'Скрытый сбор и анонимный режим меняет создатель доски или ведущий',
+    )
+    // Нажатие на отключённый переключатель ничего не меняет: сервер получит прежние значения
+    await user.click(screen.getByTestId('hide-cards-switch'))
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await waitFor(() =>
+      expect(api.updateBoard).toHaveBeenCalledWith(
+        'b-1',
+        expect.objectContaining({
+          hide_cards_until_reveal: Boolean(board.hide_cards_until_reveal),
+          anonymous_votes: Boolean(board.anonymous_votes),
+        }),
+      ),
+    )
+  })
+
+  it('модератору переключатели приватности доступны, подсказки нет', () => {
+    render(
+      <BoardSettingsDialog open onOpenChange={vi.fn()} board={board} canModerate onBoardUpdated={vi.fn()} onBoardDeleted={vi.fn()} />,
+    )
+    expect(screen.getByTestId('hide-cards-switch')).toBeEnabled()
+    expect(screen.getByTestId('anonymous-switch')).toBeEnabled()
+    expect(screen.queryByTestId('privacy-settings-hint')).not.toBeInTheDocument()
+  })
+
   it('показывает, идёт сбор или карточки уже раскрыты', () => {
     const collecting = render(
       <BoardSettingsDialog

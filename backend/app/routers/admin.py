@@ -1,7 +1,7 @@
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Response, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -14,7 +14,8 @@ from app.workspace_auth import (
     new_invite_token,
 )
 from app.config import settings
-from app.limiter import limiter
+from app.limiter import entry_limit_key, limiter
+from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ router = APIRouter()
 
 
 @router.post("/login")
-@limiter.limit("10/minute")
+@limiter.limit("10/minute", key_func=entry_limit_key)
 def admin_login(request: Request, body: schemas.AdminLoginRequest, response: Response):
     """Администраторский вход."""
     # compare_digest принимает str только из ASCII, поэтому сравниваем байты
@@ -121,6 +122,7 @@ def update_workspace(
     request: Request,
     workspace_id: str,
     body: schemas.WorkspaceUpdate,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     _: bool = Depends(get_admin_user),
 ):
@@ -136,6 +138,9 @@ def update_workspace(
         # перестают действовать, ссылка-приглашение перевыпускается.
         ws.token_epoch += 1
         ws.invite_token = new_invite_token()
+        # Открытые сокеты сессию не перепроверяют — закрываем их, иначе отозванный
+        # участник продолжал бы получать события и управлять сессией ведущего.
+        background.add_task(manager.disconnect_workspace_sessions, ws.id)
     db.commit()
     db.refresh(ws)
     return ws
@@ -184,6 +189,7 @@ def rotate_workspace_invite(
 def delete_workspace(
     request: Request,
     workspace_id: str,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     _: bool = Depends(get_admin_user),
 ):
@@ -193,3 +199,4 @@ def delete_workspace(
         raise HTTPException(status_code=404, detail="Команда не найдена")
     db.delete(ws)
     db.commit()
+    background.add_task(manager.disconnect_workspace_sessions, workspace_id)

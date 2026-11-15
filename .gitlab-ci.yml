@@ -57,7 +57,7 @@ backend-tests:
     #   uv venv → uv pip install → активируем venv и работаем из него.
     # Кэш по-прежнему работает: UV_CACHE_DIR=/cache/uv смонтирован с хоста.
     - uv venv
-    - uv pip install -r requirements-dev.txt
+    - uv pip install --require-hashes -r requirements-dev.txt
     - . .venv/bin/activate
     # Проверка целостности цепочки миграций + статический линт ruff.
     - alembic heads --verbose
@@ -83,7 +83,7 @@ backend-tests-pg:
   script:
     - cd backend
     - uv venv
-    - uv pip install -r requirements-dev.txt
+    - uv pip install --require-hashes -r requirements-dev.txt
     - . .venv/bin/activate
     - |
       python - <<'PY'
@@ -180,7 +180,7 @@ e2e-tests:
     - cd backend
     # То же, что в backend-tests: Python в образе управляется uv, ставим в venv.
     - uv venv
-    - uv pip install -r requirements-dev.txt
+    - uv pip install --require-hashes -r requirements-dev.txt
     - . .venv/bin/activate
     # Ждём, пока сервис PostgreSQL примет соединения. pg_isready есть только
     # внутри postgres-контейнера, в образе джобы его нет — ждём по TCP.

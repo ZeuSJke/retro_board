@@ -104,6 +104,8 @@ def _sync_board_session_db(
         if lock_board:
             board.is_locked = True
         db.commit()
+        # Фаза меняет видимость карточек, а с ней — можно ли называть печатающего
+        manager.set_identity_hidden(board_id, _identity_hidden(board))
         if lock_board:
             return board_settings_payload(board)
         return None
@@ -115,6 +117,13 @@ def _sync_board_session_db(
             next(db_gen)
         except StopIteration:
             pass
+
+
+def _identity_hidden(board: models.Board) -> bool:
+    """Нельзя ли называть, кто печатает: анонимный режим или карточки сейчас скрыты."""
+    from app.board_view import cards_hidden
+
+    return bool(board.anonymous_votes or cards_hidden(board))
 
 
 def _board_is_locked(websocket: WebSocket, board_id: str) -> bool:
@@ -324,8 +333,9 @@ async def workspace_websocket_endpoint(
     db_gen = _open_ws_db(websocket)
     try:
         db = next(db_gen)
-        workspace, _participant = resolve_session(db, claims)
+        workspace, participant = resolve_session(db, claims)
         workspace_id = workspace.id
+        participant_id = participant.id
     except HTTPException:
         await websocket.close(code=1008, reason="Session expired")
         return
@@ -338,7 +348,7 @@ async def workspace_websocket_endpoint(
         except StopIteration:
             pass
 
-    await manager.connect_workspace(workspace_id, websocket)
+    await manager.connect_workspace(workspace_id, websocket, participant_id)
     try:
         while True:
             # Клиент ничего, кроме ping, сюда не шлёт; ответ отличает живое соединение от зависшего
@@ -377,6 +387,7 @@ async def websocket_endpoint(
         if board is None or board.workspace_id != workspace_id or board.deleted_at is not None:
             await websocket.close(code=1008, reason="Board not found")
             return
+        manager.set_identity_hidden(board_id, _identity_hidden(board))
         # Таймер и фокус поднимаются из БД один раз после рестарта процесса
         try:
             saved_state = json.loads(board.session_state) if board.session_state else None
@@ -412,7 +423,7 @@ async def websocket_endpoint(
         spotlight_id = manager.get_spotlight(board_id)
         if spotlight_id:
             await _send(websocket, "spotlight_update", {"card_id": spotlight_id})
-        typing_users = manager.get_typing(board_id)
+        typing_users = manager.typing_for(board_id, peer.id)
         if typing_users:
             await _send(websocket, "typing_update", {"typing": typing_users})
         timer = manager.get_timer(board_id)
@@ -558,6 +569,11 @@ async def websocket_endpoint(
                         board_id, "facilitator_update", manager.facilitator_payload(board_id)
                     )
                     await _broadcast_session_reset(board_id, had_ready, had_spot)
+                    # Таймер сессии убран: без события он шёл бы до нуля у тех, кто
+                    # был на доске, и отсутствовал у вошедших позже
+                    ended_timer = manager.pop_ended_timer(board_id)
+                    if ended_timer:
+                        await manager.broadcast(board_id, "timer_reset", ended_timer)
                     await manager.broadcast(board_id, "cards_visibility_changed", {})
                     # Встреча закончилась — самое время спросить, была ли она полезной
                     await manager.broadcast(board_id, "roti_requested", {})
@@ -692,11 +708,7 @@ async def websocket_endpoint(
                     else:
                         changed = manager.set_typing(board_id, peer.id, None)
                     if changed:
-                        await manager.broadcast(
-                            board_id,
-                            "typing_update",
-                            {"typing": manager.get_typing(board_id)},
-                        )
+                        await manager.broadcast_typing(board_id)
 
             except (json.JSONDecodeError, KeyError):
                 pass
@@ -745,10 +757,6 @@ async def websocket_endpoint(
                                 board_id, "ready_update", manager.ready_payload(board_id)
                             )
                         if typing_changed:
-                            await manager.broadcast(
-                                board_id,
-                                "typing_update",
-                                {"typing": manager.get_typing(board_id)},
-                            )
+                            await manager.broadcast_typing(board_id)
             except Exception:
                 pass

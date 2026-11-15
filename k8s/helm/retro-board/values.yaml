@@ -48,7 +48,8 @@ config:
   corsOrigins: ""
   secureCookies: "true"
   csrfEnabled: "true"
-  workspaceJwtExpireHours: "168"
+  # 30 дней: личность участника привязана к сессии и должна переживать двухнедельный спринт
+  workspaceJwtExpireHours: "720"
   # Leave empty if AI_* overrides live in existingSecret (migrated from Dokploy).
   aiBaseUrl: ""
   aiModel: ""

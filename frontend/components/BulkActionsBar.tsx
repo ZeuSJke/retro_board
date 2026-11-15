@@ -52,6 +52,8 @@ interface BulkActionsBarProps {
   /** Можно ли удалить выбранное: чужие карточки удаляет только модератор доски. */
   canDelete?: boolean
   onMergeCards: (targetText: string) => Promise<void>
+  /** Почему выбранное нельзя объединить (чужие карточки, скрытый сбор); пусто — можно. */
+  mergeBlockedReason?: string | null
 }
 
 export default function BulkActionsBar({
@@ -66,6 +68,7 @@ export default function BulkActionsBar({
   onBulkDelete,
   canDelete = true,
   onMergeCards,
+  mergeBlockedReason = null,
 }: BulkActionsBarProps) {
   const [groupTitle, setGroupTitle] = useState('')
   const [groupOpen, setGroupOpen] = useState(false)
@@ -157,10 +160,11 @@ export default function BulkActionsBar({
               type="button"
               size="sm"
               variant="outline"
-              disabled={busy || count < 2}
+              disabled={busy || count < 2 || Boolean(mergeBlockedReason)}
               onClick={openMergeModal}
-              title="Объединить дубли в одну карточку с сохранением голосов"
+              title={mergeBlockedReason || 'Объединить дубли в одну карточку с сохранением голосов'}
               className="h-8 gap-1.5 text-xs"
+              data-testid="bulk-merge-btn"
             >
               <GitMerge className="h-3.5 w-3.5" />
               Объединить

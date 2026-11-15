@@ -20,7 +20,13 @@ from app.workspace_auth import (
     verify_access_key,
 )
 from app.config import settings
-from app.limiter import INVITE_LIMIT, TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
+from app.limiter import (
+    INVITE_LIMIT,
+    TEAM_READ_LIMIT,
+    TEAM_WRITE_LIMIT,
+    entry_limit_key,
+    limiter,
+)
 from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -56,7 +62,7 @@ def _start_session(
 
 
 @router.post("/login", response_model=schemas.SessionOut)
-@limiter.limit("30/minute")
+@limiter.limit("30/minute", key_func=entry_limit_key)
 def workspace_login(
     request: Request,
     response: Response,
@@ -77,7 +83,7 @@ def workspace_login(
 
 
 @router.post("/join", response_model=schemas.SessionOut)
-@limiter.limit(INVITE_LIMIT)
+@limiter.limit(INVITE_LIMIT, key_func=entry_limit_key)
 def workspace_join(
     request: Request,
     response: Response,
@@ -102,7 +108,7 @@ def _workspace_by_invite(db: Session, token: str) -> models.Workspace:
 
 
 @router.get("/invite/{token}", response_model=schemas.InviteInfoOut)
-@limiter.limit(INVITE_LIMIT)
+@limiter.limit(INVITE_LIMIT, key_func=entry_limit_key)
 def invite_info(request: Request, token: str, db: Session = Depends(get_db)):
     """Название команды для страницы приглашения (без входа)."""
     if not (8 <= len(token) <= 64):

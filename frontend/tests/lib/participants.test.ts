@@ -9,6 +9,7 @@ import {
   formatVoters,
   formatVotesCount,
   isOwnCard,
+  mergeBlockedReason,
   summarizeVoters,
   withMyVote,
 } from '../../lib/participants'
@@ -113,6 +114,37 @@ describe('права на карточку', () => {
     expect(canEditCardText(masked, ME)).toBe(false)
     expect(canDeleteCard(masked, ME)).toBe(false)
     expect(canDeleteCard(masked, ME, { moderator: true })).toBe(true)
+  })
+})
+
+describe('объединение карточек', () => {
+  const own = { author_id: ME, masked: false }
+  const foreign = { author_id: 'p-other', masked: false }
+  const legacy = { author_id: null, masked: false }
+
+  it('свои карточки участник объединяет сам', () => {
+    expect(mergeBlockedReason([own, own], ME)).toBeNull()
+    expect(mergeBlockedReason([own, legacy], ME)).toBeNull()
+  })
+
+  it('чужие карточки объединяет только модератор', () => {
+    expect(mergeBlockedReason([own, foreign], ME)).toBe(
+      'Объединять чужие карточки может создатель доски или ведущий',
+    )
+    expect(mergeBlockedReason([own, foreign], ME, { moderator: true })).toBeNull()
+  })
+
+  it('пока карточки скрыты, объединять нельзя никому — даже модератору', () => {
+    expect(mergeBlockedReason([own, own], ME, { cardsHidden: true })).toBe(
+      'Объединять карточки можно после раскрытия',
+    )
+    expect(mergeBlockedReason([own, own], ME, { cardsHidden: true, moderator: true })).toBe(
+      'Объединять карточки можно после раскрытия',
+    )
+  })
+
+  it('в анонимном режиме карточка без автора — чужая', () => {
+    expect(mergeBlockedReason([own, legacy], ME, { anonymous: true })).not.toBeNull()
   })
 })
 

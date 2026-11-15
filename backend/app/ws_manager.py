@@ -96,6 +96,11 @@ class ConnectionManager:
         self.epoch: str = uuid.uuid4().hex[:12]
         self.seq: dict[str, int] = defaultdict(int)  # board_id → номер последнего события
         self.restored: set[str] = set()  # доски, чьё состояние уже поднято из БД
+        # Скрывать ли на доске, кто именно печатает (анонимный режим, скрытый сбор).
+        # Нет записи — считаем, что скрывать: ошибка в эту сторону безвредна.
+        self.identity_hidden: dict[str, bool] = {}
+        self.ended_timers: dict[str, float] = {}  # длительность таймера завершённой сессии
+        self.workspace_peers: dict[int, str] = {}  # id(ws) сокета команды → участник
 
     def reset(self) -> None:
         """Сбросить всё in-memory состояние (для изоляции тестов)."""
@@ -119,6 +124,9 @@ class ConnectionManager:
         self.names.clear()
         self.seq.clear()
         self.restored.clear()
+        self.identity_hidden.clear()
+        self.ended_timers.clear()
+        self.workspace_peers.clear()
         self.epoch = uuid.uuid4().hex[:12]
 
     # ── Подключения ──────────────────────────────────────────────────────────
@@ -145,10 +153,14 @@ class ConnectionManager:
                 self.facilitator_names[board_id] = peer.name
         return first_socket
 
-    async def connect_workspace(self, workspace_id: str, ws: WebSocket):
+    async def connect_workspace(
+        self, workspace_id: str, ws: WebSocket, participant_id: str | None = None
+    ):
         await ws.accept()
         self.workspace_rooms[workspace_id].append(ws)
         self.ws_workspaces[id(ws)] = workspace_id
+        if participant_id:
+            self.workspace_peers[id(ws)] = participant_id
 
     def disconnect_workspace(self, workspace_id: str, ws: WebSocket):
         if ws in self.workspace_rooms[workspace_id]:
@@ -156,6 +168,7 @@ class ConnectionManager:
         if not self.workspace_rooms[workspace_id]:
             self.workspace_rooms.pop(workspace_id, None)
         self.ws_workspaces.pop(id(ws), None)
+        self.workspace_peers.pop(id(ws), None)
 
     def disconnect(self, board_id: str, ws: WebSocket) -> tuple[Peer | None, bool, bool]:
         """Отключить сокет доски.
@@ -217,11 +230,36 @@ class ConnectionManager:
             for ws in room
             if (peer := self.peers.get(id(ws))) is not None and peer.id == participant_id
         ]
+        sockets += [
+            ws
+            for room in self.workspace_rooms.values()
+            for ws in room
+            if self.workspace_peers.get(id(ws)) == participant_id
+        ]
+        await self._close_all(sockets, "Session ended")
+
+    async def disconnect_workspace_sessions(self, workspace_id: str) -> None:
+        """Закрыть все сокеты команды — досок и списка досок (сменили ключ доступа).
+
+        Сессия проверяется только при подключении, поэтому без этого участник с
+        отозванной сессией продолжал бы получать события и управлять сессией ведущего.
+        """
+        sockets = list(self.workspace_rooms.get(workspace_id, []))
+        sockets += [
+            ws
+            for room in self.rooms.values()
+            for ws in room
+            if self.ws_workspaces.get(id(ws)) == workspace_id
+        ]
+        await self._close_all(sockets, "Access revoked")
+
+    @staticmethod
+    async def _close_all(sockets: list[WebSocket], reason: str) -> None:
         for ws in sockets:
             try:
-                await ws.close(code=1008, reason="Session ended")
+                await ws.close(code=1008, reason=reason)
             except Exception:
-                logger.debug("Socket of participant %s is already closed", participant_id)
+                logger.debug("Socket is already closed")
 
     def name_of(self, participant_id: str) -> str:
         return self.names.get(participant_id, "Участник")
@@ -284,6 +322,9 @@ class ConnectionManager:
                     )
                     await self.broadcast(board_id, "ready_update", self.ready_payload(board_id))
                     await self.broadcast(board_id, "spotlight_update", {"card_id": None})
+                    ended_timer = self.pop_ended_timer(board_id)
+                    if ended_timer:
+                        await self.broadcast(board_id, "timer_reset", ended_timer)
                     # Сессия закончилась — видимость карточек могла измениться
                     await self.broadcast(board_id, "cards_visibility_changed", {})
             except asyncio.CancelledError:
@@ -397,7 +438,14 @@ class ConnectionManager:
         return self.session_ids.get(board_id)
 
     def clear_session(self, board_id: str) -> tuple[bool, bool]:
-        """Clear all session-related state for a board."""
+        """Clear all session-related state for a board.
+
+        Таймер убирается вместе с сессией; его длительность остаётся в
+        `ended_timers`, чтобы вызывающий код разослал сброс (см. `pop_ended_timer`).
+        """
+        timer = self.timers.get(board_id)
+        if timer:
+            self.ended_timers[board_id] = timer.get("duration", 0)
         self.cancel_facilitator_grace(board_id)
         self.facilitators.pop(board_id, None)
         self.facilitator_names.pop(board_id, None)
@@ -461,6 +509,39 @@ class ConnectionManager:
             for pid, col_id in self.typing_users.get(board_id, {}).items()
         ]
 
+    def set_identity_hidden(self, board_id: str, hidden: bool) -> None:
+        self.identity_hidden[board_id] = hidden
+
+    def typing_for(self, board_id: str, viewer_id: str | None) -> list[dict[str, str]]:
+        """Список печатающих для конкретного получателя.
+
+        В анонимном режиме и при скрытом сборе по индикатору нельзя понять, чья
+        карточка появится следом: чужие записи приходят без имени и идентификатора.
+        """
+        entries = self.get_typing(board_id)
+        if not self.identity_hidden.get(board_id, True):
+            return entries
+        masked: list[dict[str, str]] = []
+        for entry in entries:
+            if entry["participant_id"] == viewer_id:
+                masked.append(entry)
+            else:
+                masked.append(
+                    {
+                        "participant_id": f"anon-{len(masked)}",
+                        "username": "",
+                        "column_id": entry["column_id"],
+                    }
+                )
+        return masked
+
+    async def broadcast_typing(self, board_id: str) -> None:
+        await self.broadcast_each(
+            board_id,
+            "typing_update",
+            lambda viewer_id: {"typing": self.typing_for(board_id, viewer_id)},
+        )
+
     def set_spotlight(self, board_id: str, card_id: str | None):
         if card_id:
             self.spotlights[board_id] = card_id
@@ -498,6 +579,12 @@ class ConnectionManager:
 
     def get_timer(self, board_id: str) -> dict | None:
         return self.timers.get(board_id)
+
+    def pop_ended_timer(self, board_id: str) -> dict | None:
+        """Данные события timer_reset для таймера, убранного вместе с сессией."""
+        if board_id not in self.ended_timers:
+            return None
+        return {"duration": self.ended_timers.pop(board_id)}
 
     # ── Состояние, переживающее рестарт ──────────────────────────────────────
 
@@ -660,9 +747,7 @@ class ConnectionManager:
                 )
             await self.broadcast(board_id, "presence_update", self.presence_payload(board_id))
             if typing_changed:
-                await self.broadcast(
-                    board_id, "typing_update", {"typing": self.get_typing(board_id)}
-                )
+                await self.broadcast_typing(board_id)
 
     async def broadcast_workspace(
         self,

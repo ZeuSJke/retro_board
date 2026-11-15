@@ -593,6 +593,18 @@ async def update_board(
     require_live_board(board, workspace.id)
     was_hidden = cards_hidden(board)
     was_anonymous = board.anonymous_votes
+    # Скрытый сбор и анонимность решают, чей текст и чьё имя кому видны. Выключить
+    # их — значит раскрыть чужое, поэтому менять их может только модератор.
+    changes_privacy = (
+        body.hide_cards_until_reveal is not None
+        and body.hide_cards_until_reveal != board.hide_cards_until_reveal
+    ) or (body.anonymous_votes is not None and body.anonymous_votes != board.anonymous_votes)
+    if changes_privacy:
+        require_moderator(
+            board,
+            participant,
+            "Скрытый сбор и анонимный режим меняет создатель доски или ведущий",
+        )
     if body.name is not None:
         existing = (
             db.query(models.Board)
@@ -631,6 +643,7 @@ async def update_board(
     payload = board_settings_payload(board)
     await manager.broadcast_workspace(workspace.id, "board_updated", payload)
     await manager.broadcast(board.id, "board_updated", payload)
+    manager.set_identity_hidden(board.id, bool(board.anonymous_votes or cards_hidden(board)))
     # Скрытие и анонимность меняют то, что сервер отдаёт каждому получателю:
     # клиенты перечитывают доску.
     if cards_hidden(board) != was_hidden or board.anonymous_votes != was_anonymous:
@@ -652,7 +665,8 @@ async def reveal_cards(
     В сессии карточки раскрывает ведущий переходом из фазы «Штурм».
     """
     board = _board_query(db).filter(models.Board.id == board_id).first()
-    require_unlocked_board(board, workspace.id)
+    # Раскрытие не меняет содержимое, поэтому блокировка доски ему не мешает
+    require_live_board(board, workspace.id)
     assert board is not None
     if board.active_phase is not None:
         raise HTTPException(409, "Идёт сессия ведущего: карточки раскрывает он")
@@ -661,6 +675,7 @@ async def reveal_cards(
         board.cards_revealed = True
         db.commit()
         board = _board_query(db).filter(models.Board.id == board_id).first() or board
+        manager.set_identity_hidden(board.id, bool(board.anonymous_votes or cards_hidden(board)))
         payload = board_settings_payload(board)
         await manager.broadcast_workspace(workspace.id, "board_updated", payload)
         await manager.broadcast(board.id, "board_updated", payload)

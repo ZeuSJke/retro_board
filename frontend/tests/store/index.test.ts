@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { APP_STORE_VERSION, migratePersistedState, useAppStore } from '../../store'
+import {
+  APP_STORE_VERSION,
+  migratePersistedState,
+  syncSessionFromStorage,
+  useAppStore,
+} from '../../store'
 
 const STORAGE_KEY = 'retroboard-app'
 
@@ -284,5 +289,84 @@ describe('migratePersistedState', () => {
 
   it('участник без команды — не сессия', () => {
     expect(migratePersistedState({ participant }, APP_STORE_VERSION + 1).participant).toBeNull()
+  })
+})
+
+describe('сессия между вкладками', () => {
+  const stored = (state: Record<string, unknown>, version = APP_STORE_VERSION) =>
+    JSON.stringify({ state, version })
+
+  beforeEach(() => {
+    localStorage.clear()
+    resetStore()
+  })
+
+  it('вход в другой вкладке приходит и в эту: форма входа больше не нужна', () => {
+    syncSessionFromStorage(stored({ workspace, participant, username: 'Анна' }))
+    expect(useAppStore.getState().participant).toEqual(participant)
+    expect(useAppStore.getState().workspace).toEqual(workspace)
+    expect(useAppStore.getState().username).toBe('Анна')
+  })
+
+  it('повторный вход в другой вкладке меняет участника и здесь', () => {
+    useAppStore.setState({ workspace, participant })
+    syncSessionFromStorage(stored({ workspace, participant: { id: 'p-2', name: 'Анна' } }))
+    // Cookie общая: запросы этой вкладки уже идут от p-2, и стор должен знать об этом
+    expect(useAppStore.getState().participant?.id).toBe('p-2')
+  })
+
+  it('выход в другой вкладке завершает сессию и здесь', () => {
+    useAppStore.setState({ workspace, participant })
+    syncSessionFromStorage(stored({ workspace: null, participant: null }))
+    expect(useAppStore.getState().participant).toBeNull()
+    expect(useAppStore.getState().workspace).toBeNull()
+  })
+
+  it('тема, сетка и текущая доска у вкладок остаются своими', () => {
+    useAppStore.setState({
+      workspace,
+      participant,
+      currentBoardId: 'board-here',
+      theme: { primary: '#006E1C', dark: true },
+    })
+    syncSessionFromStorage(
+      stored({
+        workspace,
+        participant: { id: 'p-2', name: 'Борис' },
+        currentBoardId: 'board-there',
+        theme: { primary: '#6750A4', dark: false },
+      }),
+    )
+    const state = useAppStore.getState()
+    expect(state.currentBoardId).toBe('board-here')
+    expect(state.theme).toEqual({ primary: '#006E1C', dark: true })
+  })
+
+  it('та же сессия не трогает стор, мусор и очистка хранилища игнорируются', () => {
+    useAppStore.setState({ workspace, participant })
+    const before = useAppStore.getState()
+    syncSessionFromStorage(stored({ workspace, participant }))
+    syncSessionFromStorage('не json')
+    syncSessionFromStorage('[1, 2]')
+    syncSessionFromStorage(null)
+    expect(useAppStore.getState()).toBe(before)
+  })
+
+  it('событие storage от другой вкладки доходит до стора', () => {
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: STORAGE_KEY,
+        newValue: stored({ workspace, participant }),
+      }),
+    )
+    expect(useAppStore.getState().participant).toEqual(participant)
+    // Чужой ключ хранилища сессию не меняет
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'retro_theme_mode',
+        newValue: stored({ workspace: null, participant: null }),
+      }),
+    )
+    expect(useAppStore.getState().participant).toEqual(participant)
   })
 })

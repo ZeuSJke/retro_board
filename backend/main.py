@@ -177,8 +177,12 @@ app.include_router(websocket.router, tags=["websocket"])
 
 @app.get("/health", tags=["health"])
 @app.get("/api/health", tags=["health"], include_in_schema=False)
-def health():
-    """Процесс жив. В БД не ходит: по этой проверке под перезапускают."""
+async def health():
+    """Процесс жив. В БД не ходит: по этой проверке под перезапускают.
+
+    Именно `async def`: обычная функция ждала бы свободный поток из общего пула,
+    и при запросах, зависших на базе, проба не уложилась бы в таймаут.
+    """
     return {"status": "ok"}
 
 

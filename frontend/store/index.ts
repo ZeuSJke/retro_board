@@ -123,6 +123,8 @@ function sameParticipant(a: Participant | null, b: Participant): boolean {
   return a !== null && a.id === b.id && a.name === b.name
 }
 
+const STORAGE_KEY = 'retroboard-app'
+
 export const useAppStore = create<AppStore>()(
   persist(
     (set) => ({
@@ -155,7 +157,7 @@ export const useAppStore = create<AppStore>()(
       setHasHydrated: (hydrated: boolean) => set({ _hasHydrated: hydrated }),
     }),
     {
-      name: 'retroboard-app',
+      name: STORAGE_KEY,
       version: APP_STORE_VERSION,
       migrate: migratePersistedState,
       partialize: (state): PersistedAppState => ({
@@ -172,3 +174,42 @@ export const useAppStore = create<AppStore>()(
     },
   ),
 )
+
+/**
+ * Принять сессию, записанную другой вкладкой.
+ *
+ * Cookie сессии одна на браузер, а стор у каждой вкладки свой. Без этого вкладка, где
+ * открыта форма входа или прежний участник, не узнала бы, что в соседней вошли или вышли:
+ * она считала бы себя одним участником, а её запросы сервер приписывал бы другому — свои
+ * новые карточки выглядели бы чужими. Переносятся только команда и участник; тема, сетка
+ * и текущая доска у вкладок остаются своими.
+ */
+export function syncSessionFromStorage(raw: string | null): void {
+  if (raw === null) return
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return
+  }
+  if (!isRecord(parsed)) return
+  const version = typeof parsed.version === 'number' ? parsed.version : 0
+  const next = migratePersistedState(parsed.state, version)
+  const current = useAppStore.getState()
+  const sameSession =
+    (next.participant?.id ?? null) === (current.participant?.id ?? null) &&
+    (next.participant?.name ?? null) === (current.participant?.name ?? null) &&
+    (next.workspace?.workspaceId ?? null) === (current.workspace?.workspaceId ?? null)
+  if (sameSession) return
+  useAppStore.setState({
+    workspace: next.workspace,
+    participant: next.participant,
+    ...(next.participant ? { username: next.participant.name } : {}),
+  })
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key === STORAGE_KEY) syncSessionFromStorage(event.newValue)
+  })
+}

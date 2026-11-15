@@ -6,7 +6,7 @@ import { deleteBoard, updateBoard } from '@/api'
 import { markOwnBoardDeletion, unmarkOwnBoardDeletion } from '@/lib/board-list-signals'
 import { showToast } from '@/store/toastStore'
 import { getApiErrorMessage } from '@/utils/apiError'
-import { CANNOT_DELETE_BOARD_HINT } from '@/lib/participants'
+import { CANNOT_DELETE_BOARD_HINT, PRIVACY_SETTINGS_HINT } from '@/lib/participants'
 import type { Board } from '@/types'
 import {
   AlertDialog,
@@ -180,6 +180,8 @@ export default function BoardSettingsDialog({
                 <Switch
                   checked={hideCards}
                   onCheckedChange={setHideCards}
+                  disabled={!canModerate}
+                  title={canModerate ? undefined : PRIVACY_SETTINGS_HINT}
                   aria-label="Скрытый сбор"
                   data-testid="hide-cards-switch"
                 />
@@ -199,10 +201,17 @@ export default function BoardSettingsDialog({
                 <Switch
                   checked={anonymousVotes}
                   onCheckedChange={setAnonymousVotes}
+                  disabled={!canModerate}
+                  title={canModerate ? undefined : PRIVACY_SETTINGS_HINT}
                   aria-label="Анонимный режим"
                   data-testid="anonymous-switch"
                 />
               </div>
+              {!canModerate && (
+                <p className="text-xs text-muted-foreground" data-testid="privacy-settings-hint">
+                  {PRIVACY_SETTINGS_HINT}.
+                </p>
+              )}
 
               <div className="flex items-center justify-between gap-3">
                 <div className="space-y-0.5">

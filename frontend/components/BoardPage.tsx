@@ -40,6 +40,7 @@ import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown
 import { getCardColorPreset } from '@/lib/board-themes'
 import {
   applyActionItemDeleted,
+  applyActionItemChanged,
   applyActionItemSaved,
   applyMoodUpdated,
   applyParticipantRenamedToMoods,
@@ -49,6 +50,7 @@ import { blockingOverlay } from '@/lib/hotkeys'
 import {
   canDeleteCard,
   canModerateBoard,
+  mergeBlockedReason,
   countMyVotes,
   countMyVotesOnBoard,
 } from '@/lib/participants'
@@ -928,9 +930,14 @@ export default function BoardPage({
     [applyChange, handleMutationRejected],
   )
 
-  // Задачи: сохранение (создание, правка, возврат после неудачного удаления) и удаление
+  // Задачи: сохранение (создание, возврат после неудачного удаления), правка и удаление
   const handleActionItemSaved = useCallback(
     (item: ActionItem) => setActionItems((prev) => applyActionItemSaved(prev, item)),
+    [setActionItems],
+  )
+  // Правка и её откат не возвращают задачу, которую коллега успел удалить
+  const handleActionItemChanged = useCallback(
+    (item: ActionItem) => setActionItems((prev) => applyActionItemChanged(prev, item)),
     [setActionItems],
   )
 
@@ -1542,6 +1549,12 @@ export default function BoardPage({
   const canDeleteSelection = selectedCards.every((card) =>
     canDeleteCard(card, myId, { anonymous: anonymousMode, moderator: isModerator }),
   )
+  // Объединение — и правка, и удаление: чужие карточки объединяет только модератор
+  const mergeBlocked = mergeBlockedReason(selectedCards, myId, {
+    anonymous: anonymousMode,
+    moderator: isModerator,
+    cardsHidden,
+  })
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
@@ -1792,7 +1805,8 @@ export default function BoardPage({
                 actionItems={actionItems}
                 participants={participants}
                 onCreated={handleActionItemSaved}
-                onUpdated={handleActionItemSaved}
+                onUpdated={handleActionItemChanged}
+                onRestored={handleActionItemSaved}
                 onDeleted={handleActionItemDeleted}
                 dropDisabled={readOnly || cardsHidden}
                 readOnly={readOnly}
@@ -1834,7 +1848,8 @@ export default function BoardPage({
             actionItems={actionItems}
             participants={participants}
             onCreated={handleActionItemSaved}
-            onUpdated={handleActionItemSaved}
+            onUpdated={handleActionItemChanged}
+            onRestored={handleActionItemSaved}
             onDeleted={handleActionItemDeleted}
             dropDisabled
             readOnly={readOnly}
@@ -1890,6 +1905,7 @@ export default function BoardPage({
         onBulkDelete={handleBulkDelete}
         canDelete={canDeleteSelection}
         onMergeCards={handleMergeCards}
+        mergeBlockedReason={mergeBlocked}
       />
 
       <CommandPalette

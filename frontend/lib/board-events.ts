@@ -153,9 +153,19 @@ export function applyCardUpdated(columns: Column[], card: Card): Column[] {
     (c) => c.id === card.column_id && c.cards.some((x) => x.id === card.id),
   )
   if (inPlace) {
+    // Внутри колонки порядок меняет только `card_moved` (оно несёт порядок целиком), поэтому
+    // место карточки остаётся локальным. Позиция из события — серверная нумерация: после
+    // удалений она идёт с пропусками, а локальная после предпросмотра перетаскивания — подряд.
+    // Смешать их значило бы при следующей сортировке уронить карточку ниже соседей.
     return columns.map((c) =>
       c.id === card.column_id
-        ? { ...c, cards: c.cards.map((x) => (x.id === card.id ? card : x)) }
+        ? {
+            ...c,
+            cards: c.cards.map((x) => {
+              if (x.id !== card.id) return x
+              return x.position === card.position ? card : { ...card, position: x.position }
+            }),
+          }
         : c,
     )
   }
@@ -501,6 +511,17 @@ export function applyActionItemSaved(items: ActionItem[], item: ActionItem): Act
     (i, idx) => idx === 0 || compareText(next[idx - 1].created_at, i.created_at) <= 0,
   )
   return ordered ? next : next.sort((a, b) => compareText(a.created_at, b.created_at))
+}
+
+/**
+ * Правка задачи — оптимистичная, подтверждённая сервером или её откат: меняется только
+ * задача, которая есть в списке. Если коллега успел её удалить, правка (и откат после 404)
+ * не возвращает её на экран.
+ */
+export function applyActionItemChanged(items: ActionItem[], item: ActionItem): ActionItem[] {
+  return items.some((i) => i.id === item.id)
+    ? items.map((i) => (i.id === item.id ? item : i))
+    : items
 }
 
 export function applyActionItemDeleted(items: ActionItem[], itemId: string): ActionItem[] {

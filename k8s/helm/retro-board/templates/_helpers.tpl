@@ -54,6 +54,9 @@ app.kubernetes.io/component: {{ .component }}
 {{- if eq (upper $name) "TESTING" -}}
 {{- fail "config.extraEnv must not set TESTING: it disables rate limiting and secret validation" -}}
 {{- end -}}
+{{- if not (kindIs "string" $value) -}}
+{{- fail (printf "config.extraEnv.%s must be a quoted string: an unquoted number renders as 2.097152e+06 and crashes the backend on start" $name) -}}
+{{- end -}}
 {{- end -}}
 {{- if ne (int .Values.api.replicas) 1 -}}
 {{- fail "api.replicas must be 1: RetroBoard WS room/timer state is in-process memory (single-worker invariant)" -}}

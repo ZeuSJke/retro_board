@@ -44,7 +44,10 @@ class Settings(BaseSettings):
 
     # Workspace JWT secrets and admin credentials
     workspace_jwt_secret: str = "change-me-workspace-secret"
-    workspace_jwt_expire_hours: int = 168  # 7 дней
+    # 30 дней: личность участника (автор карточек, создатель доски) привязана к
+    # сессии, а ретро обычно раз в две недели — за неделю она бы терялась.
+    # Сессия продлевается при каждом заходе и отзывается выходом или сменой ключа.
+    workspace_jwt_expire_hours: int = 720
     admin_login: str = "admin"
     admin_password: str = "changeme"
     admin_jwt_secret: str = "change-me-admin-secret"

@@ -64,6 +64,8 @@ interface MasterColumnProps {
   participants?: string[]
   onCreated?: (item: ActionItem) => void
   onUpdated: (item: ActionItem) => void
+  /** Вернуть задачу, которую сервер не удалил. Без него возврат идёт через `onCreated`. */
+  onRestored?: (item: ActionItem) => void
   onDeleted: (id: string) => void
   dropDisabled?: boolean
   /**
@@ -119,6 +121,7 @@ export default function MasterColumn({
   participants = [],
   onCreated,
   onUpdated,
+  onRestored,
   onDeleted,
   dropDisabled = false,
   readOnly = false,
@@ -339,8 +342,9 @@ export default function MasterColumn({
     try {
       await deleteActionItem(target.id)
     } catch (err) {
-      // Сервер задачу не удалил: возвращаем её в список (как откат остальных правок выше)
-      onUpdated(target)
+      // Сервер задачу не удалил: возвращаем её в список. Это именно возврат, а не правка:
+      // правка задачу, которой в списке нет, не добавляет.
+      ;(onRestored ?? onCreated)?.(target)
       showToast(getApiErrorMessage(err, 'Не удалось удалить задачу'), 'error')
     }
   }

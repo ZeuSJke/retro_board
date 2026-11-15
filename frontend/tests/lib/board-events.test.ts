@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   applyActionItemDeleted,
+  applyActionItemChanged,
   applyActionItemSaved,
   applyBoardChange,
   applyCardCreated,
@@ -364,6 +365,29 @@ describe('card_created / card_updated / card_deleted', () => {
     const next = applyCardUpdated(columns, card('B', 1, { column_id: 'col-2' }))
     expect(ids(next[0])).toEqual(['A'])
     expect(ids(next[1])).toEqual(['X', 'B'])
+  })
+
+  it('card_updated внутри колонки не приносит серверную позицию — порядок остаётся локальным', () => {
+    // На сервере после удаления B и C позиции идут с пропусками: A=0, D=3, E=4.
+    // Клиент после предпросмотра или отмены перетаскивания перенумеровал колонку подряд.
+    const columns = [column('col-1', [card('A', 0), card('D', 1), card('E', 2)])]
+    // Коллега лайкнул D — событие несёт серверную позицию 3
+    const next = applyCardUpdated(columns, card('D', 3, { likes: ['p-bob'] }))
+    expect(next[0].cards.map((c) => [c.id, c.position])).toEqual([
+      ['A', 0],
+      ['D', 1],
+      ['E', 2],
+    ])
+    expect(next[0].cards[1].likes).toEqual(['p-bob'])
+    // Любая последующая сортировка по позиции даёт тот же порядок, что у остальных
+    const sorted = [...next[0].cards].sort((a, b) => a.position - b.position)
+    expect(sorted.map((c) => c.id)).toEqual(['A', 'D', 'E'])
+  })
+
+  it('card_updated с той же позицией отдаёт карточку как есть, без копии', () => {
+    const columns = [column('col-1', [card('A', 0), card('D', 1)])]
+    const updated = card('D', 1, { text: 'Новый текст' })
+    expect(applyCardUpdated(columns, updated)[0].cards[1]).toBe(updated)
   })
 
   it('card_updated для неизвестной карточки ничего не меняет', () => {
@@ -755,6 +779,20 @@ describe('задачи', () => {
     const restored = applyActionItemSaved(list, first)
 
     expect(restored.map((i) => i.id)).toEqual(['1', '2', '3'])
+  })
+
+  it('правка и её откат не возвращают задачу, которую коллега успел удалить', () => {
+    const original = item('1', '2026-01-01T00:00:01Z')
+    let list = [original]
+    // Оптимистичная смена статуса
+    list = applyActionItemChanged(list, { ...original, status: 'in_progress' })
+    expect(list[0].status).toBe('in_progress')
+    // Событие сокета: коллега удалил задачу
+    list = applyActionItemDeleted(list, original.id)
+    // Сервер ответил 404 — откат к прежнему состоянию
+    const rolledBack = applyActionItemChanged(list, original)
+    expect(rolledBack).toEqual([])
+    expect(rolledBack).toBe(list)
   })
 
   it('удаление неизвестной задачи возвращает тот же список', () => {

@@ -7,7 +7,10 @@ from app.board_view import (
     broadcast_card,
     can_delete_card,
     can_edit_card_text,
+    can_moderate,
     card_view,
+    cards_hidden,
+    require_cards_visible,
 )
 from app.database import get_db
 from app import models, schemas
@@ -88,8 +91,12 @@ async def update_card(
     board = require_unlocked_board(
         db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
-    if body.text is not None and body.text != card.text:
-        if not can_edit_card_text(card, participant.id):
+    if body.text is not None:
+        own = can_edit_card_text(card, participant.id)
+        # Клиент присылает карточку целиком, поэтому чужой текст без изменений
+        # не ошибка. Но у скрытой карточки сравнение подтверждало бы догадку
+        # о её тексте — там текст от чужого не принимается вовсе.
+        if not own and (cards_hidden(board) or body.text != card.text):
             raise HTTPException(403, _NOT_YOUR_CARD)
         card.text = body.text
     if body.color is not None:
@@ -395,6 +402,16 @@ async def merge_cards(
     board, cards, _ = _load_board_cards(db, payload.card_ids, workspace.id)
     if len(cards) < 2:
         raise HTTPException(400, "Для объединения выберите минимум 2 карточки")
+    # Объединение склеивает тексты, переписывает первую карточку и удаляет
+    # остальные — это и правка, и удаление сразу. Пока карточки скрыты, оно
+    # выдало бы чужой текст; чужие карточки объединяет только модератор.
+    require_cards_visible(board)
+    if not can_moderate(board, participant.id) and not all(
+        can_edit_card_text(card, participant.id) for card in cards
+    ):
+        raise HTTPException(
+            403, "Объединять чужие карточки может создатель доски или ведущий"
+        )
 
     primary = cards[0]
     duplicates = cards[1:]

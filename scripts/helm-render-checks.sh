@@ -119,6 +119,8 @@ expect_fail "backup without NFS server rejected" "backup.nfs.server and backup.n
   "${DEV[@]}" --set backup.enabled=true
 expect_fail "TESTING via extraEnv rejected" "config.extraEnv must not set TESTING" \
   "${STAGING[@]}" --set-string config.extraEnv.TESTING=true
+expect_fail "unquoted number in extraEnv rejected" "must be a quoted string" \
+  "${STAGING[@]}" --set config.extraEnv.MAX_REQUEST_BODY_BYTES=2097152
 
 echo "── Content-Security-Policy"
 # CSP задаётся в двух местах (Next отдаёт её без Ingress — локально и в E2E,

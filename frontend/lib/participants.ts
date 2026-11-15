@@ -99,6 +99,31 @@ export function canDeleteCard(
   return isOwnCard(card, participantId) || isLegacyCard(card, Boolean(options.anonymous))
 }
 
+/**
+ * Почему выбранные карточки нельзя объединить; `null` — можно.
+ *
+ * Объединение переписывает текст первой карточки и удаляет остальные, поэтому сервер
+ * разрешает его модератору, а участнику — только со своими карточками, и никому — пока
+ * карточки скрыты (иначе чужой скрытый текст склеился бы в карточку вызывающего).
+ */
+export function mergeBlockedReason(
+  cards: CardIdentity[],
+  participantId: string | null | undefined,
+  options: { anonymous?: boolean; moderator?: boolean; cardsHidden?: boolean } = {},
+): string | null {
+  if (options.cardsHidden) return CANNOT_MERGE_HIDDEN_HINT
+  if (options.moderator) return null
+  const allMine = cards.every((card) =>
+    canEditCardText(card, participantId, { anonymous: options.anonymous }),
+  )
+  return allMine ? null : CANNOT_MERGE_FOREIGN_HINT
+}
+
+export const CANNOT_MERGE_HIDDEN_HINT = 'Объединять карточки можно после раскрытия'
+export const CANNOT_MERGE_FOREIGN_HINT =
+  'Объединять чужие карточки может создатель доски или ведущий'
+export const PRIVACY_SETTINGS_HINT =
+  'Скрытый сбор и анонимный режим меняет создатель доски или ведущий'
 export const NOT_YOUR_CARD_HINT = 'Текст может менять только автор карточки'
 export const CANNOT_DELETE_CARD_HINT = 'Удалить чужую карточку может создатель доски или ведущий'
 export const CANNOT_DELETE_COLUMN_HINT =
