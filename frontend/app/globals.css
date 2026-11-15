@@ -1,12 +1,221 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss' source(none);
+@import 'tw-animate-css';
+@import './tailwind-v3-palette.css';
+
+/* Источники классов заданы явно — те же каталоги, что были в content у tailwind.config.ts. */
+@source '../app';
+@source '../components';
+@source '../hooks';
+@source '../lib';
+@source '../store';
+
+/* Тёмная тема — класс .dark на <html> (next-themes, attribute="class"). */
+@custom-variant dark (&:is(.dark *));
+
+/*
+  В Tailwind 4 hover: работает только на устройствах с настоящим hover (@media (hover: hover)).
+  Оставляем поведение Tailwind 3 — на тач-устройствах :hover по-прежнему срабатывает после тапа.
+*/
+@custom-variant hover (&:hover);
+
+@theme {
+  /* Порядок повторяет фактический стек Tailwind 3 (var(--font-sans), Inter, system-ui, …):
+     system-ui после sans-serif влияет на подбор глифов, которых нет в Inter (эмодзи, символы). */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif, system-ui;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Tailwind 3 задавал line-height у text-* в rem, Tailwind 4 — безразмерным множителем.
+     С множителем меняется высота строк там, где размер шрифта переопределён (text-[10px] в бейджах,
+     вложенные элементы с другим кеглем), поэтому оставлены прежние значения. */
+  --text-xs--line-height: 1rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl--line-height: 2rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-4xl--line-height: 2.5rem;
+
+  --animate-float-up: float-up 3.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  --animate-card-enter: card-enter 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-card-glow: card-glow 1.3s ease-out forwards;
+  --animate-card-reveal: card-reveal 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-vote-pop: vote-pop 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+
+  /* Центрирование по X (-50%) даёт класс -translate-x-1/2 на самом элементе: в Tailwind 4 это
+     отдельное свойство translate, оно складывается с transform из keyframes, а не перебивается им. */
+  @keyframes float-up {
+    0% {
+      transform: translate3d(0, 0, 0) scale(0.75);
+      opacity: 0;
+    }
+    10% {
+      transform: translate3d(10px, -10vh, 0) scale(1.12);
+      opacity: 1;
+    }
+    38% {
+      transform: translate3d(-16px, -36vh, 0) scale(1.06);
+      opacity: 1;
+    }
+    68% {
+      transform: translate3d(14px, -66vh, 0) scale(1);
+      opacity: 0.92;
+    }
+    100% {
+      transform: translate3d(-8px, -92vh, 0) scale(0.9);
+      opacity: 0;
+    }
+  }
+  /* Отдельные CSS-свойства scale/translate вместо transform,
+     чтобы не перебивать inline style.transform от @dnd-kit/sortable. */
+  @keyframes card-enter {
+    0% {
+      opacity: 0;
+      scale: 0.95;
+      translate: 0 10px;
+    }
+    100% {
+      opacity: 1;
+      scale: 1;
+      translate: 0 0;
+    }
+  }
+  @keyframes card-glow {
+    0% {
+      box-shadow:
+        0 0 0 2px hsl(var(--primary) / 0.45),
+        0 8px 24px -6px hsl(var(--primary) / 0.25);
+    }
+    100% {
+      box-shadow:
+        0 0 0 0px hsl(var(--primary) / 0),
+        0 1px 2px 0 rgb(0 0 0 / 0.05);
+    }
+  }
+  @keyframes card-reveal {
+    0% {
+      opacity: 0.35;
+      scale: 0.97;
+      filter: blur(4px);
+    }
+    100% {
+      opacity: 1;
+      scale: 1;
+      filter: blur(0px);
+    }
+  }
+  @keyframes vote-pop {
+    0% {
+      opacity: 1;
+      transform: translate(-50%, 0) scale(0.85);
+    }
+    40% {
+      opacity: 1;
+      transform: translate(-50%, -12px) scale(1.12);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(-50%, -22px) scale(0.95);
+    }
+  }
+}
+
+/*
+  Цвета темы — HSL-каналы из :root/.dark ниже. inline: утилита получает hsl(var(--x)) прямо
+  в своём правиле (как в Tailwind 3), поэтому значение вычисляется на самом элементе и
+  hsl(var(--primary)) в inline-стилях и CSS продолжает работать без изменений.
+*/
+@theme inline {
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+/*
+  space-x/space-y как в Tailwind 3: отступ сверху/слева получает каждый элемент, кроме первого.
+  В Tailwind 4 отступ ставится снизу/справа всем, кроме последнего, и на строчных элементах
+  (label перед полем ввода) не срабатывает — формы «слипаются».
+
+  Встроенное правило Tailwind 4 при этом тоже генерируется, поэтому вторым селектором оно гасится.
+  :not(tw-v3-space) нужен только ради специфичности (0,0,1): она выше встроенного :where(),
+  но ниже собственных отступов элемента (классы mb-N, mr-N).
+*/
+@utility space-y-* {
+  & > :not([hidden]) ~ :not([hidden]) {
+    margin-top: calc(var(--spacing) * --value(number));
+    margin-bottom: 0;
+  }
+  :where(& > :not(:last-child)):not(tw-v3-space) {
+    margin-block-end: 0;
+  }
+}
+
+@utility space-x-* {
+  & > :not([hidden]) ~ :not([hidden]) {
+    margin-left: calc(var(--spacing) * --value(number));
+    margin-right: 0;
+  }
+  :where(& > :not(:last-child)):not(tw-v3-space) {
+    margin-inline-end: 0;
+  }
+}
+
+/*
+  Совместимость с preflight Tailwind 3 — чтобы обновление не меняло внешний вид:
+  - цвет рамки по умолчанию был gray-200, в Tailwind 4 стал currentcolor
+    (для обычных элементов его ниже переопределяет border-border);
+  - у кнопок был cursor: pointer;
+  - плейсхолдер был gray-400, в Tailwind 4 — текущий цвет текста с прозрачностью 50%.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+}
 
 @layer base {
   :root {
-    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
-
     --background: 240 20% 99%;
     --foreground: 240 10% 8%;
 

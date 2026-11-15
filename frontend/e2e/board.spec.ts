@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, getCsrfHeaders, ensureE2EWorkspace, loginWorkspace } from './helpers'
+import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, getCsrfHeaders, ensureE2EWorkspace, loginWorkspace, API } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
   const wsData = await ensureE2EWorkspace(request)
@@ -61,7 +61,7 @@ test.describe('Доска — колонки и карточки', () => {
     const wsData = await ensureE2EWorkspace(request)
     const board = await createBoardViaAPI(request, 'Доска с колонкой', wsData.token)
     const csrf = await getCsrfHeaders(request)
-    await request.post('http://localhost:8000/api/columns/', {
+    await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Что хорошо' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
@@ -84,12 +84,12 @@ test.describe('Доска — колонки и карточки', () => {
     const wsData = await ensureE2EWorkspace(request)
     const board = await createBoardViaAPI(request, 'Доска лайки', wsData.token)
     const csrf = await getCsrfHeaders(request)
-    const colRes = await request.post('http://localhost:8000/api/columns/', {
+    const colRes = await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Колонка' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
     const col = await colRes.json()
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: col.id, text: 'Карточка для лайка' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
@@ -110,12 +110,12 @@ test.describe('Доска — колонки и карточки', () => {
     const wsData = await ensureE2EWorkspace(request)
     const board = await createBoardViaAPI(request, 'Доска удаление', wsData.token)
     const csrf = await getCsrfHeaders(request)
-    const colRes = await request.post('http://localhost:8000/api/columns/', {
+    const colRes = await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Колонка' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
     const col = await colRes.json()
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: col.id, text: 'Удали меня', author: 'E2E Тестер' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
@@ -136,7 +136,7 @@ test.describe('Доска — колонки и карточки', () => {
     const wsData = await ensureE2EWorkspace(request)
     const board = await createBoardViaAPI(request, 'Доска удаление кол', wsData.token)
     const csrf = await getCsrfHeaders(request)
-    await request.post('http://localhost:8000/api/columns/', {
+    await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Ненужная колонка' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
@@ -157,12 +157,12 @@ test.describe('Доска — колонки и карточки', () => {
     const wsData = await ensureE2EWorkspace(request)
     const board = await createBoardViaAPI(request, 'Доска цвет', wsData.token)
     const csrf = await getCsrfHeaders(request)
-    const colRes = await request.post('http://localhost:8000/api/columns/', {
+    const colRes = await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Колонка' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
     const col = await colRes.json()
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: col.id, text: 'Цветная карточка', author: 'E2E Тестер' },
       headers: { ...csrf, 'X-Workspace-Token': wsData.token },
     })
@@ -185,7 +185,7 @@ test.describe('Доска — колонки и карточки', () => {
     // Verify persisted in backend API after PATCH settles
     await expect
       .poll(async () => {
-        const boardRes = await request.get(`http://localhost:8000/api/boards/${board.id}`, {
+        const boardRes = await request.get(`${API}/boards/${board.id}`, {
           headers: { 'X-Workspace-Token': wsData.token },
         })
         const boardData = await boardRes.json()

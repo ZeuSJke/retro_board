@@ -1,5 +1,7 @@
 """Tests for /api/cards/ endpoints."""
 
+from tests.conftest import participant_id_of
+
 
 class TestCreateCard:
     def test_returns_201(self, client, sample_column, workspace_headers):
@@ -12,17 +14,20 @@ class TestCreateCard:
         assert resp.status_code == 201
         data = resp.json()
         assert data["text"] == "Deploy pipeline is slow"
-        assert data["author"] == "Alice"
+        # Автор — участник сессии; имя из запроса («Alice») не принимается
+        assert data["author"] == "Tester"
+        assert data["author_id"] == participant_id_of(client, workspace_headers)
         assert data["color"] == "#E3F2FD"
         assert data["likes"] == []
+        assert data["masked"] is False
 
-    def test_default_author(self, client, sample_column, workspace_headers):
+    def test_author_is_session_participant(self, client, sample_column, workspace_headers):
         resp = client.post("/api/cards/", json={
             "column_id": sample_column["id"],
-            "text": "Anonymous card",
+            "text": "Card without explicit author",
         }, headers=workspace_headers)
         assert resp.status_code == 201
-        assert resp.json()["author"] == "Аноним"
+        assert resp.json()["author"] == "Tester"
 
     def test_column_not_found_returns_404(self, client, workspace_headers):
         resp = client.post("/api/cards/", json={
@@ -129,25 +134,23 @@ class TestToggleLike:
     def test_add_like(self, client, sample_card, workspace_headers):
         resp = client.post(
             f"/api/cards/{sample_card['id']}/like",
-            params={"username": "Alice"},
             headers=workspace_headers,
         )
         assert resp.status_code == 200
-        assert "Alice" in resp.json()["likes"]
+        assert resp.json()["likes"] == [participant_id_of(client, workspace_headers)]
 
     def test_remove_like(self, client, sample_card, workspace_headers):
         # Like twice → toggle off
-        client.post(f"/api/cards/{sample_card['id']}/like", params={"username": "Bob"}, headers=workspace_headers)
+        client.post(f"/api/cards/{sample_card['id']}/like", headers=workspace_headers)
         resp = client.post(
             f"/api/cards/{sample_card['id']}/like",
-            params={"username": "Bob"},
             headers=workspace_headers,
         )
         assert resp.status_code == 200
-        assert "Bob" not in resp.json()["likes"]
+        assert resp.json()["likes"] == []
 
     def test_card_not_found(self, client, workspace_headers):
-        resp = client.post("/api/cards/no-id/like", params={"username": "X"}, headers=workspace_headers)
+        resp = client.post("/api/cards/no-id/like", headers=workspace_headers)
         assert resp.status_code == 404
 
     def test_vote_limit_returns_403(self, client, sample_board, sample_column, workspace_headers):
@@ -166,11 +169,11 @@ class TestToggleLike:
 
         # Like first two — should succeed
         for card in cards[:2]:
-            resp = client.post(f"/api/cards/{card['id']}/like", params={"username": "Voter"}, headers=workspace_headers)
+            resp = client.post(f"/api/cards/{card['id']}/like", headers=workspace_headers)
             assert resp.status_code == 200
 
         # Third like should fail
-        resp = client.post(f"/api/cards/{cards[2]['id']}/like", params={"username": "Voter"}, headers=workspace_headers)
+        resp = client.post(f"/api/cards/{cards[2]['id']}/like", headers=workspace_headers)
         assert resp.status_code == 403
         assert "Лимит голосов исчерпан" in resp.json()["detail"]
 
@@ -185,14 +188,14 @@ class TestToggleLike:
         card = resp.json()
 
         # Like (fills limit)
-        resp = client.post(f"/api/cards/{card['id']}/like", params={"username": "Voter"}, headers=workspace_headers)
+        resp = client.post(f"/api/cards/{card['id']}/like", headers=workspace_headers)
         assert resp.status_code == 200
-        assert "Voter" in resp.json()["likes"]
+        assert len(resp.json()["likes"]) == 1
 
         # Unlike (should work)
-        resp = client.post(f"/api/cards/{card['id']}/like", params={"username": "Voter"}, headers=workspace_headers)
+        resp = client.post(f"/api/cards/{card['id']}/like", headers=workspace_headers)
         assert resp.status_code == 200
-        assert "Voter" not in resp.json()["likes"]
+        assert resp.json()["likes"] == []
 
 
 class TestDeleteCard:

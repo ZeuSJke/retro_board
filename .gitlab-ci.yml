@@ -57,12 +57,64 @@ backend-tests:
     #   uv venv → uv pip install → активируем venv и работаем из него.
     # Кэш по-прежнему работает: UV_CACHE_DIR=/cache/uv смонтирован с хоста.
     - uv venv
-    - uv pip install -r requirements-dev.txt
+    - uv pip install --require-hashes -r requirements-dev.txt
     - . .venv/bin/activate
     # Проверка целостности цепочки миграций + статический линт ruff.
     - alembic heads --verbose
     - ruff check .
     - pytest -v
+
+# ── Бэкенд на PostgreSQL: миграции и тот же набор тестов ─────────────────────
+# SQLite не воспроизводит блокировки, типы и длины строк PostgreSQL и не
+# исполняет миграции. Здесь цепочка миграций проходит до нуля и обратно,
+# `alembic check` сверяет модели со схемой, а pytest идёт на настоящей базе.
+backend-tests-pg:
+  stage: test
+  services:
+    - name: docker.io/library/postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: retro
+    POSTGRES_USER: retro
+    POSTGRES_PASSWORD: retro
+    DATABASE_URL: postgresql://retro:retro@postgres:5432/retro
+    TEST_DATABASE_URL: postgresql://retro:retro@postgres:5432/retro
+    TESTING: "true"
+  script:
+    - cd backend
+    - uv venv
+    - uv pip install --require-hashes -r requirements-dev.txt
+    - . .venv/bin/activate
+    - |
+      python - <<'PY'
+      import socket, time
+      for i in range(30):
+          try:
+              socket.create_connection(("postgres", 5432), timeout=2).close()
+              print("Postgres is ready")
+              break
+          except OSError:
+              time.sleep(2)
+      else:
+          raise SystemExit("Postgres is not reachable after 60s")
+      PY
+    - alembic upgrade head
+    - alembic check
+    - alembic downgrade base
+    - alembic upgrade head
+    - pytest -q
+
+# ── Зависимости: известные уязвимости ────────────────────────────────────────
+# Не блокирует пайплайн: джобе нужен доступ к базе уязвимостей PyPI и реестру npm,
+# а новая запись в базе не должна останавливать не связанный с ней MR.
+# Красная джоба — повод обновить пакет (backend: правка requirements.in + make lock).
+deps-audit:
+  stage: test
+  allow_failure: true
+  script:
+    - uvx pip-audit --require-hashes --disable-pip -r backend/requirements.txt
+    - cd frontend
+    - npm audit --omit=dev
 
 # ── Фронтенд: сборка + линт ──────────────────────────────────────────────────
 frontend-lint:
@@ -72,8 +124,7 @@ frontend-lint:
     # В репозитории npm-lockfile (package-lock.json) — ставим зависимости через
     # npm ci. Кэш npm (npm_config_cache=/cache/npm) задан в образе и смонтирован
     # раннером с хоста: со второго прогона npm ci заметно быстрее.
-    # node 24 в образе новее node 20 из GitHub Actions, но Next.js 15 его
-    # поддерживает.
+    # Node 24 — та же линия, что в frontend/Dockerfile.
     - npm ci
     - npm run build
     - npm run typecheck
@@ -125,11 +176,15 @@ e2e-tests:
     # в джобе: каталог смонтирован раннером с хоста, и браузер должен лежать
     # именно там, чтобы переживать джобы (а не в /root/.cache контейнера).
     PLAYWRIGHT_BROWSERS_PATH: /cache/playwright
+    # Браузер должен работать в UTF-8-локали, как у пользователей: в локали C
+    # Chromium заменяет кириллическое имя скачиваемого файла на «download».
+    LANG: C.UTF-8
+    LC_ALL: C.UTF-8
   script:
     - cd backend
     # То же, что в backend-tests: Python в образе управляется uv, ставим в venv.
     - uv venv
-    - uv pip install -r requirements-dev.txt
+    - uv pip install --require-hashes -r requirements-dev.txt
     - . .venv/bin/activate
     # Ждём, пока сервис PostgreSQL примет соединения. pg_isready есть только
     # внутри postgres-контейнера, в образе джобы его нет — ждём по TCP.
@@ -149,7 +204,7 @@ e2e-tests:
     # Миграции — то же, что делает entrypoint.sh в Docker-образе бэкенда.
     - alembic upgrade head
     # Бэкенд в фоне; те же proxy/ws флаги, что в backend/entrypoint.sh.
-    - uvicorn main:app --host 0.0.0.0 --port 8000 --ws websockets-sansio --proxy-headers --forwarded-allow-ips "*" > /tmp/backend.log 2>&1 &
+    - uvicorn main:app --host 0.0.0.0 --port 8000 --ws websockets-sansio --ws-max-size 65536 --proxy-headers --forwarded-allow-ips "*" > /tmp/backend.log 2>&1 &
     - cd ../frontend
     - npm ci
     - npm run build
@@ -237,6 +292,7 @@ image-smoke:
         - backend/.dockerignore
         - backend/entrypoint.sh
         - backend/requirements.txt
+        - backend/requirements.in
         - frontend/Dockerfile
         - frontend/.dockerignore
         - frontend/next.config.mjs

@@ -7,6 +7,7 @@ import {
   getCsrfHeaders,
   loginWorkspace,
   setUsername,
+  API,
 } from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
@@ -58,7 +59,7 @@ test.describe('Курсор, автоссылки и улучшения доск
     const col0 = board.columns[0]
     const col1 = board.columns[1]
 
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: {
         column_id: col0.id,
         text: 'Починить **пайплайн** https://example.com/ci-42',
@@ -101,11 +102,11 @@ test.describe('Курсор, автоссылки и улучшения доск
     const headers = { ...csrf, 'X-Workspace-Token': wsData.token }
     const col0 = board.columns[0]
 
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: col0.id, text: 'Первая жёлтая карточка', author: 'E2E Тестер', color: '#FFF8E1' },
       headers,
     })
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: col0.id, text: 'Вторая зелёная карточка', author: 'E2E Тестер', color: '#E8F5E9' },
       headers,
     })
@@ -150,7 +151,7 @@ test.describe('Курсор, автоссылки и улучшения доск
     const csrf = await getCsrfHeaders(request)
     const headers = { ...csrf, 'X-Workspace-Token': wsData.token }
 
-    const createRes = await request.post('http://localhost:8000/api/boards/', {
+    const createRes = await request.post(`${API}/boards/`, {
       data: {
         name: 'E2E Dot Voting',
         max_votes: 5,
@@ -161,7 +162,7 @@ test.describe('Курсор, автоссылки и улучшения доск
     expect(createRes.ok()).toBeTruthy()
     const board = await createRes.json()
 
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: board.columns[0].id, text: 'Карточка для нескольких голосов', author: 'E2E Тестер' },
       headers,
     })
@@ -194,11 +195,11 @@ test.describe('Курсор, автоссылки и улучшения доск
     const headers = { ...csrf, 'X-Workspace-Token': wsData.token }
     const col0 = board.columns[0]
 
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: col0.id, text: 'Падает билд фронта', author: 'E2E Тестер' },
       headers,
     })
-    await request.post('http://localhost:8000/api/cards/', {
+    await request.post(`${API}/cards/`, {
       data: { column_id: col0.id, text: 'Медленный прогон e2e', author: 'E2E Тестер' },
       headers,
     })

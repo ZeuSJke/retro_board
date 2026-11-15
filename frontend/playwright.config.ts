@@ -27,7 +27,8 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:3080',
+    // Локальный стенд на других портах: E2E_BASE_URL (прокси) и E2E_API_URL (бэкенд, см. e2e/helpers.ts)
+    baseURL: process.env.E2E_BASE_URL || 'http://localhost:3080',
     headless: true,
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',

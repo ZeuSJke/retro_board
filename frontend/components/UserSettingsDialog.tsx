@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { useTheme } from 'next-themes'
-import { Check, Grid3X3, LogOut, Moon, Palette, Sun, User } from 'lucide-react'
+import { Check, Grid3X3, Loader2, LogOut, Moon, Palette, Sun, User } from 'lucide-react'
+import { logoutWorkspace, renameParticipant } from '@/api'
 import { useAppStore } from '@/store'
 import {
   ACCENT_PRESETS,
@@ -12,7 +13,9 @@ import {
   resolveInitialAccent,
   type AccentKey,
 } from '@/lib/board-themes'
+import { avatarSeed } from '@/lib/participants'
 import { showToast } from '@/store/toastStore'
+import { getApiErrorMessage } from '@/utils/apiError'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -32,16 +35,20 @@ interface UserSettingsDialogProps {
 }
 
 export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogProps) {
-  const username = useAppStore((s) => s.username)
-  const setUsername = useAppStore((s) => s.setUsername)
+  const participant = useAppStore((s) => s.participant)
+  const savedName = useAppStore((s) => s.username)
+  const setParticipant = useAppStore((s) => s.setParticipant)
   const workspace = useAppStore((s) => s.workspace)
-  const setWorkspace = useAppStore((s) => s.setWorkspace)
+  const clearSession = useAppStore((s) => s.clearSession)
   const dotGrid = useAppStore((s) => s.dotGrid)
   const setDotGrid = useAppStore((s) => s.setDotGrid)
+  const username = participant?.name ?? savedName
 
   const { theme, setTheme } = useTheme()
   const [nameInput, setNameInput] = useState(username)
   const [accent, setAccent] = useState<AccentKey>('violet')
+  const [saving, setSaving] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -54,20 +61,43 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
     applyAccent(key)
   }
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     const trimmed = nameInput.trim()
-    if (!trimmed) return
-    if (trimmed !== username) {
-      setUsername(trimmed)
-      showToast(`Имя изменено на «${trimmed}»`, 'success')
+    if (!trimmed || saving) return
+    if (trimmed === username) {
+      onOpenChange(false)
+      return
     }
-    onOpenChange(false)
+    setSaving(true)
+    try {
+      // Имя — подпись участника: карточки, голоса и роль ведущего остаются за ним
+      const updated = await renameParticipant(trimmed)
+      setParticipant(updated)
+      showToast(`Имя изменено на «${updated.name}»`, 'success')
+      onOpenChange(false)
+    } catch (err) {
+      // Ответ 422 разбирается по полям: «Имя: не длиннее 60 символов», «Имя не должно содержать HTML-теги»
+      showToast(getApiErrorMessage(err, 'Не удалось изменить имя', { name: 'Имя' }), 'error')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  const handleLogoutWorkspace = () => {
-    setWorkspace(null)
-    onOpenChange(false)
+  const handleLogoutWorkspace = async () => {
+    if (loggingOut) return
+    setLoggingOut(true)
+    try {
+      // Сначала сервер сбрасывает cookie сессии — и только потом забываем её локально:
+      // иначе экран входа показан, а запросы продолжают проходить
+      await logoutWorkspace()
+      clearSession()
+      onOpenChange(false)
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось выйти: сервер недоступен'), 'error')
+    } finally {
+      setLoggingOut(false)
+    }
   }
 
   return (
@@ -86,8 +116,9 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
         <form onSubmit={handleSave} className="space-y-5">
           <div className="flex items-center gap-4">
             <div
-              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-base font-bold text-white shadow ${getUserAvatarGradient(
-                nameInput || username,
+              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br/srgb text-base font-bold text-white shadow-sm ${getUserAvatarGradient(
+                // Цвет — от идентификатора участника, как в шапке и на карточках
+                avatarSeed(participant?.id, nameInput || username),
               )}`}
             >
               {getUserInitials(nameInput || username)}
@@ -156,17 +187,25 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
 
           {workspace && (
             <div className="flex items-center justify-between rounded-xl border bg-muted/40 px-3.5 py-2.5 text-sm">
-              <div>
-                <div className="font-medium">{workspace.workspaceName}</div>
-                <div className="text-xs text-muted-foreground">/{workspace.workspaceSlug}</div>
+              <div className="min-w-0">
+                <div className="truncate font-medium">{workspace.workspaceName}</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  Код команды: {workspace.workspaceSlug}
+                </div>
               </div>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
+                disabled={loggingOut}
                 onClick={handleLogoutWorkspace}
+                data-testid="logout-btn"
               >
-                <LogOut className="h-3.5 w-3.5" />
+                {loggingOut ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <LogOut className="h-3.5 w-3.5" />
+                )}
                 Выйти
               </Button>
             </div>
@@ -176,7 +215,8 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Закрыть
             </Button>
-            <Button type="submit" disabled={!nameInput.trim()}>
+            <Button type="submit" disabled={!nameInput.trim() || saving} data-testid="profile-save-btn">
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
               Сохранить
             </Button>
           </DialogFooter>

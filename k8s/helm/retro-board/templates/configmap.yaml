@@ -17,3 +17,6 @@ data:
   {{- if .Values.config.aiModel }}
   AI_MODEL: {{ .Values.config.aiModel | quote }}
   {{- end }}
+  {{- range $name, $value := .Values.config.extraEnv }}
+  {{ $name }}: {{ $value | quote }}
+  {{- end }}

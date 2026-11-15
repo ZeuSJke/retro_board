@@ -2,7 +2,7 @@
 
 Руководство для ИИ-агентов и разработчиков в репозитории **RetroBoard** (`fmrm/retro_board`).
 
-- **Продукт**: веб-приложение для командных Agile-ретроспектив в реальном времени (`Next.js 15` + `FastAPI` + `PostgreSQL 16` + `WebSocket` + `Kubernetes/Helm`).
+- **Продукт**: веб-приложение для командных Agile-ретроспектив в реальном времени (`Next.js 16` + `FastAPI` + `PostgreSQL 16` + `WebSocket` + `Kubernetes/Helm`).
 - **Язык**: общение, тексты UI, сообщения об ошибках, большинство промптов и commit/MR-сообщения — на русском языке.
 
 ## Карта репозитория и вложенные инструкции
@@ -30,14 +30,15 @@
 6. **Merge Request и CI gate**:
    - основной репозиторий — GitLab (`gitlab.kirillbessonov.ru/fmrm/retro_board`), GitHub — только зеркало. Работа ведётся через **MR** и CLI `glab` (не `gh`);
    - в описании MR указать суть изменений, результаты локальных проверок/выверки на dev, итог ревью и оставшиеся action items (если есть);
-   - дождаться 100% зелёного пайплайна MR (`backend-tests`, `frontend-lint`, `frontend-tests`, `e2e-tests`, `helm`, а при правках сборки — `image-smoke`).
+   - дождаться 100% зелёного пайплайна MR (`backend-tests`, `backend-tests-pg`, `frontend-lint`, `frontend-tests`, `e2e-tests`, `helm`, а при правках сборки — `image-smoke`).
 7. **Post-merge контроль**: после мерджа в `main` дождаться завершения `build-app-staging` и `deploy-staging`, затем убедиться, что `https://retro.kirillbessonov.ru/api/health` отвечает `200`.
 
 ## Сквозные архитектурные инварианты
 
 - **Single-worker backend**: `ConnectionManager` хранит комнаты, фасилитаторов, фазы, таймеры и состояния сессии в памяти процесса. `api.replicas` обязан оставаться `1` со стратегией `Recreate`, `WEB_CONCURRENCY=1` — нельзя масштабировать `uvicorn` на несколько воркеров без выноса состояния в Redis.
 - **Прокси, Host, Auth и CSRF**: в образе `web` нет nginx (`node server.js` на `:3000`). В k8s `/api` и `/ws` на `api:8000` и `/` на `web:3000` маршрутизирует Traefik Ingress (`ServersTransport` + `Middleware` `security-headers`), в CI E2E — `ci/e2e-nginx.conf`. Прокси обязан сохранять исходный `Host`, иначе редиректы FastAPI уведут на `:8000` мимо `csrf_token` cookie.
-- **Helm render-гейты**: `scripts/helm-render-checks.sh` блокирует `api.replicas != 1`, пустой/`*`/`null` `CORS_ORIGINS`, изменяемый тег образа без `pullPolicy=Always`, плейсхолдеры секретов и включённый `backup` без NFS-сервера/пути.
+- **Helm render-гейты**: `scripts/helm-render-checks.sh` блокирует `api.replicas != 1`, пустой/`*`/`null` `CORS_ORIGINS`, изменяемый тег образа без `pullPolicy=Always`, плейсхолдеры секретов и включённый `backup` без NFS-сервера/пути, `TESTING` в `config.extraEnv`, а также расхождение CSP между `frontend/next.config.mjs` и Traefik-middleware чарта.
+- **CSP**: политика задаётся одной строкой в двух местах — константа `CSP` в `frontend/next.config.mjs` (локально и в E2E) и `contentSecurityPolicy` в `k8s/helm/retro-board/templates/traefik.yaml` (стенды). Менять обе сразу; `connect-src` разрешает только свой хост (`'self'` покрывает WebSocket того же origin).
 
 ## Основные команды
 

@@ -4,6 +4,7 @@ import json
 import re
 
 from app.ai.ai_client import AIModelConfig, ai_client
+from app.ai.sanitize import sanitize_prompt_text
 
 MAX_CARDS_FOR_CLUSTERING = 100
 
@@ -94,12 +95,7 @@ def parse_clustering_response(
 
 def _sanitize_card_text(text: str) -> str:
     """Sanitize card text before inserting into AI prompt."""
-    text = text[:200]
-    # Remove characters that could interfere with prompt structure
-    text = text.replace('"', "'").replace("\\", "")
-    # Strip control characters
-    text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
-    return text.strip()
+    return sanitize_prompt_text(text, 200)
 
 
 def cluster_cards(cards: list[dict]) -> dict:

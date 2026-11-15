@@ -8,6 +8,7 @@ import {
   resolveInitialAccent,
 } from '@/lib/board-themes'
 import { escapeHtml, richTextToHtml } from '@/lib/rich-text'
+import { showToast } from '@/store/toastStore'
 import type { ActionItem, Board, BoardSummary, Card, Column } from '../types'
 import { initials, userColor } from './theme'
 
@@ -33,6 +34,13 @@ const ACTION_STATUS_META: Record<
     color: '#065F46',
     border: '#A7F3D0',
   },
+}
+
+const CARRIED_STATUS_META = {
+  label: 'Перенесена на другую доску',
+  bg: '#F1F5F9',
+  color: '#475569',
+  border: '#E2E8F0',
 }
 
 const PDF_CARD_BG_MAP: Record<string, { bg: string; border: string; accent: string }> = {
@@ -113,15 +121,23 @@ function cardHTML(card: Card, anonymousVotes: boolean, accentHex: string): strin
 function columnHTML(col: Column, anonymousVotes: boolean, accentHex: string): string {
   if (!col) return ''
   const colColor = col.color || accentHex
-  const ungrouped = col.cards.filter((c) => !c.group_id)
+  // Чужие карточки до раскрытия приходят с сервера без текста и автора:
+  // в отчёт попадает только их количество
+  const visibleCards = col.cards.filter((c) => !c.masked)
+  const maskedCount = col.cards.length - visibleCards.length
+  const ungrouped = visibleCards.filter((c) => !c.group_id)
   const groups = (col.groups || [])
     .map((g) => ({
       ...g,
-      cards: col.cards.filter((c) => c.group_id === g.id),
+      cards: visibleCards.filter((c) => c.group_id === g.id),
     }))
     .filter((g) => g.cards.length > 0)
 
   const hasContent = ungrouped.length > 0 || groups.length > 0
+  const maskedNote =
+    maskedCount > 0
+      ? `<div class="empty-box">Скрыто до раскрытия карточек других участников: ${maskedCount}</div>`
+      : ''
 
   const groupsHTML = groups
     .map(
@@ -155,8 +171,11 @@ function columnHTML(col: Column, anonymousVotes: boolean, accentHex: string): st
       ${
         hasContent
           ? `<div class="cards-grid">${groupsHTML}${ungroupedHTML}</div>`
-          : '<div class="empty-box">В этой колонке пока нет карточек</div>'
+          : maskedCount > 0
+            ? ''
+            : '<div class="empty-box">В этой колонке пока нет карточек</div>'
       }
+      ${maskedNote}
     </section>`
 }
 
@@ -198,7 +217,10 @@ function actionItemsSectionHTML(actionItems: ActionItem[]): string {
 
   const itemsHTML = actionItems
     .map((item, idx) => {
-      const st = ACTION_STATUS_META[item.status] || ACTION_STATUS_META.open
+      // Перенесённая задача живёт на другой доске: здесь она в истории, а не «открыта»
+      const st = item.superseded_by_id
+        ? CARRIED_STATUS_META
+        : ACTION_STATUS_META[item.status] || ACTION_STATUS_META.open
       const assigneeName = item.assignee || 'Не назначен'
       const avatarBg = item.assignee ? userColor(item.assignee) : '#94A3B8'
       const avatarText = item.assignee ? initials(item.assignee) : '—'
@@ -233,7 +255,7 @@ function actionItemsSectionHTML(actionItems: ActionItem[]): string {
   return `
     <section class="tasks-section">
       <div class="section-heading">
-        <h2 class="section-title">Задачи по итогам ретроспективы</h2>
+        <h2 class="section-title">Задачи</h2>
         <span class="section-pill">${countLabel}</span>
       </div>
       <div class="tasks-list">
@@ -714,21 +736,39 @@ export function buildBoardPDFHtml(
 </html>`
 }
 
+/** `opened` — отчёт открыт в новой вкладке с диалогом печати; `downloaded` — сохранён файлом. */
+export type PdfExportResult = 'opened' | 'downloaded'
+
+/**
+ * Открывает отчёт в новой вкладке, где сразу появляется диалог печати («Сохранить как PDF»).
+ *
+ * Если браузер заблокировал новое окно, отчёт не теряется — он сохраняется файлом `.html`, —
+ * но молча так делать нельзя: человек ждал окно печати, а получил загрузку непонятного файла.
+ * Поэтому показываем, что произошло и что делать дальше.
+ */
 export function exportBoardToPDF(
   board: Board,
   columns: Column[],
   actionItems: ActionItem[] = [],
   summary?: BoardSummary | null,
-): void {
+): PdfExportResult {
   const html = buildBoardPDFHtml(board, columns, actionItems, summary)
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
   const url = URL.createObjectURL(blob)
-  const win = window.open(url, '_blank')
-  if (!win) {
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `retro-${board.name.replace(/[^а-яёa-z0-9]/gi, '_')}.html`
-    a.click()
-  }
   setTimeout(() => URL.revokeObjectURL(url), 10000)
+
+  if (window.open(url, '_blank')) return 'opened'
+
+  const filename = `retro-${board.name.replace(/[^а-яёa-z0-9]/gi, '_')}.html`
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  showToast('Браузер не дал открыть окно печати', 'info', {
+    description:
+      `Отчёт сохранён файлом «${filename}». Откройте его — печать начнётся сама, выберите ` +
+      '«Сохранить как PDF». Чтобы отчёт открывался сразу, разрешите этому сайту всплывающие окна.',
+    duration: 15000,
+  })
+  return 'downloaded'
 }

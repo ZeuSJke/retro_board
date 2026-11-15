@@ -1,15 +1,21 @@
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Response, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.database import get_db
 from app import models, schemas
-from app.workspace_auth import hash_access_key, get_admin_user, create_admin_token
+from app.workspace_auth import (
+    create_admin_token,
+    get_admin_user,
+    hash_access_key,
+    new_invite_token,
+)
 from app.config import settings
-from app.limiter import limiter
+from app.limiter import entry_limit_key, limiter
+from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +23,16 @@ router = APIRouter()
 
 
 @router.post("/login")
-@limiter.limit("10/minute")
+@limiter.limit("10/minute", key_func=entry_limit_key)
 def admin_login(request: Request, body: schemas.AdminLoginRequest, response: Response):
     """Администраторский вход."""
-    login_ok = secrets.compare_digest(body.login, settings.admin_login)
-    password_ok = secrets.compare_digest(body.password, settings.admin_password)
+    # compare_digest принимает str только из ASCII, поэтому сравниваем байты
+    login_ok = secrets.compare_digest(
+        body.login.encode(), settings.admin_login.encode()
+    )
+    password_ok = secrets.compare_digest(
+        body.password.encode(), settings.admin_password.encode()
+    )
     if not (login_ok and password_ok):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
     token = create_admin_token()
@@ -51,24 +62,23 @@ def list_workspaces(
     _: bool = Depends(get_admin_user),
 ):
     """Список всех workspaces с количеством досок."""
-    workspaces = db.query(models.Workspace).all()
+    workspaces = db.query(models.Workspace).order_by(models.Workspace.created_at).all()
+    # Один запрос на все команды вместо запроса на каждую
+    counts = dict(
+        db.query(models.Board.workspace_id, func.count(models.Board.id))
+        .filter(models.Board.deleted_at.is_(None))
+        .group_by(models.Board.workspace_id)
+        .all()
+    )
     result = []
     for ws in workspaces:
-        count = (
-            db.query(func.count(models.Board.id))
-            .filter(
-                models.Board.workspace_id == ws.id,
-                models.Board.deleted_at.is_(None),
-            )
-            .scalar()
-        )
         item = schemas.WorkspaceListItem.model_validate(ws)
-        item.boards_count = count or 0
+        item.boards_count = counts.get(ws.id, 0)
         result.append(item)
     return result
 
 
-@router.post("/workspaces", response_model=schemas.WorkspaceOut, status_code=201)
+@router.post("/workspaces", response_model=schemas.WorkspaceListItem, status_code=201)
 @limiter.limit("30/minute")
 def create_workspace(
     request: Request,
@@ -86,7 +96,7 @@ def create_workspace(
         )
         if existing:
             raise HTTPException(
-                status_code=409, detail="Workspace with this slug already exists"
+                status_code=409, detail="Команда с таким кодом уже существует"
             )
         hashed_key = hash_access_key(body.access_key)
         ws = models.Workspace(
@@ -112,20 +122,66 @@ def update_workspace(
     request: Request,
     workspace_id: str,
     body: schemas.WorkspaceUpdate,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     _: bool = Depends(get_admin_user),
 ):
     """Обновить workspace."""
     ws = db.get(models.Workspace, workspace_id)
     if not ws:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+        raise HTTPException(status_code=404, detail="Команда не найдена")
     if body.name is not None:
         ws.name = body.name
     if body.access_key is not None:
         ws.access_key_hash = hash_access_key(body.access_key)
+        # Смена ключа закрывает доступ всем, кто его получил: выданные сессии
+        # перестают действовать, ссылка-приглашение перевыпускается.
+        ws.token_epoch += 1
+        ws.invite_token = new_invite_token()
+        # Открытые сокеты сессию не перепроверяют — закрываем их, иначе отозванный
+        # участник продолжал бы получать события и управлять сессией ведущего.
+        background.add_task(manager.disconnect_workspace_sessions, ws.id)
     db.commit()
     db.refresh(ws)
     return ws
+
+
+@router.get("/workspaces/{workspace_id}/invite", response_model=schemas.InviteOut)
+@limiter.limit("30/minute")
+def get_workspace_invite(
+    request: Request,
+    workspace_id: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Токен ссылки-приглашения команды; создаётся при первом обращении."""
+    ws = db.get(models.Workspace, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Команда не найдена")
+    if not ws.invite_token:
+        ws.invite_token = new_invite_token()
+        db.commit()
+    return schemas.InviteOut(invite_token=ws.invite_token)
+
+
+@router.post("/workspaces/{workspace_id}/invite/rotate", response_model=schemas.InviteOut)
+@limiter.limit("30/minute")
+def rotate_workspace_invite(
+    request: Request,
+    workspace_id: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Перевыпустить ссылку-приглашение: старая перестаёт работать.
+
+    Уже вошедшие участники остаются в команде — их сессии отзывает смена ключа.
+    """
+    ws = db.get(models.Workspace, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Команда не найдена")
+    ws.invite_token = new_invite_token()
+    db.commit()
+    return schemas.InviteOut(invite_token=ws.invite_token)
 
 
 @router.delete("/workspaces/{workspace_id}", status_code=204)
@@ -133,12 +189,14 @@ def update_workspace(
 def delete_workspace(
     request: Request,
     workspace_id: str,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     _: bool = Depends(get_admin_user),
 ):
     """Удалить workspace и все его доски."""
     ws = db.get(models.Workspace, workspace_id)
     if not ws:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+        raise HTTPException(status_code=404, detail="Команда не найдена")
     db.delete(ws)
     db.commit()
+    background.add_task(manager.disconnect_workspace_sessions, workspace_id)

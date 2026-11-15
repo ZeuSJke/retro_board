@@ -1,30 +1,37 @@
+import json
 import logging
 import secrets
 import traceback
 from contextlib import asynccontextmanager
 
 
+from app.body_limit import BodySizeLimitMiddleware
 from app.config import settings
+from app.database import engine
+from app.request_context import RequestIdMiddleware, configure_logging
 from app.routers import (
     action_items,
     boards,
     cards,
     columns,
     groups,
+    health,
     websocket,
     workspaces,
     admin,
 )
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from app.limiter import limiter
 
 logger = logging.getLogger("retroboard")
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 
 
 @asynccontextmanager
@@ -44,6 +51,23 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> Response:
+    """Ответ 422 без отражения введённого значения.
+
+    Стандартный обработчик возвращает поле `input` как есть: пароль из
+    запроса уезжает обратно в ответ, а строка с одиночным суррогатом
+    («\\ud800») роняет сериализацию ответа в 500. Убираем `input` и
+    пишем тело в ASCII-экранировании — оно кодируется при любом вводе.
+    """
+    errors = [
+        {key: value for key, value in error.items() if key != "input"}
+        for error in exc.errors()
+    ]
+    body = json.dumps({"detail": jsonable_encoder(errors)}, ensure_ascii=True)
+    return Response(content=body, status_code=422, media_type="application/json")
 
 
 class GlobalErrorMiddleware(BaseHTTPMiddleware):
@@ -77,7 +101,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if (
             request.url.path.startswith("/ws/")
             or request.url.path == "/api/admin/login"
-            or request.url.path in ("/health", "/api/health", "/api/workspaces/login")
+            or request.url.path
+            in (
+                "/health",
+                "/api/health",
+                "/api/ready",
+                "/api/workspaces/login",
+                "/api/workspaces/join",
+            )
         ):
             return await call_next(request)
 
@@ -113,6 +144,15 @@ app.add_middleware(GlobalErrorMiddleware)
 
 app.add_middleware(CSRFMiddleware)
 
+# Снаружи CSRF: слишком большое тело отклоняется до любых проверок и разбора
+app.add_middleware(
+    BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes
+)
+
+# Идентификатор запроса — снаружи всего остального, чтобы он был в журнале
+# и в ответе при любой ошибке, включая 413 и CSRF
+app.add_middleware(RequestIdMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -123,6 +163,8 @@ app.add_middleware(
 
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+# Раньше досок: статические пути health check не должен перехватить /{board_id}
+app.include_router(health.router, prefix="/api/boards", tags=["health"])
 app.include_router(boards.router, prefix="/api/boards", tags=["boards"])
 app.include_router(columns.router, prefix="/api/columns", tags=["columns"])
 app.include_router(cards.router, prefix="/api/cards", tags=["cards"])
@@ -135,5 +177,26 @@ app.include_router(websocket.router, tags=["websocket"])
 
 @app.get("/health", tags=["health"])
 @app.get("/api/health", tags=["health"], include_in_schema=False)
-def health():
+async def health():
+    """Процесс жив. В БД не ходит: по этой проверке под перезапускают.
+
+    Именно `async def`: обычная функция ждала бы свободный поток из общего пула,
+    и при запросах, зависших на базе, проба не уложилась бы в таймаут.
+    """
+    return {"status": "ok"}
+
+
+@app.get("/api/ready", tags=["health"], include_in_schema=False)
+def ready():
+    """Готов обслуживать запросы: база отвечает.
+
+    Для readiness-пробы: под без связи с БД убирается из балансировки, но не
+    перезапускается — перезапуск базу не вернёт, а состояние досок в памяти уронит.
+    """
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql("SELECT 1")
+    except Exception:
+        logger.warning("Readiness check failed: database is unreachable", exc_info=True)
+        return JSONResponse(status_code=503, content={"status": "database unavailable"})
     return {"status": "ok"}

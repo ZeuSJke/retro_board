@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from app.config import settings
 from app.ws_manager import manager
+from tests.conftest import participant_id_of
 
 
 def _make_board(client, headers, name="Powerups Board", **extra):
@@ -14,10 +15,10 @@ def _make_board(client, headers, name="Powerups Board", **extra):
     return resp.json()
 
 
-def _add_card(client, headers, col_id: str, text: str, author: str = "Alice"):
+def _add_card(client, headers, col_id: str, text: str):
     resp = client.post(
         "/api/cards/",
-        json={"column_id": col_id, "text": text, "author": author},
+        json={"column_id": col_id, "text": text},
         headers=headers,
     )
     assert resp.status_code in (200, 201), resp.text
@@ -38,42 +39,43 @@ class TestDotVotingAndReset:
         col_id = board["columns"][0]["id"]
         c1 = _add_card(client, workspace_headers, col_id, "Card One")
         c2 = _add_card(client, workspace_headers, col_id, "Card Two")
+        me = participant_id_of(client, workspace_headers)
 
         # Put 3 votes on c1
         for expected in (1, 2, 3):
             r = client.post(
-                f"/api/cards/{c1['id']}/like?username=Bob&action=add",
+                f"/api/cards/{c1['id']}/like?action=add",
                 headers=workspace_headers,
             )
             assert r.status_code == 200
-            assert r.json()["likes"].count("Bob") == expected
+            assert r.json()["likes"].count(me) == expected
 
         # Put 1 vote on c2 -> total 4/4 reached
         r4 = client.post(
-            f"/api/cards/{c2['id']}/like?username=Bob&action=add",
+            f"/api/cards/{c2['id']}/like?action=add",
             headers=workspace_headers,
         )
         assert r4.status_code == 200
-        assert r4.json()["likes"].count("Bob") == 1
+        assert r4.json()["likes"].count(me) == 1
 
         # 5th vote fails with 403
         r5 = client.post(
-            f"/api/cards/{c1['id']}/like?username=Bob&action=add",
+            f"/api/cards/{c1['id']}/like?action=add",
             headers=workspace_headers,
         )
         assert r5.status_code == 403
 
         # Remove single vote from c1 -> 2 votes remain
         rem = client.post(
-            f"/api/cards/{c1['id']}/like?username=Bob&action=remove",
+            f"/api/cards/{c1['id']}/like?action=remove",
             headers=workspace_headers,
         )
         assert rem.status_code == 200
-        assert rem.json()["likes"].count("Bob") == 2
+        assert rem.json()["likes"].count(me) == 2
 
-        # Reset all Bob votes across board
+        # Reset all own votes across board
         reset = client.post(
-            f"/api/boards/{board['id']}/reset-votes?username=Bob",
+            f"/api/boards/{board['id']}/reset-votes",
             headers=workspace_headers,
         )
         assert reset.status_code == 200
@@ -150,15 +152,17 @@ class TestBulkAndMergeCards:
         assert d.json()["deleted"] == 2
 
     def test_merge_cards_combines_votes_and_deletes_duplicates(
-        self, client, workspace_headers
+        self, client, workspace_headers, login_as
     ):
         board = _make_board(client, workspace_headers, name="Merge Board")
         col0 = board["columns"][0]["id"]
         c1 = _add_card(client, workspace_headers, col0, "Slow CI builds")
         c2 = _add_card(client, workspace_headers, col0, "Long pipeline runs")
-        client.post(f"/api/cards/{c1['id']}/like?username=Alice", headers=workspace_headers)
-        client.post(f"/api/cards/{c2['id']}/like?username=Alice", headers=workspace_headers)
-        client.post(f"/api/cards/{c2['id']}/like?username=Bob", headers=workspace_headers)
+        alice, bob = login_as("Alice"), login_as("Bob")
+        alice_id, bob_id = participant_id_of(client, alice), participant_id_of(client, bob)
+        client.post(f"/api/cards/{c1['id']}/like", headers=alice)
+        client.post(f"/api/cards/{c2['id']}/like", headers=alice)
+        client.post(f"/api/cards/{c2['id']}/like", headers=bob)
 
         merged = client.post(
             "/api/cards/merge",
@@ -170,7 +174,7 @@ class TestBulkAndMergeCards:
         assert "Slow CI builds" in data["text"]
         assert "Long pipeline runs" in data["text"]
         # Unique voters preserved when dot voting disabled
-        assert data["likes"] == ["Alice", "Bob"]
+        assert data["likes"] == [alice_id, bob_id]
 
         full = client.get(f"/api/boards/{board['id']}", headers=workspace_headers).json()
         card_ids = [c["id"] for c in full["columns"][0]["cards"]]
@@ -270,20 +274,18 @@ class TestAIPreviewAndSuggestions:
 
 class TestWebSocketTypingIndicator:
     def test_card_typing_broadcast_and_disconnect_cleanup(
-        self, client, ws_board, ws_token
+        self, client, ws_board, ws_token_for
     ):
         board_id = ws_board.id
         col0 = "typing-col-1"
 
         with client.websocket_connect(
-            f"/ws/{board_id}?workspace_token={ws_token}",
+            f"/ws/{board_id}?workspace_token={ws_token_for('Alice')}",
             headers={"origin": "http://localhost:3000"},
         ) as ws1, client.websocket_connect(
-            f"/ws/{board_id}?workspace_token={ws_token}",
+            f"/ws/{board_id}?workspace_token={ws_token_for('Bob')}",
             headers={"origin": "http://localhost:3000"},
         ) as ws2:
-            ws1.send_text(json.dumps({"event": "identify", "data": {"username": "Alice"}}))
-            ws2.send_text(json.dumps({"event": "identify", "data": {"username": "Bob"}}))
 
             seen_typing = None
             ws1.send_text(
@@ -300,7 +302,8 @@ class TestWebSocketTypingIndicator:
                     seen_typing = msg["data"]["typing"]
                     if seen_typing:
                         break
-            assert seen_typing == [{"username": "Alice", "column_id": col0}]
+            assert [(t["username"], t["column_id"]) for t in seen_typing] == [("Alice", col0)]
+            assert seen_typing[0]["participant_id"]
 
             # Stop typing clears state
             ws1.send_text(

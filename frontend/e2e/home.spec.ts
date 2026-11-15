@@ -1,5 +1,13 @@
 import { test, expect } from '@playwright/test'
-import { cleanupBoards, setUsername, dismissWelcome, createBoardViaAPI, ensureE2EWorkspace, loginWorkspace } from './helpers'
+import {
+  API,
+  cleanupBoards,
+  setUsername,
+  dismissWelcome,
+  createBoardViaAPI,
+  ensureE2EWorkspace,
+  loginWorkspace,
+} from './helpers'
 
 test.beforeEach(async ({ page, request }) => {
   const wsData = await ensureE2EWorkspace(request)
@@ -66,9 +74,75 @@ test.describe('Главная страница', () => {
     await expect(page.locator('body')).toContainText('Вторая доска')
   })
 
-  test('автоматическое создание доски если нет досок', async ({ page }) => {
+  test('команда без досок: пустое состояние вместо доски, созданной молча', async ({ page, request }) => {
+    const wsData = await ensureE2EWorkspace(request)
+
     await page.goto('/')
-    await dismissWelcome(page)
-    await expect(page).toHaveURL(/\/board\//)
+    await expect(page.getByTestId('no-boards-screen')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByRole('heading', { name: /пока нет досок/ })).toBeVisible()
+
+    // Сервер подтверждает: доску никто не создал
+    const list = await request.get(`${API}/boards/`, { headers: { 'X-Workspace-Token': wsData.token } })
+    expect(await list.json()).toHaveLength(0)
+
+    // Действие из пустого состояния: создать доску и попасть на неё
+    await page.getByTestId('empty-create-board-btn').click()
+    await page.getByTestId('create-board-name-input').fill('Первая доска команды')
+    await page.getByTestId('create-board-submit-btn').click()
+
+    await expect(page.getByTestId('topbar-board-name')).toHaveText('Первая доска команды', { timeout: 15000 })
+    await expect(page).toHaveURL(/\/board\/pervaia-doska-komandy$/)
+  })
+
+  test('/ при ошибке сервера показывает сообщение с «Повторить», а не вечную загрузку', async ({
+    page,
+    request,
+  }) => {
+    const wsData = await ensureE2EWorkspace(request)
+    await createBoardViaAPI(request, 'Доска после сбоя', wsData.token)
+
+    await page.route('**/api/boards/', (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Внутренняя ошибка сервера' }),
+      }),
+    )
+    await page.goto('/')
+
+    await expect(page.getByRole('heading', { name: 'Не удалось загрузить доски команды' })).toBeVisible({
+      timeout: 15000,
+    })
+    await expect(page.getByText('Внутренняя ошибка сервера')).toBeVisible()
+
+    // Сервер ожил — «Повторить» доводит до доски без перезагрузки страницы
+    await page.unroute('**/api/boards/')
+    await page.getByRole('button', { name: 'Повторить' }).click()
+
+    await expect(page).toHaveURL(/\/board\/doska-posle-sboia$/, { timeout: 15000 })
+    await expect(page.getByTestId('topbar-board-name')).toHaveText('Доска после сбоя')
+  })
+
+  test('доска с названием «Start» открывается, а /board/start ведёт к первой доске', async ({
+    page,
+    request,
+  }) => {
+    const wsData = await ensureE2EWorkspace(request)
+    const start = await createBoardViaAPI(request, 'Start', wsData.token)
+    // Служебный адрес /board/start сервер доске не выдаёт
+    expect(start.slug).toMatch(/^start-[0-9a-f]+$/)
+    await createBoardViaAPI(request, 'Свежий спринт', wsData.token)
+
+    await page.goto(`/board/${start.slug}`)
+    await expect(page.getByTestId('topbar-board-name')).toHaveText('Start', { timeout: 15000 })
+
+    // Из панели досок она открывается по тому же адресу
+    await page.goto('/board/start')
+    await expect(page.getByTestId('topbar-board-name')).toHaveText('Свежий спринт', { timeout: 15000 })
+    await page.getByTestId('boards-drawer-btn').click()
+    await page.getByRole('dialog').getByRole('button', { name: /Start/ }).click()
+
+    await expect(page).toHaveURL(new RegExp(`/board/${start.slug}$`))
+    await expect(page.getByTestId('topbar-board-name')).toHaveText('Start')
   })
 })

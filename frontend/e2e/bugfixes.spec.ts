@@ -6,6 +6,7 @@ import {
   getCsrfHeaders,
   loginWorkspace,
   setUsername,
+  API,
 } from './helpers'
 
 test.describe('Ключевые исправления (сессия, live-доски, штурм)', () => {
@@ -30,7 +31,7 @@ test.describe('Ключевые исправления (сессия, live-до�
     await createBoardViaAPI(request, 'Первая доска', wsData.token)
     const targetBoard = await createBoardViaAPI(request, 'Целевая доска', wsData.token)
 
-    await request.post('http://localhost:8000/api/columns/', {
+    await request.post(`${API}/columns/`, {
       data: { board_id: targetBoard.id, title: 'Целевая колонка' },
       headers,
     })
@@ -116,16 +117,11 @@ test.describe('Ключевые исправления (сессия, live-до�
     const headers = { ...csrf, 'X-Workspace-Token': wsData.token }
 
     const board = await createBoardViaAPI(request, 'Штурм Доска', wsData.token)
-    const colRes = await request.post('http://localhost:8000/api/columns/', {
+    const colRes = await request.post(`${API}/columns/`, {
       data: { board_id: board.id, title: 'Идеи' },
       headers,
     })
     const col = await colRes.json()
-
-    await request.post('http://localhost:8000/api/cards/', {
-      data: { column_id: col.id, text: 'Секрет ведущего', author: 'Ведущий' },
-      headers,
-    })
 
     const ctxFac = await browser.newContext()
     const ctxViewer = await browser.newContext()
@@ -133,7 +129,13 @@ test.describe('Ключевые исправления (сессия, live-до�
     try {
       const facPage = await ctxFac.newPage()
       await setUsername(facPage, 'Ведущий')
-      await loginWorkspace(facPage, request)
+      const facSession = await loginWorkspace(facPage, request)
+
+      // Автор карточки — участник сессии: карточку ведущего создаём его токеном
+      await request.post(`${API}/cards/`, {
+        data: { column_id: col.id, text: 'Секрет ведущего' },
+        headers: { ...csrf, 'X-Workspace-Token': facSession.token },
+      })
 
       await facPage.goto(`/board/${board.slug}`)
       await expect(facPage.getByText('Секрет ведущего')).toBeVisible({ timeout: 15000 })
@@ -146,6 +148,8 @@ test.describe('Ключевые исправления (сессия, live-до�
       await expect(facBtn).toBeVisible({ timeout: 10000 })
       await facBtn.click()
       await expect(facPage.getByTitle('Завершить режим ведущего')).toBeVisible({ timeout: 10000 })
+      // Свою карточку ведущий в штурме видит
+      await expect(facPage.getByText('Секрет ведущего')).toBeVisible()
 
       const viewerPage = await ctxViewer.newPage()
       await setUsername(viewerPage, 'Участник')

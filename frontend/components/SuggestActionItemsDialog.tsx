@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Loader2, Sparkles, User } from 'lucide-react'
+import { AlertTriangle, Check, Inbox, Loader2, RefreshCw, Settings2, Sparkles, User } from 'lucide-react'
 import type { ActionItemSuggestion } from '../types'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -23,11 +23,24 @@ interface EditableSuggestion extends ActionItemSuggestion {
   assignee: string
 }
 
+/**
+ * Почему предложений нет, если дело не в данных: `not_configured` — AI на сервере не настроен
+ * (повторять бессмысленно), `error` — сервис не ответил или вернул ошибку (можно повторить).
+ * Пустой список без `failure` — AI отработал, но предложить нечего («мало данных»).
+ */
+export interface SuggestFailure {
+  kind: 'error' | 'not_configured'
+  message: string
+}
+
 interface SuggestActionItemsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   loading: boolean
   suggestions: ActionItemSuggestion[]
+  failure?: SuggestFailure | null
+  /** Повторить запрос после ошибки. */
+  onRetry?: () => void
   submitting?: boolean
   onCreateSelected: (
     items: { title: string; text: string; assignee: string | null; source_card_ids: string[] }[],
@@ -39,6 +52,8 @@ export default function SuggestActionItemsDialog({
   onOpenChange,
   loading,
   suggestions,
+  failure = null,
+  onRetry,
   submitting = false,
   onCreateSelected,
 }: SuggestActionItemsDialogProps) {
@@ -83,7 +98,7 @@ export default function SuggestActionItemsDialog({
             AI-подбор задач
           </DialogTitle>
           <DialogDescription>
-            AI проанализировал карточки и голоса команды. Выберите подходящие задачи и при
+            AI предлагает задачи по карточкам и голосам команды. Выберите подходящие и при
             необходимости скорректируйте формулировки.
           </DialogDescription>
         </DialogHeader>
@@ -94,9 +109,48 @@ export default function SuggestActionItemsDialog({
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
               <span>Анализируем карточки доски и формулируем задачи...</span>
             </div>
+          ) : failure?.kind === 'not_configured' ? (
+            <div
+              data-testid="suggest-not-configured"
+              className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-background/60 px-6 py-10 text-center text-sm text-muted-foreground"
+            >
+              <Settings2 className="h-6 w-6 opacity-60" aria-hidden="true" />
+              <p className="font-medium text-foreground">AI на этом сервере не настроен</p>
+              <p className="max-w-md">
+                Подбор задач недоступен. Задачи можно добавить вручную — кнопкой «Добавить» или
+                прямо с карточки.
+              </p>
+            </div>
+          ) : failure ? (
+            <div
+              role="alert"
+              data-testid="suggest-error"
+              className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-destructive/40 bg-destructive/5 px-6 py-10 text-center text-sm text-muted-foreground"
+            >
+              <AlertTriangle className="h-6 w-6 text-destructive" aria-hidden="true" />
+              <p className="font-medium text-foreground">{failure.message}</p>
+              <p className="max-w-md">
+                AI-сервис не ответил или вернул ошибку. Попробуйте ещё раз — или добавьте задачи
+                вручную.
+              </p>
+              {onRetry && (
+                <Button type="button" size="sm" className="mt-1" onClick={onRetry}>
+                  <RefreshCw className="h-4 w-4" />
+                  Повторить
+                </Button>
+              )}
+            </div>
           ) : items.length === 0 ? (
-            <div className="rounded-xl border border-dashed bg-background/60 py-10 text-center text-sm text-muted-foreground">
-              AI не нашёл достаточно данных для предложений. Добавьте больше карточек обсуждения.
+            <div
+              data-testid="suggest-empty"
+              className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-background/60 px-6 py-10 text-center text-sm text-muted-foreground"
+            >
+              <Inbox className="h-6 w-6 opacity-60" aria-hidden="true" />
+              <p className="font-medium text-foreground">Предложить пока нечего</p>
+              <p className="max-w-md">
+                На доске мало карточек, или в них нет того, что можно превратить в задачу.
+                Добавьте карточки с проблемами и идеями и попробуйте ещё раз.
+              </p>
             </div>
           ) : (
             <>
@@ -119,7 +173,7 @@ export default function SuggestActionItemsDialog({
                   <div
                     key={idx}
                     className={cn(
-                      'flex items-start gap-3 rounded-xl border bg-card p-3.5 shadow-xs transition-all',
+                      'flex items-start gap-3 rounded-xl border bg-card p-3.5 transition-all',
                       item.checked
                         ? 'border-primary/35 ring-1 ring-primary/10'
                         : 'border-border/70 bg-muted/40 opacity-65',

@@ -1,21 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { useAppStore } from '../store'
-import {
-  checkWorkspaceSession,
-  createBoard,
-  getBoard,
-  getBoardBySlug,
-  getBoards,
-} from '../api'
+import { getBoard, getBoardBySlug, getBoards, refreshWorkspaceSession } from '../api'
+import { isOwnBoardDeletion, onBoardsRefreshRequested } from '../lib/board-list-signals'
+import { FIRST_BOARD_REF, FIRST_BOARD_ROUTE, boardPath, resolveStartBoard } from '../lib/board-routes'
 import { boardToBoardListItem } from '../utils/boardMapper'
-import { getApiErrorMessage } from '../utils/apiError'
+import { getApiErrorMessage, getApiErrorStatus, markApiErrorReported } from '../utils/apiError'
 import type { Board, BoardListItem, WsBoardUpdatedData } from '../types'
 import BoardPage from './BoardPage'
 import CreateBoardDialog from './CreateBoardDialog'
+import NoBoardsScreen from './NoBoardsScreen'
 import WelcomeDialog from './WelcomeDialog'
 import { Button } from './ui/button'
 import { showToast } from '../store/toastStore'
@@ -24,81 +21,125 @@ interface AppProps {
   boardId?: string
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export default function App({ boardId }: AppProps) {
   const router = useRouter()
-  const username = useAppStore((s) => s.username)
-  const setUsername = useAppStore((s) => s.setUsername)
   const setCurrentBoard = useAppStore((s) => s.setCurrentBoard)
-  const workspace = useAppStore((s) => s.workspace)
+  const workspaceName = useAppStore((s) => s.workspace?.workspaceName)
+  const hasWorkspace = useAppStore((s) => Boolean(s.workspace))
+  const participantId = useAppStore((s) => s.participant?.id ?? null)
   const hasHydrated = useAppStore((s) => s._hasHydrated ?? true)
 
   const [boards, setBoards] = useState<BoardListItem[]>([])
-  const [board, setBoard] = useState<Board | null>(null)
-  const [loading, setLoading] = useState(true)
+  // Доска хранится вместе с участником, для которого её отдал сервер: карточки и голоса
+  // собираются под получателя, показывать их другому участнику (повторный вход) нельзя
+  const [loaded, setLoaded] = useState<{ board: Board; participantId: string } | null>(null)
+  // Участник, которому сервер ответил «досок в команде нет»: показываем пустое состояние
+  const [emptyFor, setEmptyFor] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const loadSeqRef = useRef(0)
 
-  const needsAuth = !workspace || !username || username === 'Аноним'
+  // Сессия — это команда и участник; имя для входа необязательно
+  const needsAuth = !hasWorkspace || !participantId
+  const board = loaded && loaded.participantId === participantId ? loaded.board : null
+  const noBoards = Boolean(participantId) && emptyFor === participantId
+  const setBoard = useCallback((next: Board | null) => {
+    const owner = useAppStore.getState().participant?.id
+    setLoaded(next && owner ? { board: next, participantId: owner } : null)
+  }, [])
 
   const loadWorkspaceBoard = useCallback(async () => {
-    if (!hasHydrated || !workspace) return
-    setLoading(true)
-    setError(null)
+    if (!hasHydrated || !participantId) return
+    // Применяем только ответ на последний запрос: более ранний мог устареть
+    const seq = ++loadSeqRef.current
+    const stale = () => seq !== loadSeqRef.current
     try {
-      await checkWorkspaceSession()
-      let list = await getBoards()
-      if (list.length === 0) {
-        const created = await createBoard('Моя первая ретро-доска')
-        list = [boardToBoardListItem(created)]
-      }
+      // Источник правды о сессии — сервер: участник, команда и признак ai_enabled
+      await refreshWorkspaceSession()
+      const list = await getBoards()
+      if (stale()) return
       setBoards(list)
 
-      let target: Board | null = null
-      if (!boardId || boardId === 'start') {
-        const first = list[0]
+      if (list.length === 0) {
+        // Досок нет (новая команда или удалена последняя): молча доску не создаём
+        setBoard(null)
+        setEmptyFor(participantId)
+        setError(null)
+        return
+      }
+      setEmptyFor(null)
+
+      let target: Board
+      if (!boardId || boardId === FIRST_BOARD_REF) {
+        const first = resolveStartBoard(list) ?? list[0]
+        if (first.slug !== FIRST_BOARD_REF) {
+          // Служебный адрес — только перенаправление на адрес доски. Монтировать доску здесь
+          // нельзя: смена сегмента [id] пересоздаёт страницу, и доска загрузилась бы дважды,
+          // а её сокет открылся бы, закрылся и открылся снова. Доску загрузит страница по
+          // её адресу; до смены адреса остаётся индикатор загрузки.
+          router.replace(boardPath(first))
+          return
+        }
+        // Доска, у которой slug совпал со служебным адресом, уже открыта по своему адресу
         target = await getBoard(first.id)
-        router.replace(`/board/${target.slug || target.id}`)
+        if (stale()) return
       } else {
-        const isUuid =
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-            boardId,
-          )
+        const isUuid = UUID_RE.test(boardId)
         try {
           target = isUuid ? await getBoard(boardId) : await getBoardBySlug(boardId)
         } catch (err) {
-          const status = (err as { response?: { status?: number } })?.response?.status
-          if (status === 404 && !isUuid) {
+          if (getApiErrorStatus(err) === 404 && !isUuid) {
             target = await getBoard(boardId)
           } else {
             throw err
           }
         }
+        if (stale()) return
       }
 
-      if (target) {
-        setBoard(target)
-        setCurrentBoard(target.id)
-      }
+      setBoard(target)
+      setCurrentBoard(target.id)
+      setError(null)
     } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response?.status
-      if (status === 401 || !useAppStore.getState().workspace) {
+      if (stale()) return
+      // 401: перехватчик уже сбросил сессию — показываем вход без экрана ошибки
+      if (getApiErrorStatus(err) === 401 || !useAppStore.getState().participant) {
         setBoard(null)
         return
       }
       setError(getApiErrorMessage(err, 'Не удалось загрузить доску'))
-    } finally {
-      setLoading(false)
     }
-  }, [hasHydrated, workspace, boardId, router, setCurrentBoard])
+  }, [hasHydrated, participantId, boardId, router, setCurrentBoard, setBoard])
 
   useEffect(() => {
-    if (!hasHydrated) return
-    if (needsAuth) {
-      setLoading(false)
-      return
-    }
-    loadWorkspaceBoard()
+    if (!hasHydrated || needsAuth) return
+    void loadWorkspaceBoard()
   }, [hasHydrated, needsAuth, loadWorkspaceBoard])
+
+  // Счётчики в списке досок (карточки, открытые задачи) сервер считает сам: перечитываем
+  // список, когда его открывают, — иначе он остаётся таким, каким был при загрузке страницы
+  const refreshBoards = useCallback(async () => {
+    try {
+      const list = await getBoards()
+      if (list.length > 0) setBoards(list)
+    } catch (err) {
+      // Фоновое обновление: старый список остаётся на месте, уведомление не нужно
+      markApiErrorReported(err)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (needsAuth) return
+    return onBoardsRefreshRequested(() => void refreshBoards())
+  }, [needsAuth, refreshBoards])
+
+  const openCreateDialog = useCallback(() => {
+    setCreateDialogOpen(true)
+    // В диалоге показано число открытых задач исходной доски — оно должно быть свежим
+    void refreshBoards()
+  }, [refreshBoards])
 
   if (!hasHydrated) {
     return (
@@ -109,16 +150,72 @@ export default function App({ boardId }: AppProps) {
   }
 
   if (needsAuth) {
+    // Вход сам записывает сессию в стор — после этого эффект выше загрузит доску
+    return <WelcomeDialog onConfirm={() => {}} />
+  }
+
+  const createDialog = (
+    <CreateBoardDialog
+      open={createDialogOpen}
+      onOpenChange={setCreateDialogOpen}
+      existingBoards={boards}
+      onCreated={(created) => {
+        const listItem = boardToBoardListItem(created)
+        setBoards((prev) => (prev.some((b) => b.id === created.id) ? prev : [listItem, ...prev]))
+        setEmptyFor(null)
+        router.push(boardPath(created))
+      }}
+    />
+  )
+
+  if (error) {
+    // Ошибку снимает сам пользователь (кнопкой) или удачная загрузка: загрузчик её не трогает,
+    // пока не получит ответ
     return (
-      <WelcomeDialog
-        onConfirm={(name) => {
-          setUsername(name)
-        }}
-      />
+      <div
+        role="alert"
+        className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center"
+      >
+        <h2 className="text-lg font-semibold">Не удалось открыть доску</h2>
+        <p className="max-w-md text-sm text-muted-foreground">{error}</p>
+        <div className="flex gap-2">
+          {boardId && boardId !== FIRST_BOARD_REF && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setError(null)
+                router.replace(FIRST_BOARD_ROUTE)
+              }}
+            >
+              К первой доске
+            </Button>
+          )}
+          <Button
+            onClick={() => {
+              setError(null)
+              void loadWorkspaceBoard()
+            }}
+          >
+            Повторить
+          </Button>
+        </div>
+      </div>
     )
   }
 
-  if (loading && !board) {
+  if (!board) {
+    if (noBoards) {
+      return (
+        <>
+          <NoBoardsScreen
+            workspaceName={workspaceName || 'Команда'}
+            onCreateBoard={openCreateDialog}
+            onBoardAppeared={() => void loadWorkspaceBoard()}
+          />
+          {createDialog}
+        </>
+      )
+    }
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -127,30 +224,13 @@ export default function App({ boardId }: AppProps) {
     )
   }
 
-  if (error || !board) {
-    return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
-        <h2 className="text-lg font-semibold">Не удалось открыть доску</h2>
-        <p className="max-w-md text-sm text-muted-foreground">
-          {error || 'Доска не найдена или недоступна в текущем workspace.'}
-        </p>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => router.replace('/board/start')}>
-            К первой доске
-          </Button>
-          <Button onClick={loadWorkspaceBoard}>Повторить</Button>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <>
       <BoardPage
-        key={board.id}
+        key={`${board.id}:${participantId}`}
         board={board}
         boards={boards}
-        workspaceName={workspace?.workspaceName || 'Команда'}
+        workspaceName={workspaceName || 'Команда'}
         onBoardUpdated={(updated) => {
           setBoard(updated)
           setBoards((prev) =>
@@ -168,19 +248,15 @@ export default function App({ boardId }: AppProps) {
           )
         }}
         onBoardDeleted={(deletedId) => {
+          // Доску удалил сам участник: один переход, уведомление уже показал диалог настроек
           const remaining = boards.filter((b) => b.id !== deletedId)
           setBoards(remaining)
-          if (remaining.length > 0) {
-            const next = remaining[0]
-            router.replace(`/board/${next.slug || next.id}`)
-          } else {
-            router.replace('/board/start')
-          }
+          router.replace(remaining.length > 0 ? boardPath(remaining[0]) : FIRST_BOARD_ROUTE)
         }}
         onSelectBoard={(b) => {
-          router.push(`/board/${b.slug || b.id}`)
+          router.push(boardPath(b))
         }}
-        onOpenCreateBoard={() => setCreateDialogOpen(true)}
+        onOpenCreateBoard={openCreateDialog}
         onBoardsListCreated={(created) => {
           setBoards((prev) =>
             prev.some((b) => b.id === created.id) ? prev : [created, ...prev],
@@ -202,25 +278,16 @@ export default function App({ boardId }: AppProps) {
         }}
         onBoardsListDeleted={(deletedId) => {
           setBoards((prev) => prev.filter((b) => b.id !== deletedId))
-          if (deletedId === board.id) {
-            showToast('Текущая доска была удалена', 'info')
-            router.replace('/board/start')
+          // Событие об удалении приходит и самому удаляющему, причём раньше ответа на его
+          // запрос: его переход выполнит onBoardDeleted, второй переход и уведомление не нужны
+          if (deletedId === board.id && !isOwnBoardDeletion(deletedId)) {
+            showToast('Эту доску удалили — открываем другую доску команды', 'info')
+            router.replace(FIRST_BOARD_ROUTE)
           }
         }}
       />
 
-      <CreateBoardDialog
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
-        existingBoards={boards}
-        onCreated={(created) => {
-          const listItem = boardToBoardListItem(created)
-          setBoards((prev) =>
-            prev.some((b) => b.id === created.id) ? prev : [listItem, ...prev],
-          )
-          router.push(`/board/${created.slug || created.id}`)
-        }}
-      />
+      {createDialog}
     </>
   )
 }

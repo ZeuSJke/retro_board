@@ -24,7 +24,7 @@ export function BrandMark({ size = 32, className }: BrandMarkProps) {
       viewBox="0 0 64 64"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      className={cn('shrink-0 select-none drop-shadow-sm', className)}
+      className={cn('shrink-0 select-none drop-shadow-xs', className)}
       aria-hidden="true"
     >
       <defs>

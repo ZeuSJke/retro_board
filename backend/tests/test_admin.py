@@ -58,6 +58,8 @@ def test_admin_create_workspace(client, admin_headers):
     data = resp.json()
     assert data["slug"] == "new-team"
     assert data["name"] == "New Team"
+    # Счётчик приходит сразу: таблице в админке не нужна перезагрузка
+    assert data["boards_count"] == 0
 
 
 def test_admin_create_workspace_duplicate_slug(client, admin_headers, test_workspace):
@@ -68,7 +70,7 @@ def test_admin_create_workspace_duplicate_slug(client, admin_headers, test_works
         "access_key": "key123",
     }, headers=admin_headers)
     assert resp.status_code == 409
-    assert "already exists" in resp.json()["detail"]
+    assert "уже существует" in resp.json()["detail"]
 
 
 def test_admin_update_workspace_name(client, admin_headers, test_workspace):
@@ -149,3 +151,23 @@ def test_admin_list_workspaces_with_boards_count(client, admin_headers, workspac
     workspaces = resp.json()
     test_ws = next(w for w in workspaces if w["id"] == "test-workspace-id")
     assert test_ws["boards_count"] == 1
+
+
+def test_admin_boards_count_is_per_team_and_skips_deleted(
+    client, admin_headers, workspace_headers, sample_board
+):
+    """Счётчик считается по каждой команде отдельно и не включает удалённые доски."""
+    created = client.post(
+        "/api/admin/workspaces",
+        json={"slug": "empty-team", "name": "Пустая команда", "access_key": "key12345"},
+        headers=admin_headers,
+    )
+    assert created.status_code == 201
+
+    def counts():
+        rows = client.get("/api/admin/workspaces", headers=admin_headers).json()
+        return {w["slug"]: w["boards_count"] for w in rows}
+
+    assert counts() == {"test-team": 1, "empty-team": 0}
+    assert client.delete(f"/api/boards/{sample_board['id']}", headers=workspace_headers).status_code == 204
+    assert counts() == {"test-team": 0, "empty-team": 0}

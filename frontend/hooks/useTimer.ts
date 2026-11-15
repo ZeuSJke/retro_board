@@ -2,17 +2,46 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { playTimerChime } from '@/lib/board-themes'
+import {
+  IDLE_TIMER,
+  runningTimer,
+  stoppedTimer,
+  timerDisplaySeconds,
+  timerRemainingSeconds,
+} from '@/lib/timer'
 import type { TimerState, WsMessage } from '../types'
 
 const SOUND_MUTE_KEY = 'retro_timer_muted'
+/** Реже этого срок окончания не перепроверяется: в фоновой вкладке таймеры браузера опаздывают. */
+const EXPIRY_RECHECK_MS = 60_000
 
-export function useTimer(boardId: string, sendWs: (msg: WsMessage) => void) {
-  const [timer, setTimer] = useState<TimerState>({ duration: 300, remaining: 300, running: false })
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+interface UseTimerOptions {
+  /** Таймер дошёл до нуля на этом клиенте. */
+  onExpire?: () => void
+}
+
+/**
+ * Общий таймер этапа. Состояние приходит с сервера (события `timer_*` и начальное состояние
+ * при подключении) и нигде на клиенте не сохраняется. Идущий таймер хранится моментом
+ * окончания (`endsAt`), поэтому состояние не меняется каждую секунду: тикает только виджет.
+ * Таймер у каждой доски свой — хук живёт вместе со страницей доски.
+ */
+export function useTimer(sendWs: (msg: WsMessage) => void, options?: UseTimerOptions) {
+  const [timer, setTimer] = useState<TimerState>(IDLE_TIMER)
   const [autoAdvance, setAutoAdvance] = useState(false)
   const [soundMuted, setSoundMuted] = useState(false)
-  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const timerRestoredRef = useRef(false)
   const soundMutedRef = useRef(false)
+  const timerRef = useRef(timer)
+  const onExpireRef = useRef(options?.onExpire)
+
+  useEffect(() => {
+    timerRef.current = timer
+    onExpireRef.current = options?.onExpire
+  })
 
   useEffect(() => {
     try {
@@ -37,103 +66,71 @@ export function useTimer(boardId: string, sendWs: (msg: WsMessage) => void) {
     })
   }, [])
 
+  // Окончание: один таймер браузера до момента `endsAt`. Срок перепроверяется, когда
+  // вкладка снова видна, — в фоне таймеры срабатывают с опозданием.
   useEffect(() => {
-    if (!boardId || !timerRestoredRef.current) return
-    try {
-      localStorage.setItem(
-        `retro_timer_${boardId}`,
-        JSON.stringify({
-          duration: timer.duration,
-          remaining: timer.remaining,
-          running: timer.running,
-          savedAt: Date.now(),
-        }),
+    if (!timer.running || timer.endsAt == null) return
+    const endsAt = timer.endsAt
+    let timeout: ReturnType<typeof setTimeout> | null = null
+
+    const check = () => {
+      timeout = null
+      const left = endsAt - Date.now()
+      if (left > 0) {
+        timeout = setTimeout(check, Math.min(left, EXPIRY_RECHECK_MS))
+        return
+      }
+      setTimer((prev) =>
+        prev.running && prev.endsAt === endsAt ? stoppedTimer(prev.duration, 0) : prev,
       )
-    } catch {
-      /* ignore */
+      if (!soundMutedRef.current) playTimerChime()
+      onExpireRef.current?.()
     }
-  }, [timer.duration, timer.remaining, timer.running, boardId])
 
-  useEffect(() => {
+    const recheck = () => {
+      if (document.visibilityState !== 'visible') return
+      if (timeout) clearTimeout(timeout)
+      check()
+    }
+
+    timeout = setTimeout(check, Math.max(0, Math.min(endsAt - Date.now(), EXPIRY_RECHECK_MS)))
+    document.addEventListener('visibilitychange', recheck)
     return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
+      if (timeout) clearTimeout(timeout)
+      document.removeEventListener('visibilitychange', recheck)
+    }
+  }, [timer.running, timer.endsAt])
+
+  const handleTimerWsEvent = useCallback((event: string, data: Record<string, unknown>) => {
+    if (event === 'timer_start') {
+      const duration = finiteNumber(data.duration)
+      const remaining = finiteNumber(data.remaining)
+      if (duration === null || remaining === null) return
+      // Остаток уже нулевой — таймер на сервере истёк, пока нас не было: звука не нужно
+      setTimer(remaining > 0 ? runningTimer(duration, remaining) : stoppedTimer(duration, 0))
+    } else if (event === 'timer_pause') {
+      const remaining = finiteNumber(data.remaining)
+      if (remaining === null) return
+      const duration = finiteNumber(data.duration)
+      setTimer((prev) => stoppedTimer(duration ?? prev.duration, remaining))
+    } else if (event === 'timer_reset') {
+      const duration = finiteNumber(data.duration)
+      if (duration === null) return
+      setTimer(stoppedTimer(duration, duration))
     }
   }, [])
 
-  const startCountdown = useCallback(() => {
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-    timerIntervalRef.current = setInterval(() => {
-      setTimer((prev) => {
-        if (prev.remaining <= 0) {
-          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-          return { ...prev, remaining: 0, running: false }
-        }
-        const next = Math.max(0, prev.remaining - 1)
-        if (next <= 0) {
-          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-          if (!soundMutedRef.current) {
-            playTimerChime()
-          }
-          return { ...prev, remaining: 0, running: false }
-        }
-        return { ...prev, remaining: next }
-      })
-    }, 1000)
+  /**
+   * После подключения сервер не прислал таймер: на сервере он не запущен (сессию завершили,
+   * пока клиент был не в сети). Локальный отсчёт, оставшийся с прошлого подключения, сбрасывается.
+   */
+  const handleTimerAbsent = useCallback(() => {
+    setTimer((prev) =>
+      prev.running || prev.remaining !== prev.duration
+        ? stoppedTimer(prev.duration, prev.duration)
+        : prev,
+    )
   }, [])
-
-  const restoreTimer = useCallback(
-    (id: string) => {
-      timerRestoredRef.current = false
-      try {
-        const saved = localStorage.getItem(`retro_timer_${id}`)
-        if (saved) {
-          const { duration, remaining, running, savedAt } = JSON.parse(saved)
-          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-          if (running) {
-            const elapsed = Math.floor((Date.now() - savedAt) / 1000)
-            const adjusted = Math.max(0, remaining - elapsed)
-            setTimer({ duration, remaining: adjusted, running: adjusted > 0 })
-            if (adjusted > 0) startCountdown()
-          } else {
-            setTimer({ duration, remaining, running: false })
-          }
-        }
-      } catch {
-        /* ignore corrupted timer data */
-      }
-      timerRestoredRef.current = true
-    },
-    [startCountdown],
-  )
-
-  const handleTimerWsEvent = useCallback(
-    (event: string, data: Record<string, unknown>) => {
-      if (event === 'timer_start') {
-        const ts = data.ts as number | undefined
-        const rawDelay = ts ? (Date.now() - ts) / 1000 : 0
-        const networkDelay = Math.abs(rawDelay) <= 5 ? Math.max(0, Math.min(2, rawDelay)) : 0
-        const adjusted = Math.max(0, Math.round((data.remaining as number) - networkDelay))
-        setTimer({ duration: data.duration as number, remaining: adjusted, running: adjusted > 0 })
-        if (adjusted > 0) startCountdown()
-      } else if (event === 'timer_pause') {
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-        setTimer((prev) => ({
-          ...prev,
-          ...(data.duration != null ? { duration: data.duration as number } : {}),
-          remaining: data.remaining as number,
-          running: false,
-        }))
-      } else if (event === 'timer_reset') {
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current)
-        setTimer({
-          duration: data.duration as number,
-          remaining: data.duration as number,
-          running: false,
-        })
-      }
-    },
-    [startCountdown],
-  )
 
   const handleTimerStart = useCallback(
     (duration: number, remaining: number) => {
@@ -143,8 +140,13 @@ export function useTimer(boardId: string, sendWs: (msg: WsMessage) => void) {
   )
 
   const handleTimerPause = useCallback(() => {
-    sendWs({ event: 'timer_pause', data: { remaining: timer.remaining, duration: timer.duration } })
-  }, [sendWs, timer.remaining, timer.duration])
+    const current = timerRef.current
+    // На паузе все видят то же число, что видел нажавший
+    sendWs({
+      event: 'timer_pause',
+      data: { remaining: timerDisplaySeconds(current), duration: current.duration },
+    })
+  }, [sendWs])
 
   const handleTimerReset = useCallback(
     (duration: number) => {
@@ -155,21 +157,26 @@ export function useTimer(boardId: string, sendWs: (msg: WsMessage) => void) {
 
   const handleAddTime = useCallback(
     (extraSeconds: number) => {
-      const nextDuration = Math.max(timer.duration + extraSeconds, timer.remaining + extraSeconds)
-      const nextRemaining = timer.remaining + extraSeconds
-      if (timer.running) {
+      const current = timerRef.current
+      if (current.running) {
+        const remaining = timerRemainingSeconds(current) + extraSeconds
         sendWs({
           event: 'timer_start',
-          data: { duration: nextDuration, remaining: nextRemaining, ts: Date.now() },
+          data: {
+            duration: Math.max(current.duration + extraSeconds, remaining),
+            remaining,
+            ts: Date.now(),
+          },
         })
       } else {
+        const remaining = current.remaining + extraSeconds
         sendWs({
           event: 'timer_pause',
-          data: { duration: nextDuration, remaining: nextRemaining },
+          data: { duration: Math.max(current.duration + extraSeconds, remaining), remaining },
         })
       }
     },
-    [sendWs, timer.duration, timer.remaining, timer.running],
+    [sendWs],
   )
 
   return {
@@ -178,8 +185,8 @@ export function useTimer(boardId: string, sendWs: (msg: WsMessage) => void) {
     setAutoAdvance,
     soundMuted,
     toggleSoundMuted,
-    restoreTimer,
     handleTimerWsEvent,
+    handleTimerAbsent,
     handleTimerStart,
     handleTimerPause,
     handleTimerReset,

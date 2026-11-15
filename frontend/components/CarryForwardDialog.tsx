@@ -61,7 +61,7 @@ export default function CarryForwardDialog({
         target_board_id: targetId,
       })
       if (created.length === 0) {
-        showToast('Нет незакрытых задач для переноса', 'info')
+        showToast('Переносить нечего: незакрытых задач нет или они уже перенесены', 'info')
       } else {
         showToast(`Перенесено задач: ${created.length}`, 'success')
       }
@@ -83,7 +83,8 @@ export default function CarryForwardDialog({
             Перенести незакрытые задачи
           </DialogTitle>
           <DialogDescription>
-            Все задачи со статусом «Открыто» или «В работе» будут скопированы на выбранную доску.
+            Задачи со статусом «Открыто» или «В работе» переедут на выбранную доску. На исходной
+            доске они останутся в истории с пометкой «Перенесена» и открытыми больше не считаются.
           </DialogDescription>
         </DialogHeader>
 

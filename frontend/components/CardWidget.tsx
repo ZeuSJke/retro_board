@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { motion } from 'motion/react'
@@ -28,6 +28,20 @@ import {
   getUserAvatarGradient,
   getUserInitials,
 } from '@/lib/board-themes'
+import { sameExceptVoteCount } from '@/lib/memo'
+import {
+  CANNOT_DELETE_CARD_HINT,
+  NOT_YOUR_CARD_HINT,
+  avatarSeed,
+  canDeleteCard,
+  canEditCardText,
+  countMyVotes,
+  formatVoters,
+  formatVotesCount,
+  isOwnCard,
+  summarizeVoters,
+  withMyVote,
+} from '@/lib/participants'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage } from '../utils/apiError'
@@ -60,18 +74,35 @@ import { cn } from '@/lib/utils'
 
 interface CardWidgetProps {
   card: Card
-  currentUser?: string
+  /** Идентификатор текущего участника; по умолчанию — участник сессии из стора. */
+  currentUserId?: string
+  /** Модератор доски (создатель или ведущий) может удалять чужие карточки. */
+  isModerator?: boolean
+  /** Имена участников по идентификатору — для подписи голосов. */
+  voterNames?: Record<string, string>
   maxVotes?: number
   userTotalVotes?: number
   canVote?: boolean
+  /** Карточка в ответе сервера (после сохранения, голоса, переноса). */
   onUpdated?: (card: Card) => void
   onUpdate?: (card: Card) => void
+  /**
+   * Точечная правка карточки в её текущем состоянии — оптимистичное обновление и его откат.
+   * Меняется одно поле, поэтому события, пришедшие за время запроса, не затираются.
+   * Без этого обработчика правка уходит в `onUpdated` целой карточкой.
+   */
+  onPatched?: (cardId: string, patch: (card: Card) => Card) => void
   onDeleted?: (id: string) => void
   onDelete?: (id: string) => void
+  /** Сервер карточку не удалил: вернуть её на место. */
+  onRestored?: (card: Card, error?: unknown) => void
+  /** Сервер отклонил голос или смену цвета; локальная правка уже снята. */
+  onRejected?: (error: unknown) => void
   inGroup?: boolean
   isGroupTarget?: boolean
   dragDisabled?: boolean
-  hidden?: boolean
+  /** Почему перетаскивание отключено — подсказка на ручке. */
+  dragDisabledReason?: string | null
   anonymous?: boolean
   readOnly?: boolean
   isSpotlighted?: boolean
@@ -80,7 +111,7 @@ interface CardWidgetProps {
   revealDelayMs?: number
   onSpotlight?: (cardId: string) => void
   onCreateActionItem?: (card: Card) => void
-  onRemoveFromGroup?: () => void
+  onRemoveFromGroup?: (card: Card) => void
   allowMultipleVotes?: boolean
   selected?: boolean
   onToggleSelect?: (cardId: string, shiftKey?: boolean) => void
@@ -88,20 +119,29 @@ interface CardWidgetProps {
   onMoved?: (card: Card, targetColumnId: string) => void
 }
 
-export default function CardWidget({
+const NO_NAMES: Record<string, string> = {}
+
+const DRAG_DISABLED_FALLBACK = 'Перетаскивание сейчас отключено'
+
+function CardWidget({
   card,
-  currentUser,
+  currentUserId,
+  isModerator = false,
+  voterNames = NO_NAMES,
   maxVotes = 0,
   userTotalVotes = 0,
   canVote = true,
   onUpdated,
   onUpdate,
+  onPatched,
   onDeleted,
   onDelete,
+  onRestored,
+  onRejected,
   inGroup = false,
   isGroupTarget = false,
   dragDisabled = false,
-  hidden = false,
+  dragDisabledReason = null,
   anonymous = false,
   readOnly = false,
   isSpotlighted = false,
@@ -117,10 +157,17 @@ export default function CardWidget({
   otherColumns,
   onMoved,
 }: CardWidgetProps) {
-  const storeUser = useAppStore((s) => s.username)
-  const resolvedUser = currentUser ?? storeUser
+  const storeUserId = useAppStore((s) => s.participant?.id ?? '')
+  const myId = currentUserId ?? storeUserId
+  // Чужая карточка до раскрытия: сервер прислал её без текста, автора и голосов
+  const hidden = Boolean(card.masked)
   const emitUpdated = onUpdated ?? onUpdate ?? (() => {})
   const emitDeleted = onDeleted ?? onDelete ?? (() => {})
+  // Оптимистичная правка и её откат: меняем одно поле карточки в её текущем состоянии
+  const patchCard = (patch: (current: Card) => Card) => {
+    if (onPatched) onPatched(card.id, patch)
+    else emitUpdated(patch(card))
+  }
 
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(card.text)
@@ -131,11 +178,24 @@ export default function CardWidget({
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
 
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: card.id,
     data: { type: 'card', card },
     disabled: editing || dragDisabled || readOnly || hidden,
   })
+  // Указателем карточку тащат за любое место, с клавиатуры — за ручку: у самой карточки нет
+  // роли кнопки, иначе кнопки внутри неё оказались бы вложенными в кнопку
+  const { onKeyDown: keyboardDragListener, ...pointerDragListeners } = (listeners ?? {}) as {
+    onKeyDown?: React.KeyboardEventHandler<HTMLElement>
+  } & Record<string, unknown>
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -167,8 +227,15 @@ export default function CardWidget({
 
   const preset = getCardColorPreset(card.color)
   const likes = card.likes || []
-  const myVotesOnCard = likes.filter((u) => u === resolvedUser).length
+  // «Мой голос» и «моя карточка» — по идентификатору участника, не по имени
+  const myVotesOnCard = countMyVotes(card, myId)
   const liked = myVotesOnCard > 0
+  const own = isOwnCard(card, myId)
+  const canEditText = canEditCardText(card, myId, { anonymous })
+  const canDelete = canDeleteCard(card, myId, { anonymous, moderator: isModerator })
+  // В анонимном режиме сервер отдаёт автора только владельцу карточки
+  const showAuthorName = !anonymous || own
+  const authorLabel = anonymous ? (own ? 'Вы' : 'Участник') : card.author
   const canAddVote = canVote && !(maxVotes > 0 && userTotalVotes >= maxVotes)
   const limitReached = allowMultipleVotes ? !canAddVote : !liked && !canAddVote
   const voteDisabled = allowMultipleVotes
@@ -192,7 +259,7 @@ export default function CardWidget({
   const moveTargets = (otherColumns || []).filter((c) => c.id !== card.column_id)
 
   const startEdit = () => {
-    if (readOnly) return
+    if (readOnly || !canEditText) return
     setEditText(card.text)
     setEditColor(card.color || '#FFFFFF')
     setEditing(true)
@@ -218,14 +285,18 @@ export default function CardWidget({
 
   const handleQuickColorChange = async (hex: string) => {
     if (readOnly || (card.color || '#FFFFFF').toLowerCase() === hex.toLowerCase()) return
-    const prev = card
-    emitUpdated({ ...card, color: hex })
+    const previousColor = card.color
+    patchCard((current) => ({ ...current, color: hex }))
     try {
       const updated = await updateCard(card.id, { color: hex })
       emitUpdated(updated)
     } catch (err) {
-      emitUpdated(prev)
+      // Возвращаем только цвет — и только если его за это время не сменили ещё раз
+      patchCard((current) =>
+        current.color === hex ? { ...current, color: previousColor } : current,
+      )
       showToast(getApiErrorMessage(err, 'Не удалось обновить цвет'), 'error')
+      onRejected?.(err)
     }
   }
 
@@ -238,20 +309,17 @@ export default function CardWidget({
       if (act === 'remove' && myVotesOnCard <= 0) return
       setLiking(true)
       if (act === 'add') setVoteBurstKey((k) => k + 1)
-      let optimisticLikes: string[]
-      if (act === 'add') {
-        optimisticLikes = [...likes, resolvedUser]
-      } else {
-        const idx = likes.indexOf(resolvedUser)
-        optimisticLikes = idx >= 0 ? [...likes.slice(0, idx), ...likes.slice(idx + 1)] : likes
-      }
-      emitUpdated({ ...card, likes: optimisticLikes })
+      patchCard((current) => ({ ...current, likes: withMyVote(current.likes || [], myId, act) }))
       try {
-        const updated = await toggleLike(card.id, resolvedUser, act)
+        const updated = await toggleLike(card.id, act)
         emitUpdated(updated)
       } catch (err) {
-        emitUpdated(card)
+        // Откат точечный: снимаем или возвращаем только свой голос. Чужие голоса и правки,
+        // пришедшие, пока шёл запрос, остаются.
+        const undo = act === 'add' ? 'remove' : 'add'
+        patchCard((current) => ({ ...current, likes: withMyVote(current.likes || [], myId, undo) }))
         showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error')
+        onRejected?.(err)
       } finally {
         setLiking(false)
       }
@@ -263,16 +331,24 @@ export default function CardWidget({
     if (!liked) {
       setVoteBurstKey((k) => k + 1)
     }
-    const optimisticLikes = liked
-      ? likes.filter((u) => u !== resolvedUser)
-      : [...likes, resolvedUser]
-    emitUpdated({ ...card, likes: optimisticLikes })
+    const wasLiked = liked
+    patchCard((current) => ({
+      ...current,
+      likes: wasLiked
+        ? (current.likes || []).filter((voterId) => voterId !== myId)
+        : withMyVote(current.likes || [], myId, 'add'),
+    }))
     try {
-      const updated = await toggleLike(card.id, resolvedUser)
+      const updated = await toggleLike(card.id)
       emitUpdated(updated)
     } catch (err) {
-      emitUpdated(card)
+      // Откат точечный: возвращаем или снимаем только свой голос
+      patchCard((current) => ({
+        ...current,
+        likes: withMyVote(current.likes || [], myId, wasLiked ? 'add' : 'remove'),
+      }))
       showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error')
+      onRejected?.(err)
     } finally {
       setLiking(false)
     }
@@ -295,10 +371,14 @@ export default function CardWidget({
 
   const handleConfirmDelete = async () => {
     setDeleteOpen(false)
+    if (!canDelete) return
+    const removed = card
     emitDeleted(card.id)
     try {
       await deleteCard(card.id)
     } catch (err) {
+      // Сервер карточку не удалил: возвращаем её на место
+      onRestored?.(removed, err)
       showToast(getApiErrorMessage(err, 'Не удалось удалить карточку'), 'error')
     }
   }
@@ -310,16 +390,18 @@ export default function CardWidget({
         style={style}
         data-testid="card-widget"
         data-card-id={card.id}
-        {...(!editing && !readOnly ? { ...attributes, ...listeners } : {})}
+        {...(!editing && !readOnly ? pointerDragListeners : {})}
         className={cn(
-          'group/card relative rounded-xl border p-3.5 shadow-sm transition-[border-color,box-shadow,background-color,opacity] duration-150',
+          'group/card relative rounded-xl border p-3.5 shadow-xs transition-[border-color,box-shadow,background-color,opacity] duration-150',
+          // Подсветка после перехода к карточке из палитры команд (атрибут ставит доска)
+          'data-[flash=true]:border-primary data-[flash=true]:ring-2 data-[flash=true]:ring-primary data-[flash=true]:shadow-lg',
           preset.cardClass,
           !editing && !readOnly && 'cursor-default hover:border-primary/40 hover:shadow-md',
           selected && 'ring-2 ring-primary/60 border-primary',
           isDragging && 'z-30 opacity-45 scale-[0.98]',
           isGroupTarget && 'ring-2 ring-primary bg-primary/5',
           isSpotlighted && 'ring-2 ring-primary shadow-md shadow-primary/15',
-          isNew && '[animation:card-enter_0.32s_cubic-bezier(0.22,1,0.36,1)_both,card-glow_1.3s_ease-out_forwards]',
+          isNew && 'animate-[card-enter_0.32s_cubic-bezier(0.22,1,0.36,1)_both,card-glow_1.3s_ease-out_forwards]',
           !isNew && justRevealed && 'animate-card-reveal',
         )}
       >
@@ -334,19 +416,37 @@ export default function CardWidget({
         {/* Header: drag handle + avatar (swaps to selection checkbox on hover/selected without layout shift) + author + quick hover actions */}
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            {!editing && !readOnly && !dragDisabled && (
-              <span
+            {!editing && !readOnly && (
+              <button
+                type="button"
+                ref={setActivatorNodeRef}
                 data-testid="card-drag-handle"
-                aria-hidden="true"
-                title="Перетащить карточку"
-                className="flex h-5 w-4 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/55 transition-colors hover:bg-foreground/10 hover:text-foreground active:cursor-grabbing group-hover/card:text-muted-foreground dark:hover:bg-white/15"
+                {...attributes}
+                onKeyDown={keyboardDragListener}
+                aria-roledescription="перетаскиваемая карточка"
+                aria-label={
+                  dragDisabled
+                    ? (dragDisabledReason ?? DRAG_DISABLED_FALLBACK)
+                    : 'Перетащить карточку'
+                }
+                title={
+                  dragDisabled
+                    ? (dragDisabledReason ?? DRAG_DISABLED_FALLBACK)
+                    : 'Перетащить карточку (с клавиатуры: пробел — взять, стрелки — двигать)'
+                }
+                className={cn(
+                  'flex h-5 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/55 transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
+                  dragDisabled
+                    ? 'cursor-not-allowed opacity-40'
+                    : 'cursor-grab hover:bg-foreground/10 hover:text-foreground active:cursor-grabbing group-hover/card:text-muted-foreground dark:hover:bg-white/15',
+                )}
               >
-                <GripVertical className="h-3.5 w-3.5" />
-              </span>
+                <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
             )}
 
             <div className="group/select relative flex h-5 w-5 shrink-0 items-center justify-center">
-              {anonymous ? (
+              {!showAuthorName ? (
                 <span
                   className={cn(
                     'flex h-5 w-5 items-center justify-center rounded-full bg-muted text-muted-foreground transition-opacity duration-150',
@@ -354,7 +454,7 @@ export default function CardWidget({
                       !readOnly &&
                       (selected
                         ? 'opacity-0'
-                        : 'group-hover/card:opacity-0 group-focus-within/select:opacity-0'),
+                        : 'group-hover/card:opacity-0 group-focus-within/select:opacity-0 [@media(hover:none)]:opacity-0'),
                   )}
                 >
                   <User className="h-3 w-3" />
@@ -362,12 +462,12 @@ export default function CardWidget({
               ) : (
                 <span
                   className={cn(
-                    `flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br text-[9px] font-bold text-white transition-opacity duration-150 ${getUserAvatarGradient(card.author)}`,
+                    `flex h-5 w-5 items-center justify-center rounded-full bg-linear-to-br/srgb text-[9px] font-bold text-white transition-opacity duration-150 ${getUserAvatarGradient(avatarSeed(card.author_id, card.author))}`,
                     onToggleSelect &&
                       !readOnly &&
                       (selected
                         ? 'opacity-0'
-                        : 'group-hover/card:opacity-0 group-focus-within/select:opacity-0'),
+                        : 'group-hover/card:opacity-0 group-focus-within/select:opacity-0 [@media(hover:none)]:opacity-0'),
                   )}
                 >
                   {getUserInitials(card.author)}
@@ -388,23 +488,27 @@ export default function CardWidget({
                   className={cn(
                     'absolute inset-0 flex h-5 w-5 items-center justify-center rounded-full border transition-all duration-150',
                     selected
-                      ? 'border-primary bg-primary text-primary-foreground opacity-100 shadow-xs'
-                      : 'border-muted-foreground/50 bg-background/90 text-transparent opacity-0 group-hover/card:opacity-100 focus:opacity-100 hover:border-primary',
+                      ? 'border-primary bg-primary text-primary-foreground opacity-100'
+                      : // На сенсорном экране наведения нет: кружок выбора виден всегда
+                        'border-muted-foreground/50 bg-background/90 text-transparent opacity-0 group-hover/card:opacity-100 focus:opacity-100 hover:border-primary [@media(hover:none)]:opacity-100',
                   )}
                 >
-                  <Check className="h-2.5 w-2.5 stroke-[3]" />
+                  <Check className="h-2.5 w-2.5 stroke-3" />
                 </button>
               )}
             </div>
 
-            <span className="truncate text-[11px] font-medium text-muted-foreground">
-              {anonymous ? 'Участник' : card.author}
+            <span
+              className="truncate text-[11px] font-medium text-muted-foreground"
+              title={anonymous && own ? 'Анонимный режим: автор виден только вам' : undefined}
+            >
+              {authorLabel}
             </span>
           </div>
 
           {!editing && (
             <div
-              className="flex items-center gap-0.5 opacity-80 sm:opacity-0 transition-opacity sm:group-hover/card:opacity-100 focus-within:opacity-100"
+              className="flex items-center gap-0.5 opacity-80 sm:opacity-0 transition-opacity sm:group-hover/card:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-80"
               onPointerDown={(e) => e.stopPropagation()}
             >
               {onSpotlight && (
@@ -471,10 +575,20 @@ export default function CardWidget({
                     className="w-52"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <DropdownMenuItem onClick={startEdit}>
+                    <DropdownMenuItem
+                      onClick={startEdit}
+                      disabled={!canEditText}
+                      data-testid="card-edit-item"
+                    >
                       <Pencil className="mr-2 h-3.5 w-3.5" />
                       Редактировать
                     </DropdownMenuItem>
+                    {/* Причина — отдельной строкой: у отключённого пункта текст приглушён */}
+                    {!canEditText && (
+                      <p className="px-2.5 pb-1.5 text-[11px] leading-snug text-muted-foreground">
+                        {NOT_YOUR_CARD_HINT}
+                      </p>
+                    )}
                     <DropdownMenuSeparator />
                     <div className="px-2 py-1.5" role="group" aria-label="Цвет стикера">
                       <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -492,11 +606,11 @@ export default function CardWidget({
                               aria-label={`Цвет: ${c.name}`}
                               title={c.name}
                               onClick={() => {
-                                handleQuickColorChange(c.hex)
+                                void handleQuickColorChange(c.hex)
                                 setMenuOpen(false)
                               }}
                               className={cn(
-                                'flex h-5 w-5 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                                'flex h-5 w-5 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
                                 c.swatchClass,
                                 isActive && 'ring-2 ring-primary ring-offset-1 ring-offset-popover',
                               )}
@@ -525,7 +639,7 @@ export default function CardWidget({
                               <DropdownMenuItem
                                 key={targetCol.id}
                                 onClick={() => {
-                                  handleMoveToColumn(targetCol.id)
+                                  void handleMoveToColumn(targetCol.id)
                                   setMenuOpen(false)
                                 }}
                               >
@@ -542,18 +656,25 @@ export default function CardWidget({
                       </>
                     )}
                     {inGroup && onRemoveFromGroup && (
-                      <DropdownMenuItem onClick={onRemoveFromGroup}>
+                      <DropdownMenuItem onClick={() => onRemoveFromGroup(card)}>
                         <Unlink className="mr-2 h-3.5 w-3.5" />
                         Убрать из группы
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuItem
                       onClick={() => setDeleteOpen(true)}
+                      disabled={!canDelete}
+                      data-testid="card-delete-item"
                       className="text-destructive focus:text-destructive"
                     >
                       <Trash2 className="mr-2 h-3.5 w-3.5" />
                       Удалить
                     </DropdownMenuItem>
+                    {!canDelete && (
+                      <p className="px-2.5 pb-1.5 text-[11px] leading-snug text-muted-foreground">
+                        {CANNOT_DELETE_CARD_HINT}
+                      </p>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
@@ -573,7 +694,7 @@ export default function CardWidget({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
-                  handleSave()
+                  void handleSave()
                 } else if (e.key === 'Escape') {
                   setEditing(false)
                 }
@@ -587,8 +708,10 @@ export default function CardWidget({
                     type="button"
                     onClick={() => setEditColor(c.hex)}
                     title={c.name}
+                    aria-label={`Цвет карточки: ${c.name}`}
+                    aria-pressed={editColor.toLowerCase() === c.hex.toLowerCase()}
                     className={cn(
-                      'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110',
+                      'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
                       c.swatchClass,
                       editColor.toLowerCase() === c.hex.toLowerCase() &&
                         'ring-2 ring-primary ring-offset-1 ring-offset-card',
@@ -629,8 +752,8 @@ export default function CardWidget({
           </div>
         ) : (
           <p
-            onDoubleClick={startEdit}
-            className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-foreground"
+            onDoubleClick={canEditText ? startEdit : undefined}
+            className="whitespace-pre-wrap wrap-break-word text-[13.5px] leading-relaxed text-foreground"
           >
             <RichCardText text={card.text} />
           </p>
@@ -745,7 +868,11 @@ export default function CardWidget({
                   </TooltipTrigger>
                   <TooltipContent>
                     {likes.length > 0 && (
-                      <div>{anonymous ? `${likes.length} голосов (анонимно)` : likes.join(', ')}</div>
+                      <div>
+                        {anonymous
+                          ? `${formatVotesCount(likes.length)} (анонимно)`
+                          : formatVoters(summarizeVoters(likes, voterNames, myId))}
+                      </div>
                     )}
                     {voteBlockedReason && (
                       <div className={likes.length > 0 ? 'mt-1 opacity-80' : undefined}>
@@ -782,3 +909,9 @@ export default function CardWidget({
     </>
   )
 }
+
+/**
+ * Карточка перерисовывается, только когда меняется она сама или то, что на ней показано:
+ * лайк на соседней карточке её не трогает.
+ */
+export default memo(CardWidget, sameExceptVoteCount)

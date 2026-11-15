@@ -1,8 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Dashboard from '../../components/Dashboard'
-import type { DashboardActionItem } from '../../types'
+import { useAppStore } from '../../store'
+import { showToast } from '../../store/toastStore'
+import type { DashboardActionItem, WsMessage } from '../../types'
+import type { HealthTrendPoint } from '../../types/health'
+import type { TeamTheme } from '../../types/themes'
 
 const mockPush = vi.fn()
 vi.mock('next/navigation', () => ({
@@ -87,21 +91,83 @@ const mockGetWorkspaceInsights = vi.fn(() =>
   }),
 )
 
+// Признак ai_enabled приходит из /workspaces/me: сверка сессии кладёт его в стор
+const serverState = { aiEnabled: true }
+const mockGetBoard = vi.fn()
+const mockGetBoardSummary = vi.fn()
+const mockLogoutWorkspace = vi.fn(() => Promise.resolve())
+const mockGetTeamThemes = vi.fn((): Promise<TeamTheme[]> => Promise.resolve([]))
+const mockGetHealthTrends = vi.fn((): Promise<HealthTrendPoint[]> => Promise.resolve([]))
+
 vi.mock('../../api', () => ({
   getBoards: vi.fn(() => Promise.resolve(mockBoards)),
   getAllActionItems: vi.fn(() => Promise.resolve(mockItems)),
   getActionItemTrends: vi.fn(() => Promise.resolve([])),
   getMoodTrends: vi.fn(() => Promise.resolve([])),
   getWorkspaceInsights: () => mockGetWorkspaceInsights(),
-  updateActionItem: vi.fn((_id: string, data: Record<string, unknown>) =>
-    Promise.resolve({ ...mockItems[0], ...data }),
+  updateActionItem: vi.fn((id: string, data: Record<string, unknown>) =>
+    Promise.resolve({ ...(mockItems.find((i) => i.id === id) ?? mockItems[0]), ...data }),
   ),
   deleteActionItem: vi.fn(() => Promise.resolve()),
+  refreshWorkspaceSession: vi.fn(() => {
+    useAppStore.getState().setAiEnabled(serverState.aiEnabled)
+    return Promise.resolve({ ai_enabled: serverState.aiEnabled })
+  }),
+  getBoard: (...args: unknown[]) => mockGetBoard(...args),
+  getBoardSummary: (...args: unknown[]) => mockGetBoardSummary(...args),
+  regenerateBoardSummary: vi.fn(),
+  logoutWorkspace: () => mockLogoutWorkspace(),
+  renameParticipant: vi.fn(),
+  loginToWorkspace: vi.fn(),
 }))
+
+vi.mock('../../api/themes', () => ({
+  getTeamThemes: () => mockGetTeamThemes(),
+}))
+
+vi.mock('../../api/health', () => ({
+  getHealthTrends: () => mockGetHealthTrends(),
+  getHealthQuestions: vi.fn(() =>
+    Promise.resolve([
+      { key: 'pace', title: 'Темп', hint: 'Успеваем без переработок' },
+      { key: 'quality', title: 'Качество', hint: 'Довольны тем, что выпускаем' },
+    ]),
+  ),
+}))
+
+vi.mock('../../store/toastStore', () => ({
+  showToast: vi.fn(),
+}))
+
+// Сокет команды: запоминаем обработчик, чтобы присылать события списка досок
+const ws = { handler: null as ((msg: WsMessage) => void) | null }
+vi.mock('../../hooks/useWebSocket', () => ({
+  useWebSocket: (_channel: string, onMessage: (msg: WsMessage) => void) => {
+    ws.handler = onMessage
+    return { sendMessage: vi.fn(), connected: true }
+  },
+}))
+
+const fullBoard = (id: string, name: string) => ({
+  id,
+  name,
+  slug: id,
+  max_votes: 5,
+  created_at: '2026-01-10T10:00:00Z',
+  columns: [],
+})
 
 describe('Dashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    serverState.aiEnabled = true
+    useAppStore.setState({
+      username: 'Алиса',
+      currentBoardId: 'b1',
+      workspace: { workspaceId: 'w-1', workspaceSlug: 'team-a', workspaceName: 'Team A' },
+      participant: { id: 'p-1', name: 'Алиса' },
+      aiEnabled: null,
+    })
   })
 
   it('renders KPI header, AI insights card, and tabs after loading', async () => {
@@ -231,5 +297,346 @@ describe('Dashboard', () => {
 
     await user.click(screen.getByRole('button', { name: /К доске/i }))
     expect(mockPush).toHaveBeenCalledWith('/')
+  })
+})
+
+const THEMES: TeamTheme[] = [
+  {
+    id: 't1',
+    name: 'Долгое ревью',
+    description: 'Пул-реквесты ждут ревью по несколько дней',
+    boards_count: 3,
+    streak: 3,
+    last_board: { id: 'b2', name: 'Sprint 2', slug: 'sprint-2', created_at: '2026-02-10T10:00:00Z' },
+  },
+]
+
+const resetSession = () => {
+  vi.clearAllMocks()
+  serverState.aiEnabled = true
+  useAppStore.setState({
+    username: 'Алиса',
+    currentBoardId: 'b1',
+    workspace: { workspaceId: 'w-1', workspaceSlug: 'team-a', workspaceName: 'Team A' },
+    participant: { id: 'p-1', name: 'Алиса' },
+    aiEnabled: null,
+  })
+}
+
+describe('Dashboard — шапка', () => {
+  beforeEach(() => {
+    resetSession()
+    // Панель досок (ScrollArea) и профиль (Switch) измеряют себя через ResizeObserver,
+    // которого нет в jsdom
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('кнопка «Новая доска» доступна по названию и без подписи на узком экране', async () => {
+    render(<Dashboard />)
+    const button = await screen.findByTestId('dashboard-new-board-btn')
+    expect(button).toHaveAccessibleName('Новая доска')
+  })
+
+  it('список досок открывается из шапки и ведёт на выбранную доску', async () => {
+    const user = userEvent.setup()
+    render(<Dashboard />)
+
+    await user.click(await screen.findByRole('button', { name: 'Список досок' }))
+    const panel = await screen.findByRole('dialog', { name: 'Доски команды' })
+    expect(within(panel).getByText('Sprint 1')).toBeInTheDocument()
+
+    await user.click(within(panel).getByText('Sprint 2'))
+    expect(mockPush).toHaveBeenCalledWith('/board/sprint-2')
+  })
+
+  it('профиль открывается из шапки; «Выйти» завершает сессию на сервере и показывает вход', async () => {
+    const user = userEvent.setup()
+    render(<Dashboard />)
+
+    await user.click(await screen.findByTestId('user-settings-btn'))
+    expect(await screen.findByText('Профиль и оформление')).toBeInTheDocument()
+    expect(screen.getByLabelText('Имя участника')).toHaveValue('Алиса')
+
+    await user.click(screen.getByTestId('logout-btn'))
+
+    await waitFor(() => expect(mockLogoutWorkspace).toHaveBeenCalledTimes(1))
+    expect(await screen.findByRole('button', { name: /войти на доску/i })).toBeInTheDocument()
+    expect(useAppStore.getState().workspace).toBeNull()
+  })
+})
+
+describe('Dashboard — темы команды, AI и health check', () => {
+  beforeEach(resetSession)
+
+  it('блок «Повторяющиеся темы» берёт темы из списка команды, а не из инсайтов', async () => {
+    mockGetTeamThemes.mockResolvedValueOnce(THEMES)
+    const user = userEvent.setup()
+    render(<Dashboard />)
+
+    const card = await screen.findByTestId('team-themes-card')
+    expect(within(card).getByText('Долгое ревью')).toBeInTheDocument()
+    expect(within(card).getByText('3-й спринт подряд')).toBeInTheDocument()
+    expect(within(card).getByText(/на 3 досках/)).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: /Sprint 2/ })).toHaveAttribute(
+      'href',
+      '/board/sprint-2',
+    )
+
+    // Инсайты присылают свои «темы» — на дашборде они темами не становятся
+    await user.click(screen.getByRole('button', { name: /Собрать инсайты/i }))
+    await screen.findByText('Команда стабильно закрывает задачи.')
+    expect(screen.queryByText('CI/CD')).not.toBeInTheDocument()
+    expect(within(card).getAllByTestId('team-theme')).toHaveLength(1)
+  })
+
+  it('темы не загрузились — блок говорит об этом и предлагает повторить', async () => {
+    mockGetTeamThemes.mockRejectedValueOnce({ response: { status: 500, data: {} } })
+    const user = userEvent.setup()
+    render(<Dashboard />)
+
+    const card = await screen.findByTestId('team-themes-card')
+    expect(within(card).getByText('Не удалось загрузить темы команды')).toBeInTheDocument()
+
+    mockGetTeamThemes.mockResolvedValueOnce(THEMES)
+    await user.click(within(card).getByRole('button', { name: 'Повторить' }))
+    expect(await screen.findByText('Долгое ревью')).toBeInTheDocument()
+  })
+
+  it('без AI: блок анализа назван сводкой, а пустые темы объясняют причину', async () => {
+    serverState.aiEnabled = false
+    render(<Dashboard />)
+
+    expect(await screen.findByText('Сводка по спринтам')).toBeInTheDocument()
+    expect(screen.queryByText('Кросс-спринт AI-аналитика')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Собрать сводку' })).toBeInTheDocument()
+    expect(screen.getByTestId('team-themes-ai-off')).toBeInTheDocument()
+  })
+
+  it('health check: без ответов — объяснение, откуда возьмётся динамика', async () => {
+    render(<Dashboard />)
+    const card = await screen.findByTestId('health-trends-card')
+    expect(card).toHaveTextContent('Health check команды')
+    expect(card).toHaveTextContent('Ответов пока нет')
+  })
+
+  it('health check: с ответами — ряд на каждый вопрос и оценка встречи', async () => {
+    mockGetHealthTrends.mockResolvedValueOnce([
+      {
+        board_id: 'b1',
+        board_name: 'Sprint 1',
+        created_at: '2026-01-10T10:00:00Z',
+        averages: { pace: 1.5, quality: 3 },
+        roti_average: 4,
+      },
+      {
+        board_id: 'b2',
+        board_name: 'Sprint 2',
+        created_at: '2026-02-10T10:00:00Z',
+        averages: { pace: 2.5, quality: 3 },
+        roti_average: 4.5,
+      },
+    ])
+    render(<Dashboard />)
+
+    // График подгружается отдельным чанком
+    const pace = await screen.findByTestId('health-trend-row-pace', undefined, { timeout: 5000 })
+    expect(pace).toHaveTextContent('Темп')
+    expect(pace).toHaveTextContent('2.5')
+    expect(screen.getByTestId('health-trend-row-quality')).toHaveTextContent('Качество')
+    expect(screen.getByTestId('health-trend-row-roti')).toHaveTextContent('4.5')
+    expect(screen.getByTestId('health-trends-card')).not.toHaveTextContent('Ответов пока нет')
+  })
+})
+
+describe('Dashboard — значок «AI-итоги»', () => {
+  beforeEach(resetSession)
+
+  const openSummary = async () => {
+    const user = userEvent.setup()
+    render(<Dashboard />)
+    await user.click(await screen.findByRole('tab', { name: /Доски/i }))
+    await user.click(screen.getByRole('button', { name: 'AI-итоги доски «Sprint 1»' }))
+    return user
+  }
+
+  it('доска не загрузилась — понятное сообщение вместо тишины', async () => {
+    mockGetBoard.mockRejectedValueOnce({
+      response: { status: 404, data: { detail: 'Доска не найдена' } },
+    })
+    await openSummary()
+
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        'Не удалось открыть итоги доски «Sprint 1». Доска не найдена',
+        'error',
+      ),
+    )
+    expect(screen.queryByText('Итоги ретроспективы')).not.toBeInTheDocument()
+    expect(mockGetBoardSummary).not.toHaveBeenCalled()
+    // Кнопка снова доступна — можно повторить
+    expect(screen.getByRole('button', { name: 'AI-итоги доски «Sprint 1»' })).not.toBeDisabled()
+  })
+
+  it('нет ответа сервера — сообщение с подсказкой, что делать', async () => {
+    mockGetBoard.mockRejectedValueOnce(new Error('Network Error'))
+    await openSummary()
+
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        'Не удалось открыть итоги доски «Sprint 1». Проверьте соединение и попробуйте ещё раз.',
+        'error',
+      ),
+    )
+  })
+
+  it('итогов у доски нет — открывается окно итогов с объяснением, значок у доски пропадает', async () => {
+    mockGetBoard.mockResolvedValueOnce(fullBoard('b1', 'Sprint 1'))
+    mockGetBoardSummary.mockResolvedValueOnce(null)
+    await openSummary()
+
+    // Что именно написано в пустом окне, решает SummaryModal; здесь важно, что оно открыто
+    // для нужной доски и что это не ошибка
+    const dialog = await screen.findByRole('dialog', { name: /Итоги ретроспективы/ })
+    expect(dialog).toHaveTextContent('Sprint 1')
+    expect(dialog).not.toHaveTextContent('Не удалось загрузить итоги доски')
+    expect(showToast).not.toHaveBeenCalled()
+    expect(
+      screen.queryByRole('button', { name: 'AI-итоги доски «Sprint 1»', hidden: true }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('итоги не загрузились — ошибка показана в окне', async () => {
+    mockGetBoard.mockResolvedValueOnce(fullBoard('b1', 'Sprint 1'))
+    mockGetBoardSummary.mockRejectedValueOnce({ response: { status: 500, data: {} } })
+    await openSummary()
+
+    expect(await screen.findByText('Не удалось загрузить итоги доски')).toBeInTheDocument()
+  })
+
+  it('итоги есть — в окне видны темы с серией «N-й спринт подряд»', async () => {
+    mockGetBoard.mockResolvedValueOnce(fullBoard('b1', 'Sprint 1'))
+    mockGetBoardSummary.mockResolvedValueOnce({
+      id: 's1',
+      board_id: 'b1',
+      session_id: 1,
+      summary_text: 'Обсудили ревью.',
+      key_themes: ['Долгое ревью', 'Новая тема'],
+      recommendations: [],
+      created_at: '2026-01-10T12:00:00Z',
+      theme_stats: [
+        { id: 't1', name: 'Долгое ревью', description: '', boards_count: 3, streak: 3 },
+        { id: 't2', name: 'Новая тема', description: '', boards_count: 1, streak: 1 },
+      ],
+    })
+    await openSummary()
+
+    expect(await screen.findByText('Обсудили ревью.')).toBeInTheDocument()
+    const badges = screen.getAllByTestId('theme-streak-badge')
+    expect(badges).toHaveLength(1)
+    expect(badges[0]).toHaveTextContent('3-й спринт подряд')
+  })
+})
+
+describe('Dashboard — одна реальная задача считается один раз', () => {
+  beforeEach(resetSession)
+
+  it('перенесённый оригинал не показывается и не попадает в счётчики', async () => {
+    const apiMod = await import('../../api')
+    // Сервер по умолчанию прячет перенесённые оригиналы; проверяем, что дашборд
+    // не посчитает дубль, даже если оригинал придёт в ответе
+    const withCarried: Array<DashboardActionItem & { superseded_by_id: string | null }> = [
+      {
+        ...mockItems[0],
+        id: 'orig',
+        title: 'Починить CI',
+        board_id: 'b1',
+        board_name: 'Sprint 1',
+        superseded_by_id: 'copy',
+      },
+      {
+        ...mockItems[0],
+        id: 'copy',
+        title: 'Починить CI',
+        board_id: 'b2',
+        board_name: 'Sprint 2',
+        superseded_by_id: null,
+      },
+    ]
+    vi.mocked(apiMod.getAllActionItems).mockResolvedValueOnce(withCarried)
+
+    render(<Dashboard />)
+
+    expect(await screen.findByRole('tab', { name: 'Задачи (1)' })).toBeInTheDocument()
+    expect(screen.getAllByText('Починить CI')).toHaveLength(1)
+    expect(screen.getByTestId('kpi-open-tasks')).toHaveTextContent(/^1$/)
+  })
+
+  it('карточки досок: «перенесены», «нет задач» и живой счётчик открытых', async () => {
+    const user = userEvent.setup()
+    const apiMod = await import('../../api')
+    vi.mocked(apiMod.getBoards).mockResolvedValueOnce([
+      // Все задачи первой доски перенесены: живых записей на ней нет
+      { ...mockBoards[0], action_items_total: 2, action_items_open: 0 },
+      { ...mockBoards[1], action_items_total: 1, action_items_open: 1 },
+      {
+        ...mockBoards[1],
+        id: 'b3',
+        name: 'Sprint 3',
+        slug: 'sprint-3',
+        action_items_total: 0,
+        action_items_open: 0,
+      },
+    ])
+    vi.mocked(apiMod.getAllActionItems).mockResolvedValueOnce([
+      { ...mockItems[2], id: 'only', status: 'open' },
+    ])
+
+    render(<Dashboard />)
+    await user.click(await screen.findByRole('tab', { name: /Доски/i }))
+
+    const card = (name: string) => screen.getByText(name).closest('.rounded-xl') as HTMLElement
+    expect(card('Sprint 1')).toHaveTextContent('Задачи перенесены')
+    expect(card('Sprint 2')).toHaveTextContent('1 открыт.')
+    expect(card('Sprint 3')).toHaveTextContent('Нет задач')
+
+    // Закрываем задачу на вкладке задач — счётчик на карточке доски меняется сразу
+    await user.click(screen.getByRole('tab', { name: /Задачи/i }))
+    await user.click(screen.getByTitle('Открыто → В работе'))
+    await user.click(await screen.findByTitle('В работе → Выполнено'))
+    await user.click(screen.getByRole('tab', { name: /Доски/i }))
+    await waitFor(() => expect(card('Sprint 2')).toHaveTextContent('Все задачи закрыты'))
+  })
+
+  it('«Открытых задач» — все незакрытые, как на карточках досок; задачи в работе названы отдельно', async () => {
+    render(<Dashboard />)
+    // В исходных данных: одна открытая, одна в работе, одна выполненная
+    expect(await screen.findByTestId('kpi-open-tasks')).toHaveTextContent(/^2$/)
+    expect(screen.getByText('в работе: 1')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Задачи (3)' })).toBeInTheDocument()
+  })
+
+  it('удаление доски у коллеги убирает и её задачи', async () => {
+    render(<Dashboard />)
+    expect(await screen.findByText('Fix CI')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Задачи (3)' })).toBeInTheDocument()
+
+    act(() => {
+      ws.handler?.({ event: 'board_deleted', data: { id: 'b1' } })
+    })
+
+    expect(screen.queryByText('Fix CI')).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Задачи (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Доски (1)' })).toBeInTheDocument()
   })
 })

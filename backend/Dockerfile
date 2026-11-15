@@ -6,7 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
+# requirements.txt — полный lock с хешами (make lock): ставится ровно то, что проверено
+RUN pip install --no-cache-dir --root-user-action=ignore --require-hashes -r requirements.txt
 
 RUN groupadd --gid 1000 retro \
     && useradd --uid 1000 --gid 1000 --no-create-home --shell /usr/sbin/nologin retro

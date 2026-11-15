@@ -49,7 +49,11 @@ interface BulkActionsBarProps {
   onBulkMove: (columnId: string) => Promise<void>
   onBulkCreateActionItem: () => Promise<void>
   onBulkDelete: () => Promise<void>
+  /** Можно ли удалить выбранное: чужие карточки удаляет только модератор доски. */
+  canDelete?: boolean
   onMergeCards: (targetText: string) => Promise<void>
+  /** Почему выбранное нельзя объединить (чужие карточки, скрытый сбор); пусто — можно. */
+  mergeBlockedReason?: string | null
 }
 
 export default function BulkActionsBar({
@@ -62,7 +66,9 @@ export default function BulkActionsBar({
   onBulkMove,
   onBulkCreateActionItem,
   onBulkDelete,
+  canDelete = true,
   onMergeCards,
+  mergeBlockedReason = null,
 }: BulkActionsBarProps) {
   const [groupTitle, setGroupTitle] = useState('')
   const [groupOpen, setGroupOpen] = useState(false)
@@ -154,10 +160,11 @@ export default function BulkActionsBar({
               type="button"
               size="sm"
               variant="outline"
-              disabled={busy || count < 2}
+              disabled={busy || count < 2 || Boolean(mergeBlockedReason)}
               onClick={openMergeModal}
-              title="Объединить дубли в одну карточку с сохранением голосов"
+              title={mergeBlockedReason || 'Объединить дубли в одну карточку с сохранением голосов'}
               className="h-8 gap-1.5 text-xs"
+              data-testid="bulk-merge-btn"
             >
               <GitMerge className="h-3.5 w-3.5" />
               Объединить
@@ -196,12 +203,13 @@ export default function BulkActionsBar({
                       key={c.id}
                       type="button"
                       title={c.name}
+                      aria-label={`Цвет карточек: ${c.name}`}
                       onClick={async () => {
                         await onBulkColor(c.hex)
                         setColorOpen(false)
                       }}
                       className={cn(
-                        'flex h-6 w-6 items-center justify-center rounded-full border transition-transform hover:scale-110',
+                        'flex h-6 w-6 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
                         c.swatchClass,
                       )}
                     >
@@ -259,8 +267,14 @@ export default function BulkActionsBar({
               type="button"
               size="sm"
               variant="ghost"
-              disabled={busy}
+              disabled={busy || !canDelete}
               onClick={() => setDeleteConfirmOpen(true)}
+              title={
+                canDelete
+                  ? undefined
+                  : 'Среди выбранных есть чужие карточки: удалить их может создатель доски или ведущий'
+              }
+              data-testid="bulk-delete-btn"
               className="h-8 gap-1 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
             >
               <Trash2 className="h-3.5 w-3.5" />

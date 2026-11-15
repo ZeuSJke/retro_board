@@ -44,8 +44,12 @@ export function formatBoardMarkdown(
 
     const grouped = new Map<string, typeof col.cards>()
     const ungrouped: typeof col.cards = []
+    // Чужие карточки до раскрытия сервер присылает без текста и автора:
+    // в экспорт попадает только их количество
+    const visibleCards = col.cards.filter((c) => !c.masked)
+    const maskedCount = col.cards.length - visibleCards.length
 
-    for (const card of col.cards) {
+    for (const card of visibleCards) {
       if (card.group_id && groupMap.has(card.group_id)) {
         const list = grouped.get(card.group_id) || []
         list.push(card)
@@ -71,15 +75,21 @@ export function formatBoardMarkdown(
       const author = board.anonymous_votes ? '' : ` — *${c.author}*`
       lines.push(`- ${c.text}${author}${votes}`)
     }
+    if (maskedCount > 0) {
+      lines.push(`- _Скрыто до раскрытия карточек других участников: ${maskedCount}_`)
+    }
     lines.push('')
   }
 
   if (actionItems.length > 0) {
-    lines.push(`## Задачи по итогам (${actionItems.length})`)
+    lines.push(`## Задачи (${actionItems.length})`)
     for (const item of actionItems) {
       const title = item.title || item.text
       const assignee = item.assignee ? ` (@${item.assignee})` : ''
-      const status = STATUS_LABELS[item.status] || item.status
+      // Перенесённая задача живёт на другой доске: здесь она в истории, а не «открыта»
+      const status = item.superseded_by_id
+        ? 'Перенесена на другую доску'
+        : STATUS_LABELS[item.status] || item.status
       lines.push(`- [${item.status === 'done' ? 'x' : ' '}] **${title}**${assignee} — ${status}`)
     }
     lines.push('')

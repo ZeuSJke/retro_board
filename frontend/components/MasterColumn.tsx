@@ -10,16 +10,19 @@ import {
   ChevronDown,
   Circle,
   Clock,
+  CornerUpRight,
   History,
   ListTodo,
   Loader2,
   Plus,
+  RefreshCw,
   Sparkles,
   Trash2,
   UserPlus,
   X,
 } from 'lucide-react'
 import {
+  carryForward,
   createActionItem,
   deleteActionItem,
   getAllActionItems,
@@ -27,8 +30,9 @@ import {
   updateActionItem,
 } from '../api'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
-import { getApiErrorMessage } from '../utils/apiError'
+import { getApiErrorMessage, getApiErrorStatus } from '../utils/apiError'
 import type {
   ActionItem,
   ActionItemStatus,
@@ -36,7 +40,7 @@ import type {
   DashboardActionItem,
 } from '../types'
 import { RichCardText } from './RichCardText'
-import SuggestActionItemsDialog from './SuggestActionItemsDialog'
+import SuggestActionItemsDialog, { type SuggestFailure } from './SuggestActionItemsDialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -60,9 +64,28 @@ interface MasterColumnProps {
   participants?: string[]
   onCreated?: (item: ActionItem) => void
   onUpdated: (item: ActionItem) => void
+  /** Вернуть задачу, которую сервер не удалил. Без него возврат идёт через `onCreated`. */
+  onRestored?: (item: ActionItem) => void
   onDeleted: (id: string) => void
   dropDisabled?: boolean
+  /**
+   * Доска заблокирована: задачи нельзя создавать, править и удалять. Статус при этом
+   * отмечать можно — работа над задачами идёт и после ретро (так же ведут себя API
+   * и панель управления).
+   */
   readOnly?: boolean
+  /** Сервер сейчас скрывает чужие карточки: AI-подбор задач недоступен до раскрытия. */
+  cardsHidden?: boolean
+}
+
+/** Открытые задачи других досок. Перенесённые оригиналы сюда не попадают: их представляют копии. */
+export function selectPreviousOpenItems(
+  all: DashboardActionItem[],
+  boardId: string,
+): DashboardActionItem[] {
+  return all.filter(
+    (item) => item.board_id !== boardId && item.status !== 'done' && !item.superseded_by_id,
+  )
 }
 
 const NEXT_STATUS: Record<ActionItemStatus, ActionItemStatus> = {
@@ -98,10 +121,13 @@ export default function MasterColumn({
   participants = [],
   onCreated,
   onUpdated,
+  onRestored,
   onDeleted,
   dropDisabled = false,
   readOnly = false,
+  cardsHidden = false,
 }: MasterColumnProps) {
+  const aiEnabled = useAppStore((s) => s.aiEnabled)
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editingDescId, setEditingDescId] = useState<string | null>(null)
@@ -120,27 +146,32 @@ export default function MasterColumn({
   const [prevItems, setPrevItems] = useState<DashboardActionItem[]>([])
   const [loadingPrev, setLoadingPrev] = useState(false)
   const [prevLoaded, setPrevLoaded] = useState(false)
+  // Ошибка загрузки — отдельное состояние: пустой список означал бы «всё закрыто»
+  const [prevError, setPrevError] = useState<string | null>(null)
+  const [pullingPrevId, setPullingPrevId] = useState<string | null>(null)
 
   const [suggestDialogOpen, setSuggestDialogOpen] = useState(false)
   const [suggestLoading, setSuggestLoading] = useState(false)
   const [suggestCreating, setSuggestCreating] = useState(false)
   const [suggestions, setSuggestions] = useState<ActionItemSuggestion[]>([])
+  const [suggestFailure, setSuggestFailure] = useState<SuggestFailure | null>(null)
 
   useEffect(() => {
     setPrevLoaded(false)
     setPrevItems([])
+    setPrevError(null)
   }, [boardId])
 
   const loadPreviousOpenItems = async () => {
     if (loadingPrev) return
     setLoadingPrev(true)
+    setPrevError(null)
     try {
       const all = await getAllActionItems()
-      const filtered = all.filter((i) => i.board_id !== boardId && i.status !== 'done')
-      setPrevItems(filtered)
+      setPrevItems(selectPreviousOpenItems(all, boardId))
       setPrevLoaded(true)
-    } catch {
-      /* silent */
+    } catch (err) {
+      setPrevError(getApiErrorMessage(err, 'Проверьте соединение и попробуйте ещё раз.'))
     } finally {
       setLoadingPrev(false)
     }
@@ -164,32 +195,49 @@ export default function MasterColumn({
     }
   }
 
+  // Перенос, а не копия: сервер создаёт задачу на этой доске и помечает оригинал перенесённым,
+  // так что одна реальная задача остаётся одной открытой записью. Повторный перенос ничего не создаёт.
   const handlePullPrevItemToBoard = async (item: DashboardActionItem) => {
-    if (readOnly) return
+    if (readOnly || pullingPrevId) return
+    setPullingPrevId(item.id)
     try {
-      const created = await createActionItem({
-        board_id: boardId,
-        title: item.title || undefined,
-        text: item.text,
-        assignee: item.assignee || undefined,
+      const created = await carryForward({
+        source_board_id: item.board_id,
+        target_board_id: boardId,
+        item_ids: [item.id],
       })
-      onCreated?.(created)
-      showToast('Задача добавлена на текущую доску', 'success')
+      created.forEach((copy) => onCreated?.(copy))
+      setPrevItems((prev) => prev.filter((x) => x.id !== item.id))
+      showToast(
+        created.length > 0
+          ? 'Задача перенесена на эту доску'
+          : 'Эту задачу уже перенесли или закрыли — список обновлён',
+        created.length > 0 ? 'success' : 'info',
+      )
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Не удалось перенести задачу'), 'error')
+    } finally {
+      setPullingPrevId(null)
     }
   }
 
   const handleOpenAiSuggest = async () => {
-    if (readOnly) return
+    if (readOnly || cardsHidden) return
     setSuggestDialogOpen(true)
     setSuggestLoading(true)
     setSuggestions([])
+    setSuggestFailure(null)
     try {
       const res = await suggestActionItems(boardId)
       setSuggestions(res.suggestions)
     } catch (err) {
-      showToast(getApiErrorMessage(err, 'Не удалось получить предложения AI'), 'error')
+      // Ошибка — не «мало данных»: окно остаётся открытым и называет причину.
+      // 503 с отключённым AI сервер отдаёт и до обращения к модели («AI сервис не настроен»).
+      const message = getApiErrorMessage(err, 'Не удалось получить предложения AI')
+      const notConfigured =
+        useAppStore.getState().aiEnabled === false ||
+        (getApiErrorStatus(err) === 503 && /не настроен/i.test(message))
+      setSuggestFailure({ kind: notConfigured ? 'not_configured' : 'error', message })
     } finally {
       setSuggestLoading(false)
     }
@@ -228,8 +276,9 @@ export default function MasterColumn({
 
   const findItem = (id: string) => actionItems.find((i) => i.id === id)
 
+  // Статус отмечают и на заблокированной доске. Перенесённую задачу ведут там, куда её перенесли
   const handleCycleStatus = async (item: ActionItem) => {
-    if (readOnly) return
+    if (item.superseded_by_id) return
     const next = NEXT_STATUS[item.status]
     onUpdated({ ...item, status: next })
     try {
@@ -293,6 +342,11 @@ export default function MasterColumn({
     try {
       await deleteActionItem(target.id)
     } catch (err) {
+      // 404 — задачу уже удалил коллега: возвращать нечего, и это не ошибка для пользователя
+      if (getApiErrorStatus(err) === 404) return
+      // Сервер задачу не удалил: возвращаем её в список. Это именно возврат, а не правка:
+      // правка задачу, которой в списке нет, не добавляет.
+      ;(onRestored ?? onCreated)?.(target)
       showToast(getApiErrorMessage(err, 'Не удалось удалить задачу'), 'error')
     }
   }
@@ -323,13 +377,13 @@ export default function MasterColumn({
 
   return (
     <div data-testid="master-column" className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+      {/* Header. До 1024 px панель живёт в выезжающей шторке: справа оставлено место под её крестик */}
+      <div className="flex items-center justify-between gap-2 border-b py-3 pl-4 pr-12 lg:pr-4">
         <div className="flex items-center gap-2">
           <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
             <ListTodo className="h-3.5 w-3.5" />
           </span>
-          <h3 className="text-sm font-semibold">Итоги</h3>
+          <h3 className="text-sm font-semibold">Задачи</h3>
           <Badge variant="secondary" className="h-5 px-2 text-xs">
             {actionItems.length}
           </Badge>
@@ -337,18 +391,26 @@ export default function MasterColumn({
 
         {!readOnly && (
           <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1 px-2 text-xs"
-              onClick={handleOpenAiSuggest}
-              title="AI: предложить задачи на основе карточек"
-              data-testid="ai-suggest-action-items-btn"
-            >
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              <span className="hidden sm:inline">AI</span>
-            </Button>
+            {/* Без настроенного AI кнопки нет; пока карточки скрыты — отключена с пояснением */}
+            {aiEnabled !== false && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs"
+                onClick={handleOpenAiSuggest}
+                disabled={cardsHidden}
+                title={
+                  cardsHidden
+                    ? 'AI-подбор задач станет доступен после раскрытия карточек'
+                    : 'AI: предложить задачи на основе карточек'
+                }
+                data-testid="ai-suggest-action-items-btn"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                <span className="hidden sm:inline">AI</span>
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -402,6 +464,29 @@ export default function MasterColumn({
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     Загрузка задач...
                   </div>
+                ) : prevError ? (
+                  <div
+                    role="alert"
+                    data-testid="prev-items-error"
+                    className="flex flex-col items-center gap-2 py-3 text-center text-[11px] text-muted-foreground"
+                  >
+                    <span>
+                      <span className="font-medium text-foreground">
+                        Не удалось загрузить задачи прошлых ретро.
+                      </span>{' '}
+                      {prevError}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-6 gap-1 px-2 text-[11px]"
+                      onClick={() => void loadPreviousOpenItems()}
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      Повторить
+                    </Button>
+                  </div>
                 ) : prevItems.length === 0 ? (
                   <div className="py-3 text-center text-[11px] text-muted-foreground">
                     Все задачи с прошлых ретро закрыты.
@@ -410,7 +495,7 @@ export default function MasterColumn({
                   prevItems.map((prevItem) => (
                     <div
                       key={prevItem.id}
-                      className="rounded-lg border bg-card p-2 text-xs shadow-2xs"
+                      className="rounded-lg border bg-card p-2 text-xs"
                     >
                       <div className="mb-1 flex items-center justify-between gap-1.5 text-[10px] text-muted-foreground">
                         <span className="truncate font-medium">{prevItem.board_name}</span>
@@ -441,10 +526,15 @@ export default function MasterColumn({
                             size="sm"
                             variant="outline"
                             className="h-6 gap-1 px-2 text-[11px]"
+                            disabled={pullingPrevId !== null}
                             onClick={() => handlePullPrevItemToBoard(prevItem)}
-                            title="Перенести задачу на текущую доску"
+                            title="Перенести задачу на эту доску: на прежней она будет помечена перенесённой"
                           >
-                            <ArrowDownToLine className="h-3 w-3" />
+                            {pullingPrevId === prevItem.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <ArrowDownToLine className="h-3 w-3" />
+                            )}
                             На доску
                           </Button>
                         )}
@@ -523,14 +613,21 @@ export default function MasterColumn({
             <ListTodo className="mb-2 h-6 w-6 opacity-40" />
             <p className="font-medium text-foreground/80">Пока нет задач</p>
             <p className="mt-1">
-              Перетащите карточку сюда или нажмите кнопку задачи на любой карточке.
+              {readOnly
+                ? 'Доска заблокирована: новые задачи на неё не добавляются.'
+                : cardsHidden
+                  ? 'Пока карточки скрыты, задачу можно добавить только вручную — кнопкой «Добавить».'
+                  : 'Перетащите карточку сюда или нажмите кнопку задачи на любой карточке.'}
             </p>
           </div>
         ) : (
           <AnimatePresence initial={false}>
             {actionItems.map((item) => {
               const meta = STATUS_META[item.status] || STATUS_META.open
-              const StatusIcon = meta.Icon
+              // Задачу перенесли на другую доску: здесь она осталась в истории, а открытой
+              // считается её копия — статус меняют там
+              const carried = Boolean(item.superseded_by_id)
+              const StatusIcon = carried ? CornerUpRight : meta.Icon
               const isDone = item.status === 'done'
 
               return (
@@ -541,20 +638,31 @@ export default function MasterColumn({
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.94, height: 0, marginTop: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
                   transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  data-testid="action-item"
                   className={cn(
-                    'group/ai overflow-hidden rounded-xl border bg-card p-3 shadow-sm transition-colors hover:border-border',
-                    isDone && 'opacity-70',
+                    'group/ai overflow-hidden rounded-xl border bg-card p-3 shadow-xs transition-colors hover:border-border',
+                    (isDone || carried) && 'opacity-70',
                   )}
                 >
                   <div className="flex items-start gap-2">
                     <button
                       type="button"
-                      disabled={readOnly}
+                      disabled={carried}
                       onClick={() => handleCycleStatus(item)}
-                      title={`Статус: ${meta.label} (нажмите чтобы сменить)`}
+                      title={
+                        carried
+                          ? 'Задача перенесена на другую доску — статус меняют там'
+                          : `Статус: ${meta.label} — нажмите, чтобы сменить`
+                      }
+                      aria-label={
+                        carried
+                          ? 'Задача перенесена на другую доску'
+                          : `Статус: ${meta.label}. Сменить`
+                      }
+                      data-testid="action-item-status"
                       className={cn(
-                        'mt-0.5 shrink-0 transition-transform hover:scale-110 active:scale-95 disabled:cursor-default',
-                        meta.colorClass,
+                        'mt-0.5 shrink-0 transition-transform hover:scale-110 active:scale-95 disabled:cursor-default disabled:hover:scale-100',
+                        carried ? 'text-muted-foreground' : meta.colorClass,
                       )}
                     >
                       <motion.span
@@ -569,6 +677,15 @@ export default function MasterColumn({
                     </button>
 
                   <div className="min-w-0 flex-1 space-y-1">
+                    {carried && (
+                      <Badge
+                        variant="outline"
+                        className="h-4 gap-1 px-1.5 text-[10px] font-normal text-muted-foreground"
+                        data-testid="action-item-carried"
+                      >
+                        Перенесена на другую доску
+                      </Badge>
+                    )}
                     {editingTitleId === item.id ? (
                       <Input
                         value={editTitle}
@@ -577,7 +694,7 @@ export default function MasterColumn({
                         className="h-7 px-2 text-xs font-semibold"
                         onBlur={() => saveTitle(item.id)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveTitle(item.id)
+                          if (e.key === 'Enter') void saveTitle(item.id)
                           if (e.key === 'Escape') setEditingTitleId(null)
                         }}
                       />
@@ -614,7 +731,7 @@ export default function MasterColumn({
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault()
-                            saveDesc(item.id)
+                            void saveDesc(item.id)
                           } else if (e.key === 'Escape') {
                             setEditingDescId(null)
                           }
@@ -629,7 +746,7 @@ export default function MasterColumn({
                           }
                         }}
                         className={cn(
-                          'whitespace-pre-wrap break-words text-xs text-muted-foreground',
+                          'whitespace-pre-wrap wrap-break-word text-xs text-muted-foreground',
                           !readOnly && 'cursor-text hover:text-foreground',
                         )}
                       >
@@ -658,7 +775,7 @@ export default function MasterColumn({
                             {item.assignee ? (
                               <>
                                 <span
-                                  className={`flex h-4 w-4 items-center justify-center rounded-full bg-gradient-to-br text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
+                                  className={`flex h-4 w-4 items-center justify-center rounded-full bg-linear-to-br/srgb text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
                                 >
                                   {getUserInitials(item.assignee)}
                                 </span>
@@ -682,7 +799,7 @@ export default function MasterColumn({
                               className="h-8 text-xs"
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
-                                  saveAssignee(item.id, assigneeDraft.trim() || null)
+                                  void saveAssignee(item.id, assigneeDraft.trim() || null)
                                 }
                               }}
                             />
@@ -773,6 +890,8 @@ export default function MasterColumn({
         loading={suggestLoading}
         submitting={suggestCreating}
         suggestions={suggestions}
+        failure={suggestFailure}
+        onRetry={handleOpenAiSuggest}
         onCreateSelected={handleCreateSuggestedItems}
       />
     </div>

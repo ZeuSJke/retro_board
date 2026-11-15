@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import type { BoardListItem } from '@/types'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 
 export interface CommandBoardAction {
   id: string
@@ -44,7 +44,7 @@ interface CommandPaletteProps {
 }
 
 const COMMAND_ITEM_CLASS =
-  'flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm text-foreground outline-none transition-colors aria-selected:bg-accent aria-selected:text-accent-foreground'
+  'flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm text-foreground outline-hidden transition-colors aria-selected:bg-accent aria-selected:text-accent-foreground'
 
 export default function CommandPalette({
   boards,
@@ -81,18 +81,26 @@ export default function CommandPalette({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent layout="structured" className="max-w-xl" hideClose>
-        <Command className="flex min-w-0 flex-1 flex-col overflow-hidden bg-popover text-popover-foreground">
+        {/* Заголовок и описание — для экранных дикторов: зрячим окно понятно по полю поиска */}
+        <DialogTitle className="sr-only">Палитра команд</DialogTitle>
+        <DialogDescription className="sr-only">
+          Поиск досок, карточек и команд. Стрелки — выбор, Enter — открыть, Esc — закрыть.
+        </DialogDescription>
+        <Command
+          label="Палитра команд"
+          className="flex min-w-0 flex-1 flex-col overflow-hidden bg-popover text-popover-foreground"
+        >
           <div className="flex shrink-0 items-center gap-2.5 border-b border-border/70 px-4">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <Command.Input
               placeholder="Найти доску или команду..."
-              className="flex h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              className="flex h-12 w-full bg-transparent text-sm outline-hidden placeholder:text-muted-foreground"
             />
             <kbd className="hidden shrink-0 rounded border border-border/70 bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
               Esc
             </kbd>
           </div>
-          <Command.List className="max-h-[min(56vh,420px)] overflow-y-auto scroll-py-2 p-2.5 scrollbar-subtle [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground/80 [&_[cmdk-group]]:px-1 [&_[cmdk-group]]:py-1">
+          <Command.List className="max-h-[min(56vh,420px)] overflow-y-auto scroll-py-2 p-2.5 scrollbar-subtle **:[[cmdk-group-heading]]:px-3 **:[[cmdk-group-heading]]:pb-1.5 **:[[cmdk-group-heading]]:pt-2 **:[[cmdk-group-heading]]:text-[11px] **:[[cmdk-group-heading]]:font-semibold **:[[cmdk-group-heading]]:uppercase **:[[cmdk-group-heading]]:tracking-wider **:[[cmdk-group-heading]]:text-muted-foreground/80 **:[[cmdk-group]]:px-1 **:[[cmdk-group]]:py-1">
             <Command.Empty className="py-8 text-center text-sm text-muted-foreground">
               Ничего не найдено
             </Command.Empty>
@@ -121,7 +129,7 @@ export default function CommandPalette({
               >
                 <span className="flex items-center gap-2.5">
                   <BarChart3 className="h-4 w-4 shrink-0 text-primary" />
-                  <span>Панель управления и задачи</span>
+                  <span>Панель управления</span>
                 </span>
               </Command.Item>
               <Command.Item

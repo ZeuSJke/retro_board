@@ -155,13 +155,15 @@ spec:
             - name: http
               containerPort: 8000
               protocol: TCP
+          # Готовность учитывает связь с БД; живость — только сам процесс:
+          # перезапуск пода базу не вернёт, а состояние досок в памяти уронит.
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /api/ready
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
-            timeoutSeconds: 3
+            timeoutSeconds: 6
           livenessProbe:
             httpGet:
               path: /api/health

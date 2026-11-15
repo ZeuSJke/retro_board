@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { memo, useCallback, useState } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import { AnimatePresence, motion } from 'motion/react'
 import {
@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react'
 import { deleteGroup, removeCardFromGroup, updateGroup } from '../api'
+import { sameExceptVoteCount } from '@/lib/memo'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage } from '../utils/apiError'
 import type { Card, CardGroup } from '../types'
@@ -37,17 +38,26 @@ interface CardGroupWidgetProps {
   group: CardGroup
   cards: Card[]
   collapsed: boolean
-  onToggleCollapse: () => void
-  currentUser: string
+  onToggleCollapse: (groupId: string) => void
+  /** Идентификатор текущего участника. */
+  currentUserId: string
+  isModerator?: boolean
+  voterNames?: Record<string, string>
   maxVotes: number
   userTotalVotes: number
   onUpdated: (group: CardGroup) => void
   onDeleted: (groupId: string) => void
+  /** Сервер группу не расформировал: вернуть её вместе с карточками. */
+  onRestored?: (group: CardGroup, cardIds: string[], error?: unknown) => void
   onCardUpdated: (card: Card) => void
+  onCardPatched?: (cardId: string, patch: (card: Card) => Card) => void
   onCardDeleted: (cardId: string) => void
+  onCardRestored?: (card: Card, error?: unknown) => void
+  onCardRejected?: (error: unknown) => void
   groupTargetId: string | null
   dragDisabled?: boolean
-  hideOtherCards?: boolean
+  /** Почему перетаскивание отключено — подсказка на ручке. */
+  dragDisabledReason?: string | null
   anonymous?: boolean
   readOnly?: boolean
   spotlightCardId?: string | null
@@ -63,21 +73,29 @@ interface CardGroupWidgetProps {
   onCardMoved?: (card: Card, targetColumnId: string) => void
 }
 
-export default function CardGroupWidget({
+const DRAG_DISABLED_FALLBACK = 'Перетаскивание сейчас отключено'
+
+function CardGroupWidget({
   group,
   cards,
   collapsed,
   onToggleCollapse,
-  currentUser,
+  currentUserId,
+  isModerator = false,
+  voterNames,
   maxVotes,
   userTotalVotes,
   onUpdated,
   onDeleted,
+  onRestored,
   onCardUpdated,
+  onCardPatched,
   onCardDeleted,
+  onCardRestored,
+  onCardRejected,
   groupTargetId,
   dragDisabled = false,
-  hideOtherCards = false,
+  dragDisabledReason = null,
   anonymous = false,
   readOnly = false,
   spotlightCardId = null,
@@ -96,11 +114,17 @@ export default function CardGroupWidget({
   const [titleDraft, setTitleDraft] = useState(group.title)
   const [dissolveOpen, setDissolveOpen] = useState(false)
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: `group-${group.id}`,
-    data: { type: 'group', group },
-    disabled: editingTitle || dragDisabled || readOnly,
-  })
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, isDragging } =
+    useDraggable({
+      id: `group-${group.id}`,
+      data: { type: 'group', group },
+      disabled: editingTitle || dragDisabled || readOnly,
+    })
+  // Указателем группу тащат за шапку, с клавиатуры — за ручку (у шапки нет роли кнопки:
+  // внутри неё свои кнопки)
+  const { onKeyDown: keyboardDragListener, ...pointerDragListeners } = (listeners ?? {}) as {
+    onKeyDown?: React.KeyboardEventHandler<HTMLElement>
+  } & Record<string, unknown>
 
   const style: React.CSSProperties = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
@@ -124,22 +148,30 @@ export default function CardGroupWidget({
 
   const handleDissolve = async () => {
     setDissolveOpen(false)
+    const removed = group
+    const memberIds = cards.map((card) => card.id)
     onDeleted(group.id)
     try {
       await deleteGroup(group.id)
     } catch (err) {
+      // Сервер группу не расформировал: возвращаем её вместе с карточками
+      onRestored?.(removed, memberIds, err)
       showToast(getApiErrorMessage(err, 'Не удалось расформировать группу'), 'error')
     }
   }
 
-  const handleRemoveCard = async (card: Card) => {
-    try {
-      const updated = await removeCardFromGroup(group.id, card.id)
-      onCardUpdated(updated)
-    } catch (err) {
-      showToast(getApiErrorMessage(err, 'Не удалось убрать карточку из группы'), 'error')
-    }
-  }
+  const groupId = group.id
+  const handleRemoveCard = useCallback(
+    async (card: Card) => {
+      try {
+        const updated = await removeCardFromGroup(groupId, card.id)
+        onCardUpdated(updated)
+      } catch (err) {
+        showToast(getApiErrorMessage(err, 'Не удалось убрать карточку из группы'), 'error')
+      }
+    },
+    [groupId, onCardUpdated],
+  )
 
   return (
     <>
@@ -147,26 +179,48 @@ export default function CardGroupWidget({
         ref={setNodeRef}
         style={style}
         className={cn(
-          'rounded-xl border border-primary/25 bg-primary/[0.04] p-2 transition-all dark:bg-primary/[0.07]',
+          'rounded-xl border border-primary/25 bg-primary/4 p-2 transition-all dark:bg-primary/[0.07]',
           isDragging && 'opacity-45',
         )}
       >
         <div
-          {...(!editingTitle && !readOnly ? { ...attributes, ...listeners } : {})}
+          {...(!editingTitle && !readOnly ? pointerDragListeners : {})}
           className="group/hdr flex cursor-default items-center gap-1.5 px-1 py-1"
         >
           {!editingTitle && !readOnly && (
-            <span
-              className="flex h-5 w-4 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/55 transition-colors hover:bg-foreground/10 hover:text-foreground active:cursor-grabbing dark:hover:bg-white/15"
-              title="Перетащить группу"
+            <button
+              type="button"
+              ref={setActivatorNodeRef}
+              {...attributes}
+              onKeyDown={keyboardDragListener}
+              aria-roledescription="перетаскиваемая группа"
+              aria-label={
+                dragDisabled
+                  ? (dragDisabledReason ?? DRAG_DISABLED_FALLBACK)
+                  : `Перетащить группу «${group.title}»`
+              }
+              title={
+                dragDisabled
+                  ? (dragDisabledReason ?? DRAG_DISABLED_FALLBACK)
+                  : 'Перетащить группу в другую колонку'
+              }
+              data-testid="group-drag-handle"
+              className={cn(
+                'flex h-5 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/55 transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
+                dragDisabled
+                  ? 'cursor-not-allowed opacity-40'
+                  : 'cursor-grab hover:bg-foreground/10 hover:text-foreground active:cursor-grabbing dark:hover:bg-white/15',
+              )}
             >
-              <GripVertical className="h-3.5 w-3.5" />
-            </span>
+              <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
           )}
           <button
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={onToggleCollapse}
+            onClick={() => onToggleCollapse(group.id)}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? 'Развернуть группу' : 'Свернуть группу'}
             className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
             title={collapsed ? 'Развернуть группу' : 'Свернуть группу'}
           >
@@ -192,7 +246,7 @@ export default function CardGroupWidget({
                 className="h-6 px-2 text-xs font-semibold"
                 onBlur={saveTitle}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveTitle()
+                  if (e.key === 'Enter') void saveTitle()
                   if (e.key === 'Escape') {
                     setTitleDraft(group.title)
                     setEditingTitle(false)
@@ -237,7 +291,8 @@ export default function CardGroupWidget({
 
           {!readOnly && !editingTitle && (
             <div
-              className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/hdr:opacity-100 focus-within:opacity-100 shrink-0"
+              // На сенсорном экране наведения нет: действия группы видны всегда
+              className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/hdr:opacity-100 focus-within:opacity-100 shrink-0 [@media(hover:none)]:opacity-100"
               onPointerDown={(e) => e.stopPropagation()}
             >
               <Button
@@ -246,6 +301,7 @@ export default function CardGroupWidget({
                 size="icon-sm"
                 className="h-5 w-5"
                 title="Переименовать группу"
+                aria-label="Переименовать группу"
                 onClick={() => {
                   setTitleDraft(group.title)
                   setEditingTitle(true)
@@ -259,6 +315,7 @@ export default function CardGroupWidget({
                 size="icon-sm"
                 className="h-5 w-5 text-muted-foreground hover:text-destructive"
                 title="Расформировать группу"
+                aria-label="Расформировать группу"
                 onClick={() => setDissolveOpen(true)}
               >
                 <Unlink className="h-3 w-3" />
@@ -291,15 +348,20 @@ export default function CardGroupWidget({
                   <CardWidget
                     key={card.id}
                     card={card}
-                    currentUser={currentUser}
+                    currentUserId={currentUserId}
+                    isModerator={isModerator}
+                    voterNames={voterNames}
                     maxVotes={maxVotes}
                     userTotalVotes={userTotalVotes}
                     onUpdated={onCardUpdated}
+                    onPatched={onCardPatched}
                     onDeleted={onCardDeleted}
+                    onRestored={onCardRestored}
+                    onRejected={onCardRejected}
                     inGroup
                     isGroupTarget={groupTargetId === card.id}
                     dragDisabled={dragDisabled}
-                    hidden={hideOtherCards && card.author !== currentUser}
+                    dragDisabledReason={dragDisabledReason}
                     anonymous={anonymous}
                     readOnly={readOnly}
                     isSpotlighted={spotlightCardId === card.id}
@@ -313,7 +375,7 @@ export default function CardGroupWidget({
                     onToggleSelect={onToggleSelectCard}
                     otherColumns={otherColumns}
                     onMoved={onCardMoved}
-                    onRemoveFromGroup={() => handleRemoveCard(card)}
+                    onRemoveFromGroup={handleRemoveCard}
                   />
                 ))}
               </div>
@@ -339,3 +401,5 @@ export default function CardGroupWidget({
     </>
   )
 }
+
+export default memo(CardGroupWidget, sameExceptVoteCount)

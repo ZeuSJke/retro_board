@@ -1,16 +1,33 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { AnimatePresence, motion } from 'motion/react'
-import { Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { autoClusterColumn, createCard, deleteColumn, updateColumn } from '../api'
-import { CARD_COLOR_PRESETS, COLUMN_COLOR_PALETTE, getCardColorPreset } from '@/lib/board-themes'
+import {
+  CARD_COLOR_PRESETS,
+  COLUMN_COLOR_PALETTE,
+  getCardColorPreset,
+  getColumnColorName,
+} from '@/lib/board-themes'
+import { sameExceptVoteCount } from '@/lib/memo'
+import { CANNOT_DELETE_COLUMN_HINT, isOwnCard } from '@/lib/participants'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage } from '../utils/apiError'
-import type { Card, CardGroup, Column as ColumnType } from '../types'
+import type { Card, CardGroup, Column as ColumnType, ColumnInfo } from '../types'
 import CardWidget from './CardWidget'
 import CardGroupWidget from './CardGroupWidget'
 import {
@@ -25,6 +42,13 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
@@ -35,22 +59,47 @@ interface ColumnProps {
   column: ColumnType
   maxVotes?: number
   userTotalVotes?: number
-  currentUser?: string
-  onUpdate: (col: ColumnType) => void
+  /** Идентификатор текущего участника; по умолчанию — участник сессии из стора. */
+  currentUserId?: string
+  /** Модератор доски: удаляет чужие карточки и колонки с карточками. */
+  isModerator?: boolean
+  /** Имена участников по идентификатору — для подписи голосов. */
+  voterNames?: Record<string, string>
+  /**
+   * Изменились свойства колонки (название, цвет). Передаются только изменённые поля;
+   * `'rest'` — это ответ сервера, без него — оптимистичная правка или её откат.
+   */
+  onUpdate: (col: Partial<ColumnInfo> & { id: string }, source?: 'rest') => void
   onDelete: (colId: string) => void
+  /** Сервер колонку не удалил: вернуть её на место. */
+  onRestore?: (column: ColumnType, error?: unknown) => void
+  /** Сдвинуть колонку на одно место влево (-1) или вправо (1); задаётся только модератору. */
+  onMove?: (columnId: string, direction: -1 | 1) => void
+  canMoveLeft?: boolean
+  canMoveRight?: boolean
   onCardCreated: (card: Card) => void
   onCardUpdated: (card: Card) => void
+  /** Точечная правка карточки в её текущем состоянии (оптимистичное обновление и откат). */
+  onCardPatched?: (cardId: string, patch: (card: Card) => Card) => void
   onCardDeleted: (cardId: string) => void
+  /** Сервер карточку не удалил: вернуть её на место. */
+  onCardRestored?: (card: Card, error?: unknown) => void
+  /** Сервер отклонил изменение карточки (голос, цвет); локальная правка уже снята. */
+  onCardRejected?: (error: unknown) => void
   onGroupCreated: (group: CardGroup, cardIds: string[]) => void
   onGroupUpdated: (group: CardGroup) => void
   onGroupDeleted: (groupId: string) => void
+  /** Сервер группу не расформировал: вернуть её вместе с карточками. */
+  onGroupRestored?: (group: CardGroup, cardIds: string[], error?: unknown) => void
   groupTargetId: string | null
   collapsedGroups: Record<string, boolean>
   onToggleCollapse: (groupId: string) => void
-  hideOtherCards?: boolean
-  brainstormHidden?: boolean
+  /** Сервер сейчас скрывает чужие карточки (скрытый сбор или фаза «Штурм»). */
+  cardsHidden?: boolean
   anonymous?: boolean
   dragDisabled?: boolean
+  /** Почему перетаскивание отключено — подсказка на ручке карточки. */
+  dragDisabledReason?: string | null
   readOnly?: boolean
   cardCreationDisabled?: boolean
   searchQuery?: string
@@ -72,26 +121,36 @@ interface ColumnProps {
   onTypingChange?: (columnId: string, isTyping: boolean) => void
 }
 
-export default function Column({
+function Column({
   column,
   maxVotes = 0,
   userTotalVotes = 0,
-  currentUser,
+  currentUserId,
+  isModerator = false,
+  voterNames,
   onUpdate,
   onDelete,
+  onRestore,
+  onMove,
+  canMoveLeft = false,
+  canMoveRight = false,
   onCardCreated,
   onCardUpdated,
+  onCardPatched,
   onCardDeleted,
+  onCardRestored,
+  onCardRejected,
   onGroupCreated,
   onGroupUpdated,
   onGroupDeleted,
+  onGroupRestored,
   groupTargetId,
   collapsedGroups,
   onToggleCollapse,
-  hideOtherCards = false,
-  brainstormHidden = false,
+  cardsHidden = false,
   anonymous = false,
   dragDisabled = false,
+  dragDisabledReason = null,
   readOnly = false,
   cardCreationDisabled = false,
   searchQuery = '',
@@ -112,14 +171,26 @@ export default function Column({
   typingUsernames = [],
   onTypingChange,
 }: ColumnProps) {
-  const storeUser = useAppStore((s) => s.username)
-  const resolvedUser = currentUser ?? storeUser
-  const effectiveHide = hideOtherCards || brainstormHidden
+  const storeUserId = useAppStore((s) => s.participant?.id ?? '')
+  const aiEnabled = useAppStore((s) => s.aiEnabled)
+  const myId = currentUserId ?? storeUserId
+  // Удаление колонки стирает её карточки: с карточками это действие модератора
+  const canDeleteColumn = isModerator || column.cards.length === 0
 
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(column.title)
   const [clustering, setClustering] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  // «Переименовать» выбрано в меню: когда меню закроется, фокус уходит в поле названия,
+  // а не возвращается к кнопке меню (иначе поле тут же потеряет фокус и закроется)
+  const renameFromMenuRef = useRef(false)
+  const titleInputRef = useRef<HTMLInputElement>(null)
+
+  const startRename = () => {
+    if (readOnly) return
+    setTitleDraft(column.title)
+    setEditingTitle(true)
+  }
 
   // Inline card creation
   const [composerOpen, setComposerOpen] = useState(false)
@@ -161,9 +232,8 @@ export default function Column({
   useEffect(() => {
     const cards = column.cards || []
     const currentIds = new Set(cards.map((c) => c.id))
-    const currentHiddenIds = new Set(
-      cards.filter((c) => effectiveHide && c.author !== resolvedUser).map((c) => c.id),
-    )
+    // Скрытые карточки — те, что сервер прислал без содержимого (masked)
+    const currentHiddenIds = new Set(cards.filter((c) => c.masked).map((c) => c.id))
 
     if (!initializedCardsRef.current) {
       initializedCardsRef.current = true
@@ -224,10 +294,11 @@ export default function Column({
     return () => {
       timers.forEach(clearTimeout)
     }
-  }, [column.cards, effectiveHide, resolvedUser])
+  }, [column.cards])
 
   const { setNodeRef, isOver } = useDroppable({
     id: `col-${column.id}`,
+    data: { type: 'column', title: column.title },
   })
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -276,8 +347,8 @@ export default function Column({
   const filteredAndSortedCards = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     const filtered = (column.cards || []).filter((card) => {
-      const isHidden = effectiveHide && card.author !== resolvedUser
-      if (onlyMine && card.author !== resolvedUser) return false
+      const isHidden = Boolean(card.masked)
+      if (onlyMine && !isOwnCard(card, myId)) return false
       if (colorFilter) {
         if (isHidden) return false
         if (getCardColorPreset(card.color).id !== colorFilter) return false
@@ -298,9 +369,10 @@ export default function Column({
       }
       return (a.position ?? 0) - (b.position ?? 0)
     })
-  }, [column.cards, searchQuery, onlyMine, colorFilter, sortBy, effectiveHide, resolvedUser, anonymous])
+  }, [column.cards, searchQuery, onlyMine, colorFilter, sortBy, myId, anonymous])
 
-  const otherTypingUsers = typingUsernames.filter((u) => u !== resolvedUser)
+  // Список приходит уже без текущего участника (он исключён по идентификатору)
+  const otherTypingUsers = typingUsernames
 
   const groups = column.groups || []
   const groupIds = new Set(groups.map((g) => g.id))
@@ -315,34 +387,40 @@ export default function Column({
     setEditingTitle(false)
     const trimmed = titleDraft.trim()
     if (!trimmed || trimmed === column.title) return
-    onUpdate({ ...column, title: trimmed })
+    const previous = column.title
+    onUpdate({ id: column.id, title: trimmed })
     try {
       const updated = await updateColumn(column.id, { title: trimmed })
-      onUpdate({ ...column, ...updated })
+      onUpdate(updated, 'rest')
     } catch (err) {
-      onUpdate(column)
+      // Возвращается только название: позиция и карточки могли измениться за это время
+      onUpdate({ id: column.id, title: previous })
       showToast(getApiErrorMessage(err, 'Не удалось переименовать колонку'), 'error')
     }
   }
 
   const handleColorChange = async (color: string) => {
-    if (readOnly) return
-    onUpdate({ ...column, color })
+    if (readOnly || color === column.color) return
+    const previous = column.color
+    onUpdate({ id: column.id, color })
     try {
       const updated = await updateColumn(column.id, { color })
-      onUpdate({ ...column, ...updated })
+      onUpdate(updated, 'rest')
     } catch (err) {
-      onUpdate(column)
+      onUpdate({ id: column.id, color: previous })
       showToast(getApiErrorMessage(err, 'Не удалось изменить цвет колонки'), 'error')
     }
   }
 
   const handleConfirmDelete = async () => {
     setDeleteOpen(false)
+    const removed = column
     onDelete(column.id)
     try {
       await deleteColumn(column.id)
     } catch (err) {
+      // Сервер колонку не удалил: возвращаем её вместе с карточками
+      onRestore?.(removed, err)
       showToast(getApiErrorMessage(err, 'Не удалось удалить колонку'), 'error')
     }
   }
@@ -361,7 +439,7 @@ export default function Column({
     if (clustering || readOnly) return
     setClustering(true)
     try {
-      const result = await autoClusterColumn(column.id, resolvedUser)
+      const result = await autoClusterColumn(column.id)
       const createdGroups: Array<{ group: CardGroup; card_ids: string[] }> =
         result?.created_groups || []
       if (createdGroups.length === 0) {
@@ -375,12 +453,8 @@ export default function Column({
       }
       showToast('Карточки сгруппированы', 'info')
     } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } })?.response?.status
-      if (status === 503) {
-        showToast('AI-сервис временно недоступен', 'error')
-      } else {
-        showToast(getApiErrorMessage(err, 'Не удалось сгруппировать карточки'), 'error')
-      }
+      // Одно сообщение по делу: причину сообщает сервер
+      showToast(getApiErrorMessage(err, 'Не удалось сгруппировать карточки'), 'error')
     } finally {
       setClustering(false)
     }
@@ -394,7 +468,6 @@ export default function Column({
       const created = await createCard({
         column_id: column.id,
         text,
-        author: resolvedUser,
         color: draftColor,
       })
       onCardCreated(created)
@@ -422,7 +495,7 @@ export default function Column({
         data-testid="board-column"
         data-column-id={column.id}
         className={cn(
-          'flex max-h-full w-[86vw] max-w-[380px] shrink-0 snap-center flex-col overflow-hidden rounded-2xl border bg-card/85 shadow-sm backdrop-blur-sm transition-[border-color,box-shadow] md:w-auto md:min-w-[280px] md:max-w-[580px] md:flex-1 md:shrink-0 md:snap-none',
+          'flex max-h-full w-[86vw] max-w-[380px] shrink-0 snap-center flex-col overflow-hidden rounded-2xl border bg-card/85 shadow-xs backdrop-blur-xs transition-[border-color,box-shadow] md:w-auto md:min-w-[280px] md:max-w-[580px] md:flex-1 md:shrink-0 md:snap-none',
           isOver && 'border-primary/70 ring-2 ring-primary/20 shadow-md',
           className,
         )}
@@ -446,19 +519,23 @@ export default function Column({
                 <button
                   type="button"
                   title="Изменить цвет"
-                  className="h-3.5 w-3.5 shrink-0 rounded-full ring-2 ring-transparent transition-transform hover:scale-110 hover:ring-border"
+                  aria-label={`Цвет колонки: ${getColumnColorName(column.color || '#6366F1')}. Изменить`}
+                  className="h-3.5 w-3.5 shrink-0 rounded-full ring-2 ring-transparent transition-transform hover:scale-110 hover:ring-border focus-visible:outline-hidden focus-visible:ring-primary"
                   style={{ backgroundColor: column.color || '#6366F1' }}
                 />
               </PopoverTrigger>
               <PopoverContent align="start" className="w-auto p-2.5">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5" role="group" aria-label="Цвет колонки">
                   {COLUMN_COLOR_PALETTE.map((c) => (
                     <button
                       key={c}
                       type="button"
                       onClick={() => handleColorChange(c)}
+                      title={getColumnColorName(c)}
+                      aria-label={`Цвет колонки: ${getColumnColorName(c)}`}
+                      aria-pressed={column.color === c}
                       className={cn(
-                        'h-5 w-5 rounded-full transition-transform hover:scale-110',
+                        'h-5 w-5 rounded-full transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
                         column.color === c && 'ring-2 ring-primary ring-offset-2',
                       )}
                       style={{ backgroundColor: c }}
@@ -471,13 +548,15 @@ export default function Column({
 
           {editingTitle ? (
             <Input
+              ref={titleInputRef}
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
               autoFocus
+              aria-label="Название колонки"
               className="h-7 flex-1 px-2 text-sm font-semibold"
               onBlur={saveTitle}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') saveTitle()
+                if (e.key === 'Enter') void saveTitle()
                 if (e.key === 'Escape') {
                   setTitleDraft(column.title)
                   setEditingTitle(false)
@@ -486,13 +565,8 @@ export default function Column({
             />
           ) : (
             <h3
-              title={readOnly ? undefined : 'Двойной клик чтобы редактировать'}
-              onDoubleClick={() => {
-                if (!readOnly) {
-                  setTitleDraft(column.title)
-                  setEditingTitle(true)
-                }
-              }}
+              title={readOnly ? undefined : 'Двойной клик или меню колонки — переименовать'}
+              onDoubleClick={startRename}
               className={cn(
                 'min-w-0 flex-1 truncate text-sm font-semibold text-foreground',
                 !readOnly && 'cursor-text',
@@ -506,44 +580,123 @@ export default function Column({
             {column.cards.length}
           </Badge>
 
-          {!readOnly && !effectiveHide && ungroupedTotalCount >= 2 && (
+          {/* Без настроенного AI кнопки нет; пока карточки скрыты — отключена с пояснением */}
+          {!readOnly && aiEnabled !== false && ungroupedTotalCount >= 2 && (
             <Tooltip>
               <TooltipTrigger asChild>
+                <span className={cn('inline-flex shrink-0', cardsHidden && 'cursor-not-allowed')}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="h-7 w-7 shrink-0 text-primary hover:bg-primary/10"
+                    onClick={handleAutoCluster}
+                    disabled={clustering || cardsHidden}
+                    aria-label="Сгруппировать похожие (AI)"
+                    title={cardsHidden ? undefined : 'Сгруппировать похожие (AI)'}
+                    data-testid="ai-cluster-btn"
+                  >
+                    {clustering ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {cardsHidden
+                  ? 'AI-группировка станет доступна после раскрытия карточек'
+                  : 'Сгруппировать похожие (AI)'}
+              </TooltipContent>
+            </Tooltip>
+          )}
+
+          {!readOnly && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  className="h-7 w-7 shrink-0 text-primary hover:bg-primary/10"
-                  onClick={handleAutoCluster}
-                  disabled={clustering}
-                  title="Сгруппировать похожие (AI)"
+                  className="h-7 w-7 shrink-0 text-muted-foreground"
+                  aria-label={`Действия с колонкой «${column.title}»`}
+                  title="Действия с колонкой"
+                  data-testid="column-menu-btn"
                 >
-                  {clustering ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  )}
+                  <MoreHorizontal className="h-3.5 w-3.5" />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent>Сгруппировать похожие (AI)</TooltipContent>
-            </Tooltip>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-52"
+                onCloseAutoFocus={(e) => {
+                  if (renameFromMenuRef.current) {
+                    renameFromMenuRef.current = false
+                    e.preventDefault()
+                    titleInputRef.current?.focus()
+                    titleInputRef.current?.select()
+                  }
+                }}
+              >
+                <DropdownMenuItem
+                  onSelect={() => {
+                    renameFromMenuRef.current = true
+                    startRename()
+                  }}
+                  data-testid="column-rename-item"
+                >
+                  <Pencil className="mr-2 h-3.5 w-3.5" />
+                  Переименовать
+                </DropdownMenuItem>
+                {/* Порядок колонок общий для всей команды: его меняет модератор доски */}
+                {onMove && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      disabled={!canMoveLeft}
+                      onSelect={() => onMove(column.id, -1)}
+                      data-testid="column-move-left-item"
+                    >
+                      <ArrowLeft className="mr-2 h-3.5 w-3.5" />
+                      Сдвинуть влево
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!canMoveRight}
+                      onSelect={() => onMove(column.id, 1)}
+                      data-testid="column-move-right-item"
+                    >
+                      <ArrowRight className="mr-2 h-3.5 w-3.5" />
+                      Сдвинуть вправо
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
 
           {!readOnly && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                  onClick={() => setDeleteOpen(true)}
-                  title="Удалить колонку"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+                <span className={cn('inline-flex shrink-0', !canDeleteColumn && 'cursor-not-allowed')}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => setDeleteOpen(true)}
+                    disabled={!canDeleteColumn}
+                    aria-label="Удалить колонку"
+                    title={canDeleteColumn ? 'Удалить колонку' : undefined}
+                    data-testid="delete-column-btn"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </span>
               </TooltipTrigger>
-              <TooltipContent>Удалить колонку</TooltipContent>
+              <TooltipContent>
+                {canDeleteColumn ? 'Удалить колонку' : CANNOT_DELETE_COLUMN_HINT}
+              </TooltipContent>
             </Tooltip>
           )}
         </div>
@@ -569,17 +722,23 @@ export default function Column({
                   group={group}
                   cards={groupCards}
                   collapsed={Boolean(collapsedGroups[group.id])}
-                  onToggleCollapse={() => onToggleCollapse(group.id)}
-                  currentUser={resolvedUser}
+                  onToggleCollapse={onToggleCollapse}
+                  currentUserId={myId}
+                  isModerator={isModerator}
+                  voterNames={voterNames}
                   maxVotes={maxVotes}
                   userTotalVotes={userTotalVotes}
                   onUpdated={onGroupUpdated}
                   onDeleted={onGroupDeleted}
+                  onRestored={onGroupRestored}
                   onCardUpdated={onCardUpdated}
+                  onCardPatched={onCardPatched}
                   onCardDeleted={onCardDeleted}
+                  onCardRestored={onCardRestored}
+                  onCardRejected={onCardRejected}
                   groupTargetId={groupTargetId}
                   dragDisabled={dragDisabled}
-                  hideOtherCards={effectiveHide}
+                  dragDisabledReason={dragDisabledReason}
                   anonymous={anonymous}
                   readOnly={readOnly}
                   spotlightCardId={spotlightCardId}
@@ -601,14 +760,19 @@ export default function Column({
               <CardWidget
                 key={card.id}
                 card={card}
-                currentUser={resolvedUser}
+                currentUserId={myId}
+                isModerator={isModerator}
+                voterNames={voterNames}
                 maxVotes={maxVotes}
                 userTotalVotes={userTotalVotes}
                 onUpdated={onCardUpdated}
+                onPatched={onCardPatched}
                 onDeleted={onCardDeleted}
+                onRestored={onCardRestored}
+                onRejected={onCardRejected}
                 isGroupTarget={groupTargetId === card.id}
                 dragDisabled={dragDisabled}
-                hidden={effectiveHide && card.author !== resolvedUser}
+                dragDisabledReason={dragDisabledReason}
                 anonymous={anonymous}
                 readOnly={readOnly}
                 isSpotlighted={spotlightCardId === card.id}
@@ -639,7 +803,7 @@ export default function Column({
             >
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
               <span className="truncate">
-                {effectiveHide || anonymous
+                {cardsHidden || anonymous
                   ? otherTypingUsers.length > 1
                     ? 'Несколько участников пишут...'
                     : 'Кто-то пишет...'
@@ -653,7 +817,7 @@ export default function Column({
           {hasMoreBelow && (
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-card/90 to-transparent"
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-linear-to-t/srgb from-card/90 to-transparent"
             />
           )}
         </div>
@@ -668,7 +832,7 @@ export default function Column({
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 4, scale: 0.98 }}
                 transition={{ duration: 0.16, ease: 'easeOut' }}
-                className="space-y-2 rounded-xl border bg-background p-2.5 shadow-sm"
+                className="space-y-2 rounded-xl border bg-background p-2.5 shadow-xs"
               >
                 <Textarea
                   ref={textareaRef}
@@ -687,7 +851,7 @@ export default function Column({
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
                       emitTyping(false)
-                      handleAddCard()
+                      void handleAddCard()
                     } else if (e.key === 'Escape') {
                       emitTyping(false)
                       setComposerOpen(false)
@@ -702,8 +866,10 @@ export default function Column({
                         type="button"
                         onClick={() => setDraftColor(c.hex)}
                         title={c.name}
+                        aria-label={`Цвет карточки: ${c.name}`}
+                        aria-pressed={draftColor.toLowerCase() === c.hex.toLowerCase()}
                         className={cn(
-                          'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110',
+                          'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
                           c.swatchClass,
                           draftColor.toLowerCase() === c.hex.toLowerCase() &&
                             'ring-2 ring-primary ring-offset-1 ring-offset-background',
@@ -739,7 +905,7 @@ export default function Column({
                       disabled={!draftText.trim() || creating}
                       onClick={() => {
                         emitTyping(false)
-                        handleAddCard()
+                        void handleAddCard()
                       }}
                     >
                       {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
@@ -788,3 +954,9 @@ export default function Column({
     </>
   )
 }
+
+/**
+ * Колонка перерисовывается, только когда меняется то, что она показывает: чужой лайк
+ * в соседней колонке её не трогает (объект `column` остаётся прежним).
+ */
+export default memo(Column, sameExceptVoteCount)

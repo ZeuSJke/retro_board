@@ -148,7 +148,17 @@ class TestBoardTemplatesAndCopy:
         assert len(items) == 1
         assert items[0]["title"] == "Настроить алерты"
         assert items[0]["assignee"] == "Иван"
-        assert items[0]["status"] == "open"
+        # Перенос сохраняет статус: задача «в работе» не откатывается в «открыта»
+        assert items[0]["status"] == "in_progress"
+        assert items[0]["superseded_by_id"] is None
+
+        # Оригинал остаётся в истории своей доски, но помечен перенесённым
+        source_items = client.get(
+            f"/api/action-items/?board_id={sample_board['id']}",
+            headers=workspace_headers,
+        ).json()
+        carried = next(i for i in source_items if i["title"] == "Настроить алерты")
+        assert carried["superseded_by_id"] == items[0]["id"]
 
 
 class TestBoardLockAndPrivacy:
@@ -221,29 +231,32 @@ class TestBoardLockAndPrivacy:
 
 class TestMoodAndInsightsAndRegenerate:
     def test_mood_upsert_trends_and_board_list_stats(
-        self, client, sample_board, sample_card, workspace_headers
+        self, client, sample_board, sample_card, workspace_headers, login_as
     ):
         r1 = client.post(
             f"/api/boards/{sample_board['id']}/mood",
-            json={"author": "Алиса", "score": 3, "note": "Нормально"},
+            json={"score": 3, "note": "Нормально"},
             headers=workspace_headers,
         )
         assert r1.status_code == 200
         assert r1.json()["score"] == 3
+        assert r1.json()["author"] == "Tester"
+        assert r1.json()["mine"] is True
 
-        # Повторная отправка от того же автора обновляет оценку, а не дублирует
+        # Повторная отправка от того же участника обновляет оценку, а не дублирует
         r2 = client.post(
             f"/api/boards/{sample_board['id']}/mood",
-            json={"author": "Алиса", "score": 5, "note": "Супер спринт"},
+            json={"score": 5, "note": "Супер спринт"},
             headers=workspace_headers,
         )
         assert r2.status_code == 200
         assert r2.json()["score"] == 5
 
+        # Тёзка — другой участник: его оценка не перезаписывает первую
         r3 = client.post(
             f"/api/boards/{sample_board['id']}/mood",
-            json={"author": "Боб", "score": 3},
-            headers=workspace_headers,
+            json={"score": 3},
+            headers=login_as("Tester"),
         )
         assert r3.status_code == 200
 
@@ -333,20 +346,11 @@ class TestMoodAndInsightsAndRegenerate:
 
 
 class TestWebSocketV3EventsAndPersistence:
-    def test_ready_spotlight_and_reaction_events(self, client, ws_board, ws_token):
-        url = f"/ws/{ws_board.id}?workspace_token={ws_token}"
-        with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws2:
-                ws1.send_text(
-                    json.dumps(
-                        {"event": "identify", "data": {"username": "Facilitator"}}
-                    )
-                )
-                ws2.send_text(
-                    json.dumps(
-                        {"event": "identify", "data": {"username": "Member"}}
-                    )
-                )
+    def test_ready_spotlight_and_reaction_events(self, client, ws_board, ws_token_for):
+        url1 = f"/ws/{ws_board.id}?workspace_token={ws_token_for('Facilitator')}"
+        url2 = f"/ws/{ws_board.id}?workspace_token={ws_token_for('Member')}"
+        with client.websocket_connect(url1, headers={"origin": TEST_ORIGIN}) as ws1:
+            with client.websocket_connect(url2, headers={"origin": TEST_ORIGIN}) as ws2:
                 _recv_event(ws2, "presence_update")
 
                 ws1.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
@@ -384,16 +388,13 @@ class TestWebSocketV3EventsAndPersistence:
                 assert cleared_ready["data"]["ready_users"] == []
 
     def test_session_persists_in_db_and_hydrates_after_manager_reset(
-        self, client, ws_board, ws_token, db_session
+        self, client, ws_board, ws_token_for, db_session
     ):
         from app.models import Board
         from app.ws_manager import manager
 
-        url = f"/ws/{ws_board.id}?workspace_token={ws_token}"
+        url = f"/ws/{ws_board.id}?workspace_token={ws_token_for('Host')}"
         with client.websocket_connect(url, headers={"origin": TEST_ORIGIN}) as ws1:
-            ws1.send_text(
-                json.dumps({"event": "identify", "data": {"username": "Host"}})
-            )
             _recv_event(ws1, "presence_update")
 
             ws1.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
@@ -408,6 +409,7 @@ class TestWebSocketV3EventsAndPersistence:
             db_session.expire_all()
             row = db_session.get(Board, ws_board.id)
             assert row.active_facilitator == "Host"
+            assert row.active_facilitator_id is not None
             assert row.active_phase == "vote"
             assert row.active_session_id is not None
 
@@ -419,10 +421,6 @@ class TestWebSocketV3EventsAndPersistence:
             fac_msg = _recv_event(ws_re, "facilitator_update")
             assert fac_msg["data"]["facilitator"] == "Host"
             assert fac_msg["data"]["phase"] == "vote"
-
-            ws_re.send_text(
-                json.dumps({"event": "identify", "data": {"username": "Host"}})
-            )
             _recv_event(ws_re, "presence_update")
 
             # Завершаем сессию с блокировкой доски

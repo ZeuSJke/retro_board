@@ -5,7 +5,7 @@ import * as RadixScrollArea from '@radix-ui/react-scroll-area'
 import { cn } from '@/lib/utils'
 
 export const ScrollArea = React.forwardRef<
-  React.ElementRef<typeof RadixScrollArea.Root>,
+  React.ComponentRef<typeof RadixScrollArea.Root>,
   React.ComponentPropsWithoutRef<typeof RadixScrollArea.Root>
 >(function ScrollArea({ className, children, ...props }, ref) {
   return (

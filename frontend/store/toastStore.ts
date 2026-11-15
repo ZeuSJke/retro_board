@@ -1,58 +1,28 @@
-import { useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
 
-export interface Toast {
-  id: number
-  message: string
-  type: 'error' | 'info' | 'success'
+export interface ToastOptions {
+  /** Пояснение под заголовком: что произошло и что делать дальше. */
+  description?: string
+  /** Сколько показывать, мс. Длинному тексту нужно больше стандартных четырёх секунд. */
+  duration?: number
 }
 
-let nextId = 0
-let toasts: Toast[] = []
-const listeners = new Set<() => void>()
-
-function notify() {
-  listeners.forEach((l) => l())
-}
-
-export function showToast(message: string, type: 'error' | 'info' | 'success' = 'info') {
-  const id = ++nextId
-  toasts = [...toasts, { id, message, type }]
-  notify()
-
-  if (typeof window !== 'undefined') {
-    if (type === 'error') {
-      toast.error(message)
-    } else if (type === 'success') {
-      toast.success(message)
-    } else {
-      toast(message)
-    }
+export function showToast(
+  message: string,
+  type: 'error' | 'info' | 'success' = 'info',
+  options?: ToastOptions,
+) {
+  if (typeof window === 'undefined') return
+  if (type === 'error') {
+    // Одинаковые ошибки не складываются в стопку: несколько запросов, упавших по одной
+    // причине (истёкшая сессия, заблокированная доска), дают одно уведомление
+    toast.error(message, { id: `error:${message}`, ...options })
+  } else if (type === 'success') {
+    if (options) toast.success(message, options)
+    else toast.success(message)
+  } else if (options) {
+    toast(message, options)
+  } else {
+    toast(message)
   }
-
-  setTimeout(() => {
-    toasts = toasts.filter((t) => t.id !== id)
-    notify()
-  }, 5000)
-}
-
-export function dismissToast(id: number) {
-  toasts = toasts.filter((t) => t.id !== id)
-  notify()
-  if (typeof window !== 'undefined') {
-    toast.dismiss()
-  }
-}
-
-function getSnapshot() {
-  return toasts
-}
-
-function subscribe(callback: () => void) {
-  listeners.add(callback)
-  return () => listeners.delete(callback)
-}
-
-export function useToasts() {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }

@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { HeartPulse, Loader2 } from 'lucide-react'
+import { HeartPulse, Loader2, User } from 'lucide-react'
 import { submitBoardMood } from '@/api'
 import { MOOD_OPTIONS, getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import { avatarSeed } from '@/lib/participants'
 import { showToast } from '@/store/toastStore'
 import { getApiErrorMessage } from '@/utils/apiError'
 import type { BoardMood } from '@/types'
@@ -24,7 +25,8 @@ interface MoodDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   boardId: string
-  username: string
+  /** Анонимный режим доски: имена в откликах не показываются. */
+  anonymous?: boolean
   moods: BoardMood[]
   onMoodSubmitted: (mood: BoardMood) => void
 }
@@ -33,21 +35,22 @@ export default function MoodDialog({
   open,
   onOpenChange,
   boardId,
-  username,
+  anonymous = false,
   moods,
   onMoodSubmitted,
 }: MoodDialogProps) {
-  const existingMine = moods.find((m) => m.author === username)
+  // Свою оценку сервер помечает сам (`mine`) — по участнику сессии, а не по имени
+  const existingMine = moods.find((m) => m.mine)
   const [score, setScore] = useState<number>(existingMine?.score ?? 4)
   const [note, setNote] = useState<string>(existingMine?.note ?? '')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (!open) return
-    const mine = moods.find((m) => m.author === username)
+    const mine = moods.find((m) => m.mine)
     setScore(mine?.score ?? 4)
     setNote(mine?.note ?? '')
-  }, [open, moods, username])
+  }, [open, moods])
 
   const avg =
     moods.length > 0 ? (moods.reduce((sum, m) => sum + m.score, 0) / moods.length).toFixed(1) : null
@@ -58,7 +61,6 @@ export default function MoodDialog({
     setSaving(true)
     try {
       const saved = await submitBoardMood(boardId, {
-        author: username,
         score,
         note: note.trim() || null,
       })
@@ -87,6 +89,7 @@ export default function MoodDialog({
           </DialogTitle>
           <DialogDescription>
             Как для вас прошёл этот спринт? Оценка видна всей команде в статистике доски.
+            {anonymous && ' Доска в анонимном режиме: имена в откликах скрыты.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -136,18 +139,33 @@ export default function MoodDialog({
               <div className="max-h-36 space-y-2 overflow-y-auto pr-1">
                 {moods.map((m) => {
                   const emoji = MOOD_OPTIONS.find((o) => o.score === m.score)?.emoji || '🙂'
+                  // В анонимном режиме имён нет ни у кого: свой отклик помечен «Вы»
+                  const label = anonymous ? (m.mine ? 'Вы' : 'Участник') : m.author
                   return (
-                    <div key={m.id} className="flex items-start justify-between gap-2 text-xs">
+                    <div
+                      key={m.id}
+                      data-testid="mood-entry"
+                      className="flex items-start justify-between gap-2 text-xs"
+                    >
                       <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-[10px] font-semibold text-white ${getUserAvatarGradient(
-                            m.author,
-                          )}`}
-                        >
-                          {getUserInitials(m.author)}
-                        </span>
+                        {anonymous ? (
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                            <User className="h-3.5 w-3.5" />
+                          </span>
+                        ) : (
+                          <span
+                            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-linear-to-br/srgb text-[10px] font-semibold text-white ${getUserAvatarGradient(
+                              avatarSeed(m.participant_id, m.author),
+                            )}`}
+                          >
+                            {getUserInitials(m.author)}
+                          </span>
+                        )}
                         <div className="min-w-0">
-                          <span className="font-medium text-foreground">{m.author}</span>
+                          <span className="font-medium text-foreground">
+                            {label}
+                            {!anonymous && m.mine ? ' (вы)' : ''}
+                          </span>
                           {m.note && (
                             <p className="truncate text-muted-foreground">{m.note}</p>
                           )}

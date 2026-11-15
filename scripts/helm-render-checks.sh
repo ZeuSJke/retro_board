@@ -117,6 +117,30 @@ expect_fail "short JWT secret rejected" "must be at least 32 characters" \
   "${INLINE[@]}" --set secrets.workspaceJwtSecret=short-secret
 expect_fail "backup without NFS server rejected" "backup.nfs.server and backup.nfs.path must be non-empty" \
   "${DEV[@]}" --set backup.enabled=true
+expect_fail "TESTING via extraEnv rejected" "config.extraEnv must not set TESTING" \
+  "${STAGING[@]}" --set-string config.extraEnv.TESTING=true
+expect_fail "unquoted number in extraEnv rejected" "must be a quoted string" \
+  "${STAGING[@]}" --set config.extraEnv.MAX_REQUEST_BODY_BYTES=2097152
+
+echo "── Content-Security-Policy"
+# CSP задаётся в двух местах (Next отдаёт её без Ingress — локально и в E2E,
+# Traefik — на стендах, в том числе для ответов API). Строки обязаны совпадать.
+csp_next="$(sed -n 's/^const CSP = "\(.*\)"$/\1/p' frontend/next.config.mjs)"
+csp_chart="$(render "${STAGING[@]}" | sed -n 's/^ *contentSecurityPolicy: "\(.*\)"$/\1/p')"
+if [ -z "$csp_next" ] || [ -z "$csp_chart" ]; then
+  echo "FAIL CSP: policy not found (next: '${csp_next}', chart: '${csp_chart}')"
+  failed=1
+elif [ "$csp_next" != "$csp_chart" ]; then
+  echo "FAIL CSP differs between frontend/next.config.mjs and the chart:"
+  echo "  next:  $csp_next"
+  echo "  chart: $csp_chart"
+  failed=1
+elif grep -qE "connect-src[^;]*(\*| wss?:( |;|$))" <<<"$csp_next"; then
+  echo "FAIL CSP: connect-src allows foreign hosts: $csp_next"
+  failed=1
+else
+  echo "ok   CSP is identical in Next and the chart and allows connections to own host only"
+fi
 
 if [ "$failed" -ne 0 ]; then
   exit 1

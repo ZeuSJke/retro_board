@@ -75,6 +75,32 @@ class TestUpdateColumn:
         assert resp.status_code == 200
         assert resp.json()["position"] == 0
 
+    def test_reorder_after_delete_uses_place_in_list(self, client, sample_board, workspace_headers):
+        """После удаления колонки позиции идут с пропуском; «место N» — это номер в списке.
+
+        Раньше запрос «на место 1» для колонки с сохранённой позицией 1 молча игнорировался,
+        хотя после удаления соседней она стояла в списке на месте 0.
+        """
+        board_url = f"/api/boards/{sample_board['id']}"
+        extra = client.post(
+            "/api/columns/",
+            json={"board_id": sample_board["id"], "title": "Четвёртая"},
+            headers=workspace_headers,
+        ).json()
+        first, second, third = client.get(board_url, headers=workspace_headers).json()["columns"][:3]
+        # Удаляем первую: у оставшихся сохранённые позиции 1, 2, 3
+        assert client.delete(f"/api/columns/{first['id']}", headers=workspace_headers).status_code == 204
+
+        # «Вторая» стоит на месте 0, её сохранённая позиция — 1. Просим место 1.
+        resp = client.patch(
+            f"/api/columns/{second['id']}", json={"position": 1}, headers=workspace_headers
+        )
+        assert resp.status_code == 200 and resp.json()["position"] == 1
+
+        columns = client.get(board_url, headers=workspace_headers).json()["columns"]
+        assert [col["id"] for col in columns] == [third["id"], second["id"], extra["id"]]
+        assert [col["position"] for col in columns] == [0, 1, 2]
+
     def test_not_found_returns_404(self, client, workspace_headers):
         resp = client.patch("/api/columns/no-id", json={"title": "X"}, headers=workspace_headers)
         assert resp.status_code == 404

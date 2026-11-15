@@ -9,7 +9,11 @@ def test_workspace_login_success(client, test_workspace):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert "token" in data
+    # Токен сессии уходит только в httpOnly-cookie, в теле ответа его нет
+    assert "token" not in data
+    set_cookie = resp.headers["set-cookie"]
+    assert "workspace_token=" in set_cookie and "HttpOnly" in set_cookie
+    assert data["participant"]["name"] == "Участник"
     assert data["workspace_slug"] == "test-team"
     assert data["workspace_name"] == "Test Team"
     assert data["workspace_id"] == "test-workspace-id"
@@ -38,7 +42,7 @@ def test_list_boards_requires_workspace_token(client, workspace_headers):
     """GET /api/boards/ без токена → 401."""
     resp = client.get("/api/boards/")
     assert resp.status_code == 401
-    assert "Workspace authentication required" in resp.json()["detail"]
+    assert "Требуется вход в команду" in resp.json()["detail"]
 
 
 def test_list_boards_with_workspace_token(client, workspace_headers, sample_board):
@@ -93,8 +97,8 @@ def test_board_isolation_between_workspaces(client, db_session, workspace_header
         "/api/workspaces/login", json={"workspace_slug": "team-2", "access_key": "key2"}
     )
     assert resp_login.status_code == 200
-    token2 = resp_login.json()["token"]
-    headers2 = {"X-Workspace-Token": token2}
+    headers2 = {"X-Workspace-Token": resp_login.cookies["workspace_token"]}
+    client.cookies.clear()
 
     # Список досок во втором workspace должен быть пуст
     resp2 = client.get("/api/boards/", headers=headers2)
@@ -123,8 +127,8 @@ def test_get_board_cross_workspace_fails(
     resp_login = client.post(
         "/api/workspaces/login", json={"workspace_slug": "team-2", "access_key": "key2"}
     )
-    token2 = resp_login.json()["token"]
-    headers2 = {"X-Workspace-Token": token2}
+    headers2 = {"X-Workspace-Token": resp_login.cookies["workspace_token"]}
+    client.cookies.clear()
 
     # Попытка получить доску из первого workspace вторым → 404
     resp = client.get(f"/api/boards/{sample_board['id']}", headers=headers2)

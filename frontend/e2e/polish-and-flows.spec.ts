@@ -5,11 +5,12 @@ import {
   dismissWelcome,
   ensureE2EWorkspace,
   getCsrfHeaders,
+  loginViaAPI,
   loginWorkspace,
   setUsername,
+  API,
+  BASE_URL,
 } from './helpers'
-
-const API = 'http://localhost:8000/api'
 
 async function apiHeaders(request: APIRequestContext, token: string) {
   const csrf = await getCsrfHeaders(request)
@@ -32,7 +33,7 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     request,
   }) => {
     // 1. Verify /icon.svg responds cleanly with vector SVG
-    const iconRes = await request.get('http://localhost:3080/icon.svg')
+    const iconRes = await request.get(`${BASE_URL}/icon.svg`)
     expect(iconRes.status()).toBe(200)
     const iconBody = await iconRes.text()
     expect(iconBody).toContain('<svg')
@@ -219,10 +220,17 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
       })
     ).json()
 
+    // Голос ставит участник сессии, а не имя из запроса: каждый голосующий входит сам.
+    // Имя голосовавшего клиент знает по его карточкам (или по присутствию на доске).
     for (const voter of ['Nikolai Belous', 'Кирилл Ч', 'Egor', 'Александр Длиннофамильный']) {
-      await request.post(`${API}/cards/${card.id}/like?username=${encodeURIComponent(voter)}`, {
-        headers,
+      const voterSession = await loginViaAPI(request, voter)
+      const voterHeaders = await apiHeaders(request, voterSession.token)
+      await request.post(`${API}/cards/`, {
+        headers: voterHeaders,
+        data: { column_id: board.columns[0].id, text: `Карточка участника ${voter}` },
       })
+      const likeRes = await request.post(`${API}/cards/${card.id}/like`, { headers: voterHeaders })
+      expect(likeRes.ok()).toBeTruthy()
     }
 
     await page.setViewportSize({ width: 1280, height: 800 })
@@ -259,18 +267,14 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     })
 
     const colId = board.columns[0].id
-    const cardA = await (
-      await request.post(`${API}/cards/`, {
-        headers,
-        data: { column_id: colId, text: 'Карточка для голоса А', author: 'Иван', color: '#E8F5E9' },
-      })
-    ).json()
-    const cardB = await (
-      await request.post(`${API}/cards/`, {
-        headers,
-        data: { column_id: colId, text: 'Карточка для голоса Б', author: 'Мария', color: '#E3F2FD' },
-      })
-    ).json()
+    await request.post(`${API}/cards/`, {
+      headers,
+      data: { column_id: colId, text: 'Карточка для голоса А', author: 'Иван', color: '#E8F5E9' },
+    })
+    await request.post(`${API}/cards/`, {
+      headers,
+      data: { column_id: colId, text: 'Карточка для голоса Б', author: 'Мария', color: '#E3F2FD' },
+    })
 
     // Navigate first to dashboard, then return to the board
     await page.goto('/dashboard')
@@ -341,6 +345,13 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
   }) => {
     const board = await createBoardViaAPI(request, 'Summary Layout Board', workspaceToken)
 
+    // Итоги создаёт AI, которого в тестовом окружении нет. Окно спрашивает их, только когда
+    // доска сообщает has_summary, — помечаем доску в ответе и подменяем сами итоги.
+    await page.route(`**/api/boards/by-slug/${board.slug}`, async (route) => {
+      const response = await route.fetch()
+      const json = (await response.json()) as Record<string, unknown>
+      await route.fulfill({ response, json: { ...json, has_summary: true } })
+    })
     await page.route(`**/api/boards/${board.id}/summary`, async (route) => {
       await route.fulfill({
         status: 200,
@@ -500,7 +511,7 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     expect(initialBox).not.toBeNull()
 
     // Drag separator left to widen sidebar
-    const separator = page.getByRole('separator', { name: 'Изменить ширину панели Итоги' })
+    const separator = page.getByRole('separator', { name: 'Изменить ширину панели задач' })
     const sepBox = await separator.boundingBox()
     expect(sepBox).not.toBeNull()
 
@@ -524,9 +535,9 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
       -1,
     )
 
-    // Toggle Итоги off -> master column hides & columns reclaim space
+    // Toggle «Задачи» off -> master column hides & columns reclaim space
     const col0Before = (await page.getByTestId('board-column').first().boundingBox())!.width
-    await page.getByRole('button', { name: /Итоги/ }).click()
+    await page.getByRole('button', { name: /^Задачи/ }).click()
     await expect(masterCol).not.toBeVisible({ timeout: 5000 })
     await page.waitForTimeout(260)
     const col0After = (await page.getByTestId('board-column').first().boundingBox())!.width
