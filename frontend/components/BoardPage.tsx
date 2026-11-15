@@ -6,8 +6,10 @@ import {
   DndContext,
   DragOverlay,
   defaultDropAnimationSideEffects,
+  type Announcements,
   type DragEndEvent,
   type DropAnimation,
+  type ScreenReaderInstructions,
 } from '@dnd-kit/core'
 import { AnimatePresence } from 'motion/react'
 import { ChevronLeft, ChevronRight, Layers } from 'lucide-react'
@@ -19,28 +21,31 @@ import {
   createActionItem,
   createColumn,
   generateActionItemTitle,
-  getBoard,
   getBoardSummary,
   mergeCards,
   resetBoardVotes,
   revealBoardCards,
   toggleLike,
   updateActionItem,
+  updateColumn,
 } from '../api'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { useBoardDragDrop } from '../hooks/useBoardDragDrop'
 import { NO_FACILITATOR, useBoardWebSocket } from '../hooks/useBoardWebSocket'
+import { shallowEqualRecords, useStableValue } from '../hooks/useStableValue'
 import { useFacilitator } from '../hooks/useFacilitator'
 import { useTimer } from '../hooks/useTimer'
 import { downloadMarkdownFile, formatBoardMarkdown } from '@/lib/export-markdown'
 import { getCardColorPreset } from '@/lib/board-themes'
 import {
-  applyColumnUpdated,
+  applyActionItemDeleted,
+  applyActionItemSaved,
   applyMoodUpdated,
   applyParticipantRenamedToMoods,
   countMaskedCards,
 } from '@/lib/board-events'
+import { blockingOverlay } from '@/lib/hotkeys'
 import {
   canDeleteCard,
   canModerateBoard,
@@ -49,6 +54,7 @@ import {
 } from '@/lib/participants'
 import { getApiErrorMessage, getApiErrorStatus } from '../utils/apiError'
 import type {
+  ActionItem,
   AutoClusterPreviewResult,
   Board,
   BoardListItem,
@@ -57,6 +63,7 @@ import type {
   Card,
   CardGroup,
   Column as ColumnType,
+  ColumnInfo,
   FacilitatorInfo,
   WsBoardUpdatedData,
   WsMessage,
@@ -70,7 +77,9 @@ import Column from './Column'
 import { RichCardText } from './RichCardText'
 import type { CommandBoardAction, CommandSearchCard } from './CommandPalette'
 import CommandPalette from './CommandPaletteLazy'
+import ConnectionBanner from './ConnectionBanner'
 import CursorMarker from './CursorMarker'
+import { HEALTH_CHECK_OPEN_EVENT, openHealthCheck } from './HealthCheckButton'
 import HiddenCollectBanner from './HiddenCollectBanner'
 import MasterColumn from './MasterColumn'
 import MoodDialog from './MoodDialog'
@@ -80,6 +89,12 @@ import SpotlightModal, { type SpotlightQueueItem } from './SpotlightModal'
 import SummaryModal from './SummaryModal'
 import Topbar from './Topbar'
 import UserSettingsDialog from './UserSettingsDialog'
+import {
+  HEALTH_CHECK_START,
+  HealthCheckDialog,
+  RotiPrompt,
+  useHealthCheck,
+} from '@/components/health'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 
@@ -124,6 +139,61 @@ function triggerConfetti() {
     })
     .catch(() => {})
 }
+
+interface ColumnMeta {
+  id: string
+  title: string
+  color: string
+}
+
+function sameColumnsMeta(a: ColumnMeta[], b: ColumnMeta[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((c, i) => c.id === b[i].id && c.title === b[i].title && c.color === b[i].color)
+  )
+}
+
+/** Как назвать то, что тащат или над чем оказались, в объявлениях для экранного диктора. */
+function describeDragItem(data: Record<string, unknown> | undefined): string {
+  if (data?.type === 'card') {
+    const text = (data.card as Card | undefined)?.text?.trim()
+    return text ? `карточка «${text.slice(0, 60)}»` : 'карточка'
+  }
+  if (data?.type === 'group') {
+    return `группа «${(data.group as CardGroup | undefined)?.title ?? ''}»`
+  }
+  if (data?.type === 'column') return `колонка «${typeof data.title === 'string' ? data.title : ''}»`
+  if (data?.type === 'master') return 'панель задач'
+  return 'элемент доски'
+}
+
+// Перетаскивание с клавиатуры: подсказка и объявления для экранного диктора
+const DND_INSTRUCTIONS: ScreenReaderInstructions = {
+  draggable:
+    'Чтобы взять элемент, нажмите пробел или Enter. Стрелками переместите его, пробелом или Enter отпустите, клавишей Escape отмените перенос.',
+}
+
+const DND_ANNOUNCEMENTS: Announcements = {
+  onDragStart: ({ active }) => `Взято: ${describeDragItem(active.data.current)}.`,
+  onDragOver: ({ active, over }) =>
+    over
+      ? `${describeDragItem(active.data.current)} — над: ${describeDragItem(over.data.current)}.`
+      : `${describeDragItem(active.data.current)} — вне доски.`,
+  onDragEnd: ({ active, over }) =>
+    over
+      ? `Перенесено: ${describeDragItem(active.data.current)} — ${describeDragItem(over.data.current)}.`
+      : `Перенос отменён: ${describeDragItem(active.data.current)} возвращается на место.`,
+  onDragCancel: ({ active }) =>
+    `Перенос отменён: ${describeDragItem(active.data.current)} возвращается на место.`,
+}
+
+const DND_ACCESSIBILITY = {
+  announcements: DND_ANNOUNCEMENTS,
+  screenReaderInstructions: DND_INSTRUCTIONS,
+}
+
+/** Сколько карточка остаётся подсвеченной после перехода к ней из палитры команд. */
+const CARD_FLASH_MS = 2200
 
 export default function BoardPage({
   board,
@@ -250,19 +320,23 @@ export default function BoardPage({
     sendMessageRef.current(msg)
   }, [])
 
+  // Что делать, когда таймер дошёл до нуля: задаётся ниже, когда известны ведущий и фаза
+  const timerExpiredRef = useRef<() => void>(() => {})
+  const handleTimerExpired = useCallback(() => timerExpiredRef.current(), [])
+
   const {
     timer,
     autoAdvance,
     setAutoAdvance,
     soundMuted,
     toggleSoundMuted,
-    restoreTimer,
     handleTimerWsEvent,
+    handleTimerAbsent,
     handleTimerStart,
     handleTimerPause,
     handleTimerReset,
     handleAddTime,
-  } = useTimer(board.id, sendWs)
+  } = useTimer(sendWs, { onExpire: handleTimerExpired })
 
   const {
     facilitator,
@@ -290,11 +364,29 @@ export default function BoardPage({
     }
   }, [board.id])
 
-  const handleSummaryGenerated = useCallback(() => {
+  const boardRef = useRef(board)
+  boardRef.current = board
+
+  const handleSummaryGenerated = useCallback(
+    ({ regenerated }: { regenerated: boolean }) => {
+      // Итоги появились: теперь их есть смысл запрашивать
+      if (!boardRef.current.has_summary) onBoardUpdated({ ...boardRef.current, has_summary: true })
+      void loadSummary()
+      // Пересоздание по кнопке — окно у остальных не открываем, только обновляем содержимое
+      if (regenerated) return
+      setSummaryOpen(true)
+      triggerConfetti()
+    },
+    [loadSummary, onBoardUpdated],
+  )
+
+  // Открыть окно итогов. Сами итоги запрашиваем, только если они есть: без них сервер
+  // отвечает 404, а окно и так покажет, что итогов пока нет.
+  const hasSummary = Boolean(board.has_summary)
+  const openSummary = useCallback(() => {
     setSummaryOpen(true)
-    void loadSummary()
-    triggerConfetti()
-  }, [loadSummary])
+    if (hasSummary) void loadSummary()
+  }, [hasSummary, loadSummary])
 
   const handleSummaryFailed = useCallback((msg?: string) => {
     setSummaryLoading(false)
@@ -307,42 +399,23 @@ export default function BoardPage({
     showToast(msg || 'Не удалось сгенерировать AI-итоги', 'error')
   }, [])
 
-  const boardRef = useRef(board)
-  boardRef.current = board
-
-  // Перечитать доску с сервера. Что показывать участнику, решает сервер: при смене
-  // видимости (начало штурма, раскрытие) он присылает cards_visibility_changed,
-  // и карточки заново приходят уже в нужном виде — скрытые или раскрытые.
-  const setColumnsRef = useRef<(cols: ColumnType[]) => void>(() => {})
-  const reloadSeqRef = useRef(0)
-  const reloadBoard = useCallback(async () => {
-    const seq = ++reloadSeqRef.current
-    const boardId = boardRef.current.id
-    try {
-      const fresh = await getBoard(boardId)
-      // Применяем только ответ на последний запрос: более ранний снимок мог устареть
-      if (seq !== reloadSeqRef.current || boardRef.current.id !== boardId) return
-      setColumnsRef.current(fresh.columns || [])
+  // Доска перечитана с сервера (после переподключения, пропуска событий, смены видимости
+  // карточек). Колонки заменил хук сокета; здесь — настройки доски и настроение.
+  const handleBoardSnapshot = useCallback(
+    (fresh: Board) => {
       setMoods(fresh.moods || [])
       onBoardUpdated({ ...boardRef.current, ...fresh })
-    } catch (err) {
-      // 401: сессия сброшена, приложение само покажет экран входа
-      if (getApiErrorStatus(err) === 401) return
-      showToast(getApiErrorMessage(err, 'Не удалось обновить доску'), 'error')
-    }
-  }, [onBoardUpdated])
+    },
+    [onBoardUpdated],
+  )
 
   const handleWsBoardUpdated = useCallback(
     (data: WsBoardUpdatedData) => {
       onBoardsListUpdated(data)
       const current = boardRef.current
       if (data.id === current.id) {
-        // Анонимный режим переключили: авторов и голоса сервер теперь отдаёт иначе,
-        // а отдельного события о видимости при этом нет — перечитываем доску
-        const anonymityChanged =
-          data.anonymous_votes !== undefined &&
-          Boolean(data.anonymous_votes) !== Boolean(current.anonymous_votes)
-        if (anonymityChanged) void reloadBoard()
+        // Если изменилось то, что видит участник (скрытый сбор, анонимный режим), сервер
+        // следом пришлёт cards_visibility_changed — и доска перечитается
         onBoardUpdated({
           ...current,
           name: data.name ?? current.name,
@@ -362,35 +435,50 @@ export default function BoardPage({
         })
       }
     },
-    [onBoardUpdated, onBoardsListUpdated, reloadBoard],
+    [onBoardUpdated, onBoardsListUpdated],
   )
 
   const handleWsMoodUpdated = useCallback((mood: BoardMood) => {
     setMoods((prev) => applyMoodUpdated(prev, mood))
   }, [])
 
-  const handleCardsVisibilityChanged = useCallback(() => {
-    void reloadBoard()
-  }, [reloadBoard])
+  const applySnapshotRef = useRef<(board: Board) => void>(() => {})
 
   // Настройки сохранены этим участником. Ответ сервера — доска в его виде: если изменился
-  // скрытый сбор или анонимный режим, карточки и оценки в ответе уже собраны по-новому.
+  // скрытый сбор или анонимный режим, карточки и оценки в ответе уже собраны по-новому,
+  // и ответ применяется как снимок доски.
   const handleSettingsSaved = useCallback(
     (updated: Board) => {
       const current = boardRef.current
       const viewChanged =
         Boolean(updated.cards_hidden) !== Boolean(current.cards_hidden) ||
         Boolean(updated.anonymous_votes) !== Boolean(current.anonymous_votes)
-      if (viewChanged) {
-        // Не даём более раннему запросу перечитывания затереть этот ответ
-        reloadSeqRef.current += 1
-        setColumnsRef.current(updated.columns || [])
-        setMoods(updated.moods || [])
-      }
+      if (viewChanged) applySnapshotRef.current(updated)
       onBoardUpdated({ ...current, ...updated })
     },
     [onBoardUpdated],
   )
+
+  // Health check и оценка встречи: состояние здесь, окна — в разметке ниже
+  const health = useHealthCheck(board.id)
+  const healthRef = useRef(health)
+  useEffect(() => {
+    healthRef.current = health
+  }, [health])
+  const handleServerEvent = useCallback(
+    (msg: WsMessage) => healthRef.current.handleServerEvent(msg),
+    [],
+  )
+
+  // Доски больше нет (удалена, пока участник был не в сети): уходим к списку досок
+  const handleBoardGone = useCallback(() => {
+    onBoardsListDeleted(boardRef.current.id)
+  }, [onBoardsListDeleted])
+
+  const handleResynced = useCallback((reason: string) => {
+    // Событие health_updated могло пройти мимо, пока связи не было
+    if (reason === 'reconnect') healthRef.current.refresh()
+  }, [])
 
   const handleParticipantRenamed = useCallback((participantId: string, name: string) => {
     setMoods((prev) => applyParticipantRenamedToMoods(prev, participantId, name))
@@ -403,7 +491,12 @@ export default function BoardPage({
 
   const {
     columns,
-    setColumns,
+    applyChange,
+    resetBoard,
+    applySnapshot,
+    resync,
+    holdRemoteChanges,
+    releaseRemoteChanges,
     cursorsRef,
     subscribeCursors,
     collapsedGroups,
@@ -416,6 +509,8 @@ export default function BoardPage({
     reactions,
     sessionSynced,
     connected,
+    connection,
+    reconnect,
     actionItems,
     setActionItems,
     sendMessage,
@@ -424,6 +519,7 @@ export default function BoardPage({
   } = useBoardWebSocket({
     boardId: board.id,
     onTimerWsEvent: handleTimerWsEvent,
+    onTimerAbsent: handleTimerAbsent,
     onFacilitatorChanged: handleFacilitatorChanged,
     onPhaseChanged: handlePhaseChanged,
     onSummaryGenerated: handleSummaryGenerated,
@@ -432,17 +528,17 @@ export default function BoardPage({
     onBoardUpdated: handleWsBoardUpdated,
     onBoardDeleted: onBoardsListDeleted,
     onMoodUpdated: handleWsMoodUpdated,
-    onCardsVisibilityChanged: handleCardsVisibilityChanged,
     onParticipantRenamed: handleParticipantRenamed,
+    onBoardSnapshot: handleBoardSnapshot,
+    onResynced: handleResynced,
+    onBoardGone: handleBoardGone,
+    onServerEvent: handleServerEvent,
   })
 
   useEffect(() => {
     sendMessageRef.current = sendMessage
-  }, [sendMessage])
-
-  useEffect(() => {
-    setColumnsRef.current = setColumns
-  }, [setColumns])
+    applySnapshotRef.current = applySnapshot
+  }, [sendMessage, applySnapshot])
 
   useEffect(() => {
     const el = canvasRef.current
@@ -461,7 +557,7 @@ export default function BoardPage({
     loadedBoardIdRef.current = board.id
     if (!boardChanged) return
 
-    setColumns(initialBoard.columns || [])
+    resetBoard(initialBoard)
     setMoods(initialBoard.moods || [])
     setSummary(null)
     setSummaryError(null)
@@ -470,7 +566,6 @@ export default function BoardPage({
     lastSelectedCardIdRef.current = null
     setClusterPreviewState(null)
     typingStateRef.current = {}
-    restoreTimer(board.id)
     handleFacilitatorChanged(
       initialBoard.active_facilitator_id
         ? {
@@ -486,7 +581,7 @@ export default function BoardPage({
         .then((s) => s && setSummary(s))
         .catch(() => {})
     }
-  }, [board.id, setColumns, restoreTimer, handleFacilitatorChanged])
+  }, [board.id, resetBoard, handleFacilitatorChanged])
 
   // Subscribe cursor arrivals to render CursorMarker components dynamically
   useEffect(() => {
@@ -495,22 +590,32 @@ export default function BoardPage({
     })
   }, [subscribeCursors, forceCursorRender])
 
-  // Auto-advance timer when it hits 0 during active facilitation by current user
-  const prevRemainingRef = useRef(timer.remaining)
+  // Авто-переход: таймер дошёл до нуля у ведущего — переходим к следующей фазе
   useEffect(() => {
-    const prev = prevRemainingRef.current
-    prevRemainingRef.current = timer.remaining
-    if (
-      prev > 0 &&
-      timer.remaining === 0 &&
-      autoAdvance &&
-      Boolean(myId) &&
-      facilitator.id === myId &&
-      phase
-    ) {
-      handleNextPhase()
+    timerExpiredRef.current = () => {
+      if (autoAdvance && Boolean(myId) && facilitator.id === myId && phase) handleNextPhase()
     }
-  }, [timer.remaining, autoAdvance, facilitator.id, myId, phase, handleNextPhase])
+  }, [autoAdvance, facilitator.id, myId, phase, handleNextPhase])
+
+  // Сервер не принял изменение, локальное состояние уже возвращено. Отказ с ответом (4xx)
+  // значит, что наше представление о доске разошлось с сервером: сверяемся с ним.
+  const handleMutationRejected = useCallback(
+    (err: unknown, options?: { resync?: boolean }) => {
+      const status = getApiErrorStatus(err)
+      const refused = status !== undefined && status >= 400 && status < 500
+      if (options?.resync || (refused && status !== 401 && status !== 429)) resync('rejected')
+    },
+    [resync],
+  )
+
+  // Пока участник тащит карточку, чужие изменения копятся и применяются, когда он отпустит
+  const handleDragActiveChange = useCallback(
+    (active: boolean) => {
+      if (active) holdRemoteChanges()
+      else releaseRemoteChanges()
+    },
+    [holdRemoteChanges, releaseRemoteChanges],
+  )
 
   const {
     sensors,
@@ -520,8 +625,14 @@ export default function BoardPage({
     groupTargetId,
     onDragStart,
     onDragOver,
+    onDragCancel,
     onDragEnd,
-  } = useBoardDragDrop({ columns, setColumns })
+  } = useBoardDragDrop({
+    columns,
+    applyChange,
+    onDragActiveChange: handleDragActiveChange,
+    onRejected: handleMutationRejected,
+  })
 
   const boardLocked = Boolean(board.is_locked)
   // До первого facilitator_update от сокета сессию берём из снимка доски
@@ -562,16 +673,20 @@ export default function BoardPage({
   }, [anonymousMode, onlineParticipants, columns])
 
   // Имена участников по идентификатору — для подписи голосов: кто сейчас на доске,
-  // кого мы видели раньше и авторы карточек
-  const voterNames = useMemo(() => {
-    const names: Record<string, string> = { ...knownNames }
-    for (const col of columns) {
-      for (const card of col.cards) {
-        if (card.author_id && card.author) names[card.author_id] = card.author
+  // кого мы видели раньше и авторы карточек. Словарь пересчитывается при любом изменении
+  // доски, но объект меняется, только когда изменились сами имена: от него зависят карточки.
+  const voterNames = useStableValue(
+    useMemo(() => {
+      const names: Record<string, string> = { ...knownNames }
+      for (const col of columns) {
+        for (const card of col.cards) {
+          if (card.author_id && card.author) names[card.author_id] = card.author
+        }
       }
-    }
-    return names
-  }, [knownNames, columns])
+      return names
+    }, [knownNames, columns]),
+    shallowEqualRecords,
+  )
 
   // В анонимном режиме чужие голоса обезличены ("anon"): посчитать проголосовавших нельзя
   const votedParticipantsCount = useMemo(() => {
@@ -624,16 +739,12 @@ export default function BoardPage({
           assignee: !anonymousMode && authorHint ? authorHint : undefined,
           source_card_ids: sourceCardIds,
         })
-        setActionItems((prev) =>
-          prev.find((i) => i.id === item.id) ? prev : [...prev, item],
-        )
+        setActionItems((prev) => (prev.some((i) => i.id === item.id) ? prev : applyActionItemSaved(prev, item)))
         showToast('Добавлено в задачи', 'success')
         generateActionItemTitle(text)
           .then((generatedTitle) =>
             updateActionItem(item.id, { title: generatedTitle }).then((updated) => {
-              setActionItems((prev) =>
-                prev.map((i) => (i.id === item.id ? updated : i)),
-              )
+              setActionItems((prev) => applyActionItemSaved(prev, updated))
             }),
           )
           .catch(() => {
@@ -648,34 +759,38 @@ export default function BoardPage({
     [anonymousMode, board.id, cardsHidden, setActionItems],
   )
 
+  const handleCreateActionItemFromCard = useCallback(
+    (card: Card) => void createActionItemFromCards(card.text, [card.id], card.author),
+    [createActionItemFromCards],
+  )
+
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const overId = event.over ? String(event.over.id) : ''
+      // Бросили на панель задач: карточка возвращается на место сразу, задача создаётся следом
       if (overId === 'master-col' && activeCard) {
-        if (!readOnly) {
-          await createActionItemFromCards(
-            activeCard.text,
-            [activeCard.id],
-            activeCard.author,
-          )
-        }
+        const source = activeCard
         void onDragEnd({ ...event, over: null })
+        if (!readOnly) {
+          await createActionItemFromCards(source.text, [source.id], source.author)
+        }
         return
       }
 
       if (overId === 'master-col' && activeGroup) {
+        const source = activeGroup
+        const groupCards = columns
+          .flatMap((col) => col.cards)
+          .filter((c) => c.group_id === source.id)
+        void onDragEnd({ ...event, over: null })
         if (!readOnly) {
-          const groupCards = columns
-            .flatMap((col) => col.cards)
-            .filter((c) => c.group_id === activeGroup.id)
           const combined = groupCards.map((c) => c.text).join(' ')
           await createActionItemFromCards(
-            combined || activeGroup.title,
+            combined || source.title,
             groupCards.map((c) => c.id),
             groupCards[0]?.author ?? null,
           )
         }
-        void onDragEnd({ ...event, over: null })
         return
       }
 
@@ -684,50 +799,83 @@ export default function BoardPage({
     [activeCard, activeGroup, columns, createActionItemFromCards, onDragEnd, readOnly],
   )
 
+  // ── Изменения доски ───────────────────────────────────────────────────────
+  // Всё идёт через applyChange: ответы REST (`rest`) не затирают более свежие события
+  // сокета, оптимистичные правки и откаты (`local`) применяются всегда. Обработчики не
+  // зависят от состояния доски — на их неизменности держится мемоизация колонок.
+
+  const columnsRef = useRef(columns)
+  useEffect(() => {
+    columnsRef.current = columns
+  }, [columns])
+
   // Обновляются только свойства колонки: карточки и группы могли измениться, пока шёл запрос
   const handleColumnUpdate = useCallback(
-    (updated: ColumnType) => setColumns((prev) => applyColumnUpdated(prev, updated)),
-    [setColumns],
+    (column: Partial<ColumnInfo> & { id: string }, source?: 'rest') =>
+      applyChange({ type: 'column_updated', column }, source ?? 'local'),
+    [applyChange],
   )
 
   const handleColumnDelete = useCallback(
-    (id: string) => setColumns((prev) => prev.filter((c) => c.id !== id)),
-    [setColumns],
+    (id: string) => applyChange({ type: 'column_deleted', id }),
+    [applyChange],
+  )
+
+  // Сервер колонку не удалил: возвращаем её на место вместе с карточками
+  const handleColumnRestore = useCallback(
+    (column: ColumnType, err?: unknown) => {
+      applyChange({ type: 'column_restored', column })
+      if (err !== undefined) handleMutationRejected(err)
+    },
+    [applyChange, handleMutationRejected],
+  )
+
+  // Соседние колонки меняются местами. Сервер считает перестановкой только запрос, где
+  // новое место отличается от сохранённой позиции колонки, а после удаления колонок позиции
+  // идут с пропусками — поэтому двигаем ту из двух колонок, чей запрос сервер примет.
+  const handleMoveColumn = useCallback(
+    async (columnId: string, direction: -1 | 1) => {
+      const list = columnsRef.current
+      const index = list.findIndex((c) => c.id === columnId)
+      const neighborIndex = index + direction
+      if (index < 0 || neighborIndex < 0 || neighborIndex >= list.length) return
+      const direct = list[index].position !== neighborIndex
+      const moving = direct ? list[index] : list[neighborIndex]
+      const target = direct ? neighborIndex : index
+      const before = Object.fromEntries(list.map((c) => [c.id, c.position]))
+      applyChange({ type: 'column_updated', column: { id: moving.id, position: target } })
+      try {
+        const updated = await updateColumn(moving.id, { position: target })
+        applyChange({ type: 'column_updated', column: updated }, 'rest')
+      } catch (err) {
+        showToast(getApiErrorMessage(err, 'Не удалось переставить колонку'), 'error')
+        applyChange({ type: 'columns_arranged', positions: before })
+        handleMutationRejected(err)
+      }
+    },
+    [applyChange, handleMutationRejected],
   )
 
   const handleCardCreated = useCallback(
-    (colId: string, card: Card) =>
-      setColumns((prev) =>
-        prev.map((c) =>
-          c.id === colId && !c.cards.find((x) => x.id === card.id)
-            ? { ...c, cards: [...c.cards, card] }
-            : c,
-        ),
-      ),
-    [setColumns],
+    (card: Card) => applyChange({ type: 'card_created', card }, 'rest'),
+    [applyChange],
   )
 
   const handleCardUpdated = useCallback(
-    (colId: string, card: Card) =>
-      setColumns((prev) =>
-        prev.map((c) =>
-          c.id === colId
-            ? { ...c, cards: c.cards.map((x) => (x.id === card.id ? card : x)) }
-            : c,
-        ),
-      ),
-    [setColumns],
+    (card: Card) => applyChange({ type: 'card_updated', card }, 'rest'),
+    [applyChange],
+  )
+
+  // Оптимистичная правка карточки или её откат: меняется одно поле текущего состояния
+  const handleCardPatched = useCallback(
+    (cardId: string, patch: (card: Card) => Card) =>
+      applyChange({ type: 'card_patched', id: cardId, patch }),
+    [applyChange],
   )
 
   const handleCardDeleted = useCallback(
-    (colId: string, cardId: string) => {
-      setColumns((prev) =>
-        prev.map((c) =>
-          c.id === colId
-            ? { ...c, cards: c.cards.filter((x) => x.id !== cardId) }
-            : c,
-        ),
-      )
+    (cardId: string) => {
+      applyChange({ type: 'card_deleted', id: cardId })
       setSelectedCardIds((prev) => {
         if (!prev.has(cardId)) return prev
         const next = new Set(prev)
@@ -735,59 +883,63 @@ export default function BoardPage({
         return next
       })
     },
-    [setColumns],
+    [applyChange],
+  )
+
+  // Сервер карточку не удалил: она встаёт на прежнее место по своей позиции
+  const handleCardRestored = useCallback(
+    (card: Card, err?: unknown) => {
+      applyChange({ type: 'card_created', card })
+      if (err !== undefined) handleMutationRejected(err)
+    },
+    [applyChange, handleMutationRejected],
+  )
+
+  // Сервер отклонил изменение карточки (голос, цвет): локальная правка уже снята
+  const handleCardRejected = useCallback(
+    (err: unknown) => handleMutationRejected(err),
+    [handleMutationRejected],
+  )
+
+  const handleCardMovedToColumn = useCallback(
+    (card: Card) => applyChange({ type: 'card_moved', card }, 'rest'),
+    [applyChange],
   )
 
   const handleGroupCreated = useCallback(
-    (colId: string, group: CardGroup, cardIds: string[]) =>
-      setColumns((prev) =>
-        prev.map((c) => {
-          if (c.id !== colId) return c
-          const groups = (c.groups || []).some((g) => g.id === group.id)
-            ? c.groups
-            : [...(c.groups || []), group]
-          const cards = c.cards.map((card) =>
-            cardIds.includes(card.id) ? { ...card, group_id: group.id } : card,
-          )
-          return { ...c, groups, cards }
-        }),
-      ),
-    [setColumns],
+    (group: CardGroup, cardIds: string[]) =>
+      applyChange({ type: 'group_created', group, card_ids: cardIds }, 'rest'),
+    [applyChange],
   )
 
   const handleGroupUpdated = useCallback(
-    (colId: string, group: CardGroup) =>
-      setColumns((prev) =>
-        prev.map((c) =>
-          c.id === colId
-            ? {
-                ...c,
-                groups: (c.groups || []).map((g) =>
-                  g.id === group.id ? group : g,
-                ),
-              }
-            : c,
-        ),
-      ),
-    [setColumns],
+    (group: CardGroup) => applyChange({ type: 'group_updated', group }),
+    [applyChange],
   )
 
   const handleGroupDeleted = useCallback(
-    (colId: string, groupId: string) =>
-      setColumns((prev) =>
-        prev.map((c) =>
-          c.id === colId
-            ? {
-                ...c,
-                groups: (c.groups || []).filter((g) => g.id !== groupId),
-                cards: c.cards.map((card) =>
-                  card.group_id === groupId ? { ...card, group_id: null } : card,
-                ),
-              }
-            : c,
-        ),
-      ),
-    [setColumns],
+    (groupId: string) => applyChange({ type: 'group_deleted', id: groupId }),
+    [applyChange],
+  )
+
+  // Сервер группу не расформировал: возвращаем её вместе с карточками
+  const handleGroupRestored = useCallback(
+    (group: CardGroup, cardIds: string[], err?: unknown) => {
+      applyChange({ type: 'group_restored', group, card_ids: cardIds })
+      if (err !== undefined) handleMutationRejected(err)
+    },
+    [applyChange, handleMutationRejected],
+  )
+
+  // Задачи: сохранение (создание, правка, возврат после неудачного удаления) и удаление
+  const handleActionItemSaved = useCallback(
+    (item: ActionItem) => setActionItems((prev) => applyActionItemSaved(prev, item)),
+    [setActionItems],
+  )
+
+  const handleActionItemDeleted = useCallback(
+    (id: string) => setActionItems((prev) => applyActionItemDeleted(prev, id)),
+    [setActionItems],
   )
 
   const handleToggleCollapse = useCallback(
@@ -804,20 +956,23 @@ export default function BoardPage({
   const handleAddColumn = async (title: string, color: string) => {
     try {
       const col = await createColumn({ board_id: board.id, title, color })
-      setColumns((prev) =>
-        prev.some((c) => c.id === col.id) ? prev : [...prev, col],
-      )
+      applyChange({ type: 'column_created', column: col }, 'rest')
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Не удалось добавить колонку'), 'error')
     }
   }
 
+  const spotlightCardIdRef = useRef(spotlightCardId)
+  useEffect(() => {
+    spotlightCardIdRef.current = spotlightCardId
+  }, [spotlightCardId])
+
   const handleSpotlight = useCallback(
     (cardId: string) => {
-      const next = spotlightCardId === cardId ? null : cardId
+      const next = spotlightCardIdRef.current === cardId ? null : cardId
       sendMessage({ event: 'spotlight_card', data: { card_id: next } })
     },
-    [sendMessage, spotlightCardId],
+    [sendMessage],
   )
 
   const handleSelectSpotlightCard = useCallback(
@@ -864,9 +1019,11 @@ export default function BoardPage({
     }
   }, [])
 
-  const columnsMeta = useMemo(
-    () => columns.map((c) => ({ id: c.id, title: c.title, color: c.color })),
-    [columns],
+  // Куда можно перенести карточку из её меню. Массив меняется, только когда меняется
+  // состав, название или цвет колонок, — не при каждом лайке.
+  const columnsMeta = useStableValue(
+    useMemo(() => columns.map((c) => ({ id: c.id, title: c.title, color: c.color })), [columns]),
+    sameColumnsMeta,
   )
 
   const allGroupIds = useMemo(
@@ -918,52 +1075,19 @@ export default function BoardPage({
     [sendMessage],
   )
 
-  const handleCardMovedToColumn = useCallback(
-    (sourceColId: string, updatedCard: Card, targetColumnId: string) => {
-      setColumns((prev) =>
-        prev.map((col) => {
-          if (col.id === sourceColId && sourceColId !== targetColumnId) {
-            return {
-              ...col,
-              cards: col.cards.filter((c) => c.id !== updatedCard.id),
-            }
-          }
-          if (col.id === targetColumnId) {
-            const rest = col.cards.filter((c) => c.id !== updatedCard.id)
-            return {
-              ...col,
-              cards: [updatedCard, ...rest],
-            }
-          }
-          return col
-        }),
-      )
-    },
-    [setColumns],
-  )
-
   const handleResetMyVotes = useCallback(async () => {
     if (readOnly || resettingVotes || userTotalVotes <= 0) return
     setResettingVotes(true)
     try {
       await resetBoardVotes(board.id)
-      setColumns((prev) =>
-        prev.map((col) => ({
-          ...col,
-          cards: col.cards.map((card) =>
-            countMyVotes(card, myId) > 0
-              ? { ...card, likes: card.likes.filter((voterId) => voterId !== myId) }
-              : card,
-          ),
-        })),
-      )
+      applyChange({ type: 'votes_reset', participant_id: myId })
       showToast('Все ваши голоса сброшены', 'success')
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Не удалось сбросить голоса'), 'error')
     } finally {
       setResettingVotes(false)
     }
-  }, [board.id, readOnly, resettingVotes, setColumns, userTotalVotes, myId])
+  }, [applyChange, board.id, readOnly, resettingVotes, userTotalVotes, myId])
 
   // Раскрыть скрытый сбор вне сессии. В сессии карточки раскрывает переход ведущего
   // из фазы «Штурм». Остальные участники узнают о раскрытии по cards_visibility_changed.
@@ -972,8 +1096,8 @@ export default function BoardPage({
     setRevealing(true)
     try {
       const fresh = await revealBoardCards(board.id)
-      setColumns(fresh.columns || [])
-      setMoods(fresh.moods || [])
+      // Ответ — доска в новом виде: применяется как снимок (с номером событий)
+      applySnapshot(fresh)
       onBoardUpdated({ ...boardRef.current, ...fresh })
       showToast('Карточки раскрыты для всей команды', 'success')
     } catch (err) {
@@ -981,13 +1105,13 @@ export default function BoardPage({
     } finally {
       setRevealing(false)
     }
-  }, [board.id, onBoardUpdated, revealing, setColumns])
+  }, [applySnapshot, board.id, onBoardUpdated, revealing])
 
   const handleToggleSelectCard = useCallback(
     (cardId: string, shiftKey = false) => {
       if (readOnly) return
       // Скрытые до раскрытия чужие карточки в диапазон не попадают: выбрать их нельзя
-      const orderedIds = columns.flatMap((c) =>
+      const orderedIds = columnsRef.current.flatMap((c) =>
         c.cards.filter((card) => !card.masked).map((card) => card.id),
       )
       setSelectedCardIds((prev) => {
@@ -1012,43 +1136,16 @@ export default function BoardPage({
       })
       lastSelectedCardIdRef.current = cardId
     },
-    [columns, readOnly],
+    [readOnly],
   )
 
+  // Ответ массовой операции: карточки с новыми колонкой, группой или цветом
   const applyBulkUpdatedCards = useCallback(
     (updatedCards: Card[], extraGroup?: CardGroup) => {
-      const updatedMap = new Map(updatedCards.map((c) => [c.id, c]))
-      setColumns((prev) =>
-        prev.map((col) => {
-          const retained: Card[] = []
-          for (const existing of col.cards) {
-            const replacement = updatedMap.get(existing.id)
-            if (!replacement) {
-              retained.push(existing)
-            } else if (replacement.column_id === col.id) {
-              retained.push(replacement)
-            }
-          }
-          const incoming = updatedCards.filter(
-            (c) =>
-              c.column_id === col.id &&
-              !col.cards.some((existing) => existing.id === c.id),
-          )
-          const groups =
-            extraGroup &&
-            extraGroup.column_id === col.id &&
-            !(col.groups || []).some((g) => g.id === extraGroup.id)
-              ? [...(col.groups || []), extraGroup]
-              : col.groups
-          return {
-            ...col,
-            groups,
-            cards: [...retained, ...incoming],
-          }
-        }),
-      )
+      if (extraGroup) applyChange({ type: 'group_created', group: extraGroup }, 'rest')
+      for (const card of updatedCards) applyChange({ type: 'card_updated', card }, 'rest')
     },
-    [setColumns],
+    [applyChange],
   )
 
   const runBulkAction = useCallback(
@@ -1072,13 +1169,17 @@ export default function BoardPage({
         const updated = await bulkUpdateCards({ card_ids: ids, group_title: title })
         const newGroupId = updated[0]?.group_id
         const targetColId = updated[0]?.column_id
+        // Группу ответ не содержит (она придёт событием): пока собираем её сами — в конец колонки
+        const lastGroupPosition = (
+          columnsRef.current.find((c) => c.id === targetColId)?.groups || []
+        ).reduce((max, g) => Math.max(max, g.position), -1)
         const syntheticGroup: CardGroup | undefined =
           newGroupId && targetColId
             ? {
                 id: newGroupId,
                 column_id: targetColId,
                 title: title.trim() || 'Новая группа',
-                position: 999,
+                position: lastGroupPosition + 1,
               }
             : undefined
         applyBulkUpdatedCards(updated, syntheticGroup)
@@ -1127,36 +1228,23 @@ export default function BoardPage({
     () =>
       runBulkAction('Не удалось удалить карточки', async (ids) => {
         await bulkDeleteCards(ids)
-        const idSet = new Set(ids)
-        setColumns((prev) =>
-          prev.map((col) => ({
-            ...col,
-            cards: col.cards.filter((c) => !idSet.has(c.id)),
-          })),
-        )
+        applyChange({ type: 'cards_deleted', ids })
         setSelectedCardIds(new Set())
         showToast(`Удалено карточек: ${ids.length}`, 'success')
       }),
-    [runBulkAction, setColumns],
+    [applyChange, runBulkAction],
   )
 
   const handleMergeCards = useCallback(
     (targetText: string) =>
       runBulkAction('Не удалось объединить карточки', async (ids) => {
         const merged = await mergeCards(ids, targetText)
-        const removedSet = new Set(ids.slice(1))
-        setColumns((prev) =>
-          prev.map((col) => ({
-            ...col,
-            cards: col.cards
-              .filter((c) => !removedSet.has(c.id))
-              .map((c) => (c.id === merged.id ? merged : c)),
-          })),
-        )
+        applyChange({ type: 'cards_deleted', ids: ids.filter((id) => id !== merged.id) })
+        applyChange({ type: 'card_updated', card: merged }, 'rest')
         setSelectedCardIds(new Set())
         showToast('Дубли объединены, голоса суммированы', 'success')
       }),
-    [runBulkAction, setColumns],
+    [applyChange, runBulkAction],
   )
 
   const handleOpenClusterPreview = useCallback(
@@ -1190,7 +1278,7 @@ export default function BoardPage({
         })
         for (const entry of result.created_groups || []) {
           if (entry?.group) {
-            handleGroupCreated(colId, entry.group, entry.card_ids || [])
+            handleGroupCreated(entry.group, entry.card_ids || [])
           }
         }
         setClusterPreviewState(null)
@@ -1275,16 +1363,19 @@ export default function BoardPage({
         id: 'ai-summary',
         label: aiEnabled === false ? 'Итоги ретро и экспорт' : 'AI-резюме спринта',
         keywords: 'summary итоги отчет',
-        onSelect: () => {
-          setSummaryOpen(true)
-          void loadSummary()
-        },
+        onSelect: openSummary,
       },
       {
         id: 'mood-checkin',
         label: 'Чек-ин настроения',
         keywords: 'mood оценка',
         onSelect: () => setMoodOpen(true),
+      },
+      {
+        id: 'health-check',
+        label: 'Health check команды',
+        keywords: 'health опрос чек-ин светофор здоровье команды',
+        onSelect: openHealthCheck,
       },
       {
         id: 'shortcuts-help',
@@ -1302,11 +1393,20 @@ export default function BoardPage({
     handleToggleCollapseAllGroups,
     handleToggleMaster,
     hasGroups,
-    loadSummary,
     masterOpen,
+    openSummary,
     readOnly,
     userTotalVotes,
   ])
+
+  // Перейти к карточке на своём экране: прокрутить и ненадолго подсветить
+  const flashCard = useCallback((cardId: string) => {
+    const el = document.querySelector<HTMLElement>(`[data-card-id="${cardId}"]`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+    el.setAttribute('data-flash', 'true')
+    window.setTimeout(() => el.removeAttribute('data-flash'), CARD_FLASH_MS)
+  }, [])
 
   const commandSearchCards = useMemo<CommandSearchCard[]>(() => {
     const items: CommandSearchCard[] = []
@@ -1319,17 +1419,15 @@ export default function BoardPage({
           columnTitle: col.title,
           likesCount: (card.likes || []).length,
           onSelect: () => {
-            const el = document.querySelector<HTMLElement>(`[data-card-id="${card.id}"]`)
-            el?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
-            if (canControlSession) {
-              handleSpotlight(card.id)
-            }
+            flashCard(card.id)
+            // Поиск карточки — личное действие: фокус всей команде включает только ведущий
+            if (isFacilitator) handleSelectSpotlightCard(card.id)
           },
         })
       }
     }
     return items
-  }, [columns, canControlSession, handleSpotlight])
+  }, [columns, flashCard, handleSelectSpotlightCard, isFacilitator])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1345,14 +1443,18 @@ export default function BoardPage({
         return
       }
 
+      // Окно или меню забирают клавиатуру целиком; поповер (таймер, реакции, участники) —
+      // только Escape, которым он закрывается. Остальные клавиши доски при нём работают.
+      const overlay = blockingOverlay()
+
       if (e.key === 'Escape') {
-        if (selectedCardIds.size > 0) {
+        if (!overlay && selectedCardIds.size > 0) {
           setSelectedCardIds(new Set())
         }
         return
       }
 
-      if (document.querySelector('[role="dialog"][data-state="open"]')) {
+      if (overlay === 'modal' || overlay === 'menu') {
         return
       }
 
@@ -1397,9 +1499,26 @@ export default function BoardPage({
       }
     }
 
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    // На фазе перехвата: поповер закрывается по Escape раньше, чем событие всплывёт до окна,
+    // и к тому моменту уже не виден как открытый — Escape сбросил бы ещё и выделение
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [handleToggleMaster, readOnly, selectedCardIds.size])
+
+  useEffect(() => {
+    const open = () => healthRef.current.openDialog()
+    window.addEventListener(HEALTH_CHECK_OPEN_EVENT, open)
+    return () => window.removeEventListener(HEALTH_CHECK_OPEN_EVENT, open)
+  }, [])
+
+  // Сортировка по голосам и фильтры показывают карточки не в том порядке, в котором они
+  // лежат на сервере: перенос записал бы место «среди видимых». На это время он отключён.
+  const dragDisabledReason =
+    sortBy === 'votes'
+      ? 'Перетаскивание отключено, пока карточки отсортированы по голосам'
+      : searchQuery.trim() || onlyMine || colorFilter
+        ? 'Перетаскивание отключено, пока включён поиск или фильтр'
+        : null
 
   const handleExportMarkdown = () => {
     const md = formatBoardMarkdown(
@@ -1446,10 +1565,7 @@ export default function BoardPage({
         onOpenUserSettings={() => setUserSettingsOpen(true)}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         onOpenMood={() => setMoodOpen(true)}
-        onOpenSummary={() => {
-          setSummaryOpen(true)
-          void loadSummary()
-        }}
+        onOpenSummary={openSummary}
         onExportMarkdown={handleExportMarkdown}
         onExportPDF={handleExportPDF}
       />
@@ -1506,7 +1622,11 @@ export default function BoardPage({
         onToggleMaster={handleToggleMaster}
         actionItemsCount={actionItems.length}
         onAddColumn={handleAddColumn}
+        dragDisabledReason={readOnly ? null : dragDisabledReason}
+        onOpenHealthCheck={openHealthCheck}
       />
+
+      <ConnectionBanner connection={connection} onReconnect={reconnect} />
 
       {cardsHidden && (
         <HiddenCollectBanner
@@ -1523,8 +1643,10 @@ export default function BoardPage({
       <DndContext
         sensors={sensors}
         collisionDetection={collisionDetection}
+        accessibility={DND_ACCESSIBILITY}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
+        onDragCancel={onDragCancel}
         onDragEnd={handleDragEnd}
       >
         <main
@@ -1584,14 +1706,20 @@ export default function BoardPage({
                   voterNames={voterNames}
                   onUpdate={handleColumnUpdate}
                   onDelete={handleColumnDelete}
-                  onCardCreated={(card) => handleCardCreated(col.id, card)}
-                  onCardUpdated={(card) => handleCardUpdated(col.id, card)}
-                  onCardDeleted={(cardId) => handleCardDeleted(col.id, cardId)}
-                  onGroupCreated={(group, ids) =>
-                    handleGroupCreated(col.id, group, ids)
-                  }
-                  onGroupUpdated={(group) => handleGroupUpdated(col.id, group)}
-                  onGroupDeleted={(gid) => handleGroupDeleted(col.id, gid)}
+                  onRestore={handleColumnRestore}
+                  onMove={isModerator && !readOnly ? handleMoveColumn : undefined}
+                  canMoveLeft={idx > 0}
+                  canMoveRight={idx < columns.length - 1}
+                  onCardCreated={handleCardCreated}
+                  onCardUpdated={handleCardUpdated}
+                  onCardPatched={handleCardPatched}
+                  onCardDeleted={handleCardDeleted}
+                  onCardRestored={handleCardRestored}
+                  onCardRejected={handleCardRejected}
+                  onGroupCreated={handleGroupCreated}
+                  onGroupUpdated={handleGroupUpdated}
+                  onGroupDeleted={handleGroupDeleted}
+                  onGroupRestored={handleGroupRestored}
                   groupTargetId={groupTargetId}
                   collapsedGroups={collapsedGroups}
                   onToggleCollapse={handleToggleCollapse}
@@ -1599,24 +1727,21 @@ export default function BoardPage({
                   anonymous={anonymousMode}
                   readOnly={readOnly}
                   cardCreationDisabled={readOnly}
+                  dragDisabled={Boolean(dragDisabledReason)}
+                  dragDisabledReason={dragDisabledReason}
                   searchQuery={searchQuery}
                   onlyMine={onlyMine}
                   sortBy={sortBy}
                   spotlightCardId={spotlightCardId}
-                  onSpotlight={handleSpotlight}
-                  onCreateActionItem={
-                    cardsHidden
-                      ? undefined
-                      : (card) => createActionItemFromCards(card.text, [card.id], card.author)
-                  }
+                  // Фокус обсуждения — инструмент ведущего: остальным кнопка не показывается
+                  onSpotlight={isFacilitator ? handleSpotlight : undefined}
+                  onCreateActionItem={cardsHidden ? undefined : handleCreateActionItemFromCard}
                   onPreviewAutoCluster={handleOpenClusterPreview}
                   allowMultipleVotes={Boolean(board.allow_multiple_votes_per_card)}
                   selectedCardIds={selectedCardIds}
                   onToggleSelectCard={handleToggleSelectCard}
-                  otherColumns={columnsMeta.filter((c) => c.id !== col.id)}
-                  onCardMoved={(updatedCard, targetColId) =>
-                    handleCardMovedToColumn(col.id, updatedCard, targetColId)
-                  }
+                  otherColumns={columnsMeta}
+                  onCardMoved={handleCardMovedToColumn}
                   colorFilter={colorFilter}
                   typingUsernames={typingByColumn[col.id]}
                   onTypingChange={handleTypingChange}
@@ -1671,19 +1796,9 @@ export default function BoardPage({
                 boardId={board.id}
                 actionItems={actionItems}
                 participants={participants}
-                onCreated={(item) =>
-                  setActionItems((prev) =>
-                    prev.find((i) => i.id === item.id) ? prev : [...prev, item],
-                  )
-                }
-                onUpdated={(item) =>
-                  setActionItems((prev) =>
-                    prev.map((i) => (i.id === item.id ? item : i)),
-                  )
-                }
-                onDeleted={(id) =>
-                  setActionItems((prev) => prev.filter((i) => i.id !== id))
-                }
+                onCreated={handleActionItemSaved}
+                onUpdated={handleActionItemSaved}
+                onDeleted={handleActionItemDeleted}
                 dropDisabled={readOnly || cardsHidden}
                 readOnly={readOnly}
                 cardsHidden={cardsHidden}
@@ -1723,19 +1838,9 @@ export default function BoardPage({
             boardId={board.id}
             actionItems={actionItems}
             participants={participants}
-            onCreated={(item) =>
-              setActionItems((prev) =>
-                prev.find((i) => i.id === item.id) ? prev : [...prev, item],
-              )
-            }
-            onUpdated={(item) =>
-              setActionItems((prev) =>
-                prev.map((i) => (i.id === item.id ? item : i)),
-              )
-            }
-            onDeleted={(id) =>
-              setActionItems((prev) => prev.filter((i) => i.id !== id))
-            }
+            onCreated={handleActionItemSaved}
+            onUpdated={handleActionItemSaved}
+            onDeleted={handleActionItemDeleted}
             dropDisabled
             readOnly={readOnly}
             cardsHidden={cardsHidden}
@@ -1879,7 +1984,6 @@ export default function BoardPage({
         onLike={() => {
           if (!spotlightData || readOnly) return
           const targetCard = spotlightData.card
-          const targetColId = spotlightData.column.id
           const allowMulti = Boolean(board.allow_multiple_votes_per_card)
           const alreadyLiked = countMyVotes(targetCard, myId) > 0
           const adding = allowMulti || !alreadyLiked
@@ -1888,11 +1992,19 @@ export default function BoardPage({
             return
           }
           toggleLike(targetCard.id, allowMulti ? 'add' : 'toggle')
-            .then((updated) => handleCardUpdated(targetColId, updated))
+            .then((updated) => handleCardUpdated(updated))
             .catch((err) => showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error'))
         }}
       />
 
+      {/* Health check: запустить опрос у всех может ведущий, а вне сессии — любой участник */}
+      <HealthCheckDialog
+        health={health}
+        onStartForTeam={
+          canControlSession ? () => sendMessage(HEALTH_CHECK_START) : undefined
+        }
+      />
+      <RotiPrompt health={health} />
     </div>
   )
 }

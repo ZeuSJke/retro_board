@@ -47,6 +47,10 @@ export interface Board {
   /** Скрыты ли сейчас чужие карточки для получателя (решает сервер). */
   cards_hidden?: boolean
   has_summary?: boolean
+  /** Номер последнего события доски, вошедшего в этот снимок (см. `lib/board-sync.ts`). */
+  event_seq?: number
+  /** Поколение нумерации событий: меняется при рестарте сервера. */
+  event_epoch?: string
   columns: Column[]
   moods?: BoardMood[]
 }
@@ -197,6 +201,10 @@ export interface ReactionBubble {
 export interface WsMessage {
   event: string
   data: Record<string, unknown>
+  /** Порядковый номер события данных доски; у курсоров, таймера и присутствия его нет. */
+  seq?: number
+  /** Поколение нумерации: меняется при рестарте сервера. */
+  epoch?: string
 }
 
 export interface WsCursorMoveData {
@@ -290,6 +298,8 @@ export interface WsGroupDeletedData {
 export interface WsAutoClusterCompletedData {
   column_id: string
   username: string | null
+  /** Кто запустил группировку: «это сделал я» определяется по нему, а не по имени. */
+  participant_id?: string | null
   groups_count: number
 }
 
@@ -314,8 +324,14 @@ export interface WsBoardUpdatedData {
 
 export interface TimerState {
   duration: number
+  /**
+   * Остаток в секундах на момент последнего события таймера. У идущего таймера он не
+   * уменьшается каждую секунду: текущее значение считается от `endsAt` (см. `lib/timer.ts`).
+   */
   remaining: number
   running: boolean
+  /** Когда идущий таймер закончится, по часам клиента (мс). */
+  endsAt?: number | null
 }
 
 export interface Theme {

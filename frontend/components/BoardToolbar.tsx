@@ -2,10 +2,12 @@
 
 import { useState } from 'react'
 import {
+  Activity,
   ArrowDownWideNarrow,
   ArrowUpDown,
   ChevronsDownUp,
   ChevronsUpDown,
+  Hand,
   Palette,
   PanelRight,
   Plus,
@@ -13,7 +15,7 @@ import {
   User,
   X,
 } from 'lucide-react'
-import { CARD_COLOR_PRESETS, COLUMN_COLOR_PALETTE } from '@/lib/board-themes'
+import { CARD_COLOR_PRESETS, COLUMN_COLOR_PALETTE, getColumnColorName } from '@/lib/board-themes'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -38,6 +40,13 @@ interface BoardToolbarProps {
   onToggleMaster: () => void
   actionItemsCount: number
   onAddColumn: (title: string, color: string) => Promise<void>
+  /**
+   * Почему сейчас нельзя перетаскивать карточки (сортировка по голосам, фильтр, поиск);
+   * `null` — можно. Показывается рядом с фильтрами, чтобы отключение не было молчаливым.
+   */
+  dragDisabledReason?: string | null
+  /** Открыть health check. Кнопка видна только на телефоне: на широком экране она в шапке. */
+  onOpenHealthCheck?: () => void
 }
 
 export default function BoardToolbar({
@@ -58,6 +67,8 @@ export default function BoardToolbar({
   onToggleMaster,
   actionItemsCount,
   onAddColumn,
+  dragDisabledReason = null,
+  onOpenHealthCheck,
 }: BoardToolbarProps) {
   const [colPopoverOpen, setColPopoverOpen] = useState(false)
   const [colTitle, setColTitle] = useState('')
@@ -219,9 +230,35 @@ export default function BoardToolbar({
             </span>
           </Button>
         )}
+
+        {dragDisabledReason && (
+          <span
+            role="status"
+            data-testid="drag-disabled-hint"
+            title={`${dragDisabledReason}: порядок на экране не совпадает с порядком карточек на доске`}
+            className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-dashed border-border px-2 text-[11px] text-muted-foreground"
+          >
+            <Hand className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">{dragDisabledReason}</span>
+          </span>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        {onOpenHealthCheck && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs sm:hidden"
+            onClick={onOpenHealthCheck}
+            aria-label="Health check команды"
+            title="Health check команды"
+            data-testid="health-check-btn-mobile"
+          >
+            <Activity className="h-3.5 w-3.5 text-emerald-500" />
+          </Button>
+        )}
         {!readOnly && (
           <Popover open={colPopoverOpen} onOpenChange={setColPopoverOpen}>
             <PopoverTrigger asChild>
@@ -245,14 +282,17 @@ export default function BoardToolbar({
                   autoFocus
                   className="h-8 text-xs"
                 />
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5" role="group" aria-label="Цвет колонки">
                   {COLUMN_COLOR_PALETTE.map((c) => (
                     <button
                       key={c}
                       type="button"
                       onClick={() => setColColor(c)}
+                      title={getColumnColorName(c)}
+                      aria-label={`Цвет колонки: ${getColumnColorName(c)}`}
+                      aria-pressed={colColor === c}
                       className={cn(
-                        'h-5 w-5 rounded-full transition-transform hover:scale-110',
+                        'h-5 w-5 rounded-full transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
                         colColor === c && 'ring-2 ring-primary ring-offset-2',
                       )}
                       style={{ backgroundColor: c }}

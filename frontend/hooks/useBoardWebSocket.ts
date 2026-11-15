@@ -1,27 +1,30 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { useWebSocket } from './useWebSocket'
+import {
+  useWebSocket,
+  WS_CLOSE_POLICY_VIOLATION,
+  type WsCloseInfo,
+  type WsOpenInfo,
+  type WsStatus,
+} from './useWebSocket'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
-import { getActionItems } from '../api'
+import { getActionItems, getBoard } from '../api'
+import { getApiErrorStatus, markApiErrorReported } from '../utils/apiError'
 import { asCard, asColumn, asGroup, asActionItem } from '../utils/wsData'
 import {
-  applyCardCreated,
-  applyCardDeleted,
-  applyCardMoved,
-  applyCardUpdated,
-  applyColumnCreated,
-  applyColumnDeleted,
-  applyColumnUpdated,
-  applyGroupCreated,
-  applyGroupDeleted,
-  applyGroupMoved,
-  applyGroupUpdated,
-  applyParticipantRenamed,
+  applyActionItemDeleted,
+  applyActionItemSaved,
+  applyBoardChange,
+  describeBoardChange,
+  hasBoardEntity,
+  type BoardChange,
 } from '../lib/board-events'
+import { BoardEventSequencer } from '../lib/board-sync'
 import type {
   ActionItem,
+  Board,
   BoardListItem,
   BoardMood,
   Column,
@@ -48,21 +51,79 @@ export interface CursorPos {
 
 export const NO_FACILITATOR: FacilitatorInfo = { id: null, name: null, online: false }
 
+/**
+ * Откуда пришло изменение доски:
+ * - `ws` — событие сервера, источник истины;
+ * - `rest` — ответ на собственный запрос; не применяется, если событие сокета об этой же
+ *   сущности уже пришло (оно не старше ответа, а запоздавший ответ затёр бы чужую правку);
+ * - `local` — оптимистичная правка или её откат.
+ */
+export type ChangeSource = 'ws' | 'rest' | 'local'
+
+/** Почему доска перечитывается (для отладки и для владельца хука). */
+export type ResyncReason =
+  | 'open'
+  | 'reconnect'
+  | 'gap'
+  | 'visibility'
+  | 'confirm'
+  | 'snapshot'
+  | 'rejected'
+  | 'drag'
+  | 'retry'
+
+/**
+ * Состояние связи для интерфейса:
+ * - `connecting` — первое подключение;
+ * - `online` — связь есть, доска сверена;
+ * - `reconnecting` — связь потеряна, идут попытки подключиться;
+ * - `syncing` — связь вернулась, доска перечитывается;
+ * - `sync-failed` — связь есть, но перечитать доску не удаётся (попытки продолжаются);
+ * - `closed` — сервер закрыл соединение, автоматических попыток больше нет.
+ */
+export type BoardConnection =
+  | 'connecting'
+  | 'online'
+  | 'reconnecting'
+  | 'syncing'
+  | 'sync-failed'
+  | 'closed'
+
+/** Ответ REST не применяется, если событие сокета о той же сущности пришло не раньше этого срока. */
+const REST_AFTER_WS_WINDOW_MS = 3000
+const RESYNC_RETRY_BASE_MS = 2000
+const RESYNC_RETRY_MAX_MS = 30000
+
 interface UseBoardWebSocketParams {
   boardId: string
   onTimerWsEvent?: (event: string, data: Record<string, unknown>) => void
+  /** После подключения сервер не прислал таймер — значит, на сервере он не запущен. */
+  onTimerAbsent?: () => void
   onFacilitatorChanged?: (facilitator: FacilitatorInfo, phase: string | null) => void
   onPhaseChanged?: (phase: string) => void
-  onSummaryGenerated?: () => void
+  /** Итоги готовы. `regenerated` — их пересоздали по кнопке: окно открывать не нужно. */
+  onSummaryGenerated?: (info: { regenerated: boolean }) => void
   onSummaryFailed?: (message?: string) => void
   onBoardCreated?: (board: BoardListItem) => void
   onBoardUpdated?: (board: WsBoardUpdatedData) => void
   onBoardDeleted?: (id: string) => void
   onMoodUpdated?: (mood: BoardMood) => void
-  /** Сервер изменил видимость карточек (раскрытие, начало штурма): доску нужно перечитать. */
-  onCardsVisibilityChanged?: () => void
   /** Участник сменил имя. Подписи карточек хук обновляет сам. */
   onParticipantRenamed?: (participantId: string, name: string) => void
+  /**
+   * Доска перечитана с сервера: колонки хук уже заменил, владельцу остаётся обновить
+   * остальное (настройки, настроение).
+   */
+  onBoardSnapshot?: (board: Board) => void
+  /** Перечитывание завершено (после переподключения, пропуска событий и т. п.). */
+  onResynced?: (reason: ResyncReason) => void
+  /** Доски больше нет (удалена или недоступна): подключаться бессмысленно. */
+  onBoardGone?: () => void
+  /**
+   * События, которые хук не обрабатывает сам (health check). Вернуть `true`, если событие
+   * обработано. Пронумерованные события приходят сюда уже по порядку.
+   */
+  onServerEvent?: (msg: WsMessage) => boolean
 }
 
 function isParticipant(value: unknown): value is Participant {
@@ -79,9 +140,31 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
 }
 
+/** Что сервер присылает сразу после подключения, только если оно есть. */
+interface AwaitedState {
+  timer: boolean
+  spotlight: boolean
+  ready: boolean
+  typing: boolean
+}
+
+const NOTHING_AWAITED: AwaitedState = { timer: false, spotlight: false, ready: false, typing: false }
+
+interface SyncState {
+  running: boolean
+  /** Пока шло чтение, появился новый повод перечитать доску. */
+  again: boolean
+  /** Перечитывание отложено до конца перетаскивания. */
+  wanted: boolean
+  failures: number
+  retryTimer: ReturnType<typeof setTimeout> | null
+  disposed: boolean
+}
+
 export function useBoardWebSocket({
   boardId,
   onTimerWsEvent,
+  onTimerAbsent,
   onFacilitatorChanged,
   onPhaseChanged,
   onSummaryGenerated,
@@ -90,12 +173,14 @@ export function useBoardWebSocket({
   onBoardUpdated,
   onBoardDeleted,
   onMoodUpdated,
-  onCardsVisibilityChanged,
   onParticipantRenamed,
+  onBoardSnapshot,
+  onResynced,
+  onBoardGone,
+  onServerEvent,
 }: UseBoardWebSocketParams) {
-  // Личность — участник сессии; имя нужно только для подписи в уведомлениях
+  // Личность — участник сессии
   const myId = useAppStore((s) => s.participant?.id ?? '')
-  const myName = useAppStore((s) => s.participant?.name ?? s.username)
   const [columns, setColumns] = useState<Column[]>([])
   // Курсоры хранятся по идентификатору участника: у тёзок они разные
   const cursorsRef = useRef<Record<string, CursorPos>>({})
@@ -112,6 +197,10 @@ export function useBoardWebSocket({
   const [phase, setPhase] = useState<string | null>(null)
   const [sessionSynced, setSessionSynced] = useState(false)
   const [actionItems, setActionItems] = useState<ActionItem[]>([])
+  // Связь терялась: пока доска не перечитана, пропущенные события не учтены
+  const [recovering, setRecovering] = useState(false)
+  const [syncFailed, setSyncFailed] = useState(false)
+  const [boardGone, setBoardGone] = useState(false)
   const cursorTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const reactionTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastCursorRef = useRef<CursorPos | null>(null)
@@ -119,25 +208,64 @@ export function useBoardWebSocket({
   const lastCursorSentPosRef = useRef<CursorPos | null>(null)
   const sendMessageRef = useRef<((msg: WsMessage) => void) | null>(null)
 
+  // Учёт номеров событий: один на всё время жизни хука
+  const [sequencer] = useState(() => new BoardEventSequencer<WsMessage>())
+  const syncRef = useRef<SyncState>({
+    running: false,
+    again: false,
+    wanted: false,
+    failures: 0,
+    retryTimer: null,
+    disposed: false,
+  })
+  // Когда событие сокета последний раз касалось сущности (`card:<id>` и т. п.)
+  const touchedRef = useRef<Map<string, number>>(new Map())
+  const awaitedRef = useRef<AwaitedState>(NOTHING_AWAITED)
+  const boardIdRef = useRef(boardId)
+  const statusRef = useRef<WsStatus>('connecting')
+  const stopSocketRef = useRef<() => void>(() => {})
+  const dispatchRef = useRef<(msg: WsMessage) => void>(() => {})
+  const resyncRef = useRef<(reason: ResyncReason, snapshot?: Board) => void>(() => {})
+
+  const myIdRef = useRef(myId)
+  // Обработчики владельца — через ref: перечитывание и разбор событий живут дольше одного рендера
+  const callbacksRef = useRef({
+    onTimerWsEvent,
+    onTimerAbsent,
+    onFacilitatorChanged,
+    onPhaseChanged,
+    onSummaryGenerated,
+    onSummaryFailed,
+    onBoardCreated,
+    onBoardUpdated,
+    onBoardDeleted,
+    onMoodUpdated,
+    onParticipantRenamed,
+    onBoardSnapshot,
+    onResynced,
+    onBoardGone,
+    onServerEvent,
+  })
   useEffect(() => {
-    setSessionSynced(false)
-    setFacilitator(NO_FACILITATOR)
-    setPhase(null)
-    setParticipants([])
-    setKnownNames({})
-    setReadyIds([])
-    setSpotlightCardId(null)
-    setTypingUsers([])
-    setReactions([])
-    Object.values(cursorTimeouts.current).forEach(clearTimeout)
-    cursorTimeouts.current = {}
-    if (Object.keys(cursorsRef.current).length > 0) {
-      cursorsRef.current = {}
-      notifyCursorListeners()
+    myIdRef.current = myId
+    callbacksRef.current = {
+      onTimerWsEvent,
+      onTimerAbsent,
+      onFacilitatorChanged,
+      onPhaseChanged,
+      onSummaryGenerated,
+      onSummaryFailed,
+      onBoardCreated,
+      onBoardUpdated,
+      onBoardDeleted,
+      onMoodUpdated,
+      onParticipantRenamed,
+      onBoardSnapshot,
+      onResynced,
+      onBoardGone,
+      onServerEvent,
     }
-    lastCursorSentAtRef.current = 0
-    lastCursorSentPosRef.current = null
-  }, [boardId])
+  })
 
   const subscribeCursors = useCallback((cb: () => void) => {
     cursorListenersRef.current.add(cb)
@@ -151,9 +279,46 @@ export function useBoardWebSocket({
   }, [])
 
   useEffect(() => {
+    boardIdRef.current = boardId
+    setSessionSynced(false)
+    setFacilitator(NO_FACILITATOR)
+    setPhase(null)
+    setParticipants([])
+    setKnownNames({})
+    setReadyIds([])
+    setSpotlightCardId(null)
+    setTypingUsers([])
+    setReactions([])
+    setRecovering(false)
+    setSyncFailed(false)
+    setBoardGone(false)
+    Object.values(cursorTimeouts.current).forEach(clearTimeout)
+    cursorTimeouts.current = {}
+    if (Object.keys(cursorsRef.current).length > 0) {
+      cursorsRef.current = {}
+      notifyCursorListeners()
+    }
+    lastCursorSentAtRef.current = 0
+    lastCursorSentPosRef.current = null
+    touchedRef.current.clear()
+    awaitedRef.current = NOTHING_AWAITED
+    const sync = syncRef.current
+    if (sync.retryTimer) clearTimeout(sync.retryTimer)
+    sync.retryTimer = null
+    sync.again = false
+    sync.wanted = false
+    sync.failures = 0
+  }, [boardId, notifyCursorListeners])
+
+  useEffect(() => {
     const cTimeouts = cursorTimeouts.current
     const rTimeouts = reactionTimeouts.current
+    const sync = syncRef.current
+    sync.disposed = false
     return () => {
+      sync.disposed = true
+      if (sync.retryTimer) clearTimeout(sync.retryTimer)
+      sync.retryTimer = null
       Object.values(cTimeouts).forEach(clearTimeout)
       Object.values(rTimeouts).forEach(clearTimeout)
     }
@@ -192,9 +357,69 @@ export function useBoardWebSocket({
     [notifyCursorListeners],
   )
 
-  const handleWsMessage = useCallback(
+  /**
+   * Применить изменение к колонкам — одна точка для события сокета, ответа REST и
+   * оптимистичной правки (см. `applyBoardChange`).
+   */
+  const applyChange = useCallback((change: BoardChange, source: ChangeSource = 'local') => {
+    const { key, creates } = describeBoardChange(change)
+    if (key && source === 'ws') {
+      const touched = touchedRef.current
+      const now = Date.now()
+      if (touched.size > 400) {
+        for (const [k, at] of touched) {
+          if (now - at >= REST_AFTER_WS_WINDOW_MS) touched.delete(k)
+        }
+      }
+      touched.set(key, now)
+    }
+    if (key && source === 'rest') {
+      const touchedAt = touchedRef.current.get(key)
+      // Событие сокета об этой сущности уже пришло: оно не старше ответа REST
+      if (touchedAt !== undefined && Date.now() - touchedAt < REST_AFTER_WS_WINDOW_MS) return
+      if (creates) {
+        setColumns((prev) => (hasBoardEntity(prev, key) ? prev : applyBoardChange(prev, change)))
+        return
+      }
+    }
+    setColumns((prev) => applyBoardChange(prev, change))
+  }, [])
+
+  /** Начальное состояние доски (снимок, с которым открыта страница). */
+  const resetBoard = useCallback(
+    (board: Pick<Board, 'columns' | 'event_seq' | 'event_epoch'>) => {
+      sequencer.reset({ epoch: board.event_epoch, seq: board.event_seq })
+      touchedRef.current.clear()
+      setColumns(board.columns || [])
+    },
+    [sequencer],
+  )
+
+  // Сервер присылает готовность, фокус, набор текста и таймер при подключении, только если
+  // они есть. Состав доски (`presence_update`) приходит последним: чего к этому моменту нет —
+  // того нет и на сервере, и состояние, оставшееся с прошлого подключения, пора сбросить.
+  const settleAwaitedState = useCallback(() => {
+    const awaited = awaitedRef.current
+    if (!awaited.timer && !awaited.spotlight && !awaited.ready && !awaited.typing) return
+    awaitedRef.current = NOTHING_AWAITED
+    if (awaited.ready) setReadyIds((prev) => (prev.length > 0 ? [] : prev))
+    if (awaited.spotlight) setSpotlightCardId(null)
+    if (awaited.typing) setTypingUsers((prev) => (prev.length > 0 ? [] : prev))
+    if (awaited.timer) callbacksRef.current.onTimerAbsent?.()
+  }, [])
+
+  const noLongerAwaited = useCallback((part: keyof AwaitedState) => {
+    if (awaitedRef.current[part]) awaitedRef.current = { ...awaitedRef.current, [part]: false }
+  }, [])
+
+  /** Разобрать и применить событие. Порядок пронумерованных событий уже проверен. */
+  const dispatch = useCallback(
     (msg: WsMessage) => {
-      const { event, data } = msg
+      const { event } = msg
+      const data = msg.data ?? {}
+      const callbacks = callbacksRef.current
+
+      if (callbacks.onServerEvent?.(msg)) return
 
       if (event === 'group_collapse') {
         const { group_id, collapsed } = data as unknown as WsGroupCollapseData
@@ -227,7 +452,8 @@ export function useBoardWebSocket({
       }
 
       if (event === 'timer_start' || event === 'timer_pause' || event === 'timer_reset') {
-        onTimerWsEvent?.(event, data)
+        noLongerAwaited('timer')
+        callbacks.onTimerWsEvent?.(event, data)
         return
       }
 
@@ -235,21 +461,25 @@ export function useBoardWebSocket({
         const list = Array.isArray(data.participants) ? data.participants.filter(isParticipant) : []
         setParticipants(list)
         rememberNames(list)
+        settleAwaitedState()
         return
       }
 
       if (event === 'ready_update') {
+        noLongerAwaited('ready')
         setReadyIds(stringList(data.ready_ids))
         return
       }
 
       if (event === 'spotlight_update') {
+        noLongerAwaited('spotlight')
         const cardId = typeof data.card_id === 'string' ? data.card_id : null
         setSpotlightCardId(cardId)
         return
       }
 
       if (event === 'typing_update') {
+        noLongerAwaited('typing')
         const list = Array.isArray(data.typing)
           ? data.typing.filter(
               (item): item is TypingUser =>
@@ -287,7 +517,7 @@ export function useBoardWebSocket({
 
       if (event === 'mood_updated') {
         if (typeof data?.id === 'string' && typeof data?.score === 'number') {
-          onMoodUpdated?.(data as unknown as BoardMood)
+          callbacks.onMoodUpdated?.(data as unknown as BoardMood)
         }
         return
       }
@@ -310,7 +540,7 @@ export function useBoardWebSocket({
           setReadyIds([])
           setSpotlightCardId(null)
         }
-        onFacilitatorChanged?.(next, p)
+        callbacks.onFacilitatorChanged?.(next, p)
         return
       }
 
@@ -320,12 +550,13 @@ export function useBoardWebSocket({
         setPhase(p)
         setReadyIds([])
         setSpotlightCardId(null)
-        onPhaseChanged?.(p)
+        callbacks.onPhaseChanged?.(p)
         return
       }
 
       if (event === 'cards_visibility_changed') {
-        onCardsVisibilityChanged?.()
+        // Что показывать участнику, решает сервер: карточки заново придут в нужном виде
+        resyncRef.current('visibility')
         return
       }
 
@@ -333,7 +564,7 @@ export function useBoardWebSocket({
         const id = typeof data.participant_id === 'string' ? data.participant_id : ''
         const name = typeof data.name === 'string' ? data.name : ''
         if (!id || !name) return
-        setColumns((prev) => applyParticipantRenamed(prev, id, name))
+        applyChange({ type: 'participant_renamed', participant_id: id, name }, 'ws')
         setParticipants((prev) =>
           prev.some((p) => p.id === id && p.name !== name)
             ? prev.map((p) => (p.id === id ? { ...p, name } : p))
@@ -351,24 +582,14 @@ export function useBoardWebSocket({
           cursorsRef.current = { ...cursorsRef.current, [id]: { ...cursor, name } }
           notifyCursorListeners()
         }
-        onParticipantRenamed?.(id, name)
+        callbacks.onParticipantRenamed?.(id, name)
         return
       }
 
-      if (event === 'action_item_created') {
+      if (event === 'action_item_created' || event === 'action_item_updated') {
         try {
           const item = asActionItem(data)
-          setActionItems((prev) => (prev.find((i) => i.id === item.id) ? prev : [...prev, item]))
-        } catch {
-          /* ignore malformed action item */
-        }
-        return
-      }
-
-      if (event === 'action_item_updated') {
-        try {
-          const item = asActionItem(data)
-          setActionItems((prev) => prev.map((i) => (i.id === item.id ? item : i)))
+          setActionItems((prev) => applyActionItemSaved(prev, item))
         } catch {
           /* ignore malformed action item */
         }
@@ -376,109 +597,101 @@ export function useBoardWebSocket({
       }
 
       if (event === 'action_item_deleted') {
-        const { id } = data as { id: string }
-        if (id) setActionItems((prev) => prev.filter((i) => i.id !== id))
+        const { id } = data as { id?: string }
+        if (id) setActionItems((prev) => applyActionItemDeleted(prev, id))
         return
       }
 
       if (event === 'auto_cluster_completed') {
-        // В событии только имя инициатора (идентификатора участника нет): себя узнаём по имени
-        const u = typeof data.username === 'string' ? data.username : ''
-        if (u && u !== myName) {
-          showToast(`${u} сгруппировал(а) карточки`, 'info')
+        // «Это запустил я» — по идентификатору участника: у тёзок имена совпадают
+        const initiatorId = typeof data.participant_id === 'string' ? data.participant_id : ''
+        const name = typeof data.username === 'string' ? data.username : ''
+        const mine = Boolean(initiatorId) && initiatorId === myIdRef.current
+        if (name && !mine) {
+          showToast(`${name} сгруппировал(а) карточки`, 'info')
         }
         return
       }
 
       if (event === 'summary_generated') {
-        onSummaryGenerated?.()
+        callbacks.onSummaryGenerated?.({ regenerated: data.regenerated === true })
         return
       }
 
       if (event === 'summary_failed') {
         const { message } = data as unknown as WsSummaryFailedData
-        onSummaryFailed?.(message)
+        callbacks.onSummaryFailed?.(message)
         return
       }
 
       if (event === 'board_created') {
         const board = data as unknown as BoardListItem
-        if (board?.id) onBoardCreated?.(board)
+        if (board?.id) callbacks.onBoardCreated?.(board)
         return
       }
 
       if (event === 'board_updated') {
         const upd = data as unknown as WsBoardUpdatedData
-        if (upd?.id) onBoardUpdated?.(upd)
+        if (upd?.id) callbacks.onBoardUpdated?.(upd)
         return
       }
 
       if (event === 'board_deleted') {
         const { id } = data as unknown as WsDeletedData
-        if (id) onBoardDeleted?.(id)
+        if (id) callbacks.onBoardDeleted?.(id)
         return
       }
 
-      let updater: ((prev: Column[]) => Column[]) | null = null
+      let change: BoardChange | null = null
       try {
         switch (event) {
-          case 'column_created': {
-            const col = asColumn(data)
-            updater = (prev) => applyColumnCreated(prev, col)
+          case 'column_created':
+            change = { type: 'column_created', column: asColumn(data) }
             break
-          }
-          case 'column_updated': {
-            const col = asColumn(data)
-            updater = (prev) => applyColumnUpdated(prev, col)
+          case 'column_updated':
+            change = { type: 'column_updated', column: asColumn(data) }
             break
-          }
           case 'column_deleted': {
             const deletedId = (data as unknown as WsDeletedData)?.id
-            if (deletedId) updater = (prev) => applyColumnDeleted(prev, deletedId)
+            if (deletedId) change = { type: 'column_deleted', id: deletedId }
             break
           }
-          case 'card_created': {
-            const card = asCard(data)
-            updater = (prev) => applyCardCreated(prev, card)
+          case 'card_created':
+            change = { type: 'card_created', card: asCard(data) }
             break
-          }
-          case 'card_updated': {
-            const card = asCard(data)
-            updater = (prev) => applyCardUpdated(prev, card)
+          case 'card_updated':
+            change = { type: 'card_updated', card: asCard(data) }
             break
-          }
           case 'card_moved': {
             const moved = data as unknown as WsCardMovedData
             if (!moved?.card || !moved.old_column_id) break
-            const payload: WsCardMovedData = { ...moved, card: asCard(moved.card as unknown as Record<string, unknown>) }
-            updater = (prev) => applyCardMoved(prev, payload)
+            change = {
+              ...moved,
+              type: 'card_moved',
+              card: asCard(moved.card as unknown as Record<string, unknown>),
+            }
             break
           }
           case 'card_deleted': {
             const deletedId = (data as unknown as WsDeletedData)?.id
-            if (deletedId) updater = (prev) => applyCardDeleted(prev, deletedId)
+            if (deletedId) change = { type: 'card_deleted', id: deletedId }
             break
           }
-          case 'group_created': {
-            const g = asGroup(data)
-            updater = (prev) => applyGroupCreated(prev, g)
+          case 'group_created':
+            change = { type: 'group_created', group: asGroup(data) }
             break
-          }
-          case 'group_updated': {
-            const g = asGroup(data)
-            updater = (prev) => applyGroupUpdated(prev, g)
+          case 'group_updated':
+            change = { type: 'group_updated', group: asGroup(data) }
             break
-          }
           case 'group_deleted': {
             const del = data as unknown as WsGroupDeletedData
-            if (!del?.id || !del.column_id) break
-            updater = (prev) => applyGroupDeleted(prev, del)
+            if (del?.id) change = { ...del, type: 'group_deleted' }
             break
           }
           case 'group_moved': {
             const moved = data as unknown as WsGroupMovedData
             if (!moved?.group || !moved.old_column_id || !Array.isArray(moved.cards)) break
-            updater = (prev) => applyGroupMoved(prev, moved)
+            change = { ...moved, type: 'group_moved' }
             break
           }
           default:
@@ -487,44 +700,228 @@ export function useBoardWebSocket({
       } catch {
         return
       }
-      if (updater) setColumns(updater)
+      if (change) applyChange(change, 'ws')
     },
     [
-      onTimerWsEvent,
-      onFacilitatorChanged,
-      onPhaseChanged,
-      onSummaryGenerated,
-      onSummaryFailed,
-      onBoardCreated,
-      onBoardUpdated,
-      onBoardDeleted,
-      onMoodUpdated,
-      onCardsVisibilityChanged,
-      onParticipantRenamed,
+      applyChange,
+      noLongerAwaited,
       notifyCursorListeners,
       rememberNames,
       removeCursor,
-      myName,
+      settleAwaitedState,
     ],
   )
 
-  const { sendMessage, connected } = useWebSocket(
+  /**
+   * Перечитать доску и задачи с сервера. Пока идёт чтение, пронумерованные события копятся
+   * и применяются поверх снимка — ничего не теряется и не применяется дважды. `snapshot` —
+   * доска, уже полученная ответом REST (сохранение настроек, раскрытие карточек).
+   */
+  const resync = useCallback(
+    (reason: ResyncReason, snapshot?: Board) => {
+      const sync = syncRef.current
+      const id = boardIdRef.current
+      if (!id || sync.disposed) return
+      if (sync.running) {
+        sync.again = true
+        return
+      }
+      if (sequencer.isPaused) {
+        // Участник тащит карточку: состояние под указателем не подменяем
+        sync.wanted = true
+        return
+      }
+      if (sync.retryTimer) clearTimeout(sync.retryTimer)
+      sync.retryTimer = null
+      sync.running = true
+      const before = sequencer.current
+      sequencer.beginSnapshot()
+
+      const stale = () => sync.disposed || boardIdRef.current !== id
+
+      void (async () => {
+        let error: unknown = null
+        let failed = false
+        let followUp: ResyncReason | null = null
+        try {
+          const fresh = snapshot ?? (await getBoard(id))
+          if (stale()) return
+          // Первое подключение: номер событий тот же, что у снимка, с которым открыта
+          // страница, — между снимком и подпиской на события ничего не произошло
+          const unchanged =
+            reason === 'open' &&
+            Boolean(fresh.event_epoch) &&
+            fresh.event_epoch === before.epoch &&
+            fresh.event_seq === before.seq
+          // Задачи читаются после доски: их список не старше номера снимка
+          const items = unchanged ? null : await getActionItems(id)
+          if (stale()) return
+          if (sequencer.isPaused) {
+            sequencer.abortSnapshot()
+            sync.wanted = true
+            return
+          }
+          const result = sequencer.completeSnapshot({
+            epoch: fresh.event_epoch,
+            seq: fresh.event_seq,
+          })
+          if (result.fresh && !unchanged) {
+            setColumns(fresh.columns || [])
+            callbacksRef.current.onBoardSnapshot?.(fresh)
+          }
+          if (items) setActionItems(items)
+          for (const msg of result.replay) dispatchRef.current(msg)
+          sync.failures = 0
+          setRecovering(false)
+          setSyncFailed(false)
+          if (!unchanged) callbacksRef.current.onResynced?.(reason)
+          if (result.resync) followUp = 'gap'
+          else if (result.overlap && reason !== 'confirm') followUp = 'confirm'
+        } catch (err) {
+          error = err
+          failed = true
+          sequencer.abortSnapshot()
+        } finally {
+          sync.running = false
+        }
+
+        if (stale()) return
+        if (failed) {
+          // Фоновая сверка: общий тост об ошибке не нужен
+          markApiErrorReported(error)
+          const status = getApiErrorStatus(error)
+          // 401: перехватчик сбросил сессию — приложение само покажет экран входа
+          if (status === 401) return
+          if (status === 404) {
+            stopSocketRef.current()
+            setBoardGone(true)
+            callbacksRef.current.onBoardGone?.()
+            return
+          }
+          sync.failures += 1
+          sync.again = false
+          // Без связи повторять бессмысленно: доска перечитается при подключении
+          if (statusRef.current === 'open') {
+            setSyncFailed(true)
+            const delay = Math.min(
+              RESYNC_RETRY_BASE_MS * 2 ** (sync.failures - 1),
+              RESYNC_RETRY_MAX_MS,
+            )
+            sync.retryTimer = setTimeout(() => {
+              sync.retryTimer = null
+              resyncRef.current('retry')
+            }, delay)
+          }
+          return
+        }
+        if (sync.again) {
+          sync.again = false
+          resyncRef.current(followUp ?? 'retry')
+        } else if (followUp) {
+          resyncRef.current(followUp)
+        }
+      })()
+    },
+    [sequencer],
+  )
+
+  const handleWsMessage = useCallback(
+    (msg: WsMessage) => {
+      const verdict = sequencer.accept(msg)
+      if (verdict === 'skip' || verdict === 'hold') return
+      if (verdict === 'resync') {
+        resync('gap')
+        return
+      }
+      dispatch(msg)
+    },
+    [dispatch, resync, sequencer],
+  )
+
+  // Сокет закрылся при рукопожатии или сервером: выясняем, не пропала ли доска или сессия.
+  // Отказ при рукопожатии браузер видит как обычный обрыв (код 1006), поэтому по коду
+  // закрытия причину не узнать — спрашиваем REST.
+  const verifyAccess = useCallback(async () => {
+    const id = boardIdRef.current
+    if (!id) return
+    try {
+      await getBoard(id)
+    } catch (err) {
+      markApiErrorReported(err)
+      if (syncRef.current.disposed || boardIdRef.current !== id) return
+      // 401 сбрасывает сессию в перехватчике: приложение покажет вход, сокет остановится сам
+      if (getApiErrorStatus(err) === 404) {
+        stopSocketRef.current()
+        setBoardGone(true)
+        callbacksRef.current.onBoardGone?.()
+      }
+    }
+  }, [])
+
+  const { sendMessage, connected, status, reconnect, stop } = useWebSocket(
     boardId,
     handleWsMessage,
-    useCallback(() => {
-      // Личность сокета сервер берёт из сессии. `identify` — запрос состава доски
-      // и состояния сессии ведущего (ответ: presence_update и facilitator_update).
-      sendMessageRef.current?.({ event: 'identify', data: {} })
-      const pos = lastCursorRef.current
-      if (pos) {
-        sendMessageRef.current?.({ event: 'cursor_move', data: { x: pos.x, y: pos.y } })
-      }
-    }, []),
+    useCallback(
+      (info?: WsOpenInfo) => {
+        // Личность сокета сервер берёт из сессии. `identify` — запрос состава доски
+        // и состояния сессии ведущего (ответ: presence_update и facilitator_update).
+        sendMessageRef.current?.({ event: 'identify', data: {} })
+        const pos = lastCursorRef.current
+        if (pos) {
+          sendMessageRef.current?.({ event: 'cursor_move', data: { x: pos.x, y: pos.y } })
+        }
+        awaitedRef.current = { timer: true, spotlight: true, ready: true, typing: true }
+        statusRef.current = 'open'
+        // Пока сокета не было, события могли пройти мимо: копим новые до снимка
+        if (info?.reconnected) sequencer.markStale()
+        resyncRef.current(info?.reconnected ? 'reconnect' : 'open')
+      },
+      [sequencer],
+    ),
+    {
+      onClose: useCallback(
+        (info: WsCloseInfo) => {
+          if (info.wasOpen) setRecovering(true)
+          const refusedAtHandshake =
+            !info.wasOpen && (info.failedAttempts === 1 || info.failedAttempts % 4 === 0)
+          if (info.code === WS_CLOSE_POLICY_VIOLATION || refusedAtHandshake) {
+            void verifyAccess()
+          }
+        },
+        [verifyAccess],
+      ),
+    },
   )
 
   useEffect(() => {
     sendMessageRef.current = sendMessage
-  }, [sendMessage])
+    stopSocketRef.current = stop
+    statusRef.current = status
+    dispatchRef.current = dispatch
+    resyncRef.current = resync
+  }, [sendMessage, stop, status, dispatch, resync])
+
+  /** Перетаскивание началось: чужие изменения и перечитывание откладываются. */
+  const holdRemoteChanges = useCallback(() => {
+    sequencer.pause()
+  }, [sequencer])
+
+  /** Перетаскивание закончилось: применить отложенное. */
+  const releaseRemoteChanges = useCallback(() => {
+    if (!sequencer.isPaused) return
+    const sync = syncRef.current
+    const drained = sequencer.resume()
+    for (const msg of drained.replay) dispatchRef.current(msg)
+    if (sync.wanted || drained.resync || sequencer.needsSnapshot) {
+      sync.wanted = false
+      resyncRef.current('drag')
+    }
+  }, [sequencer])
+
+  /** Применить доску из ответа REST как снимок (и дочитать к ней задачи). */
+  const applySnapshot = useCallback((board: Board) => {
+    resyncRef.current('snapshot', board)
+  }, [])
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent, boardEl: HTMLDivElement | null) => {
@@ -551,9 +948,29 @@ export function useBoardWebSocket({
     sendMessage({ event: 'cursor_leave', data: {} })
   }, [sendMessage])
 
+  const connection: BoardConnection = boardGone
+    ? 'closed'
+    : status === 'open'
+      ? syncFailed
+        ? 'sync-failed'
+        : recovering
+          ? 'syncing'
+          : 'online'
+      : status
+
   return {
     columns,
     setColumns,
+    /** Применить изменение доски (событие, ответ REST или оптимистичная правка). */
+    applyChange,
+    /** Задать начальное состояние из снимка доски. */
+    resetBoard,
+    /** Применить доску из ответа REST как снимок. */
+    applySnapshot,
+    /** Перечитать доску с сервера. */
+    resync,
+    holdRemoteChanges,
+    releaseRemoteChanges,
     cursorsRef,
     subscribeCursors,
     collapsedGroups,
@@ -573,6 +990,10 @@ export function useBoardWebSocket({
     phase,
     sessionSynced,
     connected,
+    /** Состояние связи для баннера на доске. */
+    connection,
+    /** Подключиться снова вручную (после `closed`). */
+    reconnect,
     actionItems,
     setActionItems,
     sendMessage,

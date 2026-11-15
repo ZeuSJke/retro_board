@@ -21,6 +21,7 @@ import {
   Users,
 } from 'lucide-react'
 import { BrandMark } from '@/components/BrandLogo'
+import HealthCheckButton from '@/components/HealthCheckButton'
 import { ShareBoardButton, ShareBoardMenuItem } from '@/components/ShareBoardDialog'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import { avatarSeed } from '@/lib/participants'
@@ -274,6 +275,8 @@ export default function Topbar({
             <TooltipContent>Чек-ин настроения команды</TooltipContent>
           </Tooltip>
         )}
+
+        {board && <HealthCheckButton />}
 
         <Button asChild variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
           <Link href="/dashboard" data-testid="dashboard-nav-link">

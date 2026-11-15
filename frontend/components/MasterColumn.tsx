@@ -300,6 +300,8 @@ export default function MasterColumn({
     try {
       await deleteActionItem(target.id)
     } catch (err) {
+      // Сервер задачу не удалил: возвращаем её в список (как откат остальных правок выше)
+      onUpdated(target)
       showToast(getApiErrorMessage(err, 'Не удалось удалить задачу'), 'error')
     }
   }

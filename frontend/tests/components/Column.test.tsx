@@ -328,7 +328,7 @@ describe('Column', () => {
     )
 
     expect(screen.queryByTitle('Изменить цвет')).not.toBeInTheDocument()
-    expect(screen.queryByTitle('Двойной клик чтобы редактировать')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Двойной клик или меню колонки — переименовать')).not.toBeInTheDocument()
     expect(screen.queryByTitle('Удалить колонку')).not.toBeInTheDocument()
     expect(screen.queryByTitle('Сгруппировать похожие (AI)')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /добавить карточку/i })).toBeDisabled()

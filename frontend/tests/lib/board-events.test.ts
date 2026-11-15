@@ -1,20 +1,35 @@
 import { describe, it, expect } from 'vitest'
 import {
+  applyActionItemDeleted,
+  applyActionItemSaved,
+  applyBoardChange,
   applyCardCreated,
   applyCardDeleted,
   applyCardMoved,
+  applyCardPatched,
+  applyCardRelocated,
   applyCardUpdated,
   applyColumnCreated,
   applyColumnDeleted,
+  applyColumnRestored,
   applyColumnUpdated,
+  applyColumnsArranged,
+  applyGroupCreated,
   applyGroupDeleted,
   applyGroupMoved,
+  applyGroupRelocated,
+  applyGroupRestored,
+  applyGroupUpdated,
   applyMoodUpdated,
   applyParticipantRenamed,
   applyParticipantRenamedToMoods,
+  applyVotesReset,
   countMaskedCards,
+  describeBoardChange,
+  hasBoardEntity,
+  type BoardChange,
 } from '../../lib/board-events'
-import type { BoardMood, Card, Column } from '../../types'
+import type { ActionItem, BoardMood, Card, CardGroup, Column } from '../../types'
 
 function card(id: string, position: number, extra: Partial<Card> = {}): Card {
   return {
@@ -101,16 +116,45 @@ describe('card_moved', () => {
     expect(positions(next[0])).toEqual([0, 1, 2])
   })
 
-  it('без списков порядка (старый сервер) сортирует по позициям', () => {
+  it('без списков порядка (ответ REST, оптимистичный перенос) ставит карточку на её позицию, как сервер', () => {
+    // Сервер вынимает карточку, вставляет на позицию и перенумеровывает колонку
     const columns = [column('col-1', [card('A', 0), card('B', 1), card('C', 2)])]
 
-    const next = applyCardMoved(columns, {
-      card: card('C', 0),
-      old_column_id: 'col-1',
-    } as never)
+    const next = applyCardMoved(columns, { card: card('C', 0), old_column_id: 'col-1' })
 
-    expect(ids(next[0])[0]).toBe('A')
-    expect(ids(next[0])).toContain('C')
+    expect(ids(next[0])).toEqual(['C', 'A', 'B'])
+    expect(positions(next[0])).toEqual([0, 1, 2])
+  })
+
+  it('без списков порядка перенос в другую колонку перенумеровывает обе', () => {
+    const columns = [
+      column('col-1', [card('A', 0), card('B', 1), card('C', 2)]),
+      column('col-2', [card('X', 0, { column_id: 'col-2' }), card('Y', 1, { column_id: 'col-2' })]),
+    ]
+
+    // Колонка, откуда ушла карточка, не названа: она находится сама
+    const next = applyCardMoved(columns, { card: card('A', 1, { column_id: 'col-2' }) })
+
+    expect(ids(next[0])).toEqual(['B', 'C'])
+    expect(positions(next[0])).toEqual([0, 1])
+    expect(ids(next[1])).toEqual(['X', 'A', 'Y'])
+    expect(positions(next[1])).toEqual([0, 1, 2])
+  })
+
+  it('оптимистичный перенос и событие сервера дают один и тот же порядок', () => {
+    const columns = [column('col-1', [card('A', 0), card('B', 1), card('C', 2), card('D', 3)])]
+    const moved = card('D', 1)
+
+    const optimistic = applyCardMoved(columns, { card: moved })
+    const fromServer = applyCardMoved(optimistic, {
+      card: moved,
+      old_column_id: 'col-1',
+      column_card_ids: ['A', 'D', 'B', 'C'],
+      old_column_card_ids: ['A', 'D', 'B', 'C'],
+    })
+
+    expect(ids(optimistic[0])).toEqual(['A', 'D', 'B', 'C'])
+    expect(ids(fromServer[0])).toEqual(ids(optimistic[0]))
   })
 
   it('не оставляет дубль, если карточка числилась в третьей колонке', () => {
@@ -165,12 +209,103 @@ describe('column_created / column_updated / column_deleted', () => {
       board_id: 'b-1',
       title: 'Новое название',
       color: '#BA1A1A',
-      position: 2,
+      position: 0,
     })
 
-    expect(next[0]).toMatchObject({ title: 'Новое название', color: '#BA1A1A', position: 2 })
+    expect(next[0]).toMatchObject({ title: 'Новое название', color: '#BA1A1A', position: 0 })
     expect(next[0].cards).toBe(cards)
     expect(next[0].groups).toBe(groups)
+  })
+
+  it('column_updated с новой позицией переставляет колонку и перенумеровывает остальные', () => {
+    // Сервер вынимает колонку, вставляет на новое место и нумерует ряд заново,
+    // а событие присылает только о ней
+    const columns = [
+      column('A', [], { position: 0 }),
+      column('B', [], { position: 1 }),
+      column('C', [], { position: 2 }),
+    ]
+
+    const right = applyColumnUpdated(columns, { id: 'A', position: 2 })
+    expect(right.map((c) => c.id)).toEqual(['B', 'C', 'A'])
+    expect(right.map((c) => c.position)).toEqual([0, 1, 2])
+
+    const left = applyColumnUpdated(columns, { id: 'C', position: 0 })
+    expect(left.map((c) => c.id)).toEqual(['C', 'A', 'B'])
+    expect(left.map((c) => c.position)).toEqual([0, 1, 2])
+  })
+
+  it('column_updated с прежней позицией порядок не трогает — даже если позиции идут с пропусками', () => {
+    // После удаления колонки сервер не перенумеровывает оставшиеся: позиции 0, 2, 3
+    const columns = [
+      column('A', [], { position: 0 }),
+      column('C', [], { position: 2 }),
+      column('D', [], { position: 3 }),
+    ]
+
+    const next = applyColumnUpdated(columns, { id: 'C', title: 'Переименована', position: 2 })
+
+    expect(next.map((c) => c.id)).toEqual(['A', 'C', 'D'])
+    expect(next.map((c) => c.position)).toEqual([0, 2, 3])
+    expect(next[1].title).toBe('Переименована')
+    // Остальные колонки — те же объекты: мемоизированные колонки не перерисуются
+    expect(next[0]).toBe(columns[0])
+    expect(next[2]).toBe(columns[2])
+  })
+
+  it('column_updated без изменений возвращает то же состояние', () => {
+    const columns = [column('col-1', [], { title: 'Т', color: '#111111' })]
+    expect(applyColumnUpdated(columns, { id: 'col-1', title: 'Т', color: '#111111', position: 0 })).toBe(
+      columns,
+    )
+    expect(applyColumnUpdated(columns, { id: 'нет такой', title: 'Х' })).toBe(columns)
+  })
+
+  it('повтор события о перестановке ничего не меняет', () => {
+    const columns = [column('A', [], { position: 0 }), column('B', [], { position: 1 })]
+    const once = applyColumnUpdated(columns, { id: 'B', position: 0 })
+    const twice = applyColumnUpdated(once, { id: 'B', position: 0 })
+    expect(twice.map((c) => c.id)).toEqual(['B', 'A'])
+    expect(twice).toBe(once)
+  })
+
+  it('новая колонка встаёт по позиции, а не в конец', () => {
+    const columns = [column('A', [], { position: 0 }), column('C', [], { position: 2 })]
+    const next = applyColumnCreated(columns, {
+      id: 'B',
+      board_id: 'b-1',
+      title: 'Б',
+      color: '#111111',
+      position: 1,
+    })
+    expect(next.map((c) => c.id)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('удалённая колонка возвращается на прежнее место вместе с карточками', () => {
+    const removed = column('B', [card('X', 0, { column_id: 'B' })], { position: 1 })
+    const columns = [column('A', [], { position: 0 }), column('C', [], { position: 2 })]
+
+    const next = applyColumnRestored(columns, removed)
+
+    expect(next.map((c) => c.id)).toEqual(['A', 'B', 'C'])
+    expect(ids(next[1])).toEqual(['X'])
+    // Колонка уже на месте (сервер прислал её заново) — второй раз не добавляется
+    expect(applyColumnRestored(next, removed)).toBe(next)
+  })
+
+  it('откат перестановки возвращает колонкам точные прежние позиции', () => {
+    const before = [
+      column('A', [], { position: 0 }),
+      column('C', [], { position: 2 }),
+      column('D', [], { position: 3 }),
+    ]
+    const moved = applyColumnUpdated(before, { id: 'D', position: 1 })
+    expect(moved.map((c) => c.id)).toEqual(['A', 'D', 'C'])
+
+    const restored = applyColumnsArranged(moved, { A: 0, C: 2, D: 3 })
+
+    expect(restored.map((c) => c.id)).toEqual(['A', 'C', 'D'])
+    expect(restored.map((c) => c.position)).toEqual([0, 2, 3])
   })
 
   it('column_updated игнорирует cards и groups в событии', () => {
@@ -345,5 +480,286 @@ describe('countMaskedCards', () => {
     ]
     expect(countMaskedCards(columns)).toBe(3)
     expect(countMaskedCards([column('col-1', [card('A', 0)])])).toBe(0)
+  })
+})
+
+// ── Единая точка применения: оптимистичная правка, ответ REST и событие сокета ──
+
+describe('карточки: создание, правка, откат', () => {
+  it('card_created ставит карточку по позиции, времени создания и id — как сервер', () => {
+    const columns = [
+      column('col-1', [
+        card('B', 1, { created_at: '2026-01-01T00:00:02Z' }),
+        card('D', 2, { created_at: '2026-01-01T00:00:04Z' }),
+      ]),
+    ]
+    // Та же позиция, что у B: порядок решает время создания
+    const next = applyCardCreated(columns, card('A', 1, { created_at: '2026-01-01T00:00:01Z' }))
+    expect(ids(next[0])).toEqual(['A', 'B', 'D'])
+  })
+
+  it('удалённая карточка возвращается на прежнее место (откат удаления)', () => {
+    const removed = card('B', 1)
+    const columns = [column('col-1', [card('A', 0), card('C', 2)])]
+
+    const next = applyCardCreated(columns, removed)
+
+    expect(ids(next[0])).toEqual(['A', 'B', 'C'])
+  })
+
+  it('card_patched меняет одно поле текущей карточки и не трогает остальное', () => {
+    const columns = [
+      column('col-1', [card('A', 0, { likes: ['p-bob'], text: 'Новый текст' }), card('B', 1)]),
+      column('col-2'),
+    ]
+
+    const next = applyCardPatched(columns, 'A', (c) => ({ ...c, likes: [...c.likes, 'p-me'] }))
+
+    expect(next[0].cards[0]).toMatchObject({ likes: ['p-bob', 'p-me'], text: 'Новый текст' })
+    expect(next[0].cards[1]).toBe(columns[0].cards[1])
+    expect(next[1]).toBe(columns[1])
+  })
+
+  it('card_patched без изменений и для неизвестной карточки возвращает то же состояние', () => {
+    const columns = [column('col-1', [card('A', 0)])]
+    expect(applyCardPatched(columns, 'A', (c) => c)).toBe(columns)
+    expect(applyCardPatched(columns, 'нет', (c) => ({ ...c, text: 'x' }))).toBe(columns)
+  })
+
+  it('откат голоса не затирает голос, пришедший за время запроса', () => {
+    // Оптимистично: мой голос. Пока шёл запрос, проголосовал Боб. Сервер мне отказал.
+    let columns = [column('col-1', [card('A', 0, { likes: [] })])]
+    columns = applyCardPatched(columns, 'A', (c) => ({ ...c, likes: [...c.likes, 'p-me'] }))
+    columns = applyCardUpdated(columns, card('A', 0, { likes: ['p-me', 'p-bob'] }))
+    columns = applyCardPatched(columns, 'A', (c) => ({
+      ...c,
+      likes: c.likes.filter((voter) => voter !== 'p-me'),
+    }))
+
+    expect(columns[0].cards[0].likes).toEqual(['p-bob'])
+  })
+
+  it('card_relocated переставляет карточку в её текущем состоянии', () => {
+    const columns = [
+      column('col-1', [card('A', 0), card('B', 1, { likes: ['p-bob'], group_id: 'g-1' })]),
+      column('col-2', [card('X', 0, { column_id: 'col-2' })]),
+    ]
+
+    const next = applyCardRelocated(columns, {
+      id: 'B',
+      column_id: 'col-2',
+      position: 0,
+      group_id: null,
+    })
+
+    expect(ids(next[0])).toEqual(['A'])
+    expect(ids(next[1])).toEqual(['B', 'X'])
+    expect(next[1].cards[0]).toMatchObject({ column_id: 'col-2', group_id: null, likes: ['p-bob'] })
+  })
+
+  it('отмена перетаскивания возвращает карточку на место, сохраняя пришедшие изменения', () => {
+    const start = [
+      column('col-1', [card('A', 0), card('B', 1), card('C', 2)]),
+      column('col-2', [card('X', 0, { column_id: 'col-2' })]),
+    ]
+    // Предпросмотр: B уехала во вторую колонку
+    let columns = applyCardRelocated(start, { id: 'B', column_id: 'col-2', position: 1, group_id: null })
+    expect(ids(columns[1])).toEqual(['X', 'B'])
+    // Отмена: B возвращается на второе место первой колонки
+    columns = applyCardRelocated(columns, { id: 'B', column_id: 'col-1', position: 1, group_id: null })
+
+    expect(ids(columns[0])).toEqual(['A', 'B', 'C'])
+    expect(ids(columns[1])).toEqual(['X'])
+  })
+
+  it('card_relocated без group_id оставляет группу карточки прежней', () => {
+    const columns = [column('col-1', [card('A', 0, { group_id: 'g-1' }), card('B', 1)])]
+    const next = applyCardRelocated(columns, { id: 'A', column_id: 'col-1', position: 1 })
+    expect(ids(next[0])).toEqual(['B', 'A'])
+    expect(next[0].cards[1].group_id).toBe('g-1')
+  })
+
+  it('card_relocated для неизвестной карточки или колонки ничего не меняет', () => {
+    const columns = [column('col-1', [card('A', 0)])]
+    expect(applyCardRelocated(columns, { id: 'нет', column_id: 'col-1', position: 0 })).toBe(columns)
+    expect(applyCardRelocated(columns, { id: 'A', column_id: 'нет', position: 0 })).toBe(columns)
+  })
+
+  it('votes_reset снимает все голоса участника и не трогает чужие', () => {
+    const columns = [
+      column('col-1', [card('A', 0, { likes: ['p-me', 'p-bob', 'p-me'] }), card('B', 1, { likes: ['p-bob'] })]),
+    ]
+    const next = applyVotesReset(columns, 'p-me')
+    expect(next[0].cards[0].likes).toEqual(['p-bob'])
+    expect(next[0].cards[1]).toBe(columns[0].cards[1])
+    expect(applyVotesReset(next, 'p-me')).toBe(next)
+  })
+})
+
+describe('группы: создание, откат, перенос', () => {
+  const group: CardGroup = { id: 'g-1', column_id: 'col-1', title: 'Группа', position: 0 }
+
+  it('group_created с перечнем карточек кладёт их в группу', () => {
+    const columns = [column('col-1', [card('A', 0), card('B', 1), card('C', 2)])]
+    const next = applyGroupCreated(columns, group, ['A', 'C'])
+    expect(next[0].groups).toEqual([group])
+    expect(next[0].cards.map((c) => c.group_id)).toEqual(['g-1', null, 'g-1'])
+  })
+
+  it('группы стоят по позиции, как у сервера', () => {
+    const columns = [
+      column('col-1', [], { groups: [{ ...group, id: 'g-2', position: 2 }] }),
+    ]
+    const next = applyGroupCreated(columns, { ...group, id: 'g-1', position: 1 })
+    expect(next[0].groups.map((g) => g.id)).toEqual(['g-1', 'g-2'])
+  })
+
+  it('group_updated не пересоздаёт колонки без этой группы', () => {
+    const columns = [column('col-1', [], { groups: [group] }), column('col-2')]
+    const next = applyGroupUpdated(columns, { ...group, title: 'Новое имя' })
+    expect(next[0].groups[0].title).toBe('Новое имя')
+    expect(next[1]).toBe(columns[1])
+  })
+
+  it('group_deleted не трогает карточку, которую уже положили в другую группу', () => {
+    const columns = [
+      column('col-1', [card('A', 0, { group_id: 'g-1' }), card('B', 1, { group_id: 'g-2' })], {
+        groups: [group, { ...group, id: 'g-2' }],
+      }),
+    ]
+    const next = applyGroupDeleted(columns, { id: 'g-1', column_id: 'col-1', card_ids: ['A', 'B'] })
+    expect(next[0].cards.map((c) => c.group_id)).toEqual([null, 'g-2'])
+    expect(next[0].groups.map((g) => g.id)).toEqual(['g-2'])
+  })
+
+  it('расформированная группа возвращается вместе с карточками (откат)', () => {
+    const start = [column('col-1', [card('A', 0, { group_id: 'g-1' }), card('B', 1, { group_id: 'g-1' })], { groups: [group] })]
+    // Оптимистично расформировали
+    let columns = applyGroupDeleted(start, { id: 'g-1' })
+    expect(columns[0].groups).toEqual([])
+    // Пока шёл запрос, карточку B положили в другую группу
+    columns = applyCardUpdated(columns, card('B', 1, { group_id: 'g-2' }))
+    // Сервер отказал: группа возвращается, но чужую правку не затирает
+    columns = applyGroupRestored(columns, group, ['A', 'B'])
+
+    expect(columns[0].groups).toEqual([group])
+    expect(columns[0].cards.map((c) => c.group_id)).toEqual(['g-1', 'g-2'])
+  })
+
+  it('group_relocated переносит группу с её текущими карточками и обратно', () => {
+    const start = [
+      column('col-1', [card('A', 0, { group_id: 'g-1' }), card('B', 1)], { groups: [group] }),
+      column('col-2', [card('X', 0, { column_id: 'col-2' })]),
+    ]
+
+    const moved = applyGroupRelocated(start, { id: 'g-1', column_id: 'col-2' })
+    expect(ids(moved[0])).toEqual(['B'])
+    expect(moved[1].groups.map((g) => g.id)).toEqual(['g-1'])
+    expect(moved[1].cards.find((c) => c.id === 'A')).toMatchObject({ column_id: 'col-2', group_id: 'g-1' })
+
+    const back = applyGroupRelocated(moved, { id: 'g-1', column_id: 'col-1' })
+    expect(back[0].groups.map((g) => g.id)).toEqual(['g-1'])
+    expect(ids(back[0]).sort()).toEqual(['A', 'B'])
+    expect(ids(back[1])).toEqual(['X'])
+  })
+
+  it('group_relocated в ту же или неизвестную колонку ничего не меняет', () => {
+    const columns = [column('col-1', [], { groups: [group] })]
+    expect(applyGroupRelocated(columns, { id: 'g-1', column_id: 'col-1' })).toBe(columns)
+    expect(applyGroupRelocated(columns, { id: 'g-1', column_id: 'нет' })).toBe(columns)
+  })
+})
+
+describe('applyBoardChange — одна функция для всех источников', () => {
+  it('каждому типу изменения соответствует свой редьюсер', () => {
+    const base = [column('col-1', [card('A', 0)])]
+    const apply = (change: BoardChange) => applyBoardChange(base, change)
+
+    expect(ids(apply({ type: 'card_created', card: card('B', 1) })[0])).toEqual(['A', 'B'])
+    expect(apply({ type: 'card_updated', card: card('A', 0, { text: 'Т' }) })[0].cards[0].text).toBe('Т')
+    expect(ids(apply({ type: 'card_deleted', id: 'A' })[0])).toEqual([])
+    expect(ids(apply({ type: 'cards_deleted', ids: ['A'] })[0])).toEqual([])
+    expect(apply({ type: 'column_deleted', id: 'col-1' })).toEqual([])
+    expect(apply({ type: 'column_updated', column: { id: 'col-1', title: 'Н' } })[0].title).toBe('Н')
+    expect(
+      apply({ type: 'participant_renamed', participant_id: 'p-anna', name: 'Анна П.' })[0].cards[0].author,
+    ).toBe('Анна П.')
+  })
+
+  it('событие сокета поверх оптимистичной правки и ответа REST даёт то же, что само по себе', () => {
+    const base = [column('col-1', [card('A', 0), card('B', 1)])]
+    const created = card('C', 2)
+    const event: BoardChange = { type: 'card_created', card: created }
+
+    const wsOnly = applyBoardChange(base, event)
+    const restThenWs = applyBoardChange(applyBoardChange(base, event), event)
+
+    expect(restThenWs).toEqual(wsOnly)
+    expect(ids(restThenWs[0])).toEqual(['A', 'B', 'C'])
+  })
+
+  it('describeBoardChange называет сущность и отличает создание', () => {
+    expect(describeBoardChange({ type: 'card_created', card: card('A', 0) })).toEqual({
+      key: 'card:A',
+      creates: true,
+    })
+    expect(describeBoardChange({ type: 'card_moved', card: card('A', 0) })).toEqual({
+      key: 'card:A',
+      creates: false,
+    })
+    expect(describeBoardChange({ type: 'group_deleted', id: 'g-1' }).key).toBe('group:g-1')
+    expect(describeBoardChange({ type: 'column_updated', column: { id: 'c' } }).key).toBe('column:c')
+    // Точечные правки и откаты к сущности не привязаны: они применяются всегда
+    expect(describeBoardChange({ type: 'card_patched', id: 'A', patch: (c) => c }).key).toBeNull()
+  })
+
+  it('hasBoardEntity находит колонку, карточку и группу', () => {
+    const columns = [
+      column('col-1', [card('A', 0)], {
+        groups: [{ id: 'g-1', column_id: 'col-1', title: 'Г', position: 0 }],
+      }),
+    ]
+    expect(hasBoardEntity(columns, 'column:col-1')).toBe(true)
+    expect(hasBoardEntity(columns, 'card:A')).toBe(true)
+    expect(hasBoardEntity(columns, 'group:g-1')).toBe(true)
+    expect(hasBoardEntity(columns, 'card:нет')).toBe(false)
+  })
+})
+
+describe('задачи', () => {
+  const item = (id: string, createdAt: string, extra: Partial<ActionItem> = {}): ActionItem => ({
+    id,
+    board_id: 'b-1',
+    title: `Задача ${id}`,
+    text: '',
+    assignee: null,
+    source_card_ids: [],
+    status: 'open',
+    completed_at: null,
+    created_at: createdAt,
+    ...extra,
+  })
+
+  it('новая задача добавляется, известная заменяется', () => {
+    const list = [item('1', '2026-01-01T00:00:01Z')]
+    const added = applyActionItemSaved(list, item('2', '2026-01-01T00:00:02Z'))
+    expect(added.map((i) => i.id)).toEqual(['1', '2'])
+    const updated = applyActionItemSaved(added, item('1', '2026-01-01T00:00:01Z', { status: 'done' }))
+    expect(updated.map((i) => i.status)).toEqual(['done', 'open'])
+  })
+
+  it('задача, которую сервер не удалил, возвращается на своё место по времени создания', () => {
+    const first = item('1', '2026-01-01T00:00:01Z')
+    const list = [item('2', '2026-01-01T00:00:02Z'), item('3', '2026-01-01T00:00:03Z')]
+
+    const restored = applyActionItemSaved(list, first)
+
+    expect(restored.map((i) => i.id)).toEqual(['1', '2', '3'])
+  })
+
+  it('удаление неизвестной задачи возвращает тот же список', () => {
+    const list = [item('1', '2026-01-01T00:00:01Z')]
+    expect(applyActionItemDeleted(list, 'нет')).toBe(list)
+    expect(applyActionItemDeleted(list, '1')).toEqual([])
   })
 })

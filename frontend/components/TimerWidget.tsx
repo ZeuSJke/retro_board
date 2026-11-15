@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'motion/react'
 import { Pause, Play, Plus, RotateCcw, Volume2, VolumeX } from 'lucide-react'
+import { timerDisplaySeconds } from '@/lib/timer'
 import type { TimerState } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -23,7 +24,40 @@ function formatTime(sec: number): string {
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
 }
 
+/** Как часто виджет сверяется с часами; на экране число меняется раз в секунду. */
+const TICK_MS = 200
+
+/**
+ * Остаток идущего таймера в секундах. Тик живёт здесь, внутри виджета: состояние таймера
+ * у владельца не меняется каждую секунду, и доска из-за отсчёта не перерисовывается.
+ */
+function useTimerSeconds(timer: TimerState): number {
+  const [live, setLive] = useState<{ endsAt: number; seconds: number } | null>(null)
+
+  useEffect(() => {
+    if (!timer.running || timer.endsAt == null) return
+    const endsAt = timer.endsAt
+    const update = () => {
+      const seconds = timerDisplaySeconds(timer)
+      setLive((prev) =>
+        prev && prev.endsAt === endsAt && prev.seconds === seconds ? prev : { endsAt, seconds },
+      )
+    }
+    const interval = setInterval(update, TICK_MS)
+    // В фоновой вкладке тик замедляется: при возврате показываем верное число сразу
+    document.addEventListener('visibilitychange', update)
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', update)
+    }
+  }, [timer])
+
+  if (timer.running && timer.endsAt != null && live?.endsAt === timer.endsAt) return live.seconds
+  return Math.ceil(Math.max(0, timer.remaining))
+}
+
 interface TimerWidgetProps {
+  /** Состояние таймера: у идущего — момент окончания, а не тикающий счётчик. */
   timer: TimerState
   canControl: boolean
   autoAdvance: boolean
@@ -62,8 +96,9 @@ export default function TimerWidget({
     }
   }, [timer.remaining])
 
-  const ratio = timer.duration > 0 ? Math.max(0, Math.min(1, timer.remaining / timer.duration)) : 0
-  const urgent = timer.running && timer.remaining <= 30 && timer.remaining > 0
+  const seconds = useTimerSeconds(timer)
+  const ratio = timer.duration > 0 ? Math.max(0, Math.min(1, seconds / timer.duration)) : 0
+  const urgent = timer.running && seconds <= 30 && seconds > 0
   const circumference = 2 * Math.PI * 10
   const strokeDashoffset = circumference * (1 - ratio)
 
@@ -109,8 +144,8 @@ export default function TimerWidget({
                 className="transition-[stroke-dashoffset] duration-1000 ease-linear"
               />
             </svg>
-            <span className="font-mono text-xs font-bold tabular-nums">
-              {formatTime(timer.remaining)}
+            <span className="font-mono text-xs font-bold tabular-nums" data-testid="timer-display">
+              {formatTime(seconds)}
             </span>
           </motion.button>
         </PopoverTrigger>
@@ -136,7 +171,7 @@ export default function TimerWidget({
           </div>
 
           <div className="text-center font-mono text-3xl font-bold tabular-nums text-foreground">
-            {formatTime(timer.remaining)}
+            {formatTime(seconds)}
           </div>
 
           {canControl ? (
