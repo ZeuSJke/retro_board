@@ -15,6 +15,9 @@ const api = vi.hoisted(() => ({
   deleteAdminWorkspace: vi.fn(),
   getAdminWorkspaceInvite: vi.fn(),
   rotateAdminWorkspaceInvite: vi.fn(),
+  getAdminAgentTokens: vi.fn(),
+  createAdminAgentToken: vi.fn(),
+  revokeAdminAgentToken: vi.fn(),
 }))
 
 // Сетевые вызовы подменены, отметка о входе (localStorage) — настоящая
@@ -398,5 +401,72 @@ describe('generateSlugFromName', () => {
     const slug = generateSlugFromName(`${'щ'.repeat(19)}abc ${'я'.repeat(10)}`)
     expect(slug).toBe(`${'shch'.repeat(19)}abc`)
     expect(generateSlugFromName('я'.repeat(60))).toHaveLength(80)
+  })
+})
+
+describe('токены агентов в админке', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    setAdminSessionHint(false)
+  })
+
+  it('открывает диалог токенов команды, выпускает и отзывает токен через admin API', async () => {
+    const user = userEvent.setup()
+    api.getAdminAgentTokens.mockResolvedValueOnce([])
+    api.createAdminAgentToken.mockResolvedValueOnce({
+      token: {
+        id: 'tok-adm-1',
+        workspace_id: 'ws-1',
+        participant_id: 'p-adm-bot-1',
+        name: 'Admin Bot',
+        token_prefix: 'rba_adm1',
+        scope: 'read_write',
+        created_by_id: null,
+        created_at: '2026-11-15T10:00:00Z',
+        last_used_at: null,
+        revoked_at: null,
+      },
+      secret: 'rba_adm1_secret_token',
+    })
+    api.revokeAdminAgentToken.mockResolvedValueOnce({
+      id: 'tok-adm-1',
+      workspace_id: 'ws-1',
+      participant_id: 'p-adm-bot-1',
+      name: 'Admin Bot',
+      token_prefix: 'rba_adm1',
+      scope: 'read_write',
+      created_by_id: null,
+      created_at: '2026-11-15T10:00:00Z',
+      last_used_at: null,
+      revoked_at: '2026-11-15T10:05:00Z',
+    })
+
+    await renderSignedIn()
+
+    await user.click(teamRow('Платформа').getByRole('button', { name: 'Токены агентов' }))
+
+    const dialog = await screen.findByTestId('agent-tokens-dialog')
+    expect(within(dialog).getByText('Администрирование')).toBeInTheDocument()
+    expect(within(dialog).getByText('Платформа')).toBeInTheDocument()
+    await waitFor(() => expect(api.getAdminAgentTokens).toHaveBeenCalledWith('ws-1'))
+
+    await user.type(within(dialog).getByTestId('agent-token-name-input'), 'Admin Bot')
+    await user.click(within(dialog).getByRole('radio', { name: 'Чтение и запись' }))
+    await user.click(within(dialog).getByTestId('agent-token-create-btn'))
+
+    await waitFor(() =>
+      expect(api.createAdminAgentToken).toHaveBeenCalledWith('ws-1', {
+        name: 'Admin Bot',
+        scope: 'read_write',
+      }),
+    )
+    expect(within(dialog).getByTestId('agent-token-secret-input')).toHaveValue('rba_adm1_secret_token')
+
+    await user.click(within(dialog).getByTestId('agent-token-revoke-tok-adm-1'))
+    await user.click(within(dialog).getByTestId('agent-token-confirm-revoke-tok-adm-1'))
+
+    await waitFor(() => expect(api.revokeAdminAgentToken).toHaveBeenCalledWith('ws-1', 'tok-adm-1'))
+    expect(within(dialog).getByTestId('agent-token-row-tok-adm-1')).toHaveTextContent('Отозван')
   })
 })

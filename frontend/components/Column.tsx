@@ -356,7 +356,7 @@ function Column({
       if (q) {
         if (isHidden) return false
         const matchText = card.text.toLowerCase().includes(q)
-        const matchAuthor = !anonymous && card.author.toLowerCase().includes(q)
+        const matchAuthor = (!anonymous || card.author_kind === 'agent') && card.author.toLowerCase().includes(q)
         if (!matchText && !matchAuthor) return false
       }
       return true

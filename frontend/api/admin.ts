@@ -1,4 +1,5 @@
 import axios, { type AxiosError } from 'axios'
+import type { AgentToken, AgentTokenCreated, AgentTokenScope } from '../types'
 import { isApiErrorReported } from '../utils/apiError'
 import { getCsrfToken, handleCommonHttpError } from './index'
 
@@ -149,3 +150,22 @@ export const getAdminWorkspaceInvite = (id: string): Promise<string> =>
 /** Перевыпустить приглашение: прежняя ссылка перестаёт работать, вошедшие участники остаются. */
 export const rotateAdminWorkspaceInvite = (id: string): Promise<string> =>
   adminApi.post<InviteResponse>(`/workspaces/${id}/invite/rotate`).then((r) => r.data.invite_token)
+
+/** Список токенов MCP-агентов команды (для администратора). */
+export const getAdminAgentTokens = (workspaceId: string): Promise<AgentToken[]> =>
+  adminApi.get<AgentToken[]>(`/workspaces/${workspaceId}/agent-tokens`).then((r) => r.data)
+
+/** Выпустить токен MCP-агента команды (от имени администратора). */
+export const createAdminAgentToken = (
+  workspaceId: string,
+  data: { name: string; scope: AgentTokenScope },
+): Promise<AgentTokenCreated> =>
+  adminApi
+    .post<AgentTokenCreated>(`/workspaces/${workspaceId}/agent-tokens`, data)
+    .then((r) => r.data)
+
+/** Отозвать токен MCP-агента команды (от имени администратора). */
+export const revokeAdminAgentToken = (workspaceId: string, tokenId: string): Promise<AgentToken> =>
+  adminApi
+    .delete<AgentToken>(`/workspaces/${workspaceId}/agent-tokens/${tokenId}`)
+    .then((r) => r.data)

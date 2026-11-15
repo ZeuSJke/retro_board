@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
-import { ChevronLeft, ChevronRight, ListTodo, Sparkles, ThumbsUp, User } from 'lucide-react'
+import { Bot, ChevronLeft, ChevronRight, ListTodo, Sparkles, ThumbsUp, User } from 'lucide-react'
 import { getCardColorPreset, getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import { avatarSeed, countMyVotes, isOwnCard } from '@/lib/participants'
 import type { Card, Column } from '@/types'
@@ -119,7 +119,8 @@ export default function SpotlightModal({
   const canAddMore = !(maxVotes > 0 && userTotalVotes >= maxVotes)
   const limitReached = allowMultipleVotes ? !canAddMore : !liked && !canAddMore
   const voteDisabled = readOnly || limitReached
-  const showAuthor = !anonymous || isOwnCard(card, currentUserId)
+  const isAgent = card.author_kind === 'agent' && !card.masked
+  const showAuthor = !anonymous || isOwnCard(card, currentUserId) || isAgent
 
   // Крестик, Esc и клик по фону: у управляющего фокусом снимают его для всех,
   // у остальных только прячут окно на своём экране
@@ -282,12 +283,23 @@ export default function SpotlightModal({
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   {showAuthor ? (
                     <>
-                      <span
-                        className={`flex h-6 w-6 items-center justify-center rounded-full bg-linear-to-br/srgb text-[10px] font-bold text-white ${getUserAvatarGradient(avatarSeed(card.author_id, card.author))}`}
-                      >
-                        {getUserInitials(card.author)}
-                      </span>
+                      {isAgent ? (
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-500/15 text-violet-700 ring-1 ring-violet-500/30 dark:text-violet-300">
+                          <Bot className="h-3.5 w-3.5" />
+                        </span>
+                      ) : (
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-full bg-linear-to-br/srgb text-[10px] font-bold text-white ${getUserAvatarGradient(avatarSeed(card.author_id, card.author))}`}
+                        >
+                          {getUserInitials(card.author)}
+                        </span>
+                      )}
                       <span className="font-medium text-foreground/85">{card.author}</span>
+                      {isAgent && (
+                        <Badge variant="outline" className="h-4 border-violet-500/30 bg-violet-500/10 px-1.5 text-[10px] text-violet-700 dark:text-violet-300">
+                          Агент
+                        </Badge>
+                      )}
                     </>
                   ) : (
                     <>

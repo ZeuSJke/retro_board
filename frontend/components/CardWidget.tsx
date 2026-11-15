@@ -6,6 +6,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { motion } from 'motion/react'
 import {
   ArrowRightLeft,
+  Bot,
   Check,
   EyeOff,
   GripVertical,
@@ -233,9 +234,16 @@ function CardWidget({
   const own = isOwnCard(card, myId)
   const canEditText = canEditCardText(card, myId, { anonymous })
   const canDelete = canDeleteCard(card, myId, { anonymous, moderator: isModerator })
-  // В анонимном режиме сервер отдаёт автора только владельцу карточки
-  const showAuthorName = !anonymous || own
-  const authorLabel = anonymous ? (own ? 'Вы' : 'Участник') : card.author
+  // В анонимном режиме сервер отдаёт автора только владельцу карточки, а карточки агентов видны всегда
+  const isAgent = card.author_kind === 'agent' && !card.masked
+  const showAuthorName = !anonymous || own || isAgent
+  const authorLabel = isAgent
+    ? card.author
+    : anonymous
+      ? own
+        ? 'Вы'
+        : 'Участник'
+      : card.author
   const canAddVote = canVote && !(maxVotes > 0 && userTotalVotes >= maxVotes)
   const limitReached = allowMultipleVotes ? !canAddVote : !liked && !canAddVote
   const voteDisabled = allowMultipleVotes
@@ -459,6 +467,20 @@ function CardWidget({
                 >
                   <User className="h-3 w-3" />
                 </span>
+              ) : isAgent ? (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'flex h-5 w-5 items-center justify-center rounded-full bg-violet-500/15 text-violet-700 ring-1 ring-violet-500/30 transition-opacity duration-150 dark:text-violet-300',
+                    onToggleSelect &&
+                      !readOnly &&
+                      (selected
+                        ? 'opacity-0'
+                        : 'group-hover/card:opacity-0 group-focus-within/select:opacity-0 [@media(hover:none)]:opacity-0'),
+                  )}
+                >
+                  <Bot className="h-3 w-3" />
+                </span>
               ) : (
                 <span
                   className={cn(
@@ -500,10 +522,24 @@ function CardWidget({
 
             <span
               className="truncate text-[11px] font-medium text-muted-foreground"
-              title={anonymous && own ? 'Анонимный режим: автор виден только вам' : undefined}
+              title={
+                isAgent
+                  ? 'Карточка ИИ-агента'
+                  : anonymous && own
+                    ? 'Анонимный режим: автор виден только вам'
+                    : undefined
+              }
             >
               {authorLabel}
             </span>
+            {isAgent && (
+              <span
+                data-testid="card-agent-badge"
+                className="inline-flex shrink-0 items-center rounded-full border border-violet-500/25 bg-violet-500/10 px-1.5 py-0 text-[9px] font-medium text-violet-700 dark:text-violet-300"
+              >
+                Агент
+              </span>
+            )}
           </div>
 
           {!editing && (

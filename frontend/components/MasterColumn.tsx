@@ -40,6 +40,7 @@ import type {
   DashboardActionItem,
 } from '../types'
 import { RichCardText } from './RichCardText'
+import ActionItemExternalLink from './ActionItemExternalLink'
 import SuggestActionItemsDialog, { type SuggestFailure } from './SuggestActionItemsDialog'
 import {
   AlertDialog,
@@ -140,6 +141,7 @@ export default function MasterColumn({
   const [newTitle, setNewTitle] = useState('')
   const [newText, setNewText] = useState('')
   const [newAssignee, setNewAssignee] = useState('')
+  const [newExternalUrl, setNewExternalUrl] = useState('')
   const [creating, setCreating] = useState(false)
 
   const [prevOpenExpanded, setPrevOpenExpanded] = useState(false)
@@ -361,11 +363,13 @@ export default function MasterColumn({
         title: newTitle.trim() || undefined,
         text: newText.trim(),
         assignee: newAssignee.trim() || undefined,
+        external_url: newExternalUrl.trim() || undefined,
       })
       onCreated?.(created)
       setNewTitle('')
       setNewText('')
       setNewAssignee('')
+      setNewExternalUrl('')
       setAddingNew(false)
       showToast('Задача создана', 'success')
     } catch (err) {
@@ -575,6 +579,12 @@ export default function MasterColumn({
                 required
                 className="min-h-[56px] text-xs"
               />
+              <Input
+                value={newExternalUrl}
+                onChange={(e) => setNewExternalUrl(e.target.value)}
+                placeholder="Ссылка в трекере (опционально, https://...)"
+                className="h-8 text-xs"
+              />
               <div className="flex items-center gap-1.5">
                 <Input
                   value={newAssignee}
@@ -754,93 +764,101 @@ export default function MasterColumn({
                       </p>
                     )}
 
-                    <div className="flex items-center justify-between gap-2 pt-1">
-                      <Popover
-                        open={assigneePopoverId === item.id}
-                        onOpenChange={(open) => {
-                          if (open) {
-                            setAssigneeDraft(item.assignee || '')
-                            setAssigneePopoverId(item.id)
-                          } else {
-                            setAssigneePopoverId(null)
-                          }
-                        }}
-                      >
-                        <PopoverTrigger asChild>
-                          <button
-                            type="button"
-                            disabled={readOnly}
-                            className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border/80 px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:cursor-default"
-                          >
-                            {item.assignee ? (
-                              <>
-                                <span
-                                  className={`flex h-4 w-4 items-center justify-center rounded-full bg-linear-to-br/srgb text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
-                                >
-                                  {getUserInitials(item.assignee)}
-                                </span>
-                                <span className="max-w-[120px] truncate">{item.assignee}</span>
-                              </>
-                            ) : (
-                              <>
-                                <UserPlus className="h-3 w-3" />
-                                <span>Назначить</span>
-                              </>
-                            )}
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent align="start" className="w-60 space-y-2 p-3">
-                          <div className="text-xs font-semibold">Ответственный</div>
-                          <div className="flex gap-1.5">
-                            <Input
-                              value={assigneeDraft}
-                              onChange={(e) => setAssigneeDraft(e.target.value)}
-                              placeholder="Имя участника"
-                              className="h-8 text-xs"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  void saveAssignee(item.id, assigneeDraft.trim() || null)
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Popover
+                          open={assigneePopoverId === item.id}
+                          onOpenChange={(open) => {
+                            if (open) {
+                              setAssigneeDraft(item.assignee || '')
+                              setAssigneePopoverId(item.id)
+                            } else {
+                              setAssigneePopoverId(null)
+                            }
+                          }}
+                        >
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              disabled={readOnly}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border/80 px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:cursor-default"
+                            >
+                              {item.assignee ? (
+                                <>
+                                  <span
+                                    className={`flex h-4 w-4 items-center justify-center rounded-full bg-linear-to-br/srgb text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
+                                  >
+                                    {getUserInitials(item.assignee)}
+                                  </span>
+                                  <span className="max-w-[120px] truncate">{item.assignee}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <UserPlus className="h-3 w-3" />
+                                  <span>Назначить</span>
+                                </>
+                              )}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent align="start" className="w-60 space-y-2 p-3">
+                            <div className="text-xs font-semibold">Ответственный</div>
+                            <div className="flex gap-1.5">
+                              <Input
+                                value={assigneeDraft}
+                                onChange={(e) => setAssigneeDraft(e.target.value)}
+                                placeholder="Имя участника"
+                                className="h-8 text-xs"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    void saveAssignee(item.id, assigneeDraft.trim() || null)
+                                  }
+                                }}
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-8 px-2.5 text-xs"
+                                onClick={() =>
+                                  saveAssignee(item.id, assigneeDraft.trim() || null)
                                 }
-                              }}
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="h-8 px-2.5 text-xs"
-                              onClick={() =>
-                                saveAssignee(item.id, assigneeDraft.trim() || null)
-                              }
-                            >
-                              ОК
-                            </Button>
-                          </div>
-                          {participants.length > 0 && (
-                            <div className="flex flex-wrap gap-1">
-                              {participants.map((p) => (
-                                <button
-                                  key={p}
-                                  type="button"
-                                  onClick={() => saveAssignee(item.id, p)}
-                                  className="rounded-md bg-muted px-2 py-0.5 text-[11px] hover:bg-accent"
-                                >
-                                  {p}
-                                </button>
-                              ))}
+                              >
+                                ОК
+                              </Button>
                             </div>
-                          )}
-                          {item.assignee && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-full text-xs text-muted-foreground"
-                              onClick={() => saveAssignee(item.id, null)}
-                            >
-                              Снять назначение
-                            </Button>
-                          )}
-                        </PopoverContent>
-                      </Popover>
+                            {participants.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {participants.map((p) => (
+                                  <button
+                                    key={p}
+                                    type="button"
+                                    onClick={() => saveAssignee(item.id, p)}
+                                    className="rounded-md bg-muted px-2 py-0.5 text-[11px] hover:bg-accent"
+                                  >
+                                    {p}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {item.assignee && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-full text-xs text-muted-foreground"
+                                onClick={() => saveAssignee(item.id, null)}
+                              >
+                                Снять назначение
+                              </Button>
+                            )}
+                          </PopoverContent>
+                        </Popover>
+
+                        <ActionItemExternalLink
+                          item={item}
+                          editDisabled={carried}
+                          onUpdated={onUpdated}
+                        />
+                      </div>
 
                       {!readOnly && (
                         <Button

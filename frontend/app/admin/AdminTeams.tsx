@@ -1,10 +1,11 @@
 'use client'
 
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useTheme } from 'next-themes'
 import {
   ArrowLeft,
+  Bot,
   KeyRound,
   Layers,
   Link2,
@@ -21,12 +22,16 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import {
+  createAdminAgentToken,
   createAdminWorkspace,
   deleteAdminWorkspace,
+  getAdminAgentTokens,
   getAdminWorkspaces,
+  revokeAdminAgentToken,
   updateAdminWorkspace,
   type WorkspaceListItem,
 } from '@/api/admin'
+import AgentTokensDialog, { type AgentTokensAdapter } from '@/components/AgentTokensDialog'
 import { BrandMark } from '@/components/BrandLogo'
 import { showToast } from '@/store/toastStore'
 import {
@@ -68,7 +73,7 @@ import { Label } from '@/components/ui/label'
 import AccessKeyField from './AccessKeyField'
 import InviteLinkDialog from './InviteLinkDialog'
 
-type DialogMode = 'create' | 'rename' | 'key' | 'invite' | null
+type DialogMode = 'create' | 'rename' | 'key' | 'invite' | 'tokens' | null
 
 /** Как поля команды называются в формах админки — для сообщений о проверке (ответ 422). */
 const TEAM_FIELD_LABELS: FieldLabels = {
@@ -267,6 +272,7 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
 
   const actionsFor = (ws: WorkspaceListItem): TeamAction[] => [
     { key: 'invite', label: 'Приглашение', icon: Link2, onSelect: () => openFor('invite', ws) },
+    { key: 'tokens', label: 'Токены агентов', icon: Bot, onSelect: () => openFor('tokens', ws) },
     { key: 'rename', label: 'Переименовать', icon: Pencil, onSelect: () => openFor('rename', ws) },
     { key: 'key', label: 'Ключ', icon: KeyRound, onSelect: () => openFor('key', ws) },
     {
@@ -277,6 +283,16 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
       destructive: true,
     },
   ]
+
+  const targetId = target?.id ?? null
+  const tokensAdapter = useMemo<AgentTokensAdapter | null>(() => {
+    if (!targetId) return null
+    return {
+      list: () => getAdminAgentTokens(targetId),
+      create: (payload) => createAdminAgentToken(targetId, payload),
+      revoke: (tokenId) => revokeAdminAgentToken(targetId, tokenId),
+    }
+  }, [targetId])
 
   // До первого ответа сервера страницу не показываем: если сессия закончилась, вместо неё
   // сразу появится форма входа
@@ -675,6 +691,15 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
         open={dialogMode === 'invite'}
         onOpenChange={(o) => !o && closeDialog()}
         team={target}
+      />
+
+      {/* Токены MCP-агентов команды */}
+      <AgentTokensDialog
+        open={dialogMode === 'tokens'}
+        onOpenChange={(o) => !o && closeDialog()}
+        teamLabel={target?.name}
+        subtitle="Администрирование"
+        adapter={tokensAdapter}
       />
 
       {/* Подтверждение удаления */}

@@ -198,12 +198,19 @@ export const createActionItem = (data: {
   title?: string
   text: string
   assignee?: string
+  external_url?: string | null
   source_card_ids?: string[]
   status?: ActionItemStatus
 }): Promise<ActionItem> => api.post<ActionItem>('/action-items/', data).then((r) => r.data)
 export const updateActionItem = (
   id: string,
-  data: { title?: string; text?: string; assignee?: string | null; status?: ActionItemStatus },
+  data: {
+    title?: string
+    text?: string
+    assignee?: string | null
+    external_url?: string | null
+    status?: ActionItemStatus
+  },
 ): Promise<ActionItem> => api.patch<ActionItem>(`/action-items/${id}`, data).then((r) => r.data)
 export const deleteActionItem = (id: string): Promise<void> => api.delete(`/action-items/${id}`)
 export const getAllActionItems = (params?: {

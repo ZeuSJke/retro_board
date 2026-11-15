@@ -22,6 +22,7 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
+  Bot,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -57,6 +58,7 @@ import {
   refreshWorkspaceSession,
   updateActionItem,
 } from '../api'
+import { createAgentToken, getAgentTokens, revokeAgentToken } from '../api/agentTokens'
 import { getHealthQuestions, getHealthTrends } from '../api/health'
 import { getTeamThemes } from '../api/themes'
 import { useAppStore } from '../store'
@@ -80,6 +82,8 @@ import type {
 } from '../types'
 import type { HealthQuestion, HealthTrendPoint } from '../types/health'
 import type { TeamTheme } from '../types/themes'
+import ActionItemExternalLink from './ActionItemExternalLink'
+import AgentTokensDialog, { type AgentTokensAdapter } from './AgentTokensDialog'
 import BoardsPanel from './BoardsPanel'
 import CarryForwardDialog from './CarryForwardDialog'
 import CreateBoardDialog from './CreateBoardDialog'
@@ -328,6 +332,16 @@ export default function Dashboard() {
   const [carryOpen, setCarryOpen] = useState(false)
   const [boardsPanelOpen, setBoardsPanelOpen] = useState(false)
   const [userSettingsOpen, setUserSettingsOpen] = useState(false)
+  const [teamSettingsOpen, setTeamSettingsOpen] = useState(false)
+
+  const agentTokensAdapter = useMemo<AgentTokensAdapter>(
+    () => ({
+      list: getAgentTokens,
+      create: createAgentToken,
+      revoke: revokeAgentToken,
+    }),
+    [],
+  )
 
   // Summary modal state
   const [summaryOpeningId, setSummaryOpeningId] = useState<string | null>(null)
@@ -846,6 +860,19 @@ export default function Dashboard() {
               <ExternalLink className="h-2.5 w-2.5" />
               <span className="max-w-[140px] truncate">{item.board_name}</span>
             </button>
+
+            <ActionItemExternalLink
+              item={item}
+              editDisabled={Boolean(item.superseded_by_id)}
+              stopPointerDown
+              onUpdated={(updated) =>
+                setItems((prev) =>
+                  prev.map((i) =>
+                    i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i,
+                  ),
+                )
+              }
+            />
           </div>
 
           {kanbanMode && (
@@ -973,6 +1000,23 @@ export default function Dashboard() {
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">Новая доска</span>
             </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 px-2.5"
+                  onClick={() => setTeamSettingsOpen(true)}
+                  aria-label="Настройки команды: токены агентов"
+                  data-testid="team-settings-btn"
+                >
+                  <Bot className="h-4 w-4 text-primary" />
+                  <span className="hidden md:inline">Токены агентов</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Настройки команды · Токены агентов (MCP)</TooltipContent>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -1526,6 +1570,14 @@ export default function Dashboard() {
       />
 
       <UserSettingsDialog open={userSettingsOpen} onOpenChange={setUserSettingsOpen} />
+
+      <AgentTokensDialog
+        open={teamSettingsOpen}
+        onOpenChange={setTeamSettingsOpen}
+        teamLabel={workspace?.workspaceName}
+        subtitle="Настройки команды"
+        adapter={agentTokensAdapter}
+      />
 
       {summaryModalBoard && (
         <SummaryModal

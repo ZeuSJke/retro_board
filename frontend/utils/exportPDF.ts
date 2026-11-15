@@ -96,9 +96,11 @@ function pluralizeRu(n: number, one: string, few: string, many: string): string 
 
 function cardHTML(card: Card, anonymousVotes: boolean, accentHex: string): string {
   const tone = resolveCardPrintStyle(card.color)
-  const displayAuthor = anonymousVotes ? 'Участник' : card.author
-  const avatarBg = anonymousVotes ? '#64748B' : userColor(card.author)
-  const avatarText = anonymousVotes ? '•' : initials(card.author)
+  const isAgent = card.author_kind === 'agent' && !card.masked
+  const hideAuthor = anonymousVotes && !isAgent
+  const displayAuthor = isAgent ? `${card.author} (агент)` : hideAuthor ? 'Участник' : card.author
+  const avatarBg = hideAuthor ? '#64748B' : userColor(card.author)
+  const avatarText = hideAuthor ? '•' : initials(card.author)
   const likeCount = (card.likes || []).length
 
   return `

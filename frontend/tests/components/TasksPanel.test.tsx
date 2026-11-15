@@ -314,3 +314,52 @@ describe('SuggestActionItemsDialog — состояния', () => {
     expect(screen.queryByText(/не нашёл достаточно данных/)).not.toBeInTheDocument()
   })
 })
+
+describe('Внешняя ссылка на задачу (external_url)', () => {
+  it('показывает безопасную http(s)-ссылку и отбрасывает небезопасный протокол', () => {
+    renderPanel({
+      actionItems: [
+        task('t-safe', { external_url: 'https://tracker.company.ru/TASK-10' }),
+        task('t-xss', { external_url: 'javascript:alert(1)' }),
+      ],
+    })
+
+    const link = screen.getByTestId('action-item-external-link')
+    expect(link).toHaveAttribute('href', 'https://tracker.company.ru/TASK-10')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(screen.queryAllByTestId('action-item-external-link')).toHaveLength(1)
+  })
+
+  it('на заблокированной доске даёт прикрепить и проверить внешнюю ссылку', async () => {
+    const user = userEvent.setup()
+    api.updateActionItem.mockResolvedValueOnce(
+      task('t-1', { external_url: 'https://jira.company.ru/RETRO-77' }),
+    )
+    const { onUpdated } = renderPanel({
+      readOnly: true,
+      actionItems: [task('t-1', { external_url: null })],
+    })
+
+    await user.click(screen.getByTestId('action-item-link-btn-t-1'))
+    const input = await screen.findByPlaceholderText('https://tracker.company.ru/TASK-1')
+
+    await user.type(input, 'ftp://bad.example.com/1')
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }))
+    expect(screen.getByText('Укажите ссылку http:// или https:// с доменом')).toBeInTheDocument()
+    expect(api.updateActionItem).not.toHaveBeenCalled()
+
+    await user.clear(input)
+    await user.type(input, 'https://jira.company.ru/RETRO-77')
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }))
+
+    await waitFor(() =>
+      expect(api.updateActionItem).toHaveBeenCalledWith('t-1', {
+        external_url: 'https://jira.company.ru/RETRO-77',
+      }),
+    )
+    expect(onUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 't-1', external_url: 'https://jira.company.ru/RETRO-77' }),
+    )
+  })
+})
