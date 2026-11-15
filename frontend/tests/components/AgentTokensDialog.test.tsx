@@ -137,6 +137,7 @@ describe('AgentTokensDialog', () => {
     expect(JSON.parse(copied)).toEqual({
       mcpServers: {
         retroboard: {
+          type: 'http',
           url: `${window.location.origin}/mcp`,
           headers: {
             Authorization: 'Bearer rba_new123_super_secret_value',

@@ -57,6 +57,7 @@ function buildMcpSnippet(origin: string, secret: string): string {
     {
       mcpServers: {
         retroboard: {
+          type: 'http',
           url: endpoint,
           headers: {
             Authorization: `Bearer ${secret}`,

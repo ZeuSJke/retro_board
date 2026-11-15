@@ -400,4 +400,39 @@ describe('Внешняя ссылка на задачу (external_url)', () => {
       expect.objectContaining({ id: 't-new', external_url: 'https://tracker.company.ru/OPS-9' }),
     )
   })
+
+  it('перенесённая задача (superseded_by_id) полностью доступна только для чтения', async () => {
+    const user = userEvent.setup()
+    renderPanel({
+      readOnly: false,
+      actionItems: [
+        task('t-carried', {
+          title: 'Перенесённый заголовок',
+          text: 'Перенесённое описание',
+          assignee: null,
+          external_url: 'https://tracker.company.ru/CARRY-1',
+          superseded_by_id: 't-copy',
+        }),
+      ],
+    })
+
+    expect(screen.getByTestId('action-item-carried')).toBeInTheDocument()
+    expect(screen.getByTestId('action-item-status')).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Назначить/i })).toBeDisabled()
+    expect(screen.queryByTitle('Удалить задачу')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('action-item-link-btn-t-carried')).not.toBeInTheDocument()
+    expect(screen.getByTestId('action-item-external-link')).toHaveAttribute(
+      'href',
+      'https://tracker.company.ru/CARRY-1',
+    )
+
+    await user.click(screen.getByText('Перенесённый заголовок'))
+    await user.click(screen.getByText('Перенесённое описание'))
+    await user.click(screen.getByRole('button', { name: /Назначить/i }))
+    expect(screen.queryByDisplayValue('Перенесённый заголовок')).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Перенесённое описание')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Имя участника')).not.toBeInTheDocument()
+    expect(api.updateActionItem).not.toHaveBeenCalled()
+    expect(api.deleteActionItem).not.toHaveBeenCalled()
+  })
 })

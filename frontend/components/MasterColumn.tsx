@@ -655,6 +655,7 @@ export default function MasterColumn({
               // Задачу перенесли на другую доску: здесь она осталась в истории, а открытой
               // считается её копия — статус меняют там
               const carried = Boolean(item.superseded_by_id)
+              const itemReadOnly = readOnly || carried
               const StatusIcon = carried ? CornerUpRight : meta.Icon
               const isDone = item.status === 'done'
 
@@ -729,7 +730,7 @@ export default function MasterColumn({
                     ) : (
                       <div
                         onClick={() => {
-                          if (!readOnly) {
+                          if (!itemReadOnly) {
                             setEditingTitleId(item.id)
                             setEditTitle(item.title || '')
                           }
@@ -737,7 +738,7 @@ export default function MasterColumn({
                         className={cn(
                           'text-xs font-semibold leading-snug',
                           isDone && 'line-through',
-                          !readOnly && 'cursor-text hover:text-primary',
+                          !itemReadOnly && 'cursor-text hover:text-primary',
                         )}
                       >
                         {item.title || (
@@ -768,14 +769,14 @@ export default function MasterColumn({
                     ) : (
                       <p
                         onClick={() => {
-                          if (!readOnly) {
+                          if (!itemReadOnly) {
                             setEditingDescId(item.id)
                             setEditDesc(item.text)
                           }
                         }}
                         className={cn(
                           'whitespace-pre-wrap wrap-break-word text-xs text-muted-foreground',
-                          !readOnly && 'cursor-text hover:text-foreground',
+                          !itemReadOnly && 'cursor-text hover:text-foreground',
                         )}
                       >
                         <RichCardText text={item.text} />
@@ -798,7 +799,12 @@ export default function MasterColumn({
                           <PopoverTrigger asChild>
                             <button
                               type="button"
-                              disabled={readOnly}
+                              disabled={itemReadOnly}
+                              title={
+                                carried
+                                  ? 'Задача перенесена на другую доску — изменения доступны в копии'
+                                  : undefined
+                              }
                               className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border/80 px-2 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:cursor-default"
                             >
                               {item.assignee ? (
@@ -878,7 +884,7 @@ export default function MasterColumn({
                         />
                       </div>
 
-                      {!readOnly && (
+                      {!itemReadOnly && (
                         <Button
                           type="button"
                           variant="ghost"
