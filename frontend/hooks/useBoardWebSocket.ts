@@ -262,7 +262,7 @@ export function useBoardWebSocket({
       onBoardCreated,
       onBoardUpdated,
       onBoardDeleted,
-        onParticipantRenamed,
+      onParticipantRenamed,
       onBoardSnapshot,
       onResynced,
       onBoardGone,

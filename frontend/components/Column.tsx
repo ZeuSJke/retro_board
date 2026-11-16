@@ -833,7 +833,7 @@ function Column({
                 animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
                 transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                className="overflow-hidden"
+                className="-m-1 overflow-hidden p-1"
               >
                 <div className="space-y-2 rounded-xl border bg-background p-2.5 shadow-xs">
                   <Textarea
@@ -924,7 +924,7 @@ function Column({
                 animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
                 transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
-                className="overflow-hidden"
+                className="-m-1 overflow-hidden p-1"
               >
                 <Button
                   type="button"

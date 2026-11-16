@@ -1166,6 +1166,22 @@ export default function BoardPage({
               onMouseLeave={handleMouseLeave}
               className="relative flex flex-1 items-stretch gap-3 sm:gap-4 overflow-x-auto overflow-y-hidden p-3 sm:p-4 snap-x snap-mandatory md:snap-none"
             >
+              {columns.length === 0 && (
+                <div
+                  data-testid="board-empty-columns"
+                  className="flex min-w-0 flex-1 items-center justify-center p-4"
+                >
+                  <div className="max-w-sm rounded-2xl border border-dashed bg-card/60 px-6 py-8 text-center">
+                    <p className="text-sm font-medium">На доске пока нет колонок</p>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      {readOnly
+                        ? 'Добавить колонки сможет создатель или ведущий после разблокировки доски.'
+                        : 'Добавьте первую кнопкой «Колонка» в панели инструментов.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {columns.map((col, idx) => (
                 <Column
                   key={col.id}

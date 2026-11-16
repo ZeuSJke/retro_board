@@ -174,8 +174,8 @@ export function useBoardShortcuts({
           likesCount: (card.likes || []).length,
           onSelect: () => {
             flashCard(card.id)
-            // Поиск карточки — личное действие: фокус всей команде включает ведущий,
-            // а вне сессии — любой участник
+            // В сессии поиск у не-ведущего — личное действие; вне сессии фокус,
+            // как и кнопкой карточки, включает любой участник
             if (canControlFocus) onSelectSpotlightCard(card.id)
           },
         })

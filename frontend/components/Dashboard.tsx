@@ -1248,7 +1248,7 @@ export default function Dashboard() {
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm font-semibold">Настроение команды</CardTitle>
                       <CardDescription className="text-xs">
-                        Средняя оценка чек-ина настроения по ретроспективам (от 1 до 5)
+                        Историческая средняя оценка настроения по ретроспективам (от 1 до 5)
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
