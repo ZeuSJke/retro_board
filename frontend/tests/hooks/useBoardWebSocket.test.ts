@@ -97,6 +97,13 @@ describe('useBoardWebSocket', () => {
     expect(result.current.myId).toBe('p-me')
   })
 
+  it('отдаёт колонки из снимка сразу, до resetBoard', () => {
+    const initial = [{ ...COLUMN, cards: [], groups: [] }]
+    const { result } = setup({ initialColumns: initial })
+
+    expect(result.current.columns).toEqual(initial)
+  })
+
   it('handles column_created event', () => {
     const { result } = setup()
 

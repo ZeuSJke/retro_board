@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { DndContext, DragOverlay, type DragEndEvent } from '@dnd-kit/core'
 import { AnimatePresence } from 'motion/react'
-import { ChevronLeft, ChevronRight, Layers } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Layers, Plus } from 'lucide-react'
 import {
   createActionItem,
   createColumn,
@@ -64,6 +64,7 @@ import SessionBar from './SessionBar'
 import type { SpotlightQueueItem } from './SpotlightModal'
 import Topbar from './Topbar'
 import { useHealthCheck } from '@/components/health'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 interface BoardPageProps {
@@ -106,6 +107,7 @@ export default function BoardPage({
   const dotGrid = useAppStore((s) => s.dotGrid)
 
   const [boardsPanelOpen, setBoardsPanelOpen] = useState(false)
+  const [addColumnOpen, setAddColumnOpen] = useState(false)
   const [boardSettingsOpen, setBoardSettingsOpen] = useState(false)
   const [userSettingsOpen, setUserSettingsOpen] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
@@ -1100,6 +1102,8 @@ export default function BoardPage({
         onToggleMaster={handleToggleMaster}
         actionItemsCount={actionItems.length}
         onAddColumn={handleAddColumn}
+        addColumnOpen={addColumnOpen}
+        onAddColumnOpenChange={setAddColumnOpen}
         dragDisabledReason={readOnly ? null : dragDisabledReason}
       />
 
@@ -1177,8 +1181,20 @@ export default function BoardPage({
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                       {readOnly
                         ? 'Разблокируйте доску в настройках, чтобы добавить колонки.'
-                        : 'Добавьте первую через панель инструментов.'}
+                        : 'Добавьте первую колонку — в ней появятся карточки.'}
                     </p>
+                    {!readOnly && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="mt-3 gap-1.5"
+                        onClick={() => setAddColumnOpen(true)}
+                        data-testid="empty-board-add-column"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Добавить колонку
+                      </Button>
+                    )}
                   </div>
                 </div>
               )}

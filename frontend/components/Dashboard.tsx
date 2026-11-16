@@ -1171,6 +1171,7 @@ export default function Dashboard() {
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.24, delay: 0.1 }}
+                className={cn(kpi.moodAvg === null && 'col-span-2 lg:col-span-1')}
               >
                 <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
                   <CardContent className="flex items-center justify-between gap-2 p-4">

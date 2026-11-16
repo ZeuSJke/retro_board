@@ -777,6 +777,15 @@ describe('BoardToolbar', () => {
     )
   })
 
+  it('открывает форму новой колонки по запросу с пустого холста', () => {
+    const props = { ...toolbarProps, addColumnOpen: false, onAddColumnOpenChange: vi.fn() }
+    const { rerender } = render(<BoardToolbar {...props} />)
+    expect(screen.queryByText('Новая колонка')).not.toBeInTheDocument()
+
+    rerender(<BoardToolbar {...props} addColumnOpen />)
+    expect(screen.getByText('Новая колонка')).toBeInTheDocument()
+  })
+
   it('образцы цвета новой колонки подписаны', async () => {
     const user = userEvent.setup()
     render(<BoardToolbar {...toolbarProps} />)
