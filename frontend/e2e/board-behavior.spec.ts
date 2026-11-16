@@ -95,7 +95,8 @@ async function keyboardDrag(page: Page, text: string, arrows: string[], finish: 
     page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))))
   await cardByText(page, text).getByTestId('card-drag-handle').focus()
   await page.keyboard.press('Space')
-  await expect(page.locator('[id^="DndLiveRegion"]')).toContainText('Взято:')
+  // На быстрых или нагруженных прогонах onDragOver («— над:») успевает сменить «Взято:» сразу в том же кадре
+  await expect(page.locator('[id^="DndLiveRegion"]')).toContainText(/^(Взято:|.+ — (над:|вне доски\.))/)
   for (const arrow of arrows) {
     await page.keyboard.press(arrow)
     await nextFrame()

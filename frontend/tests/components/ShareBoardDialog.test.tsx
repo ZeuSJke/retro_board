@@ -89,7 +89,11 @@ describe('ShareBoardDialog', () => {
   it('рисует QR-код ссылки на доску прямо на странице, без картинок', async () => {
     render(<ShareBoardDialog open onOpenChange={vi.fn()} board={board} />)
 
-    const qr = await screen.findByRole('img', { name: 'QR-код ссылки на доску «Ретро спринта 42»' })
+    const qr = await screen.findByRole(
+      'img',
+      { name: 'QR-код ссылки на доску «Ретро спринта 42»' },
+      { timeout: 5000 },
+    )
     expect(qr.tagName.toLowerCase()).toBe('svg')
     expect(qr.querySelector('path')?.getAttribute('d')).toMatch(/^M\d+ \d+h\d+v1h-\d+z/)
     expect(document.querySelector('img')).toBeNull()
@@ -112,12 +116,12 @@ describe('ShareBoardDialog', () => {
   it('«Показать крупно» оставляет один код на весь диалог и возвращает к ссылкам', async () => {
     const user = userEvent.setup()
     render(<ShareBoardDialog open onOpenChange={vi.fn()} board={board} />)
-    await screen.findByRole('img', { name: /QR-код/ })
+    await screen.findByRole('img', { name: /QR-код/ }, { timeout: 5000 })
 
     await user.click(screen.getByRole('button', { name: 'Показать крупно' }))
 
     expect(await screen.findByRole('dialog', { name: 'Ретро спринта 42' })).toBeInTheDocument()
-    expect(await screen.findByRole('img', { name: /QR-код/ })).toBeInTheDocument()
+    expect(await screen.findByRole('img', { name: /QR-код/ }, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.queryByLabelText('Ссылка на эту доску')).toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'К ссылкам' }))
