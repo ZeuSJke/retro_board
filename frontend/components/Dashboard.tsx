@@ -66,7 +66,7 @@ import { useAppStore } from '../store'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { queryKeys } from '../lib/query-client'
 import { showToast } from '../store/toastStore'
-import { getApiErrorMessage, getApiErrorStatus, markApiErrorReported } from '../utils/apiError'
+import { getApiErrorMessage, getApiErrorStatus, markApiErrorReported, quietQuery } from '../utils/apiError'
 import { boardToBoardListItem } from '../utils/boardMapper'
 import { isBoardListItem, isBoardUpdatedData, isDeletedData } from '../utils/wsData'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
@@ -364,50 +364,39 @@ export default function Dashboard() {
     void refreshWorkspaceSession().catch(markApiErrorReported)
   }, [queriesEnabled, workspaceId])
 
-  // Второстепенные графики и темы показывают своё состояние или тихо деградируют,
-  // поэтому помечаем ошибку, чтобы перехватчик не дублировал тосты.
-  const queryQuietly = <T,>(fn: () => Promise<T>) => async () => {
-    try {
-      return await fn()
-    } catch (err) {
-      markApiErrorReported(err)
-      throw err
-    }
-  }
-
   const boardsQuery = useQuery({
     queryKey: boardsKey,
-    queryFn: getBoards,
+    queryFn: quietQuery(getBoards),
     enabled: queriesEnabled,
   })
   const itemsQuery = useQuery({
     queryKey: itemsKey,
-    queryFn: async () => withoutCarriedOriginals(await getAllActionItems()),
+    queryFn: quietQuery(async () => withoutCarriedOriginals(await getAllActionItems())),
     enabled: queriesEnabled,
   })
   const trendsQuery = useQuery({
     queryKey: trendsKey,
-    queryFn: queryQuietly(getActionItemTrends),
+    queryFn: quietQuery(getActionItemTrends),
     enabled: queriesEnabled,
   })
   const moodTrendsQuery = useQuery({
     queryKey: moodTrendsKey,
-    queryFn: queryQuietly(getMoodTrends),
+    queryFn: quietQuery(getMoodTrends),
     enabled: queriesEnabled,
   })
   const healthTrendsQuery = useQuery({
     queryKey: healthTrendsKey,
-    queryFn: queryQuietly(getHealthTrends),
+    queryFn: quietQuery(getHealthTrends),
     enabled: queriesEnabled,
   })
   const healthQuestionsQuery = useQuery({
     queryKey: healthQuestionsKey,
-    queryFn: queryQuietly(getHealthQuestions),
+    queryFn: quietQuery(getHealthQuestions),
     enabled: queriesEnabled,
   })
   const themesQuery = useQuery({
     queryKey: themesKey,
-    queryFn: queryQuietly(getTeamThemes),
+    queryFn: quietQuery(getTeamThemes),
     enabled: queriesEnabled,
   })
 
@@ -437,7 +426,10 @@ export default function Dashboard() {
   const primaryError = boardsQuery.error ?? itemsQuery.error
   const authError = primaryError !== null && getApiErrorStatus(primaryError) === 401
   const needsAuth = (hasHydrated && !workspace) || (hadWorkspace && !workspace) || authError
-  const loading = queriesEnabled && (boardsQuery.isLoading || itemsQuery.isLoading)
+  // До гидрации стора и до первого ответа не показываем нулевые счётчики.
+  const loading =
+    !hasHydrated ||
+    (queriesEnabled && (boardsQuery.isPending || itemsQuery.isPending))
   const error =
     primaryError && !authError
       ? getApiErrorMessage(primaryError, 'Не удалось загрузить аналитику')

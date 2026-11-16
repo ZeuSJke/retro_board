@@ -106,8 +106,8 @@ export function useTimer(sendWs: (msg: WsMessage) => void, options?: UseTimerOpt
       const duration = finiteNumber(data.duration)
       const remaining = finiteNumber(data.remaining)
       if (duration === null || remaining === null) return
-      // Payload может нести серверное `ends_at_ms`, но отсчёт строим от `remaining` по часам
-      // клиента (`Date.now() + remaining * 1000`), чтобы сдвиг часов не ломал таймер.
+      // Отсчёт строим от `remaining` по часам клиента (`Date.now() + remaining * 1000`),
+      // чтобы перекос часов между сервером и клиентом не ломал таймер.
       // Остаток уже нулевой — таймер на сервере истёк, пока нас не было: звука не нужно.
       setTimer(remaining > 0 ? runningTimer(duration, remaining) : stoppedTimer(duration, 0))
     } else if (event === 'timer_pause') {

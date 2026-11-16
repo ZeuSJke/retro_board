@@ -441,6 +441,27 @@ describe('useWebSocket', () => {
       expect(MockWebSocket.instances).toHaveLength(1)
     })
 
+    it('код 4008 (медленный клиент) не останавливает переподключение, в отличие от 1008', () => {
+      const { result, ws, onClose } = setup()
+      act(() => ws.open())
+      act(() => ws.drop(4008, 'Slow consumer'))
+
+      expect(result.current.status).toBe('reconnecting')
+      expect(onClose).toHaveBeenCalledWith({
+        code: 4008,
+        reason: 'Slow consumer',
+        wasOpen: true,
+        failedAttempts: 0,
+      })
+
+      act(() => {
+        vi.advanceTimersByTime(3000)
+      })
+      expect(MockWebSocket.instances).toHaveLength(2)
+      act(() => lastSocket().open())
+      expect(result.current.status).toBe('open')
+    })
+
     it('reconnect() подключается снова вручную', () => {
       const { result, ws } = setup()
       act(() => ws.open())

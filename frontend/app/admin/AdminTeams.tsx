@@ -40,6 +40,7 @@ import {
   getApiErrorMessage,
   getApiErrorStatus,
   markApiErrorReported,
+  quietQuery,
   type FieldLabels,
 } from '@/utils/apiError'
 import {
@@ -180,14 +181,7 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
 
   const tokensCountQuery = useQuery({
     queryKey: ['admin', 'agent-tokens', target?.id ?? ''],
-    queryFn: async () => {
-      try {
-        return await getAdminAgentTokens(target!.id)
-      } catch (err) {
-        markApiErrorReported(err)
-        throw err
-      }
-    },
+    queryFn: quietQuery(() => getAdminAgentTokens(target!.id)),
     enabled: dialogMode === 'key' && Boolean(target),
     staleTime: 0,
   })

@@ -402,7 +402,7 @@ deploy-staging:
         --namespace "$STAGING_NAMESPACE" \
         -f k8s/helm/retro-board/values-staging.yaml \
         --set-string image.tag="$STAGING_TAG" \
-        --wait --atomic --timeout 10m
+        --wait --timeout 10m
     - kubectl -n "$STAGING_NAMESPACE" rollout status statefulset/retro-board-postgres --timeout=5m
     - kubectl -n "$STAGING_NAMESPACE" rollout status deploy/retro-board-api --timeout=5m
     - kubectl -n "$STAGING_NAMESPACE" rollout status deploy/retro-board-web --timeout=5m

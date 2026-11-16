@@ -379,10 +379,10 @@ describe('useTimer', () => {
     expect(result.current.handleTimerWsEvent).toBe(before.handleTimerWsEvent)
   })
 
-  it('timer_start: ends_at_ms и перекос часов ts не ломают обратный отсчёт от remaining', () => {
+  it('timer_start: перекос часов ts не ломает обратный отсчёт от remaining', () => {
     const { result } = renderHook(() => useTimer(sendWs))
 
-    // Часы сервера сдвинуты относительно клиента на +2 часа (ts / ends_at_ms в будущем),
+    // Часы сервера сдвинуты относительно клиента на +2 часа (ts в будущем),
     // но отсчёт идёт от локального момента получения кадра + remaining секунд.
     const skewedServerNow = Date.now() + 2 * 3600_000
     act(() => {
@@ -390,7 +390,6 @@ describe('useTimer', () => {
         duration: 180,
         remaining: 75,
         ts: skewedServerNow,
-        ends_at_ms: skewedServerNow + 75_000,
       })
     })
 

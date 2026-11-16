@@ -15,6 +15,7 @@ from app.board_view import (
     visible_cards_sql_filter,
 )
 from app.database import release_connection
+from app.services.boards import clear_deleted_groups_state
 from app.services.common import BroadcastAction, dispatch_broadcasts, find_live_board
 from app.utils import get_or_404, require_unlocked_board
 from app.ws_manager import manager
@@ -212,6 +213,7 @@ def bulk_update_cards_sync(
 
     db.flush()
     deleted_groups = prune_empty_groups(db, touched_group_ids)
+    clear_deleted_groups_state(db, board.id, [p["id"] for p in deleted_groups], commit=False)
     db.commit()
 
     board_id = board.id

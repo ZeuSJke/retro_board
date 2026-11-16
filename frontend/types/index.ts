@@ -319,8 +319,6 @@ export interface WsTimerStartData {
   duration: number
   remaining: number
   ts?: number
-  /** Ожидаемое время окончания по часам сервера (мс UTC); отсчёт по-прежнему идёт от `remaining`. */
-  ends_at_ms?: number
 }
 
 export interface WsTimerPauseData {

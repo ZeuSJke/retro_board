@@ -8,6 +8,7 @@ from app import models, schemas
 from app.board_view import require_moderator
 from app.database import get_db
 from app.limiter import limiter
+from app.services.boards import clear_deleted_groups_state
 from app.utils import get_or_404, require_unlocked_board
 from app.workspace_auth import get_current_participant, get_current_workspace
 from app.ws_manager import manager
@@ -105,6 +106,9 @@ async def delete_column(
             board, participant, "Удалить колонку с карточками может создатель доски или ведущий"
         )
     board_id = col.board_id
+    deleted_group_ids = [g.id for g in col.groups]
     db.delete(col)
+    db.flush()
+    clear_deleted_groups_state(db, board_id, deleted_group_ids, commit=False)
     db.commit()
     await manager.broadcast(board_id, "column_deleted", {"id": column_id})

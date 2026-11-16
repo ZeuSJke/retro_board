@@ -5,7 +5,7 @@ import os
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from fastapi import WebSocket
@@ -77,6 +77,10 @@ class ConnectionManager:
     # клиент не задерживал рассылку здоровым участникам комнаты.
     MAX_SOCKET_QUEUE: int = 128
     SEND_TIMEOUT_SECONDS: float = 5.0
+    MAX_COLLAPSED_GROUPS: int = 200
+    # Не 1008 (policy violation): при переполнении или таймауте клиент должен
+    # автоматически переподключиться и пересинхронизироваться по снимку.
+    SLOW_CONSUMER_CLOSE_CODE: int = 4008
 
     def __init__(self):
         self.rooms: dict[str, list[WebSocket]] = defaultdict(list)
@@ -179,7 +183,7 @@ class ConnectionManager:
     def _schedule_close(
         self,
         ws: WebSocket,
-        code: int = 1008,
+        code: int = 4008,
         reason: str = "Slow consumer",
     ) -> None:
         try:
@@ -237,7 +241,9 @@ class ConnectionManager:
                     )
                     if self.on_slow_consumer_drop is not None:
                         self.on_slow_consumer_drop()
-                    self._schedule_close(ws, code=1008, reason="Slow consumer")
+                    self._schedule_close(
+                        ws, code=self.SLOW_CONSUMER_CLOSE_CODE, reason="Slow consumer"
+                    )
                     await self._handle_failed_socket(
                         ws, board_id=board_id, workspace_id=workspace_id
                     )
@@ -254,34 +260,28 @@ class ConnectionManager:
 
     async def _send_raw(self, ws: WebSocket, message: str) -> bool:
         queue = self._queues.get(id(ws))
-        if queue is not None:
-            try:
-                queue.put_nowait(message)
-                return True
-            except asyncio.QueueFull:
-                logger.warning(
-                    "Dropping slow WebSocket consumer (outgoing queue limit=%d reached)",
-                    queue.maxsize,
-                )
-                if self.on_slow_consumer_drop is not None:
-                    self.on_slow_consumer_drop()
-                self._stop_writer(ws)
-                self._schedule_close(ws, code=1008, reason="Slow consumer")
-                return False
-        # Fallback для юнит-тестов, добавляющих мок-сокет в rooms напрямую без connect()
+        if queue is None:
+            return False
         try:
-            await asyncio.wait_for(ws.send_text(message), timeout=self.SEND_TIMEOUT_SECONDS)
+            # Ждём освобождения слота с таймаутом, чтобы кратковременный всплеск
+            # (например, bulk-операция > MAX_SOCKET_QUEUE) давал writer-задаче шанс разгрузить очередь.
+            await asyncio.wait_for(queue.put(message), timeout=self.SEND_TIMEOUT_SECONDS)
             return True
         except TimeoutError:
+            if self._queues.get(id(ws)) is not queue:
+                return False
+            logger.warning(
+                "Dropping slow WebSocket consumer (outgoing queue limit=%d stalled for %.1fs)",
+                queue.maxsize,
+                self.SEND_TIMEOUT_SECONDS,
+            )
             if self.on_slow_consumer_drop is not None:
                 self.on_slow_consumer_drop()
-            self._schedule_close(ws, code=1008, reason="Slow consumer")
+            self._stop_writer(ws)
+            self._schedule_close(
+                ws, code=self.SLOW_CONSUMER_CLOSE_CODE, reason="Slow consumer"
+            )
             return False
-        except Exception:
-            return False
-
-    async def send_text(self, ws: WebSocket, message: str) -> bool:
-        return await self._send_raw(ws, message)
 
     async def send_event(self, ws: WebSocket, event: str, data: dict) -> bool:
         return await self._send_raw(
@@ -718,48 +718,70 @@ class ConnectionManager:
     def get_spotlight(self, board_id: str) -> str | None:
         return self.spotlights.get(board_id)
 
-    def set_group_collapsed(self, board_id: str, group_id: str, collapsed: bool) -> None:
+    def set_group_collapsed(self, board_id: str, group_id: str, collapsed: bool) -> bool:
+        """Обновить состояние сворачивания группы; возвращает True, если оно изменилось."""
         if collapsed:
-            self.collapsed_groups[board_id].add(group_id)
-        else:
-            bucket = self.collapsed_groups.get(board_id)
-            if bucket:
-                bucket.discard(group_id)
-                if not bucket:
-                    self.collapsed_groups.pop(board_id, None)
+            bucket = self.collapsed_groups[board_id]
+            if group_id in bucket or len(bucket) >= self.MAX_COLLAPSED_GROUPS:
+                return False
+            bucket.add(group_id)
+            return True
+        existing = self.collapsed_groups.get(board_id)
+        if not existing or group_id not in existing:
+            return False
+        existing.discard(group_id)
+        if not existing:
+            self.collapsed_groups.pop(board_id, None)
+        return True
 
     def get_collapsed_groups(self, board_id: str) -> list[str]:
         return sorted(self.collapsed_groups.get(board_id, ()))
 
+    def remove_collapsed_groups(self, board_id: str, group_ids: Iterable[str]) -> bool:
+        existing = self.collapsed_groups.get(board_id)
+        if not existing:
+            return False
+        before = len(existing)
+        existing.difference_update(group_ids)
+        if not existing:
+            self.collapsed_groups.pop(board_id, None)
+        return len(existing) != before
+
     def remove_collapsed_group(self, board_id: str, group_id: str) -> None:
-        self.set_group_collapsed(board_id, group_id, False)
+        self.remove_collapsed_groups(board_id, (group_id,))
 
-    def set_timer(self, board_id: str, event: str, data: dict) -> float | None:
-        """Store timer state so new clients can catch up.
+    def prune_collapsed_groups(self, board_id: str, valid_group_ids: set[str]) -> bool:
+        bucket = self.collapsed_groups.get(board_id)
+        if not bucket:
+            return False
+        filtered = bucket & valid_group_ids
+        if len(filtered) == len(bucket):
+            return False
+        if filtered:
+            self.collapsed_groups[board_id] = filtered
+        else:
+            self.collapsed_groups.pop(board_id, None)
+        return True
 
-        Для `timer_start` возвращает серверное время окончания в мс (`ends_at_ms`).
-        """
+    def set_timer(self, board_id: str, event: str, data: dict) -> None:
+        """Store timer state so new clients can catch up."""
         now_ms = time.time() * 1000
         if event == "timer_start":
             duration = data.get("duration", 0)
             remaining = data.get("remaining", 0)
-            ends_at_ms = round(now_ms + remaining * 1000)
             self.timers[board_id] = {
                 "running": True,
                 "duration": duration,
                 "remaining": remaining,
-                # Всегда опираемся на серверное время, чтобы избежать рассинхрона часов клиента
+                # Отметку ставит сервер, а не клиент (часы у участников могут расходиться)
                 "ts": now_ms,
-                "ends_at_ms": ends_at_ms,
             }
-            return ends_at_ms
         elif event == "timer_pause":
             t = self.timers.get(board_id)
             if t:
                 t["running"] = False
                 t["remaining"] = data.get("remaining", t["remaining"])
                 t["duration"] = data.get("duration", t["duration"])
-                t.pop("ends_at_ms", None)
         elif event == "timer_reset":
             dur = data.get("duration", 0)
             self.timers[board_id] = {
@@ -768,7 +790,6 @@ class ConnectionManager:
                 "remaining": dur,
                 "ts": 0,
             }
-        return None
 
     def get_timer(self, board_id: str) -> dict | None:
         return self.timers.get(board_id)
@@ -781,7 +802,9 @@ class ConnectionManager:
 
     # ── Состояние, переживающее рестарт ──────────────────────────────────────
 
-    def export_state(self, board_id: str) -> dict | None:
+    def export_state(
+        self, board_id: str, valid_group_ids: set[str] | None = None
+    ) -> dict | None:
         """Таймер, фокус и свёрнутые группы в виде, пригодном для хранения в БД.
 
         Идущий таймер сохраняется моментом окончания, а не остатком: остаток
@@ -794,8 +817,7 @@ class ConnectionManager:
                 state["timer"] = {
                     "running": True,
                     "duration": timer["duration"],
-                    "ends_at_ms": timer.get("ends_at_ms")
-                    or (timer["ts"] + timer["remaining"] * 1000),
+                    "ends_at_ms": timer["ts"] + timer["remaining"] * 1000,
                 }
             else:
                 state["timer"] = {
@@ -806,12 +828,19 @@ class ConnectionManager:
         spotlight = self.spotlights.get(board_id)
         if spotlight:
             state["spotlight"] = spotlight
+        if valid_group_ids is not None:
+            self.prune_collapsed_groups(board_id, valid_group_ids)
         collapsed = self.get_collapsed_groups(board_id)
         if collapsed:
             state["collapsed_groups"] = collapsed
         return state or None
 
-    def restore_state(self, board_id: str, state: object) -> None:
+    def restore_state(
+        self,
+        board_id: str,
+        state: object,
+        valid_group_ids: set[str] | None = None,
+    ) -> None:
         """Поднять таймер, фокус и свёрнутые группы из БД один раз за жизнь процесса.
 
         Данные читаются недоверчиво: повреждённая запись просто игнорируется.
@@ -839,7 +868,6 @@ class ConnectionManager:
                         "duration": duration,
                         "remaining": (ends_at - now_ms) / 1000,
                         "ts": now_ms,
-                        "ends_at_ms": ends_at,
                     }
             else:
                 remaining = number(timer.get("remaining"))
@@ -855,7 +883,15 @@ class ConnectionManager:
             self.spotlights[board_id] = spotlight
         collapsed = state.get("collapsed_groups")
         if isinstance(collapsed, list) and board_id not in self.collapsed_groups:
-            valid = {g for g in collapsed if isinstance(g, str) and 0 < len(g) <= 100}
+            valid = {
+                g
+                for g in collapsed
+                if isinstance(g, str)
+                and 0 < len(g) <= 100
+                and (valid_group_ids is None or g in valid_group_ids)
+            }
+            if len(valid) > self.MAX_COLLAPSED_GROUPS:
+                valid = set(sorted(valid)[: self.MAX_COLLAPSED_GROUPS])
             if valid:
                 self.collapsed_groups[board_id] = valid
 
@@ -884,10 +920,6 @@ class ConnectionManager:
         data: dict,
         exclude: WebSocket | None = None,
     ):
-        if event == "group_deleted":
-            gid = data.get("id")
-            if isinstance(gid, str):
-                self.remove_collapsed_group(board_id, gid)
         message = json.dumps({**self._envelope(board_id, event), "data": data}, default=str)
         await self._send_to_room(board_id, event, lambda ws: message, exclude)
 

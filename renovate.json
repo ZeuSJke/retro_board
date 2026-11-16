@@ -11,6 +11,11 @@
     "dependencies"
   ],
   "prConcurrentLimit": 4,
+  "pip_requirements": {
+    "managerFilePatterns": [
+      "/(^|/)backend/requirements(-dev)?\\.in$/"
+    ]
+  },
   "packageRules": [
     {
       "matchManagers": [

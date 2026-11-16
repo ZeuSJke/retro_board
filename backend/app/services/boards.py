@@ -1,7 +1,9 @@
 """Сервисный слой для досок, списков, трендов и итогов ретро."""
 
+import json
 import logging
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -827,3 +829,57 @@ def generate_summary_internal(
         return themes.summary_out(db, summary, workspace_id).model_dump(mode="json")
     finally:
         db.close()
+
+
+def board_group_ids(db: Session, board_id: str) -> set[str]:
+    """Идентификаторы всех существующих групп карточек доски."""
+    rows = (
+        db.query(models.CardGroup.id)
+        .join(models.Column, models.CardGroup.column_id == models.Column.id)
+        .filter(models.Column.board_id == board_id)
+        .all()
+    )
+    return {gid for (gid,) in rows}
+
+
+def clear_deleted_groups_state(
+    db: Session,
+    board_id: str,
+    deleted_group_ids: Iterable[str],
+    *,
+    commit: bool = True,
+) -> None:
+    """Убрать удалённые группы из памяти и сохранённого `Board.session_state`."""
+    gids = {gid for gid in deleted_group_ids if gid}
+    if not gids:
+        return
+    manager.remove_collapsed_groups(board_id, gids)
+
+    board = db.get(models.Board, board_id)
+    if board is None or board.deleted_at is not None or not board.session_state:
+        return
+
+    if board_id in manager.restored:
+        state = manager.export_state(board_id, valid_group_ids=board_group_ids(db, board_id))
+        board.session_state = json.dumps(state) if state else None
+    else:
+        try:
+            saved = json.loads(board.session_state)
+        except ValueError:
+            return
+        if not isinstance(saved, dict):
+            return
+        collapsed = saved.get("collapsed_groups")
+        if not isinstance(collapsed, list):
+            return
+        remaining = [g for g in collapsed if isinstance(g, str) and g not in gids]
+        if len(remaining) == len(collapsed):
+            return
+        if remaining:
+            saved["collapsed_groups"] = remaining
+        else:
+            saved.pop("collapsed_groups", None)
+        board.session_state = json.dumps(saved) if saved else None
+
+    if commit:
+        db.commit()

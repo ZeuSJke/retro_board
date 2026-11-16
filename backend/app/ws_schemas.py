@@ -1,4 +1,4 @@
-"""Типизированные схемы входящих и исходящих WebSocket-сообщений.
+"""Типизированные схемы входящих WebSocket-сообщений.
 
 Входящие события проходят строгую валидацию до попадания в обработчики и
 `ConnectionManager`; некорректные кадры отбрасываются целиком, не нарушая
@@ -7,8 +7,7 @@
 
 from __future__ import annotations
 
-import math
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StrictBool, StrictStr, ValidationError
 
@@ -17,6 +16,8 @@ from app.ws_payloads import (
     MAX_ID_LENGTH,
     MAX_TIMER_SECONDS,
     MAX_TIMESTAMP_MS,
+    number_in_range,
+    short_str,
 )
 
 VALID_PHASES: tuple[str, ...] = ("brainstorm", "reveal", "discuss", "vote", "summary")
@@ -27,22 +28,20 @@ PhaseLiteral = Literal["brainstorm", "reveal", "discuss", "vote", "summary"]
 
 def _strict_finite_number(low: float, high: float):
     def _validate(value: object) -> float | int:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("must be a finite number")
-        if isinstance(value, float) and not math.isfinite(value):
-            raise ValueError("must be finite")
-        if not (low <= value <= high):
-            raise ValueError("number out of range")
-        return value
+        checked = number_in_range(value, low, high)
+        if checked is None:
+            raise ValueError("must be a finite number within range")
+        return checked
 
     return BeforeValidator(_validate)
 
 
 def _strict_nonempty_str(max_length: int):
     def _validate(value: object) -> str:
-        if not isinstance(value, str) or not value or len(value) > max_length:
+        checked = short_str(value, max_length)
+        if checked is None:
             raise ValueError("must be non-empty string within length limit")
-        return value
+        return checked
 
     return BeforeValidator(_validate)
 
@@ -60,7 +59,6 @@ def _coerce_reaction_id(value: object) -> str | None:
 
 CoordValue = Annotated[float | int, _strict_finite_number(0, MAX_COORD_VALUE)]
 TimerSeconds = Annotated[float | int, _strict_finite_number(0, MAX_TIMER_SECONDS)]
-TimestampMs = Annotated[float | int, _strict_finite_number(0, MAX_TIMESTAMP_MS)]
 ShortId = Annotated[str, _strict_nonempty_str(MAX_ID_LENGTH)]
 
 
@@ -91,13 +89,9 @@ class TimerStartIn(WsBasePayload):
 
     def sanitized(self) -> dict[str, Any]:
         clean: dict[str, Any] = {"duration": self.duration, "remaining": self.remaining}
-        if (
-            not isinstance(self.ts, bool)
-            and isinstance(self.ts, (int, float))
-            and not (isinstance(self.ts, float) and not math.isfinite(self.ts))
-            and 0 <= self.ts <= MAX_TIMESTAMP_MS
-        ):
-            clean["ts"] = self.ts
+        ts = number_in_range(self.ts, 0, MAX_TIMESTAMP_MS)
+        if ts is not None:
+            clean["ts"] = ts
         return clean
 
 
@@ -108,14 +102,10 @@ class TimerPauseIn(WsBasePayload):
     def sanitized(self) -> dict[str, Any] | None:
         clean: dict[str, Any] = {"remaining": self.remaining}
         if self.duration is not None:
-            if (
-                isinstance(self.duration, bool)
-                or not isinstance(self.duration, (int, float))
-                or (isinstance(self.duration, float) and not math.isfinite(self.duration))
-                or not (0 <= self.duration <= MAX_TIMER_SECONDS)
-            ):
+            dur = number_in_range(self.duration, 0, MAX_TIMER_SECONDS)
+            if dur is None:
                 return None
-            clean["duration"] = self.duration
+            clean["duration"] = dur
         return clean
 
 
@@ -159,11 +149,7 @@ class CardTypingIn(WsBasePayload):
     is_typing: StrictBool = False
 
     def sanitized_column_id(self) -> str | None:
-        if not isinstance(self.column_id, str) or not self.column_id:
-            return None
-        if len(self.column_id) > MAX_ID_LENGTH:
-            return None
-        return self.column_id
+        return short_str(self.column_id, MAX_ID_LENGTH)
 
 
 INBOUND_EVENT_MODELS: dict[str, type[WsBasePayload]] = {
@@ -207,91 +193,3 @@ def parse_ws_event(event: object, payload: object) -> tuple[str, WsBasePayload] 
     if isinstance(model, ReactionIn) and not model.valid_emoji():
         return None
     return event, model
-
-
-# ── Типизированные исходящие payload-структуры ───────────────────────────────
-
-
-class ParticipantBriefOut(TypedDict):
-    id: str
-    name: str
-
-
-class PresenceUpdateOut(TypedDict):
-    users: list[str]
-    participants: list[ParticipantBriefOut]
-
-
-class FacilitatorUpdateOut(TypedDict):
-    facilitator: str | None
-    facilitator_id: str | None
-    facilitator_online: bool
-    phase: str | None
-    session_id: int | None
-
-
-class ReadyUpdateOut(TypedDict):
-    ready_ids: list[str]
-    ready_users: list[str]
-
-
-class TimerStartOut(TypedDict, total=False):
-    duration: float | int
-    remaining: float | int
-    ts: float | int
-    ends_at_ms: float | int
-
-
-class TimerPauseOut(TypedDict, total=False):
-    remaining: float | int
-    duration: float | int
-
-
-class TimerResetOut(TypedDict):
-    duration: float | int
-
-
-class GroupCollapseOut(TypedDict):
-    group_id: str
-    collapsed: bool
-
-
-class GroupsCollapsedOut(TypedDict):
-    group_ids: list[str]
-
-
-class CursorMoveOut(TypedDict):
-    participant_id: str
-    username: str
-    x: float | int
-    y: float | int
-
-
-class CursorLeaveOut(TypedDict):
-    participant_id: str
-    username: str
-
-
-class SpotlightUpdateOut(TypedDict):
-    card_id: str | None
-
-
-class PhaseUpdateOut(TypedDict):
-    phase: str
-
-
-class ReactionOut(TypedDict):
-    id: str
-    emoji: str
-    username: str
-    participant_id: str
-
-
-class HealthCheckRequestedOut(TypedDict):
-    requested_by: str
-    participant_id: str
-
-
-class ParticipantRenamedOut(TypedDict):
-    participant_id: str
-    name: str

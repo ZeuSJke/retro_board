@@ -19,13 +19,8 @@ from app.config import settings
 from app.database import _engine_options
 from app.limiter import TEAM_WRITE_LIMIT
 from app.workspace_auth import verify_access_key
-from app.ws_payloads import (
-    MAX_WS_MESSAGE_CHARS,
-    clean_cursor_move,
-    clean_group_collapse,
-    clean_timer,
-    number_in_range,
-)
+from app.ws_payloads import MAX_WS_MESSAGE_CHARS, number_in_range
+from app.ws_schemas import parse_ws_event
 from tests.conftest import engine as test_engine
 
 TEST_ORIGIN = "http://localhost:3000"
@@ -82,13 +77,14 @@ class TestPayloadCleaners:
     def test_huge_integer_is_rejected_without_overflow(self):
         """Целое из тысяч цифр укладывается в лимит сообщения; isfinite на нём падал."""
         assert number_in_range(10**4000, 0, 10000) is None
-        assert clean_cursor_move({"x": 10**4000, "y": 1}) is None
+        assert parse_ws_event("cursor_move", {"x": 10**4000, "y": 1}) is None
 
     def test_timer_start_keeps_only_known_fields(self):
-        clean = clean_timer(
+        parsed = parse_ws_event(
             "timer_start", {"duration": 300, "remaining": 120, "ts": 1700000000000, "junk": "x" * 100}
         )
-        assert clean == {"duration": 300, "remaining": 120, "ts": 1700000000000}
+        assert parsed is not None
+        assert parsed[1].sanitized() == {"duration": 300, "remaining": 120, "ts": 1700000000000}
 
     @pytest.mark.parametrize(
         "payload",
@@ -101,27 +97,33 @@ class TestPayloadCleaners:
         ],
     )
     def test_timer_start_rejects_bad_numbers(self, payload):
-        assert clean_timer("timer_start", payload) is None
+        assert parse_ws_event("timer_start", payload) is None
 
     def test_timer_pause_and_reset(self):
-        assert clean_timer("timer_pause", {"remaining": 42}) == {"remaining": 42}
-        assert clean_timer("timer_pause", {"remaining": 42, "duration": 60}) == {
+        p_pause = parse_ws_event("timer_pause", {"remaining": 42})
+        assert p_pause is not None and p_pause[1].sanitized() == {"remaining": 42}
+        p_pause_dur = parse_ws_event("timer_pause", {"remaining": 42, "duration": 60})
+        assert p_pause_dur is not None and p_pause_dur[1].sanitized() == {
             "remaining": 42,
             "duration": 60,
         }
-        assert clean_timer("timer_pause", {"remaining": 42, "duration": "x"}) is None
-        assert clean_timer("timer_reset", {"duration": 300, "extra": 1}) == {"duration": 300}
-        assert clean_timer("timer_reset", {}) is None
+        p_pause_bad = parse_ws_event("timer_pause", {"remaining": 42, "duration": "x"})
+        assert p_pause_bad is not None and p_pause_bad[1].sanitized() is None
+        p_reset = parse_ws_event("timer_reset", {"duration": 300, "extra": 1})
+        assert p_reset is not None and p_reset[1].sanitized() == {"duration": 300}
+        assert parse_ws_event("timer_reset", {}) is None
 
     def test_cursor_and_collapse(self):
-        assert clean_cursor_move({"x": 1, "y": 2, "username": "a", "junk": 1}) == {"x": 1, "y": 2}
-        assert clean_cursor_move({"x": "1", "y": 2}) is None
-        assert clean_group_collapse({"group_id": "g1", "collapsed": True, "junk": 1}) == {
+        cursor = parse_ws_event("cursor_move", {"x": 1, "y": 2, "username": "a", "junk": 1})
+        assert cursor is not None and cursor[1].model_dump() == {"x": 1, "y": 2}
+        assert parse_ws_event("cursor_move", {"x": "1", "y": 2}) is None
+        collapse = parse_ws_event("group_collapse", {"group_id": "g1", "collapsed": True, "junk": 1})
+        assert collapse is not None and collapse[1].model_dump() == {
             "group_id": "g1",
             "collapsed": True,
         }
-        assert clean_group_collapse({"group_id": "g1", "collapsed": "yes"}) is None
-        assert clean_group_collapse({"group_id": "g" * 500, "collapsed": True}) is None
+        assert parse_ws_event("group_collapse", {"group_id": "g1", "collapsed": "yes"}) is None
+        assert parse_ws_event("group_collapse", {"group_id": "g" * 500, "collapsed": True}) is None
 
 
 class TestWebSocketHardening:
@@ -144,13 +146,13 @@ class TestWebSocketHardening:
 
         with _ws(client, ws_token) as ws1, _ws(client, ws_token) as ws2:
             ws1.send_text('{"event": "timer_start", "data": {"duration": 300, "remaining": NaN}}')
-            _send(ws1, "group_collapse", {"group_id": "маркер", "collapsed": True})
+            _send(ws1, "reaction", {"emoji": "👍"})
             # До маркера второму клиенту не должно прийти ни одного события таймера
             seen = []
             while True:
                 msg = ws2.receive_json()
                 seen.append(msg["event"])
-                if msg["event"] == "group_collapse":
+                if msg["event"] == "reaction":
                     break
             assert "timer_start" not in seen
             assert manager.get_timer("hardening-board") is None
@@ -174,8 +176,8 @@ class TestWebSocketHardening:
             _recv(ws, "presence_update")
             with patch.object(manager, "toggle_ready", side_effect=RuntimeError("сбой")):
                 _send(ws, "ready_toggle", {"ready": True})
-                _send(ws, "group_collapse", {"group_id": "g1", "collapsed": True})
-                assert _recv(ws, "group_collapse")["data"] == {"group_id": "g1", "collapsed": True}
+                _send(ws, "reaction", {"emoji": "👍"})
+                assert _recv(ws, "reaction")["data"]["emoji"] == "👍"
 
     def test_pause_keeps_extended_duration(self, client, ws_token):
         """После «+время» на паузе новый участник получает согласованные duration и remaining."""
@@ -202,20 +204,32 @@ class TestWebSocketHardening:
         """data не-словарь раньше обрывал соединение отправителя."""
         with _ws(client, ws_token) as ws:
             ws.send_text(raw)
-            _send(ws, "group_collapse", {"group_id": "g1", "collapsed": True})
-            assert _recv(ws, "group_collapse")["data"] == {"group_id": "g1", "collapsed": True}
+            _send(ws, "reaction", {"emoji": "👍"})
+            assert _recv(ws, "reaction")["data"]["emoji"] == "👍"
 
     def test_oversized_message_is_ignored(self, client, ws_token):
         with _ws(client, ws_token) as ws:
-            _send(ws, "group_collapse", {"group_id": "g1", "collapsed": True, "junk": "x" * MAX_WS_MESSAGE_CHARS})
-            _send(ws, "group_collapse", {"group_id": "g2", "collapsed": False})
-            assert _recv(ws, "group_collapse")["data"] == {"group_id": "g2", "collapsed": False}
+            _send(ws, "reaction", {"emoji": "❤️", "junk": "x" * MAX_WS_MESSAGE_CHARS})
+            _send(ws, "reaction", {"emoji": "🔥"})
+            assert _recv(ws, "reaction")["data"]["emoji"] == "🔥"
 
-    def test_relay_strips_unknown_fields(self, client, ws_token):
+    def test_relay_strips_unknown_fields(self, client, ws_token, ensure_board):
         """Другим клиентам уходят только известные поля, а не всё присланное."""
+        ensure_board("hardening-board")
+        headers = {"X-Workspace-Token": ws_token}
+        col = client.post(
+            "/api/columns/",
+            json={"board_id": "hardening-board", "title": "Колонка"},
+            headers=headers,
+        ).json()
+        grp = client.post(
+            "/api/groups/",
+            json={"column_id": col["id"], "title": "Группа"},
+            headers=headers,
+        ).json()
         with _ws(client, ws_token) as ws1, _ws(client, ws_token) as ws2:
-            _send(ws1, "group_collapse", {"group_id": "g1", "collapsed": True, "junk": "мусор"})
-            assert _recv(ws2, "group_collapse")["data"] == {"group_id": "g1", "collapsed": True}
+            _send(ws1, "group_collapse", {"group_id": grp["id"], "collapsed": True, "junk": "мусор"})
+            assert _recv(ws2, "group_collapse")["data"] == {"group_id": grp["id"], "collapsed": True}
 
             _send(ws1, "cursor_move", {"username": "Alice", "x": 10, "y": 20, "junk": "мусор"})
             moved = _recv(ws2, "cursor_move")["data"]
@@ -226,9 +240,29 @@ class TestWebSocketHardening:
             _send(ws1, "timer_start", {"duration": 300, "remaining": 300, "junk": "мусор"})
             started_data = _recv(ws2, "timer_start")["data"]
             assert "junk" not in started_data
+            assert "ends_at_ms" not in started_data
             assert (started_data["duration"], started_data["remaining"]) == (300, 300)
-            assert isinstance(started_data.get("ends_at_ms"), (int, float))
-            assert started_data["ends_at_ms"] > 0
+
+    def test_malformed_flood_counts_against_ws_rate_limit(self, client, ws_token):
+        """Поток невалидных кадров с тем же именем события тоже расходует лимит частоты."""
+        from app.routers.websocket import WS_RATE_LIMIT
+        from app.ws_manager import manager
+
+        with _ws(client, ws_token) as ws1, _ws(client, ws_token) as ws2:
+            _recv(ws2, "presence_update")
+            for _ in range(WS_RATE_LIMIT):
+                _send(ws1, "timer_start", {"duration": 60, "remaining": "bad"})
+            # После заполнения корзины невалидными кадрами валидный в том же окне отброшен
+            _send(ws1, "timer_start", {"duration": 60, "remaining": 60})
+            _send(ws1, "cursor_move", {"x": 7, "y": 8})
+            seen = []
+            while True:
+                msg = ws2.receive_json()
+                seen.append(msg["event"])
+                if msg["event"] == "cursor_move":
+                    break
+            assert "timer_start" not in seen
+            assert manager.get_timer("hardening-board") is None
 
     def test_cursor_leave_uses_sender_identity(self, client, ws_token_for):
         """Нельзя убрать чужой курсор, прислав чужое имя: личность берётся из сессии."""

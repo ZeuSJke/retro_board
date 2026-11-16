@@ -8,11 +8,13 @@ from typing import Any
 
 import anyio
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session
 
 from app import models
 from app.config import settings
 from app.database import get_db
 from app.observability import record_unhandled_error
+from app.services.boards import board_group_ids
 from app.workspace_auth import SESSION_COOKIE, decode_workspace_token, resolve_session
 from app.ws_manager import Peer, manager
 from app.ws_payloads import MAX_WS_MESSAGE_CHARS, number_in_range
@@ -101,7 +103,7 @@ def _sync_board_session_db(
         board.active_facilitator_id = facilitator.id if facilitator else None
         board.active_phase = phase
         board.active_session_id = session_id
-        board.session_state = _dump_state(board_id)
+        board.session_state = _dump_state(db, board_id)
         if reveal:
             board.cards_revealed = True
         if lock_board:
@@ -145,8 +147,8 @@ def _board_is_locked(websocket: WebSocket, board_id: str) -> bool:
             pass
 
 
-def _dump_state(board_id: str) -> str | None:
-    state = manager.export_state(board_id)
+def _dump_state(db: Session, board_id: str) -> str | None:
+    state = manager.export_state(board_id, valid_group_ids=board_group_ids(db, board_id))
     return json.dumps(state) if state else None
 
 
@@ -158,7 +160,7 @@ def _persist_session_state(websocket: WebSocket, board_id: str, workspace_id: st
         board = db.get(models.Board, board_id)
         if board is None or board.deleted_at is not None or board.workspace_id != workspace_id:
             return
-        board.session_state = _dump_state(board_id)
+        board.session_state = _dump_state(db, board_id)
         db.commit()
     except Exception:
         logger.warning("Failed to persist session state for board %s", board_id, exc_info=True)
@@ -302,16 +304,12 @@ def _timer_snapshot_message(timer: dict) -> dict | None:
             return None
         now_ms = time.time() * 1000
         left = max(0, remaining - (now_ms - started_ms) / 1000)
-        ends_at_ms = number_in_range(timer.get("ends_at_ms"), 0, float("inf"))
-        if ends_at_ms is None:
-            ends_at_ms = round(started_ms + remaining * 1000)
         return {
             "event": "timer_start",
             "data": {
                 "duration": duration,
                 "remaining": left,
                 "ts": now_ms,
-                "ends_at_ms": ends_at_ms,
             },
         }
     if remaining > 0:
@@ -376,9 +374,46 @@ async def _handle_cursor_leave(ctx: _WsContext, _payload: WsBasePayload) -> None
 async def _handle_group_collapse(ctx: _WsContext, payload: WsBasePayload) -> None:
     if not isinstance(payload, GroupCollapseIn):
         return
+    db_gen = _open_ws_db(ctx.websocket)
+    try:
+        db = next(db_gen)
+        board = db.get(models.Board, ctx.board_id)
+        if (
+            board is None
+            or board.deleted_at is not None
+            or board.workspace_id != ctx.workspace_id
+        ):
+            return
+        group_exists = (
+            db.query(models.CardGroup.id)
+            .join(models.Column, models.CardGroup.column_id == models.Column.id)
+            .filter(
+                models.CardGroup.id == payload.group_id,
+                models.Column.board_id == ctx.board_id,
+            )
+            .first()
+        )
+        if group_exists is None:
+            return
+        changed = manager.set_group_collapsed(
+            ctx.board_id, payload.group_id, payload.collapsed
+        )
+        if changed:
+            try:
+                board.session_state = _dump_state(db, ctx.board_id)
+                db.commit()
+            except Exception:
+                logger.warning(
+                    "Failed to persist collapsed groups for board %s",
+                    ctx.board_id,
+                    exc_info=True,
+                )
+    finally:
+        try:
+            next(db_gen)
+        except StopIteration:
+            pass
     collapse = {"group_id": payload.group_id, "collapsed": payload.collapsed}
-    manager.set_group_collapsed(ctx.board_id, payload.group_id, payload.collapsed)
-    _persist_session_state(ctx.websocket, ctx.board_id, ctx.workspace_id)
     # Broadcast to ALL (including sender) for sync
     await manager.broadcast(ctx.board_id, "group_collapse", collapse)
 
@@ -397,9 +432,7 @@ def _timer_handler(event: str) -> Callable[[_WsContext, WsBasePayload], Awaitabl
             timer_data = payload.sanitized()
         if timer_data is None:
             return
-        ends_at_ms = manager.set_timer(ctx.board_id, event, timer_data)
-        if event == "timer_start" and ends_at_ms is not None:
-            timer_data = {**timer_data, "ends_at_ms": ends_at_ms}
+        manager.set_timer(ctx.board_id, event, timer_data)
         _persist_session_state(ctx.websocket, ctx.board_id, ctx.workspace_id)
         await manager.broadcast(ctx.board_id, event, timer_data)
 
@@ -636,6 +669,7 @@ async def workspace_websocket_endpoint(
         await websocket.close(code=1008, reason="Session expired")
         return
     except Exception:
+        logger.warning("Workspace WS handshake DB error for %s", workspace_id if "workspace_id" in locals() else "unknown", exc_info=True)
         await websocket.close(code=1011, reason="Server error")
         return
     finally:
@@ -689,7 +723,9 @@ async def websocket_endpoint(
             saved_state = json.loads(board.session_state) if board.session_state else None
         except ValueError:
             saved_state = None
-        manager.restore_state(board_id, saved_state)
+        valid_groups = board_group_ids(db, board_id)
+        manager.restore_state(board_id, saved_state, valid_group_ids=valid_groups)
+        manager.prune_collapsed_groups(board_id, valid_groups)
         if manager.get_facilitator(board_id) is None and board.active_facilitator_id:
             manager.hydrate_session(
                 board_id,
@@ -699,6 +735,7 @@ async def websocket_endpoint(
                 board.active_session_id,
             )
     except Exception:
+        logger.warning("Board WS handshake DB error for %s", board_id, exc_info=True)
         await websocket.close(code=1011, reason="Server error")
         return
     finally:
@@ -751,14 +788,14 @@ async def websocket_endpoint(
                 msg = json.loads(data)
                 if not isinstance(msg, dict):
                     continue
-                parsed = parse_ws_event(msg.get("event"), msg.get("data"))
-                if parsed is None:
+                event_name = msg.get("event")
+                if not isinstance(event_name, str) or event_name not in KNOWN_EVENTS:
                     continue
-                event, payload = parsed
 
-                # Separate rate-limit buckets so cursor movement never drops session/timer commands
+                # Лимит частоты считаем по имени события ДО разбора data,
+                # чтобы поток некорректных кадров не обходил ограничение.
                 now = time.monotonic()
-                if event == "cursor_move":
+                if event_name == "cursor_move":
                     cursor_timestamps = [t for t in cursor_timestamps if now - t < WS_RATE_WINDOW]
                     if len(cursor_timestamps) >= WS_CURSOR_RATE_LIMIT:
                         continue
@@ -768,6 +805,11 @@ async def websocket_endpoint(
                     if len(msg_timestamps) >= WS_RATE_LIMIT:
                         continue
                     msg_timestamps.append(now)
+
+                parsed = parse_ws_event(event_name, msg.get("data"))
+                if parsed is None:
+                    continue
+                event, payload = parsed
 
                 # Имя могли сменить через REST — берём актуальное
                 peer = manager.get_peer(websocket) or peer
@@ -808,8 +850,9 @@ async def websocket_endpoint(
             ready_changed = manager.remove_ready_user(board_id, gone.id)
             typing_changed = manager.set_typing(board_id, gone.id, None)
             try:
-                # Защищаем рассылку о выходе от CancelledError при закрытии сокета (Starlette TestClient / cancel),
-                # иначе cursor_leave / presence_update обрываются на await и клиенты не получают обновление.
+                # Защищаем рассылку о выходе от CancelledError при отмене задачи сокета
+                # (обрыв соединения или остановка ASGI-сервера), иначе cursor_leave и
+                # presence_update обрываются на await и клиенты остаются с призраком участника.
                 with anyio.CancelScope(shield=True):
                     with anyio.move_on_after(2.0):
                         await manager.broadcast(

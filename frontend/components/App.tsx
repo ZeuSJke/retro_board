@@ -10,7 +10,7 @@ import { isOwnBoardDeletion, onBoardsRefreshRequested } from '../lib/board-list-
 import { FIRST_BOARD_REF, FIRST_BOARD_ROUTE, boardPath, resolveStartBoard } from '../lib/board-routes'
 import { queryKeys } from '../lib/query-client'
 import { boardToBoardListItem } from '../utils/boardMapper'
-import { getApiErrorMessage, getApiErrorStatus, markApiErrorReported } from '../utils/apiError'
+import { getApiErrorMessage, getApiErrorStatus, markApiErrorReported, quietQuery } from '../utils/apiError'
 import type { Board, BoardListItem, WsBoardUpdatedData } from '../types'
 import BoardPage from './BoardPage'
 import CreateBoardDialog from './CreateBoardDialog'
@@ -84,7 +84,7 @@ export default function App({ boardId }: AppProps) {
       const freshWorkspaceId = useAppStore.getState().workspace?.workspaceId ?? 'anonymous'
       const list = await queryClient.fetchQuery({
         queryKey: queryKeys.boards(freshWorkspaceId),
-        queryFn: getBoards,
+        queryFn: quietQuery(getBoards),
         staleTime: 0,
       })
       if (stale()) return
@@ -130,9 +130,13 @@ export default function App({ boardId }: AppProps) {
       setCurrentBoard(target.id)
       setError(null)
     } catch (err) {
-      if (stale()) return
+      if (stale()) {
+        markApiErrorReported(err)
+        return
+      }
       // 401: перехватчик уже сбросил сессию — показываем вход без экрана ошибки
       if (getApiErrorStatus(err) === 401 || !useAppStore.getState().participant) {
+        markApiErrorReported(err)
         setBoard(null)
         return
       }

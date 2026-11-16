@@ -14,6 +14,7 @@ from app.board_view import (
 from app.database import get_db
 from app.limiter import TEAM_BULK_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.services import cards as cards_service
+from app.services.boards import clear_deleted_groups_state
 from app.services.cards import load_board_cards, prune_empty_groups
 from app.utils import get_or_404, require_unlocked_board
 from app.workspace_auth import get_current_participant, get_current_workspace
@@ -253,6 +254,7 @@ async def bulk_delete_cards(
         db.delete(card)
     db.flush()
     deleted_groups = prune_empty_groups(db, touched_group_ids)
+    clear_deleted_groups_state(db, board.id, [p["id"] for p in deleted_groups], commit=False)
     db.commit()
 
     for evt in deleted_events:
@@ -317,6 +319,7 @@ async def merge_cards(
         db.delete(dup)
     db.flush()
     deleted_groups = prune_empty_groups(db, touched_group_ids)
+    clear_deleted_groups_state(db, board.id, [p["id"] for p in deleted_groups], commit=False)
     db.commit()
     db.refresh(primary)
 
@@ -347,16 +350,11 @@ async def delete_card(
     board_id = col.board_id
     group_id = card.group_id
     db.delete(card)
+    db.flush()
+    deleted_groups = prune_empty_groups(db, {group_id} if group_id else set())
+    clear_deleted_groups_state(db, board_id, [p["id"] for p in deleted_groups], commit=False)
     db.commit()
     await manager.broadcast(board_id, "card_deleted", {"id": card_id, "column_id": col.id})
 
-    # Auto-delete group if it became empty after card deletion
-    if group_id:
-        remaining = db.query(models.Card).filter(models.Card.group_id == group_id).count()
-        if remaining == 0:
-            group = db.get(models.CardGroup, group_id)
-            if group:
-                col_id = group.column_id
-                db.delete(group)
-                db.commit()
-                await manager.broadcast(board_id, "group_deleted", {"id": group_id, "column_id": col_id, "card_ids": []})
+    for deleted_payload in deleted_groups:
+        await manager.broadcast(board_id, "group_deleted", deleted_payload)

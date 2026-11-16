@@ -29,7 +29,8 @@ import { useAppStore } from '../store'
 import { isApiErrorReported, RATE_LIMIT_MESSAGE } from '../utils/apiError'
 
 export const DEFAULT_API_TIMEOUT_MS = 15_000
-export const AI_API_TIMEOUT_MS = 90_000
+// Верхний предел ожидания на сервере: очередь к модели (15 с) + 2 попытки по 90 с + пауза (0.5 с) = 195.5 с.
+export const AI_API_TIMEOUT_MS = 210_000
 
 /** Общий HTTP-клиент команды: CSRF-заголовок, сброс сессии по 401, запасной тост об ошибке. */
 export const api = axios.create({ baseURL: '/api', timeout: DEFAULT_API_TIMEOUT_MS })

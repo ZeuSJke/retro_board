@@ -13,6 +13,7 @@ const render = (ui: React.ReactElement) => {
   })
 }
 import { showToast } from '../../store/toastStore'
+import { isApiErrorReported } from '../../utils/apiError'
 import type { AgentToken, DashboardActionItem, WsMessage } from '../../types'
 import type { HealthTrendPoint } from '../../types/health'
 import type { TeamTheme } from '../../types/themes'
@@ -181,6 +182,7 @@ describe('Dashboard', () => {
     vi.clearAllMocks()
     serverState.aiEnabled = true
     useAppStore.setState({
+      _hasHydrated: true,
       username: 'Алиса',
       currentBoardId: 'b1',
       workspace: { workspaceId: 'w-1', workspaceSlug: 'team-a', workspaceName: 'Team A' },
@@ -705,5 +707,32 @@ describe('Dashboard — одна реальная задача считаетс�
     )
     const link = await screen.findByTestId('action-item-external-link')
     expect(link).toHaveAttribute('href', 'https://tracker.yandex.ru/RETRO-42')
+  })
+
+  it('до гидрации стора показывает индикатор загрузки вместо нулевых счётчиков и окна входа', () => {
+    useAppStore.setState({ _hasHydrated: false, workspace: null, participant: null })
+    render(<Dashboard />)
+
+    expect(screen.getByText('Загружаем отчёты...')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-key-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('kpi-open-tasks')).not.toBeInTheDocument()
+
+    act(() => {
+      useAppStore.setState({ _hasHydrated: true })
+    })
+    expect(screen.getByTestId('workspace-key-input')).toBeInTheDocument()
+  })
+
+  it('ошибка загрузки досок/задач помечается показанной и не вызывает повторный тост', async () => {
+    const serverErr = Object.assign(new Error('Server Error'), {
+      response: { status: 500, data: {} },
+    })
+    const apiMod = await import('../../api')
+    vi.mocked(apiMod.getBoards).mockRejectedValueOnce(serverErr)
+
+    render(<Dashboard />)
+    expect(await screen.findByText('Не удалось загрузить аналитику')).toBeInTheDocument()
+    expect(isApiErrorReported(serverErr)).toBe(true)
+    expect(showToast).not.toHaveBeenCalled()
   })
 })

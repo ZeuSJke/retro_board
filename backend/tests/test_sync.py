@@ -163,18 +163,28 @@ class TestStateSurvivesRestart:
     def test_running_timer_and_spotlight_are_restored(self, client, workspace_headers, sample_board, db_session):
         """Раньше каждый выкат обнулял таймер и карточку в фокусе."""
         board_id = sample_board["id"]
+        col = client.post(
+            "/api/columns/",
+            json={"board_id": board_id, "title": "Колонка"},
+            headers=workspace_headers,
+        ).json()
+        grp = client.post(
+            "/api/groups/",
+            json={"column_id": col["id"], "title": "Сохраняемая группа"},
+            headers=workspace_headers,
+        ).json()
         with _ws(client, board_id, workspace_headers) as ws:
             _send(ws, "timer_start", {"duration": 300, "remaining": 200})
             _recv(ws, "timer_start")
             _send(ws, "spotlight_card", {"card_id": "card-42"})
             _recv(ws, "spotlight_update")
-            _send(ws, "group_collapse", {"group_id": "grp-saved", "collapsed": True})
+            _send(ws, "group_collapse", {"group_id": grp["id"], "collapsed": True})
             _recv(ws, "group_collapse")
 
         db_session.expire_all()
         saved = json.loads(db_session.get(Board, board_id).session_state)
         assert saved["spotlight"] == "card-42"
-        assert saved["collapsed_groups"] == ["grp-saved"]
+        assert saved["collapsed_groups"] == [grp["id"]]
         assert saved["timer"]["running"] is True and saved["timer"]["duration"] == 300
         assert saved["timer"]["ends_at_ms"] > time.time() * 1000
 
@@ -182,11 +192,11 @@ class TestStateSurvivesRestart:
 
         with _ws(client, board_id, workspace_headers) as ws:
             assert _recv(ws, "spotlight_update")["data"] == {"card_id": "card-42"}
-            assert _recv(ws, "groups_collapsed")["data"] == {"group_ids": ["grp-saved"]}
+            assert _recv(ws, "groups_collapsed")["data"] == {"group_ids": [grp["id"]]}
             timer = _recv(ws, "timer_start")["data"]
             assert timer["duration"] == 300
             assert 190 < timer["remaining"] <= 200
-            assert timer["ends_at_ms"] > time.time() * 1000
+            assert "ends_at_ms" not in timer
 
     def test_paused_timer_is_restored(self, client, workspace_headers, sample_board):
         board_id = sample_board["id"]
