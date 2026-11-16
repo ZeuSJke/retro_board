@@ -151,7 +151,7 @@ function emit(event: string, data: unknown, seq?: number, epoch = 'e1') {
       event,
       data: data as Record<string, unknown>,
       ...(seq !== undefined ? { seq, epoch } : {}),
-    })
+    } as WsMessage)
   })
 }
 

@@ -9,7 +9,7 @@
 
 Перед чтением или правкой кода в `backend/` или `frontend/` **сначала прочитай соответствующий вложенный `AGENTS.md`**:
 - `backend/` → [backend/AGENTS.md](backend/AGENTS.md) (FastAPI, SQLAlchemy, Alembic, SQLite-тесты, ruff, WS, AI)
-- `frontend/` → [frontend/AGENTS.md](frontend/AGENTS.md) (Next.js App Router, shadcn/Radix, Zustand, WS, Vitest, Playwright)
+- `frontend/` → [frontend/AGENTS.md](frontend/AGENTS.md) (Next.js App Router, shadcn/Radix, Zustand, React Query, WS, Vitest, Playwright)
 - `k8s/helm/retro-board/` — Helm-чарт для `k3s-dev` и `k3s-stage` (`values-dev.yaml`, `values-staging.yaml`)
 - `ci/` — конфиг `ci/e2e-nginx.conf` для E2E-джобы в GitLab CI
 - `scripts/` — `build-image.sh` (BuildKit over SSH / CI), `helm-render-checks.sh` (kubeconform + render-гейты)
@@ -47,7 +47,7 @@
 make setup                # алиас: make install
 
 # Проверки и полный локальный DoD gate
-make verify               # helm-lint + lint (ruff + next build/tsc/lint) + test-backend + test-frontend
+make verify               # helm-lint + lint (ruff + mypy + next build/tsc/lint) + test-backend + test-frontend
 make helm-lint            # helm lint (dev + staging) + kubeconform + scripts/helm-render-checks.sh
 
 # Сборка и деплой на k3s-dev (https://retro-dev.kirillbessonov.ru)

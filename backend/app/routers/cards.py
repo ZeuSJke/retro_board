@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from app import models, schemas
 from app.board_view import (
     broadcast_card,
     can_delete_card,
@@ -11,13 +12,13 @@ from app.board_view import (
     require_cards_visible,
 )
 from app.database import get_db
-from app import models, schemas
+from app.limiter import TEAM_BULK_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.services import cards as cards_service
+from app.services.boards import clear_deleted_groups_state
 from app.services.cards import load_board_cards, prune_empty_groups
 from app.utils import get_or_404, require_unlocked_board
-from app.ws_manager import manager
-from app.limiter import TEAM_BULK_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.workspace_auth import get_current_participant, get_current_workspace
+from app.ws_manager import manager
 
 router = APIRouter()
 
@@ -70,7 +71,7 @@ async def update_card(
     participant: models.Participant = Depends(get_current_participant),
 ):
     card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
-    col = db.get(models.Column, card.column_id)
+    col = get_or_404(db, models.Column, card.column_id, "Карточка не найдена")
     board = require_unlocked_board(
         db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
@@ -107,11 +108,11 @@ async def move_card(
     participant: models.Participant = Depends(get_current_participant),
 ):
     card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
-    col = db.get(models.Column, card.column_id)
+    col = get_or_404(db, models.Column, card.column_id, "Карточка не найдена")
     board = require_unlocked_board(
         db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
-    old_col = db.get(models.Column, card.column_id)
+    old_col = col
     new_col = get_or_404(db, models.Column, body.column_id, "Колонка назначения не найдена")
     if new_col.board_id != old_col.board_id:
         raise HTTPException(400, "Колонки должны быть на одной доске")
@@ -178,7 +179,7 @@ async def toggle_like(
     card = db.query(models.Card).filter(models.Card.id == card_id).with_for_update().first()
     if not card:
         raise HTTPException(404, "Карточка не найдена")
-    col = db.get(models.Column, card.column_id)
+    col = get_or_404(db, models.Column, card.column_id, "Карточка не найдена")
     # Lock board row too to prevent parallel votes across different cards from exceeding max_votes
     board = (
         db.query(models.Board)
@@ -253,6 +254,7 @@ async def bulk_delete_cards(
         db.delete(card)
     db.flush()
     deleted_groups = prune_empty_groups(db, touched_group_ids)
+    clear_deleted_groups_state(db, board.id, [p["id"] for p in deleted_groups], commit=False)
     db.commit()
 
     for evt in deleted_events:
@@ -317,6 +319,7 @@ async def merge_cards(
         db.delete(dup)
     db.flush()
     deleted_groups = prune_empty_groups(db, touched_group_ids)
+    clear_deleted_groups_state(db, board.id, [p["id"] for p in deleted_groups], commit=False)
     db.commit()
     db.refresh(primary)
 
@@ -338,7 +341,7 @@ async def delete_card(
     participant: models.Participant = Depends(get_current_participant),
 ):
     card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
-    col = db.get(models.Column, card.column_id)
+    col = get_or_404(db, models.Column, card.column_id, "Карточка не найдена")
     board = require_unlocked_board(
         db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
@@ -347,16 +350,11 @@ async def delete_card(
     board_id = col.board_id
     group_id = card.group_id
     db.delete(card)
+    db.flush()
+    deleted_groups = prune_empty_groups(db, {group_id} if group_id else set())
+    clear_deleted_groups_state(db, board_id, [p["id"] for p in deleted_groups], commit=False)
     db.commit()
     await manager.broadcast(board_id, "card_deleted", {"id": card_id, "column_id": col.id})
 
-    # Auto-delete group if it became empty after card deletion
-    if group_id:
-        remaining = db.query(models.Card).filter(models.Card.group_id == group_id).count()
-        if remaining == 0:
-            group = db.get(models.CardGroup, group_id)
-            if group:
-                col_id = group.column_id
-                db.delete(group)
-                db.commit()
-                await manager.broadcast(board_id, "group_deleted", {"id": group_id, "column_id": col_id, "card_ids": []})
+    for deleted_payload in deleted_groups:
+        await manager.broadcast(board_id, "group_deleted", deleted_payload)

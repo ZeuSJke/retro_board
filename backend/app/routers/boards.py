@@ -1,16 +1,17 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, UTC
+from datetime import UTC, datetime
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app import models, schemas, themes
 from app.ai.prompts.summary_generation import generate_summary
 from app.ai.prompts.workspace_insights import generate_workspace_insights
 from app.board_view import (
-    ANON_AUTHOR,
     board_settings_payload,
     board_view,
     broadcast_card,
@@ -22,8 +23,6 @@ from app.board_view import (
 )
 from app.config import settings
 from app.database import get_db, release_connection
-from app import models, schemas
-from app import themes
 from app.limiter import TEAM_BULK_LIMIT, TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.models import now_utc
 from app.services import boards as boards_service
@@ -145,10 +144,16 @@ def list_workspace_themes(
 @limiter.limit(TEAM_READ_LIMIT)
 def list_boards(
     request: Request,
+    response: Response,
+    limit: Optional[int] = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    items, _total = boards_service.list_workspace_boards(db, workspace.id)
+    items, total = boards_service.list_workspace_boards(
+        db, workspace.id, limit=limit, offset=offset
+    )
+    response.headers["X-Total-Count"] = str(total)
     return items
 
 
@@ -266,7 +271,9 @@ async def update_board(
     # Признак ставится до рассылок: между ними цикл событий успевает обработать чужой ввод
     manager.set_identity_hidden(board.id, bool(board.anonymous_votes or cards_hidden(board)))
     payload = board_settings_payload(board)
-    await manager.broadcast_workspace(workspace.id, "board_updated", payload)
+    await manager.broadcast_workspace(
+        workspace.id, "board_updated", payload, exclude_board_id=board.id
+    )
     await manager.broadcast(board.id, "board_updated", payload)
     # Скрытие и анонимность меняют то, что сервер отдаёт каждому получателю:
     # клиенты перечитывают доску.
@@ -301,7 +308,9 @@ async def reveal_cards(
         board = boards_service.board_query(db).filter(models.Board.id == board_id).first() or board
         manager.set_identity_hidden(board.id, bool(board.anonymous_votes or cards_hidden(board)))
         payload = board_settings_payload(board)
-        await manager.broadcast_workspace(workspace.id, "board_updated", payload)
+        await manager.broadcast_workspace(
+            workspace.id, "board_updated", payload, exclude_board_id=board.id
+        )
         await manager.broadcast(board.id, "board_updated", payload)
         await manager.broadcast(board.id, "cards_visibility_changed", {})
     return board_view(board, participant.id)
@@ -320,10 +329,9 @@ async def delete_board(
     if board.workspace_id != workspace.id or board.deleted_at is not None:
         raise HTTPException(404, "Доска не найдена")
     require_moderator(board, participant, "Удалить доску может её создатель или ведущий")
+    # Уникальность name/slug задана частичным индексом `WHERE deleted_at IS NULL`,
+    # поэтому при мягком удалении исходные имя и slug сохраняются.
     board.deleted_at = datetime.now(UTC)
-    # Clear unique fields so the name/slug can be reused
-    board.slug = None
-    board.name = f"__deleted__{board.id}"
     db.commit()
     await manager.broadcast_workspace(
         workspace.id,
@@ -333,178 +341,6 @@ async def delete_board(
 
 
 # ── Summary Endpoints ────────────────────────────────────────────────────────
-
-
-def _get_board_full_data(
-    db: Session, board_id: str, workspace_id: str
-) -> dict:
-    """Get full board data with columns and cards for AI processing."""
-    from sqlalchemy import or_
-
-    board = (
-        db.query(models.Board)
-        .options(
-            selectinload(models.Board.columns).selectinload(models.Column.cards),
-        )
-        .filter(
-            or_(
-                models.Board.slug == board_id,
-                models.Board.id == board_id,
-            ),
-            models.Board.deleted_at.is_(None),
-            models.Board.workspace_id == workspace_id,
-        )
-        .first()
-    )
-
-    if not board:
-        return {}
-
-    return {
-        "id": board.id,
-        "name": board.name,
-        # Темы команды: модель переиспользует их названия вместо новых
-        "team_themes": themes.themes_for_prompt(db, workspace_id),
-        "columns": [
-            {
-                "id": col.id,
-                "title": col.title,
-                "position": col.position,
-                "cards": [
-                    {
-                        "id": card.id,
-                        "text": card.text,
-                        "author": (
-                            ANON_AUTHOR
-                            if board.anonymous_votes and (card.author_kind or "human") != "agent"
-                            else card.author
-                        ),
-                        "likes": card.likes or [],
-                        "position": card.position,
-                    }
-                    for card in col.cards
-                ],
-            }
-            for col in board.columns
-        ],
-    }
-
-
-def _generate_summary_internal(
-    board_id: str,
-    facilitator_id: str,
-    workspace_id: str,
-) -> dict | None:
-    """Generate and save summary (blocking; run via asyncio.to_thread).
-
-    Opens its own Session so it never reuses the request/WS session
-    across threads. Returns summary data dict or None if generation failed.
-    """
-    from app.database import SessionLocal
-
-    logger.info("Starting summary generation for board %s", board_id)
-
-    if manager.get_facilitator(board_id) != facilitator_id:
-        logger.warning("Participant %s is not facilitator of board %s", facilitator_id, board_id)
-        return None
-
-    session_id = manager.get_session_id(board_id)
-    if not session_id:
-        session_id = int(datetime.now(UTC).timestamp() * 1000)
-        manager.set_session_id(board_id, session_id)
-        logger.info("Created new session ID: %s", session_id)
-
-    db = SessionLocal()
-    try:
-        board_row = db.get(models.Board, board_id)
-        if (
-            board_row is None
-            or board_row.workspace_id != workspace_id
-            or board_row.deleted_at is not None
-        ):
-            logger.warning(
-                "Summary generation refused for board %s: not live in workspace",
-                board_id,
-            )
-            return None
-
-        existing = (
-            db.query(models.BoardSummary)
-            .filter(
-                models.BoardSummary.board_id == board_id,
-                models.BoardSummary.session_id == session_id,
-            )
-            .first()
-        )
-
-        if existing:
-            logger.info(
-                "Summary already exists for board %s, session %s",
-                board_id,
-                session_id,
-            )
-            return themes.summary_out(db, existing, workspace_id).model_dump(
-                mode="json"
-            )
-
-        board_data = _get_board_full_data(db, board_id, workspace_id)
-        if not board_data:
-            logger.warning("No board data for %s", board_id)
-            return None
-
-        # Данные прочитаны — соединение на время вызова модели не держим.
-        # Сессия та же: следующий запрос возьмёт соединение из пула заново.
-        db.close()
-        try:
-            ai_result = generate_summary(board_data)
-            logger.info("AI summary generated for board %s", board_id)
-        except Exception as e:
-            logger.error(
-                "AI summary generation failed for board %s: %s", board_id, e
-            )
-            return None
-
-        # Темы доски пишутся той же транзакцией, что и итоги
-        theme_names = themes.apply_board_themes(
-            db, workspace_id, board_data["id"], ai_result
-        )
-        summary = models.BoardSummary(
-            id=str(uuid.uuid4()),
-            board_id=board_data["id"],
-            session_id=session_id,
-            summary_text=ai_result.get("summary_text", ""),
-            key_themes=theme_names,
-            recommendations=ai_result.get("recommendations", []),
-        )
-        db.add(summary)
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            logger.info(
-                "Summary race lost for board %s, session %s",
-                board_id,
-                session_id,
-            )
-            existing = (
-                db.query(models.BoardSummary)
-                .filter(
-                    models.BoardSummary.board_id == board_data["id"],
-                    models.BoardSummary.session_id == session_id,
-                )
-                .first()
-            )
-            if existing is None:
-                return None
-            return themes.summary_out(db, existing, workspace_id).model_dump(
-                mode="json"
-            )
-        db.refresh(summary)
-        logger.info("Summary saved to DB for board %s", board_id)
-
-        return themes.summary_out(db, summary, workspace_id).model_dump(mode="json")
-    finally:
-        db.close()
 
 
 @router.post("/{board_id}/mood", response_model=schemas.BoardMoodOut)
@@ -579,7 +415,7 @@ async def regenerate_summary(
         raise HTTPException(503, "AI сервис не настроен")
     require_cards_visible(board)
 
-    board_data = _get_board_full_data(db, board.id, workspace.id)
+    board_data = boards_service.get_board_full_data(db, board.id, workspace.id)
     if not board_data:
         raise HTTPException(404, "Доска не найдена")
 

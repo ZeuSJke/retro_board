@@ -61,6 +61,10 @@ app.kubernetes.io/component: {{ .component }}
 {{- if ne (int .Values.api.replicas) 1 -}}
 {{- fail "api.replicas must be 1: RetroBoard WS room/timer state is in-process memory (single-worker invariant)" -}}
 {{- end -}}
+{{- $fwd := trim (.Values.api.forwardedAllowIps | toString) -}}
+{{- if or (eq $fwd "") (eq $fwd "*") -}}
+{{- fail "api.forwardedAllowIps must be narrowed to proxy CIDRs/IPs and must not be '*'" -}}
+{{- end -}}
 {{- $cors := trim (.Values.config.corsOrigins | toString) -}}
 {{- if or (kindIs "invalid" .Values.config.corsOrigins) (eq $cors "") (eq $cors "*") (eq (lower $cors) "null") (eq (lower $cors) "<nil>") -}}
 {{- fail "config.corsOrigins must be explicitly set and must not be '*' or 'null'" -}}

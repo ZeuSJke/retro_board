@@ -98,7 +98,7 @@ test.describe('Workspace switch — переключение между workspac
     await confirmBtn.click()
 
     await page.waitForURL(/\/board\//, { timeout: 10000 })
-    await page.waitForTimeout(1000)
+    await expect(page.locator('main')).toBeVisible({ timeout: 15000 })
 
     const errorVisible = await page.getByText(/не удалось загрузить/i).isVisible().catch(() => false)
     expect(errorVisible).toBe(false)

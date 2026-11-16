@@ -81,6 +81,7 @@ expect_count "staging: backup CronJob rendered" '^kind: CronJob$' 1 "${STAGING[@
 expect_count "staging: 4 NetworkPolicies (postgres, api, web, backup)" '^kind: NetworkPolicy$' 4 "${STAGING[@]}"
 expect_count "staging: NFS mount on backup CronJob" 'server: "192.168.1.10"' 1 "${STAGING[@]}"
 expect_count "staging: Ingress paths (/api, /ws, /mcp, /)" '^          - path: /(api|ws|mcp)?$' 4 "${STAGING[@]}"
+expect_count "staging: FORWARDED_ALLOW_IPS narrowed to pod/loopback CIDRs" 'value: "127\.0\.0\.1,10\.42\.0\.0/16"' 1 "${STAGING[@]}"
 expect_count "staging: readOnlyRootFilesystem true on api/web/backup" 'readOnlyRootFilesystem: true' 5 "${STAGING[@]}"
 validate_manifests "staging" "${STAGING[@]}"
 
@@ -99,6 +100,8 @@ validate_manifests "inline-secrets" "${INLINE[@]}"
 echo "── Negative renders: chart invariant guards"
 expect_fail "api replicas > 1 rejected" "api.replicas must be 1" \
   "${STAGING[@]}" --set api.replicas=2
+expect_fail "wildcard forwardedAllowIps rejected" "api.forwardedAllowIps must be narrowed" \
+  "${STAGING[@]}" --set "api.forwardedAllowIps=*"
 expect_fail "empty CORS rejected" "config.corsOrigins must be explicitly set" \
   "${STAGING[@]}" --set config.corsOrigins=
 expect_fail "wildcard CORS rejected" "must not be '*'" \

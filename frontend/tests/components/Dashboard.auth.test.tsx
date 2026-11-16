@@ -1,8 +1,17 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Dashboard from '../../components/Dashboard'
+import { makeQueryClient } from '../../lib/query-client'
 import { useAppStore } from '../../store'
+
+const render = (ui: React.ReactElement) => {
+  const client = makeQueryClient()
+  return rtlRender(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  })
+}
 
 const mockPush = vi.fn()
 const mockGetBoards = vi.fn()

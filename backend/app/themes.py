@@ -10,7 +10,7 @@ import re
 import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import exists
 from sqlalchemy.orm import Session
@@ -35,7 +35,7 @@ _DASHES_RE = re.compile(r"[‐‑‒–—−]")
 # ── Очистка и сравнение названий ─────────────────────────────────────────────
 
 
-def _one_line(value: str, form: str = "NFC") -> str:
+def _one_line(value: str, form: Literal["NFC", "NFD", "NFKC", "NFKD"] = "NFC") -> str:
     """Одна строка без невидимых символов и разметки (ответ модели — недоверенный)."""
     text = unicodedata.normalize(form, value)
     text = _INVISIBLE_RE.sub(" ", text)
@@ -347,6 +347,8 @@ def list_workspace_themes(db: Session, workspace_id: str) -> list[schemas.Worksp
     for theme_id in timeline.ranked_theme_ids():
         theme = timeline.themes[theme_id]
         last = timeline.last_board(theme_id)
+        if last is None:
+            continue
         result.append(
             schemas.WorkspaceThemeOut(
                 id=theme.id,

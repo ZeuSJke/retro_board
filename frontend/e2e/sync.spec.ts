@@ -119,7 +119,10 @@ test.describe('Синхронизация доски', () => {
     // По адресу доски
     await page.goto(`/board/${board.slug}`)
     await expect(page.getByTitle('Подключено (Live)')).toBeVisible({ timeout: 15000 })
-    await page.waitForTimeout(1500)
+    await page.waitForLoadState('networkidle')
+    await page.evaluate(
+      () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+    )
     expect(sockets, 'по адресу доски').toHaveLength(1)
     expect(sockets[0].closed).toBe(false)
 
@@ -128,7 +131,10 @@ test.describe('Синхронизация доски', () => {
     await page.goto('/board/start')
     await expect(page).toHaveURL(new RegExp(`/board/${board.slug}$`), { timeout: 15000 })
     await expect(page.getByTitle('Подключено (Live)')).toBeVisible({ timeout: 15000 })
-    await page.waitForTimeout(1500)
+    await page.waitForLoadState('networkidle')
+    await page.evaluate(
+      () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+    )
     expect(sockets, 'через /board/start').toHaveLength(1)
     expect(sockets[0].closed).toBe(false)
 
@@ -144,7 +150,10 @@ test.describe('Синхронизация доски', () => {
       await fresh.locator('#welcome-key').fill('e2e-test-key')
       await fresh.getByRole('button', { name: /войти на доску/i }).click()
       await expect(fresh.getByTitle('Подключено (Live)')).toBeVisible({ timeout: 15000 })
-      await fresh.waitForTimeout(1500)
+      await fresh.waitForLoadState('networkidle')
+      await fresh.evaluate(
+        () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+      )
       expect(freshSockets, 'после входа с главной').toHaveLength(1)
       expect(freshSockets[0].closed).toBe(false)
     } finally {
@@ -260,7 +269,7 @@ test.describe('Синхронизация доски', () => {
 
       // Таймер идёт у обоих и показывает одно и то же время
       const before = await timerSeconds(guest.page)
-      await guest.page.waitForTimeout(2100)
+      await expect.poll(() => timerSeconds(guest.page), { timeout: 5000 }).toBeLessThanOrEqual(before - 2)
       const after = await timerSeconds(guest.page)
       expect(before - after).toBeGreaterThanOrEqual(2)
       expect(before - after).toBeLessThanOrEqual(3)
@@ -287,9 +296,12 @@ test.describe('Синхронизация доски', () => {
 
       // Пауза останавливает таймер у всех на одном значении
       await creator.page.getByLabel('Пауза таймера').click()
-      await guest.page.waitForTimeout(700)
+      await expect(guest.page.getByLabel('Запустить таймер')).toBeVisible({ timeout: 5000 })
+      await expect(creator.page.getByLabel('Запустить таймер')).toBeVisible({ timeout: 5000 })
       const paused = await timerSeconds(guest.page)
-      await guest.page.waitForTimeout(1500)
+      await guest.page.evaluate(
+        () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+      )
       expect(await timerSeconds(guest.page)).toBe(paused)
       expect(await timerSeconds(creator.page)).toBe(paused)
     } finally {
@@ -351,7 +363,8 @@ test.describe('Синхронизация доски', () => {
       await expect(page.getByRole('button', { name: /войти на доску/i })).toBeVisible({ timeout: 15000 })
       // Новых попыток подключения нет
       const opened = sockets.length
-      await page.waitForTimeout(4000)
+      await expect.poll(() => sockets.every((s) => s.closed)).toBe(true)
+      await page.waitForLoadState('networkidle')
       expect(sockets.length).toBe(opened)
     } finally {
       await ctx.close()

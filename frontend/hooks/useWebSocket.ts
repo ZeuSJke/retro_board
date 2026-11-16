@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store'
 import type { WsMessage } from '../types'
+import { parseWsMessage } from '../utils/wsData'
 
 const RECONNECT_BASE_MS = 2000
 const RECONNECT_MAX_MS = 30000
@@ -53,8 +54,7 @@ export interface UseWebSocketOptions {
   onClose?: (info: WsCloseInfo) => void
   /**
    * Сервер отвечает на `ping` событием `pong` — молчание в ответ означает зависшее соединение.
-   * Так делает сокет доски (`/ws/{board_id}`). Сокет команды (`/ws/workspace`) на `ping` не
-   * отвечает: для него проверка выключена, иначе он переподключался бы каждые полминуты.
+   * Поддерживается и на сокете доски (`/ws/{board_id}`), и на сокете команды (`/ws/workspace`).
    */
   expectPong?: boolean
 }
@@ -199,14 +199,15 @@ export function useWebSocket(
         // Любое сообщение — признак живого соединения
         lastSeenAt = Date.now()
         clearPong()
-        let msg: WsMessage
+        let msg: WsMessage | null
         try {
-          msg = JSON.parse(e.data as string) as WsMessage
+          msg = parseWsMessage(JSON.parse(e.data as string))
         } catch {
           return // ignore malformed messages
         }
+        if (!msg) return
         // Ответ на наш ping: служебное сообщение, обработчикам доски не нужно
-        if (msg?.event === 'pong') return
+        if (msg.event === 'pong') return
         onMessageRef.current(msg)
       }
 

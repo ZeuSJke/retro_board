@@ -1,9 +1,19 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react'
+import { act, render as rtlRender, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Dashboard from '../../components/Dashboard'
+import { makeQueryClient } from '../../lib/query-client'
 import { useAppStore } from '../../store'
+
+const render = (ui: React.ReactElement) => {
+  const client = makeQueryClient()
+  return rtlRender(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  })
+}
 import { showToast } from '../../store/toastStore'
+import { isApiErrorReported } from '../../utils/apiError'
 import type { AgentToken, DashboardActionItem, WsMessage } from '../../types'
 import type { HealthTrendPoint } from '../../types/health'
 import type { TeamTheme } from '../../types/themes'
@@ -172,6 +182,7 @@ describe('Dashboard', () => {
     vi.clearAllMocks()
     serverState.aiEnabled = true
     useAppStore.setState({
+      _hasHydrated: true,
       username: 'Алиса',
       currentBoardId: 'b1',
       workspace: { workspaceId: 'w-1', workspaceSlug: 'team-a', workspaceName: 'Team A' },
@@ -184,10 +195,10 @@ describe('Dashboard', () => {
     render(<Dashboard />)
 
     await waitFor(() => {
-      expect(screen.getByText('Панель управления')).toBeInTheDocument()
+      expect(screen.getByText('Доски команды')).toBeInTheDocument()
     })
 
-    expect(screen.getByText('Доски команды')).toBeInTheDocument()
+    expect(screen.getByText('Панель управления')).toBeInTheDocument()
     expect(screen.getByText('Аналитика по спринтам')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Задачи/i })).toBeInTheDocument()
   })
@@ -645,7 +656,9 @@ describe('Dashboard — одна реальная задача считаетс�
       ws.handler?.({ event: 'board_deleted', data: { id: 'b1' } })
     })
 
-    expect(screen.queryByText('Fix CI')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByText('Fix CI')).not.toBeInTheDocument()
+    })
     expect(screen.getByRole('tab', { name: 'Задачи (1)' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Доски (1)' })).toBeInTheDocument()
   })
@@ -694,5 +707,32 @@ describe('Dashboard — одна реальная задача считаетс�
     )
     const link = await screen.findByTestId('action-item-external-link')
     expect(link).toHaveAttribute('href', 'https://tracker.yandex.ru/RETRO-42')
+  })
+
+  it('до гидрации стора показывает индикатор загрузки вместо нулевых счётчиков и окна входа', () => {
+    useAppStore.setState({ _hasHydrated: false, workspace: null, participant: null })
+    render(<Dashboard />)
+
+    expect(screen.getByText('Загружаем отчёты...')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-key-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('kpi-open-tasks')).not.toBeInTheDocument()
+
+    act(() => {
+      useAppStore.setState({ _hasHydrated: true })
+    })
+    expect(screen.getByTestId('workspace-key-input')).toBeInTheDocument()
+  })
+
+  it('ошибка загрузки досок/задач помечается показанной и не вызывает повторный тост', async () => {
+    const serverErr = Object.assign(new Error('Server Error'), {
+      response: { status: 500, data: {} },
+    })
+    const apiMod = await import('../../api')
+    vi.mocked(apiMod.getBoards).mockRejectedValueOnce(serverErr)
+
+    render(<Dashboard />)
+    expect(await screen.findByText('Не удалось загрузить аналитику')).toBeInTheDocument()
+    expect(isApiErrorReported(serverErr)).toBe(true)
+    expect(showToast).not.toHaveBeenCalled()
   })
 })

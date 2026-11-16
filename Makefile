@@ -6,6 +6,7 @@ CHART := k8s/helm/retro-board
 
 BACKEND_PYTEST = $(shell [ -x backend/.venv/bin/pytest ] && echo .venv/bin/pytest || echo pytest)
 BACKEND_RUFF = $(shell [ -x backend/.venv/bin/ruff ] && echo .venv/bin/ruff || echo ruff)
+BACKEND_MYPY = $(shell [ -x backend/.venv/bin/mypy ] && echo .venv/bin/mypy || echo mypy)
 BACKEND_ALEMBIC = $(shell [ -x backend/.venv/bin/alembic ] && echo .venv/bin/alembic || echo alembic)
 
 .PHONY: help setup install lock audit helm-lint lint lint-backend lint-frontend test-backend test-backend-pg test-frontend verify dev-images dev-secrets dev-deploy dev
@@ -64,7 +65,7 @@ helm-lint:
 	bash scripts/helm-render-checks.sh
 
 lint-backend:
-	cd backend && $(BACKEND_RUFF) check .
+	cd backend && $(BACKEND_RUFF) check . && $(BACKEND_MYPY) app main.py
 
 lint-frontend:
 	cd frontend && npm run build && npm run typecheck && npm run lint

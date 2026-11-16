@@ -98,9 +98,9 @@ def board_summary(db: Session, board_id: str, viewer_id: str | None) -> dict:
         counts.setdefault(question, {})[value] = count
 
     questions = []
-    for question in QUESTIONS:
-        by_value = counts.get(question["key"], {})
-        item = _empty_question(question)
+    for q_def in QUESTIONS:
+        by_value = counts.get(q_def["key"], {})
+        item = _empty_question(q_def)
         item["red"] = by_value.get(RED, 0)
         item["yellow"] = by_value.get(YELLOW, 0)
         item["green"] = by_value.get(GREEN, 0)

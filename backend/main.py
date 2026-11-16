@@ -3,34 +3,45 @@ import logging
 import secrets
 import traceback
 from contextlib import asynccontextmanager
+from typing import cast
 
-
-from app.body_limit import BodySizeLimitMiddleware
-from app.config import settings
-from app.database import engine
-from app.request_context import RequestIdMiddleware, configure_logging
-from app.routers import (
-    action_items,
-    boards,
-    cards,
-    columns,
-    groups,
-    health,
-    websocket,
-    workspaces,
-    admin,
-)
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Route
-from slowapi.errors import RateLimitExceeded
-from slowapi import _rate_limit_exceeded_handler
+
+from app.body_limit import BodySizeLimitMiddleware
+from app.config import settings
+from app.database import engine
 from app.limiter import limiter
 from app.mcp import mcp_asgi_app, mcp_lifespan
+from app.observability import (
+    CONTENT_TYPE_LATEST,
+    MetricsMiddleware,
+    record_unhandled_error,
+    record_ws_slow_consumer_drop,
+    register_ws_counts_provider,
+    render_metrics,
+)
+from app.request_context import RequestIdMiddleware, configure_logging
+from app.routers import (
+    action_items,
+    admin,
+    boards,
+    cards,
+    columns,
+    groups,
+    websocket,
+    workspaces,
+)
+from app.routers import (
+    health as health_router,
+)
 
 logger = logging.getLogger("retroboard")
 configure_logging()
@@ -52,8 +63,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+def _rate_limit_handler(request: Request, exc: Exception) -> Response:
+    return _rate_limit_exceeded_handler(request, cast(RateLimitExceeded, exc))
+
+
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 
 
 @app.exception_handler(RequestValidationError)
@@ -78,6 +93,7 @@ class GlobalErrorMiddleware(BaseHTTPMiddleware):
         try:
             return await call_next(request)
         except Exception as exc:
+            record_unhandled_error("http", type(exc).__name__)
             logger.error(
                 "Unhandled exception: %s: %s\n%s",
                 type(exc).__name__,
@@ -110,6 +126,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 "/health",
                 "/api/health",
                 "/api/ready",
+                "/metrics",
                 "/api/workspaces/login",
                 "/api/workspaces/join",
             )
@@ -153,6 +170,9 @@ app.add_middleware(
     BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes
 )
 
+# Метрики внутри RequestIdMiddleware и снаружи всех обработчиков ошибок/CSRF
+app.add_middleware(MetricsMiddleware)
+
 # Идентификатор запроса — снаружи всего остального, чтобы он был в журнале
 # и в ответе при любой ошибке, включая 413 и CSRF
 app.add_middleware(RequestIdMiddleware)
@@ -163,6 +183,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*", "x-csrf-token"],
+    expose_headers=["X-Total-Count", "X-Request-ID"],
 )
 
 app.routes.extend(
@@ -185,7 +206,7 @@ app.routes.extend(
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 # Раньше досок: статические пути health check не должен перехватить /{board_id}
-app.include_router(health.router, prefix="/api/boards", tags=["health"])
+app.include_router(health_router.router, prefix="/api/boards", tags=["health"])
 app.include_router(boards.router, prefix="/api/boards", tags=["boards"])
 app.include_router(columns.router, prefix="/api/columns", tags=["columns"])
 app.include_router(cards.router, prefix="/api/cards", tags=["cards"])
@@ -194,6 +215,9 @@ app.include_router(
     action_items.router, prefix="/api/action-items", tags=["action_items"]
 )
 app.include_router(websocket.router, tags=["websocket"])
+
+register_ws_counts_provider(websocket.manager.connection_counts)
+websocket.manager.on_slow_consumer_drop = record_ws_slow_consumer_drop
 
 
 @app.get("/health", tags=["health"])
@@ -205,6 +229,12 @@ async def health():
     и при запросах, зависших на базе, проба не уложилась бы в таймаут.
     """
     return {"status": "ok"}
+
+
+@app.get("/metrics", tags=["health"], include_in_schema=False)
+async def metrics() -> Response:
+    """Метрики Prometheus для мониторинга внутри кластера."""
+    return Response(content=render_metrics(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/api/ready", tags=["health"], include_in_schema=False)

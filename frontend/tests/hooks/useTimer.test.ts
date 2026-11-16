@@ -378,4 +378,30 @@ describe('useTimer', () => {
     expect(result.current.handleAddTime).toBe(before.handleAddTime)
     expect(result.current.handleTimerWsEvent).toBe(before.handleTimerWsEvent)
   })
+
+  it('timer_start: перекос часов ts не ломает обратный отсчёт от remaining', () => {
+    const { result } = renderHook(() => useTimer(sendWs))
+
+    // Часы сервера сдвинуты относительно клиента на +2 часа (ts в будущем),
+    // но отсчёт идёт от локального момента получения кадра + remaining секунд.
+    const skewedServerNow = Date.now() + 2 * 3600_000
+    act(() => {
+      result.current.handleTimerWsEvent('timer_start', {
+        duration: 180,
+        remaining: 75,
+        ts: skewedServerNow,
+      })
+    })
+
+    expect(result.current.timer.running).toBe(true)
+    expect(result.current.timer.duration).toBe(180)
+    expect(result.current.timer.remaining).toBe(75)
+    expect(result.current.timer.endsAt).toBe(Date.now() + 75_000)
+    expect(timerDisplaySeconds(result.current.timer)).toBe(75)
+
+    act(() => {
+      vi.advanceTimersByTime(10_000)
+    })
+    expect(timerDisplaySeconds(result.current.timer)).toBe(65)
+  })
 })

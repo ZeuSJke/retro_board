@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -92,8 +93,22 @@ class Participant(Base):
 class Board(Base):
     __tablename__ = "boards"
     __table_args__ = (
-        UniqueConstraint("workspace_id", "name", name="uq_board_workspace_name"),
-        UniqueConstraint("workspace_id", "slug", name="uq_board_workspace_slug"),
+        Index(
+            "uq_board_workspace_name",
+            "workspace_id",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "uq_board_workspace_slug",
+            "workspace_id",
+            "slug",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)

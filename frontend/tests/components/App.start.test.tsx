@@ -1,8 +1,17 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import App from '../../components/App'
+import { makeQueryClient } from '../../lib/query-client'
 import { useAppStore } from '../../store'
 import type { Board } from '../../types'
+
+const render = (ui: React.ReactElement) => {
+  const client = makeQueryClient()
+  return rtlRender(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  })
+}
 
 const api = vi.hoisted(() => ({
   refreshWorkspaceSession: vi.fn(),

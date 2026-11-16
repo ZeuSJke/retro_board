@@ -28,8 +28,12 @@ import { showToast } from '../store/toastStore'
 import { useAppStore } from '../store'
 import { isApiErrorReported, RATE_LIMIT_MESSAGE } from '../utils/apiError'
 
+export const DEFAULT_API_TIMEOUT_MS = 15_000
+// Верхний предел ожидания на сервере: очередь к модели (15 с) + 2 попытки по 90 с + пауза (0.5 с) = 195.5 с.
+export const AI_API_TIMEOUT_MS = 210_000
+
 /** Общий HTTP-клиент команды: CSRF-заголовок, сброс сессии по 401, запасной тост об ошибке. */
-export const api = axios.create({ baseURL: '/api' })
+export const api = axios.create({ baseURL: '/api', timeout: DEFAULT_API_TIMEOUT_MS })
 
 export function getCsrfToken(): string {
   if (typeof document === 'undefined') return ''
@@ -179,10 +183,16 @@ export const removeCardFromGroup = (groupId: string, cardId: string): Promise<Ca
 export const moveGroup = (id: string, data: { column_id: string }): Promise<CardGroup> =>
   api.patch<CardGroup>(`/groups/${id}/move`, data).then((r) => r.data)
 export const autoClusterColumn = (columnId: string): Promise<AppliedClusters> =>
-  api.post<AppliedClusters>('/groups/auto-cluster', { column_id: columnId }).then((r) => r.data)
+  api
+    .post<AppliedClusters>('/groups/auto-cluster', { column_id: columnId }, { timeout: AI_API_TIMEOUT_MS })
+    .then((r) => r.data)
 export const autoClusterPreview = (columnId: string): Promise<AutoClusterPreviewResult> =>
   api
-    .post<AutoClusterPreviewResult>('/groups/auto-cluster-preview', { column_id: columnId })
+    .post<AutoClusterPreviewResult>(
+      '/groups/auto-cluster-preview',
+      { column_id: columnId },
+      { timeout: AI_API_TIMEOUT_MS },
+    )
     .then((r) => r.data)
 export const applyAutoClusters = (data: {
   column_id: string
@@ -223,15 +233,25 @@ export const getActionItemTrends = (): Promise<TrendPoint[]> =>
 export const getMoodTrends = (): Promise<MoodTrendPoint[]> =>
   api.get<MoodTrendPoint[]>('/boards/mood-trends').then((r) => r.data)
 export const getWorkspaceInsights = (): Promise<WorkspaceInsights> =>
-  api.post<WorkspaceInsights>('/boards/workspace-insights').then((r) => r.data)
+  api
+    .post<WorkspaceInsights>('/boards/workspace-insights', undefined, { timeout: AI_API_TIMEOUT_MS })
+    .then((r) => r.data)
 export const carryForward = (data: CarryForwardRequest): Promise<ActionItem[]> =>
   api.post<ActionItem[]>('/action-items/carry-forward', data).then((r) => r.data)
 export const generateActionItemTitle = (text: string): Promise<string> =>
-  api.post<{ title: string }>('/action-items/generate-title', { text }).then((r) => r.data.title)
+  api
+    .post<{ title: string }>('/action-items/generate-title', { text }, { timeout: AI_API_TIMEOUT_MS })
+    .then((r) => r.data.title)
 export const suggestActionItems = (
   boardId: string,
 ): Promise<{ board_id: string; suggestions: ActionItemSuggestion[] }> =>
-  api.post<{ board_id: string; suggestions: ActionItemSuggestion[] }>('/action-items/suggest', { board_id: boardId }).then((r) => r.data)
+  api
+    .post<{ board_id: string; suggestions: ActionItemSuggestion[] }>(
+      '/action-items/suggest',
+      { board_id: boardId },
+      { timeout: AI_API_TIMEOUT_MS },
+    )
+    .then((r) => r.data)
 
 // ── Summary ─────────────────────────────────────────────────────────────────
 export const getBoardSummary = (boardId: string): Promise<BoardSummary | null> =>
@@ -244,7 +264,9 @@ export const getBoardSummary = (boardId: string): Promise<BoardSummary | null> =
     })
 
 export const regenerateBoardSummary = (boardId: string): Promise<BoardSummary> =>
-  api.post<BoardSummary>(`/boards/${boardId}/summary/regenerate`).then((r) => r.data)
+  api
+    .post<BoardSummary>(`/boards/${boardId}/summary/regenerate`, undefined, { timeout: AI_API_TIMEOUT_MS })
+    .then((r) => r.data)
 
 // ── Сессия: команда и участник ──────────────────────────────────────────────
 export interface SessionResponse {

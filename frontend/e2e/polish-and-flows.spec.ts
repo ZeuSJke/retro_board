@@ -415,10 +415,11 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     expect(overlayBox!.height).toBeGreaterThan(600)
 
     // Mid-flight, reaction should have risen well into the upper half of the board
-    await page.waitForTimeout(1600)
-    const reactionBox = await overlay.locator('.animate-float-up').first().boundingBox()
-    expect(reactionBox).not.toBeNull()
-    expect(reactionBox!.y).toBeLessThan(400)
+    await expect
+      .poll(async () => (await overlay.locator('.animate-float-up').first().boundingBox())?.y ?? 9999, {
+        timeout: 5000,
+      })
+      .toBeLessThan(400)
   })
 
   test('responsive columns fill 1920px, center on 2560px ultrawide, scroll with 6 columns, and adapt on mobile', async ({
@@ -449,7 +450,7 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
 
     // 2. 2560x1440 ultrawide: columns cap near max-w-[580px] and center inside canvas
     await page.setViewportSize({ width: 2560, height: 1440 })
-    await page.waitForTimeout(150)
+    await expect.poll(async () => (await cols.nth(0).boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(520)
     const col0Uw = await cols.nth(0).boundingBox()
     const col2Uw = await cols.nth(2).boundingBox()
     const masterUw = await page.getByTestId('master-column').boundingBox()
@@ -489,7 +490,7 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
 
     // 4. Mobile 390x844 -> single focused column ~86vw, page has no overflow
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.waitForTimeout(150)
+    await expect.poll(async () => (await cols.nth(0).boundingBox())?.width ?? 999).toBeLessThan(370)
     const col0Mob = await cols.nth(0).boundingBox()
     expect(col0Mob).not.toBeNull()
     expect(col0Mob!.width).toBeGreaterThan(290)
@@ -539,9 +540,9 @@ test.describe('Brand Identity, UX Polish & Regression Flows', () => {
     const col0Before = (await page.getByTestId('board-column').first().boundingBox())!.width
     await page.getByRole('button', { name: /^Задачи/ }).click()
     await expect(masterCol).not.toBeVisible({ timeout: 5000 })
-    await page.waitForTimeout(260)
-    const col0After = (await page.getByTestId('board-column').first().boundingBox())!.width
-    expect(col0After).toBeGreaterThan(col0Before + 40)
+    await expect
+      .poll(async () => (await page.getByTestId('board-column').first().boundingBox())?.width ?? 0)
+      .toBeGreaterThan(col0Before + 40)
   })
 
   test('non-modal export dropdown lets user open board settings in a single click', async ({

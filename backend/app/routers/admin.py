@@ -1,12 +1,16 @@
 import logging
 import secrets
+from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, Request
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
-from app.database import get_db
 from app import models, schemas
+from app.config import settings
+from app.database import get_db
+from app.limiter import entry_limit_key, limiter
+from app.services import agent_tokens as agent_token_service
 from app.workspace_auth import (
     create_admin_token,
     get_admin_user,
@@ -14,9 +18,6 @@ from app.workspace_auth import (
     new_invite_token,
     verify_admin_token,
 )
-from app.config import settings
-from app.limiter import entry_limit_key, limiter
-from app.services import agent_tokens as agent_token_service
 from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -76,21 +77,44 @@ def admin_session(request: Request, response: Response):
 @limiter.limit("30/minute")
 def list_workspaces(
     request: Request,
+    response: Response,
+    limit: Optional[int] = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     _: bool = Depends(get_admin_user),
 ):
     """Список всех workspaces с количеством досок."""
-    workspaces = db.query(models.Workspace).order_by(models.Workspace.created_at).all()
+    total = db.query(func.count(models.Workspace.id)).scalar() or 0
+    response.headers["X-Total-Count"] = str(total)
+
+    q = db.query(models.Workspace).order_by(
+        models.Workspace.created_at, models.Workspace.id
+    )
+    if offset:
+        q = q.offset(offset)
+    if limit is not None:
+        q = q.limit(limit)
+    workspaces = q.all()
+    if not workspaces:
+        return []
+
+    ws_ids = [ws.id for ws in workspaces]
     # Один запрос на все команды вместо запроса на каждую
     counts = dict(
         db.query(models.Board.workspace_id, func.count(models.Board.id))
-        .filter(models.Board.deleted_at.is_(None))
+        .filter(
+            models.Board.deleted_at.is_(None),
+            models.Board.workspace_id.in_(ws_ids),
+        )
         .group_by(models.Board.workspace_id)
         .all()
     )
     token_counts = dict(
         db.query(models.AgentToken.workspace_id, func.count(models.AgentToken.id))
-        .filter(models.AgentToken.revoked_at.is_(None))
+        .filter(
+            models.AgentToken.revoked_at.is_(None),
+            models.AgentToken.workspace_id.in_(ws_ids),
+        )
         .group_by(models.AgentToken.workspace_id)
         .all()
     )

@@ -5,7 +5,7 @@ import os
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from fastapi import WebSocket
@@ -53,6 +53,7 @@ SEQUENCED_EVENTS = frozenset(
         "mood_updated",
         "health_updated",
         "cards_visibility_changed",
+        "participant_renamed",
     }
 )
 
@@ -72,6 +73,14 @@ class ConnectionManager:
     # Через сколько секунд отсутствия ведущего роль можно забрать, не дожидаясь
     # завершения сессии: фазы и таймер при этом сохраняются.
     FACILITATOR_TAKEOVER_SECONDS: float = 15.0
+    # Буфер исходящих сообщений на один сокет и таймаут отправки, чтобы медленный
+    # клиент не задерживал рассылку здоровым участникам комнаты.
+    MAX_SOCKET_QUEUE: int = 128
+    SEND_TIMEOUT_SECONDS: float = 5.0
+    MAX_COLLAPSED_GROUPS: int = 200
+    # Не 1008 (policy violation): при переполнении или таймауте клиент должен
+    # автоматически переподключиться и пересинхронизироваться по снимку.
+    SLOW_CONSUMER_CLOSE_CODE: int = 4008
 
     def __init__(self):
         self.rooms: dict[str, list[WebSocket]] = defaultdict(list)
@@ -86,11 +95,16 @@ class ConnectionManager:
         self.session_ids: dict[str, int] = {}  # board_id → session_id (timestamp)
         self.ready_users: dict[str, set[str]] = defaultdict(set)  # board_id → {participant_id}
         self.spotlights: dict[str, str] = {}  # board_id → card_id
+        self.collapsed_groups: dict[str, set[str]] = defaultdict(set)  # board_id → {group_id}
         # board_id → {participant_id: column_id}
         self.typing_users: dict[str, dict[str, str]] = defaultdict(dict)
         self.names: dict[str, str] = {}  # participant_id → последнее известное имя
         self.facilitator_grace_tasks: dict[str, asyncio.Task] = {}
         self.on_session_cleared = None  # Optional callback(board_id)
+        self.on_slow_consumer_drop: Callable[[], None] | None = None
+        self._queues: dict[int, asyncio.Queue[str]] = {}
+        self._writers: dict[int, asyncio.Task[None]] = {}
+        self._close_tasks: set[asyncio.Task[None]] = set()
         # Номера событий живут в памяти процесса; `epoch` меняется при рестарте,
         # и клиент понимает, что прежняя нумерация недействительна.
         self.epoch: str = uuid.uuid4().hex[:12]
@@ -108,6 +122,15 @@ class ConnectionManager:
             if not task.done():
                 task.cancel()
         self.facilitator_grace_tasks.clear()
+        for writer in list(self._writers.values()):
+            if not writer.done():
+                writer.cancel()
+        self._writers.clear()
+        self._queues.clear()
+        for close_task in list(self._close_tasks):
+            if not close_task.done():
+                close_task.cancel()
+        self._close_tasks.clear()
         self.rooms.clear()
         self.workspace_rooms.clear()
         self.peers.clear()
@@ -120,6 +143,7 @@ class ConnectionManager:
         self.session_ids.clear()
         self.ready_users.clear()
         self.spotlights.clear()
+        self.collapsed_groups.clear()
         self.typing_users.clear()
         self.names.clear()
         self.seq.clear()
@@ -128,6 +152,141 @@ class ConnectionManager:
         self.ended_timers.clear()
         self.workspace_peers.clear()
         self.epoch = uuid.uuid4().hex[:12]
+
+    # ── Исходящие очереди сокетов ────────────────────────────────────────────
+
+    def _start_writer(
+        self,
+        ws: WebSocket,
+        *,
+        board_id: str | None,
+        workspace_id: str | None,
+    ) -> None:
+        self._stop_writer(ws)
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self.MAX_SOCKET_QUEUE)
+        self._queues[id(ws)] = queue
+        self._writers[id(ws)] = asyncio.create_task(
+            self._socket_writer(ws, queue, board_id=board_id, workspace_id=workspace_id)
+        )
+
+    def _stop_writer(self, ws: WebSocket) -> None:
+        self._queues.pop(id(ws), None)
+        writer = self._writers.pop(id(ws), None)
+        if writer is not None and not writer.done():
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                current = None
+            if writer is not current:
+                writer.cancel()
+
+    def _schedule_close(
+        self,
+        ws: WebSocket,
+        code: int = 4008,
+        reason: str = "Slow consumer",
+    ) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def _do_close() -> None:
+            try:
+                await asyncio.wait_for(ws.close(code=code, reason=reason), timeout=2.0)
+            except Exception:
+                logger.debug("Close slow socket skipped/failed", exc_info=True)
+
+        task = loop.create_task(_do_close())
+        self._close_tasks.add(task)
+        task.add_done_callback(self._close_tasks.discard)
+
+    async def _handle_failed_socket(
+        self,
+        ws: WebSocket,
+        *,
+        board_id: str | None,
+        workspace_id: str | None,
+    ) -> None:
+        if board_id is not None:
+            if ws in self.rooms.get(board_id, []):
+                await self._drop_dead(board_id, [ws])
+            else:
+                self._stop_writer(ws)
+        elif workspace_id is not None:
+            self.disconnect_workspace(workspace_id, ws)
+        else:
+            self._stop_writer(ws)
+
+    async def _socket_writer(
+        self,
+        ws: WebSocket,
+        queue: asyncio.Queue[str],
+        *,
+        board_id: str | None,
+        workspace_id: str | None,
+    ) -> None:
+        try:
+            while True:
+                message = await queue.get()
+                try:
+                    await asyncio.wait_for(
+                        ws.send_text(message),
+                        timeout=self.SEND_TIMEOUT_SECONDS,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "Dropping slow WebSocket consumer after %.1fs send timeout",
+                        self.SEND_TIMEOUT_SECONDS,
+                    )
+                    if self.on_slow_consumer_drop is not None:
+                        self.on_slow_consumer_drop()
+                    self._schedule_close(
+                        ws, code=self.SLOW_CONSUMER_CLOSE_CODE, reason="Slow consumer"
+                    )
+                    await self._handle_failed_socket(
+                        ws, board_id=board_id, workspace_id=workspace_id
+                    )
+                    return
+                except Exception:
+                    await self._handle_failed_socket(
+                        ws, board_id=board_id, workspace_id=workspace_id
+                    )
+                    return
+                finally:
+                    queue.task_done()
+        except asyncio.CancelledError:
+            return
+
+    async def _send_raw(self, ws: WebSocket, message: str) -> bool:
+        queue = self._queues.get(id(ws))
+        if queue is None:
+            return False
+        try:
+            # Ждём освобождения слота с таймаутом, чтобы кратковременный всплеск
+            # (например, bulk-операция > MAX_SOCKET_QUEUE) давал writer-задаче шанс разгрузить очередь.
+            await asyncio.wait_for(queue.put(message), timeout=self.SEND_TIMEOUT_SECONDS)
+            return True
+        except TimeoutError:
+            if self._queues.get(id(ws)) is not queue:
+                return False
+            logger.warning(
+                "Dropping slow WebSocket consumer (outgoing queue limit=%d stalled for %.1fs)",
+                queue.maxsize,
+                self.SEND_TIMEOUT_SECONDS,
+            )
+            if self.on_slow_consumer_drop is not None:
+                self.on_slow_consumer_drop()
+            self._stop_writer(ws)
+            self._schedule_close(
+                ws, code=self.SLOW_CONSUMER_CLOSE_CODE, reason="Slow consumer"
+            )
+            return False
+
+    async def send_event(self, ws: WebSocket, event: str, data: dict) -> bool:
+        return await self._send_raw(
+            ws, json.dumps({"event": event, "data": data}, default=str)
+        )
 
     # ── Подключения ──────────────────────────────────────────────────────────
 
@@ -140,8 +299,9 @@ class ConnectionManager:
     ) -> bool:
         """Принять сокет доски. Возвращает True, если участник появился на доске впервые."""
         await ws.accept()
-        first_socket = bool(peer) and not self.is_online(board_id, peer.id)
+        first_socket = peer is not None and not self.is_online(board_id, peer.id)
         self.rooms[board_id].append(ws)
+        self._start_writer(ws, board_id=board_id, workspace_id=workspace_id)
         if workspace_id:
             self.ws_workspaces[id(ws)] = workspace_id
         if peer:
@@ -158,11 +318,13 @@ class ConnectionManager:
     ):
         await ws.accept()
         self.workspace_rooms[workspace_id].append(ws)
+        self._start_writer(ws, board_id=None, workspace_id=workspace_id)
         self.ws_workspaces[id(ws)] = workspace_id
         if participant_id:
             self.workspace_peers[id(ws)] = participant_id
 
     def disconnect_workspace(self, workspace_id: str, ws: WebSocket):
+        self._stop_writer(ws)
         if ws in self.workspace_rooms[workspace_id]:
             self.workspace_rooms[workspace_id].remove(ws)
         if not self.workspace_rooms[workspace_id]:
@@ -176,6 +338,7 @@ class ConnectionManager:
         Возвращает (участник, остался ли он на доске в другой вкладке,
         ушёл ли со всех вкладок действующий ведущий).
         """
+        self._stop_writer(ws)
         if ws in self.rooms[board_id]:
             self.rooms[board_id].remove(ws)
         if not self.rooms[board_id]:
@@ -253,9 +416,9 @@ class ConnectionManager:
         ]
         await self._close_all(sockets, "Access revoked")
 
-    @staticmethod
-    async def _close_all(sockets: list[WebSocket], reason: str) -> None:
+    async def _close_all(self, sockets: list[WebSocket], reason: str) -> None:
         for ws in sockets:
+            self._stop_writer(ws)
             try:
                 await ws.close(code=1008, reason=reason)
             except Exception:
@@ -555,15 +718,62 @@ class ConnectionManager:
     def get_spotlight(self, board_id: str) -> str | None:
         return self.spotlights.get(board_id)
 
-    def set_timer(self, board_id: str, event: str, data: dict):
+    def set_group_collapsed(self, board_id: str, group_id: str, collapsed: bool) -> bool:
+        """Обновить состояние сворачивания группы; возвращает True, если оно изменилось."""
+        if collapsed:
+            bucket = self.collapsed_groups[board_id]
+            if group_id in bucket or len(bucket) >= self.MAX_COLLAPSED_GROUPS:
+                return False
+            bucket.add(group_id)
+            return True
+        existing = self.collapsed_groups.get(board_id)
+        if not existing or group_id not in existing:
+            return False
+        existing.discard(group_id)
+        if not existing:
+            self.collapsed_groups.pop(board_id, None)
+        return True
+
+    def get_collapsed_groups(self, board_id: str) -> list[str]:
+        return sorted(self.collapsed_groups.get(board_id, ()))
+
+    def remove_collapsed_groups(self, board_id: str, group_ids: Iterable[str]) -> bool:
+        existing = self.collapsed_groups.get(board_id)
+        if not existing:
+            return False
+        before = len(existing)
+        existing.difference_update(group_ids)
+        if not existing:
+            self.collapsed_groups.pop(board_id, None)
+        return len(existing) != before
+
+    def remove_collapsed_group(self, board_id: str, group_id: str) -> None:
+        self.remove_collapsed_groups(board_id, (group_id,))
+
+    def prune_collapsed_groups(self, board_id: str, valid_group_ids: set[str]) -> bool:
+        bucket = self.collapsed_groups.get(board_id)
+        if not bucket:
+            return False
+        filtered = bucket & valid_group_ids
+        if len(filtered) == len(bucket):
+            return False
+        if filtered:
+            self.collapsed_groups[board_id] = filtered
+        else:
+            self.collapsed_groups.pop(board_id, None)
+        return True
+
+    def set_timer(self, board_id: str, event: str, data: dict) -> None:
         """Store timer state so new clients can catch up."""
         now_ms = time.time() * 1000
         if event == "timer_start":
+            duration = data.get("duration", 0)
+            remaining = data.get("remaining", 0)
             self.timers[board_id] = {
                 "running": True,
-                "duration": data.get("duration", 0),
-                "remaining": data.get("remaining", 0),
-                # Всегда опираемся на серверное время, чтобы избежать рассинхрона часов клиента
+                "duration": duration,
+                "remaining": remaining,
+                # Отметку ставит сервер, а не клиент (часы у участников могут расходиться)
                 "ts": now_ms,
             }
         elif event == "timer_pause":
@@ -592,8 +802,10 @@ class ConnectionManager:
 
     # ── Состояние, переживающее рестарт ──────────────────────────────────────
 
-    def export_state(self, board_id: str) -> dict | None:
-        """Таймер и карточка в фокусе в виде, пригодном для хранения в БД.
+    def export_state(
+        self, board_id: str, valid_group_ids: set[str] | None = None
+    ) -> dict | None:
+        """Таймер, фокус и свёрнутые группы в виде, пригодном для хранения в БД.
 
         Идущий таймер сохраняется моментом окончания, а не остатком: остаток
         устарел бы за время, пока под перезапускается.
@@ -616,10 +828,20 @@ class ConnectionManager:
         spotlight = self.spotlights.get(board_id)
         if spotlight:
             state["spotlight"] = spotlight
+        if valid_group_ids is not None:
+            self.prune_collapsed_groups(board_id, valid_group_ids)
+        collapsed = self.get_collapsed_groups(board_id)
+        if collapsed:
+            state["collapsed_groups"] = collapsed
         return state or None
 
-    def restore_state(self, board_id: str, state: object) -> None:
-        """Поднять таймер и фокус из БД один раз за жизнь процесса.
+    def restore_state(
+        self,
+        board_id: str,
+        state: object,
+        valid_group_ids: set[str] | None = None,
+    ) -> None:
+        """Поднять таймер, фокус и свёрнутые группы из БД один раз за жизнь процесса.
 
         Данные читаются недоверчиво: повреждённая запись просто игнорируется.
         """
@@ -659,9 +881,28 @@ class ConnectionManager:
         spotlight = state.get("spotlight")
         if isinstance(spotlight, str) and spotlight and board_id not in self.spotlights:
             self.spotlights[board_id] = spotlight
+        collapsed = state.get("collapsed_groups")
+        if isinstance(collapsed, list) and board_id not in self.collapsed_groups:
+            valid = {
+                g
+                for g in collapsed
+                if isinstance(g, str)
+                and 0 < len(g) <= 100
+                and (valid_group_ids is None or g in valid_group_ids)
+            }
+            if len(valid) > self.MAX_COLLAPSED_GROUPS:
+                valid = set(sorted(valid)[: self.MAX_COLLAPSED_GROUPS])
+            if valid:
+                self.collapsed_groups[board_id] = valid
 
     def current_seq(self, board_id: str) -> int:
         return self.seq.get(board_id, 0)
+
+    def connection_counts(self) -> tuple[int, int]:
+        """Число открытых сокетов (на досках, на уровне команд)."""
+        board_sockets = sum(len(s) for s in self.rooms.values())
+        workspace_sockets = sum(len(s) for s in self.workspace_rooms.values())
+        return board_sockets, workspace_sockets
 
     def _envelope(self, board_id: str, event: str) -> dict:
         """Конверт события: у событий данных — номер и поколение нумерации."""
@@ -726,9 +967,7 @@ class ConnectionManager:
             message = render(ws)
             if message is None:
                 continue
-            try:
-                await ws.send_text(message)
-            except Exception:
+            if not await self._send_raw(ws, message):
                 dead.append(ws)
         if dead:
             await self._drop_dead(board_id, dead, event)
@@ -758,27 +997,31 @@ class ConnectionManager:
         workspace_id: str,
         event: str,
         data: dict,
+        exclude_board_id: str | None = None,
     ):
         """Разослать событие всем клиентам данного workspace (доски и дашборд)."""
-        message = json.dumps({"event": event, "data": data}, default=str)
+        ws_message = json.dumps({"event": event, "data": data}, default=str)
 
         dead_ws_sockets: list[WebSocket] = []
         for ws in list(self.workspace_rooms.get(workspace_id, [])):
-            try:
-                await ws.send_text(message)
-            except Exception:
+            if not await self._send_raw(ws, ws_message):
                 dead_ws_sockets.append(ws)
         for ws in dead_ws_sockets:
             self.disconnect_workspace(workspace_id, ws)
 
         dead_by_board: dict[str, list[WebSocket]] = defaultdict(list)
         for b_id, sockets in list(self.rooms.items()):
-            for ws in list(sockets):
-                if self.ws_workspaces.get(id(ws)) != workspace_id:
-                    continue
-                try:
-                    await ws.send_text(message)
-                except Exception:
+            if exclude_board_id is not None and b_id == exclude_board_id:
+                continue
+            targets = [
+                ws for ws in list(sockets) if self.ws_workspaces.get(id(ws)) == workspace_id
+            ]
+            if not targets:
+                continue
+            envelope = self._envelope(b_id, event)
+            board_message = json.dumps({**envelope, "data": data}, default=str)
+            for ws in targets:
+                if not await self._send_raw(ws, board_message):
                     dead_by_board[b_id].append(ws)
 
         for b_id, dead in dead_by_board.items():

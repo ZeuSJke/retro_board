@@ -7,19 +7,19 @@ JWT в httpOnly-cookie. В токене — идентификаторы ком�
 не принимаются.
 """
 
-from datetime import datetime, timedelta, UTC
 import logging
 import secrets
+from datetime import UTC, datetime, timedelta
 
-from fastapi import Depends, HTTPException, Request, Response
 import bcrypt
 import jwt
+from fastapi import Depends, HTTPException, Request, Response
 from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
 
-from app.database import get_db
 from app import models
 from app.config import settings
+from app.database import get_db
 
 logger = logging.getLogger(__name__)
 

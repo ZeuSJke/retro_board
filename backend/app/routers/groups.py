@@ -1,19 +1,22 @@
 import asyncio
 import logging
 import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.config import settings
-from app.board_view import broadcast_card, card_view, require_cards_visible
-from app.database import get_db, release_connection
 from app import models, schemas
-from app.utils import get_or_404, require_unlocked_board
-from app.ws_manager import manager
+from app.ai.clustering import MAX_CARDS_FOR_CLUSTERING, cluster_cards
+from app.board_view import broadcast_card, card_view, require_cards_visible
+from app.config import settings
+from app.database import get_db, release_connection
 from app.limiter import TEAM_WRITE_LIMIT, limiter
+from app.services.boards import clear_deleted_groups_state
+from app.services.cards import prune_empty_groups
+from app.utils import get_or_404, require_unlocked_board
 from app.workspace_auth import get_current_participant, get_current_workspace
-from app.ai.clustering import cluster_cards, MAX_CARDS_FOR_CLUSTERING
+from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +63,7 @@ async def update_group(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     group = get_or_404(db, models.CardGroup, group_id, "Группа не найдена")
-    col = db.get(models.Column, group.column_id)
+    col = get_or_404(db, models.Column, group.column_id, "Группа не найдена")
     require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Группа не найдена")
     if body.title is not None:
         group.title = body.title
@@ -80,7 +83,7 @@ async def delete_group(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     group = get_or_404(db, models.CardGroup, group_id, "Группа не найдена")
-    col = db.get(models.Column, group.column_id)
+    col = get_or_404(db, models.Column, group.column_id, "Группа не найдена")
     require_unlocked_board(db.get(models.Board, col.board_id), workspace.id, "Группа не найдена")
     board_id = col.board_id
     col_id = group.column_id  # capture before deletion
@@ -92,6 +95,8 @@ async def delete_group(
         card_ids.append(card.id)
 
     db.delete(group)
+    db.flush()
+    clear_deleted_groups_state(db, board_id, [group_id], commit=False)
     db.commit()
     await manager.broadcast(
         board_id,
@@ -112,7 +117,7 @@ async def set_card_group(
 ):
     """Add a card to a group."""
     group = get_or_404(db, models.CardGroup, group_id, "Группа не найдена")
-    col = db.get(models.Column, group.column_id)
+    col = get_or_404(db, models.Column, group.column_id, "Группа не найдена")
     board = require_unlocked_board(
         db.get(models.Board, col.board_id), workspace.id, "Группа не найдена"
     )
@@ -137,11 +142,11 @@ async def move_group(
 ):
     """Move a group (and all its cards) to a different column."""
     group = get_or_404(db, models.CardGroup, group_id, "Группа не найдена")
-    col = db.get(models.Column, group.column_id)
+    col = get_or_404(db, models.Column, group.column_id, "Группа не найдена")
     board = require_unlocked_board(
         db.get(models.Board, col.board_id), workspace.id, "Группа не найдена"
     )
-    old_col = db.get(models.Column, group.column_id)
+    old_col = col
     new_col = get_or_404(db, models.Column, body.column_id, "Колонка не найдена")
     if old_col.board_id != new_col.board_id:
         raise HTTPException(400, "Колонки должны быть на одной доске")
@@ -181,26 +186,22 @@ async def remove_card_from_group(
 ):
     """Remove a card from its group. Auto-deletes the group if it becomes empty."""
     card = get_or_404(db, models.Card, card_id, "Карточка не найдена")
-    col = db.get(models.Column, card.column_id)
+    col = get_or_404(db, models.Column, card.column_id, "Карточка не найдена")
     board = require_unlocked_board(
         db.get(models.Board, col.board_id), workspace.id, "Карточка не найдена"
     )
     if card.group_id != group_id:
         raise HTTPException(400, "Карточка не входит в эту группу")
     card.group_id = None
+    db.flush()
+    deleted_groups = prune_empty_groups(db, {group_id})
+    clear_deleted_groups_state(db, col.board_id, [p["id"] for p in deleted_groups], commit=False)
     db.commit()
     db.refresh(card)
     await broadcast_card(board, "card_updated", card)
 
-    # Auto-delete group if now empty
-    remaining = db.query(models.Card).filter(models.Card.group_id == group_id).count()
-    if remaining == 0:
-        group = db.get(models.CardGroup, group_id)
-        if group:
-            col_id = group.column_id
-            db.delete(group)
-            db.commit()
-            await manager.broadcast(col.board_id, "group_deleted", {"id": group_id, "column_id": col_id, "card_ids": []})
+    for deleted_payload in deleted_groups:
+        await manager.broadcast(col.board_id, "group_deleted", deleted_payload)
 
     return card_view(card, board, participant.id)
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
+
 import re
 from datetime import datetime
 from typing import Literal, Optional
 from urllib.parse import urlparse
+
 from pydantic import BaseModel, Field, field_validator
 
 ActionItemStatus = Literal["open", "in_progress", "done"]

@@ -152,9 +152,9 @@ class TestIdentityComesFromSession:
                 send(ws_twin, "phase_change", {"phase": "summary"})
                 send(ws_twin, "facilitator_stop", {"lock_board": True})
                 send(ws_twin, "timer_start", {"duration": 60, "remaining": 60})
-                send(ws_twin, "group_collapse", {"group_id": "маркер", "collapsed": True})
+                send(ws_twin, "reaction", {"emoji": "👍"})
 
-                seen = events_until(ws_fac, "group_collapse")
+                seen = events_until(ws_fac, "reaction")
                 assert "phase_update" not in seen
                 assert "timer_start" not in seen
                 assert manager.get_facilitator(board) == started["facilitator_id"]
@@ -169,8 +169,8 @@ class TestCursor:
                 msg = recv_event(ws2, "cursor_move")
                 assert msg["data"]["username"] == "Alice"
                 assert msg["data"]["x"] == 100
-                send(ws1, "group_collapse", {"group_id": "маркер", "collapsed": True})
-                assert "cursor_move" not in events_until(ws1, "group_collapse")
+                send(ws1, "reaction", {"emoji": "👍"})
+                assert "cursor_move" not in events_until(ws1, "reaction")
 
     def test_cursor_leave_on_disconnect(self, client, ws_token_for):
         with connect(client, "board-2", ws_token_for("Listener")) as ws_listener:
@@ -218,8 +218,8 @@ class TestFacilitator:
                 send(ws1, "facilitator_start")
                 leader_id = recv_event(ws2, "facilitator_update")["data"]["facilitator_id"]
                 send(ws2, "facilitator_start")
-                send(ws2, "group_collapse", {"group_id": "маркер", "collapsed": True})
-                events_until(ws1, "group_collapse")
+                send(ws2, "reaction", {"emoji": "👍"})
+                events_until(ws1, "reaction")
                 assert manager.get_facilitator(board) == leader_id
 
     def test_invalid_phase_is_ignored(self, client, ws_token):
@@ -228,8 +228,8 @@ class TestFacilitator:
             recv_event(ws, "facilitator_update")
             send(ws, "phase_change", {"phase": "не-фаза"})
             send(ws, "phase_change", {"phase": ["vote"]})
-            send(ws, "group_collapse", {"group_id": "маркер", "collapsed": True})
-            assert "phase_update" not in events_until(ws, "group_collapse")
+            send(ws, "reaction", {"emoji": "👍"})
+            assert "phase_update" not in events_until(ws, "reaction")
 
     def test_rename_via_rest_updates_facilitator_and_presence(
         self, client, ws_board, ws_token_for
@@ -292,8 +292,8 @@ class TestFacilitatorHandover:
             me = recv_event(ws, "facilitator_update")["data"]["facilitator_id"]
             send(ws, "facilitator_transfer", {"participant_id": "нет-такого"})
             send(ws, "facilitator_transfer", {"participant_id": me})
-            send(ws, "group_collapse", {"group_id": "маркер", "collapsed": True})
-            events_until(ws, "group_collapse")
+            send(ws, "reaction", {"emoji": "👍"})
+            events_until(ws, "reaction")
             assert manager.get_facilitator(board) == me
 
     def test_takeover_only_when_facilitator_is_gone(self, client, ws_token_for, monkeypatch):
@@ -308,8 +308,8 @@ class TestFacilitatorHandover:
 
                 # Пока ведущий на доске, роль забрать нельзя
                 send(ws_member, "facilitator_takeover")
-                send(ws_member, "group_collapse", {"group_id": "маркер", "collapsed": True})
-                events_until(ws_member, "group_collapse")
+                send(ws_member, "reaction", {"emoji": "👍"})
+                events_until(ws_member, "reaction")
                 assert manager.get_facilitator(board) == leader_id
 
             # Ведущий ушёл: остальные видят, что он не в сети
@@ -465,8 +465,8 @@ class TestTimerEvents:
                 recv_event(ws_other, "facilitator_update")
 
                 send(ws_other, "timer_start", {"duration": 300, "remaining": 300, "ts": 0})
-                send(ws_fac, "group_collapse", {"group_id": "маркер", "collapsed": True})
-                assert "timer_start" not in events_until(ws_other, "group_collapse")
+                send(ws_fac, "reaction", {"emoji": "👍"})
+                assert "timer_start" not in events_until(ws_other, "reaction")
                 assert manager.get_timer(board) is None
 
     def test_no_facilitator_anyone_can_send_timer(self, client, ws_token_for):
@@ -476,12 +476,29 @@ class TestTimerEvents:
                 assert recv_event(ws1, "timer_start")["event"] == "timer_start"
 
 
+def _create_column_group(client, board_id: str, token: str, title: str = "Группа") -> tuple[dict, dict]:
+    headers = {"X-Workspace-Token": token}
+    col = client.post(
+        "/api/columns/",
+        json={"board_id": board_id, "title": "Колонка"},
+        headers=headers,
+    ).json()
+    grp = client.post(
+        "/api/groups/",
+        json={"column_id": col["id"], "title": title},
+        headers=headers,
+    ).json()
+    return col, grp
+
+
 class TestGroupCollapse:
-    def test_group_collapse_broadcast_to_all(self, client, ws_token_for):
-        with connect(client, "board-g", ws_token_for("Alice")) as ws1:
-            with connect(client, "board-g", ws_token_for("Bob")) as ws2:
-                send(ws1, "group_collapse", {"group_id": "g1", "collapsed": True})
-                assert recv_event(ws1, "group_collapse")["data"]["group_id"] == "g1"
+    def test_group_collapse_broadcast_to_all(self, client, ws_token_for, ws_board):
+        token = ws_token_for("Alice")
+        _, grp = _create_column_group(client, ws_board.id, token)
+        with connect(client, ws_board.id, token) as ws1:
+            with connect(client, ws_board.id, ws_token_for("Bob")) as ws2:
+                send(ws1, "group_collapse", {"group_id": grp["id"], "collapsed": True})
+                assert recv_event(ws1, "group_collapse")["data"]["group_id"] == grp["id"]
                 assert recv_event(ws2, "group_collapse")["data"]["collapsed"] is True
 
 
@@ -697,11 +714,11 @@ class TestSummaryEvents:
     def test_summary_failed_event_on_generation_error(
         self, client, ws_token, ws_board, monkeypatch
     ):
-        from app.routers import boards as boards_router
+        from app.services import boards as boards_service
 
         monkeypatch.setattr(settings, "ai_base_url", "http://llm.test/v1")
         monkeypatch.setattr(
-            boards_router, "_generate_summary_internal", lambda *args, **kwargs: None
+            boards_service, "generate_summary_internal", lambda *args, **kwargs: None
         )
         with connect(client, ws_board.id, ws_token) as ws:
             send(ws, "facilitator_start")
@@ -714,12 +731,12 @@ class TestSummaryEvents:
         self, client, ws_token, ws_board, monkeypatch
     ):
         """Итоги из фазы и по кнопке приходят одним конвертом; различает их флаг regenerated."""
-        from app.routers import boards as boards_router
+        from app.services import boards as boards_service
 
         summary = {"id": "s1", "summary_text": "Итоги", "key_themes": [], "recommendations": []}
         monkeypatch.setattr(settings, "ai_base_url", "http://llm.test/v1")
         monkeypatch.setattr(
-            boards_router, "_generate_summary_internal", lambda *args, **kwargs: summary
+            boards_service, "generate_summary_internal", lambda *args, **kwargs: summary
         )
         with connect(client, ws_board.id, ws_token) as ws:
             send(ws, "facilitator_start")
@@ -751,3 +768,330 @@ class TestRateLimit:
 
             send(ws, "phase_change", {"phase": "vote"})
             assert recv_event(ws, "phase_update")["data"]["phase"] == "vote"
+
+
+class TestGroupCollapsePersistence:
+    def test_late_joiner_receives_groups_collapsed_snapshot(
+        self, client, ws_token_for, ws_board
+    ):
+        token = ws_token_for("Alice")
+        _, grp = _create_column_group(client, ws_board.id, token)
+        with connect(client, ws_board.id, token) as ws1:
+            send(ws1, "group_collapse", {"group_id": grp["id"], "collapsed": True})
+            assert recv_event(ws1, "group_collapse")["data"] == {
+                "group_id": grp["id"],
+                "collapsed": True,
+            }
+
+            with connect(client, ws_board.id, ws_token_for("Bob"), drain=False) as ws2:
+                assert recv_event(ws2, "groups_collapsed")["data"] == {"group_ids": [grp["id"]]}
+
+            send(ws1, "group_collapse", {"group_id": grp["id"], "collapsed": False})
+            assert recv_event(ws1, "group_collapse")["data"]["collapsed"] is False
+
+            with connect(client, ws_board.id, ws_token_for("Carol"), drain=False) as ws3:
+                seen3 = events_until(ws3, "presence_update")
+                assert "groups_collapsed" not in seen3
+
+    def test_group_collapse_rejects_nonexistent_and_foreign_board_group(
+        self, client, ws_token_for, ws_board, ensure_board, db_session
+    ):
+        from app.models import Board
+
+        token = ws_token_for("Alice")
+        other_board_id = ensure_board("foreign-collapse-board")
+        _, foreign_grp = _create_column_group(client, other_board_id, token, title="Чужая")
+
+        with (
+            connect(client, ws_board.id, token) as ws1,
+            connect(client, ws_board.id, ws_token_for("Bob")) as ws2,
+        ):
+            send(ws1, "group_collapse", {"group_id": "missing-group-id", "collapsed": True})
+            send(ws1, "group_collapse", {"group_id": foreign_grp["id"], "collapsed": True})
+            send(ws1, "reaction", {"emoji": "👍"})
+
+            seen = events_until(ws2, "reaction")
+            assert "group_collapse" not in seen
+            assert manager.get_collapsed_groups(ws_board.id) == []
+
+        db_session.expire_all()
+        assert db_session.get(Board, ws_board.id).session_state is None
+
+    def test_delete_column_clears_collapsed_groups_from_memory_and_db(
+        self, client, ws_token_for, ws_board, db_session
+    ):
+        from app.models import Board
+
+        token = ws_token_for("Alice")
+        headers = {"X-Workspace-Token": token}
+        col, grp = _create_column_group(client, ws_board.id, token, title="В колонке")
+
+        with connect(client, ws_board.id, token) as ws1:
+            send(ws1, "group_collapse", {"group_id": grp["id"], "collapsed": True})
+            assert recv_event(ws1, "group_collapse")["data"]["collapsed"] is True
+            assert grp["id"] in manager.get_collapsed_groups(ws_board.id)
+
+            del_resp = client.delete(f"/api/columns/{col['id']}", headers=headers)
+            assert del_resp.status_code == 204
+            assert grp["id"] not in manager.get_collapsed_groups(ws_board.id)
+
+            with connect(client, ws_board.id, ws_token_for("Bob"), drain=False) as ws2:
+                assert "groups_collapsed" not in events_until(ws2, "presence_update")
+
+        db_session.expire_all()
+        board = db_session.get(Board, ws_board.id)
+        if board.session_state:
+            assert grp["id"] not in json.loads(board.session_state).get("collapsed_groups", [])
+
+        manager.reset()
+        with connect(client, ws_board.id, ws_token_for("Carol"), drain=False) as ws3:
+            assert "groups_collapsed" not in events_until(ws3, "presence_update")
+
+    def test_auto_deleted_group_clears_collapsed_group_state(
+        self, client, ws_token_for, ws_board
+    ):
+        token = ws_token_for("Alice")
+        headers = {"X-Workspace-Token": token}
+        col = client.post(
+            "/api/columns/",
+            json={"board_id": ws_board.id, "title": "Колонка"},
+            headers=headers,
+        ).json()
+        card = client.post(
+            "/api/cards/",
+            json={"column_id": col["id"], "text": "Единственная карточка"},
+            headers=headers,
+        ).json()
+        grp = client.post(
+            "/api/groups/",
+            json={"column_id": col["id"], "title": "Автогруппа"},
+            headers=headers,
+        ).json()
+        assert (
+            client.post(f"/api/groups/{grp['id']}/set_card/{card['id']}", headers=headers).status_code
+            == 200
+        )
+
+        with connect(client, ws_board.id, token) as ws1:
+            send(ws1, "group_collapse", {"group_id": grp["id"], "collapsed": True})
+            assert recv_event(ws1, "group_collapse")["data"]["collapsed"] is True
+            assert grp["id"] in manager.get_collapsed_groups(ws_board.id)
+
+            del_resp = client.delete(f"/api/cards/{card['id']}", headers=headers)
+            assert del_resp.status_code == 204
+            assert recv_event(ws1, "group_deleted")["data"]["id"] == grp["id"]
+            assert grp["id"] not in manager.get_collapsed_groups(ws_board.id)
+
+            with connect(client, ws_board.id, ws_token_for("Bob"), drain=False) as ws2:
+                seen2 = events_until(ws2, "presence_update")
+                assert "groups_collapsed" not in seen2
+
+
+class TestBoardUpdateDeduplication:
+    def test_patch_board_sends_single_board_updated_to_active_board(
+        self, client, ws_token, ws_board
+    ):
+        ws_headers = {"X-Workspace-Token": ws_token}
+        with (
+            connect(client, ws_board.id, ws_token) as ws_board_sock,
+            client.websocket_connect(
+                f"/ws/workspace?workspace_token={ws_token}", headers={"origin": TEST_ORIGIN}
+            ) as ws_workspace_sock,
+        ):
+            resp = client.patch(
+                f"/api/boards/{ws_board.id}",
+                json={"name": "Без дублей"},
+                headers=ws_headers,
+            )
+            assert resp.status_code == 200
+
+            ws_event = recv_event(ws_workspace_sock, "board_updated")
+            assert ws_event["data"]["name"] == "Без дублей"
+
+            # На самой доске событие приходит один раз и имеет порядковый номер;
+            # следом отправляем reaction как маркер, чтобы убедиться, что второго дубля нет.
+            send(ws_board_sock, "reaction", {"emoji": "👍"})
+            board_events = []
+            for _ in range(20):
+                msg = ws_board_sock.receive_json()
+                board_events.append(msg)
+                if msg["event"] == "reaction":
+                    break
+            updated = [m for m in board_events if m["event"] == "board_updated"]
+            assert len(updated) == 1
+            assert updated[0]["seq"] == 1
+            assert updated[0]["data"]["name"] == "Без дублей"
+
+
+class TestSlowConsumerAndSchema:
+    def test_slow_consumer_full_queue_dropped_without_blocking_healthy_peer(self):
+        import asyncio
+
+        from app.ws_manager import ConnectionManager
+
+        class FakeSocket:
+            def __init__(self, hang: bool = False):
+                self.hang = hang
+                self.sent: list[str] = []
+                self.closed_codes: list[int] = []
+                self.release = asyncio.Event()
+
+            async def accept(self):
+                return None
+
+            async def send_text(self, message: str):
+                if self.hang:
+                    await self.release.wait()
+                self.sent.append(message)
+
+            async def close(self, code: int = 1000, reason: str = ""):
+                self.closed_codes.append(code)
+                self.release.set()
+
+        async def scenario():
+            mgr = ConnectionManager()
+            mgr.MAX_SOCKET_QUEUE = 2
+            mgr.SEND_TIMEOUT_SECONDS = 0.05
+            slow = FakeSocket(hang=True)
+            healthy = FakeSocket(hang=False)
+            await mgr.connect("b1", slow, peer=None)
+            await mgr.connect("b1", healthy, peer=None)
+            try:
+                # 1-е сообщение уйдёт в hang внутри send_text, ещё 2 забьют очередь (maxsize=2),
+                # 4-е дождётся короткого таймаута и отключит медленного клиента с переподключаемым кодом 4008.
+                await mgr.broadcast("b1", "reaction", {"emoji": "👍"})
+                await asyncio.sleep(0)
+                for i in range(4):
+                    await mgr.broadcast("b1", "reaction", {"emoji": "👍", "i": i})
+                    await asyncio.sleep(0)
+                await asyncio.sleep(0.1)
+                assert len(healthy.sent) == 5
+                assert healthy in mgr.rooms.get("b1", [])
+                assert slow not in mgr.rooms.get("b1", [])
+                assert 4008 in slow.closed_codes
+                assert 1008 not in slow.closed_codes
+            finally:
+                slow.release.set()
+                mgr.reset()
+
+        asyncio.run(scenario())
+
+    def test_burst_over_queue_limit_drains_without_eviction(self):
+        import asyncio
+
+        from app.ws_manager import ConnectionManager
+
+        class YieldingSocket:
+            def __init__(self):
+                self.sent: list[str] = []
+                self.closed_codes: list[int] = []
+
+            async def accept(self):
+                return None
+
+            async def send_text(self, message: str):
+                await asyncio.sleep(0)
+                self.sent.append(message)
+
+            async def close(self, code: int = 1000, reason: str = ""):
+                self.closed_codes.append(code)
+
+        async def scenario():
+            mgr = ConnectionManager()
+            mgr.MAX_SOCKET_QUEUE = 16
+            mgr.SEND_TIMEOUT_SECONDS = 1.0
+            sock = YieldingSocket()
+            await mgr.connect("b-burst", sock, peer=None)
+            try:
+                for i in range(200):
+                    await mgr.broadcast("b-burst", "reaction", {"emoji": "👍", "i": i})
+                for _ in range(50):
+                    if len(sock.sent) >= 200:
+                        break
+                    await asyncio.sleep(0.01)
+                assert len(sock.sent) == 200
+                assert sock in mgr.rooms.get("b-burst", [])
+                assert not sock.closed_codes
+            finally:
+                mgr.reset()
+
+        asyncio.run(scenario())
+
+    def test_bulk_update_over_128_events_keeps_ws_open(
+        self, client, ws_token_for, ws_board, db_session
+    ):
+        from app.models import Card, CardGroup, Column
+
+        token = ws_token_for("Alice")
+        headers = {"X-Workspace-Token": token}
+        me = client.get("/api/workspaces/me", headers=headers).json()["participant"]
+
+        cols = (
+            db_session.query(Column)
+            .filter(Column.board_id == ws_board.id)
+            .order_by(Column.position)
+            .all()
+        )
+        col1, col2 = cols[0], cols[1]
+        groups = []
+        for idx in range(35):
+            grp = CardGroup(column_id=col1.id, title=f"Группа {idx}", position=idx)
+            db_session.add(grp)
+            groups.append(grp)
+        db_session.flush()
+
+        cards = []
+        for idx in range(100):
+            card = Card(
+                column_id=col1.id,
+                group_id=groups[idx % len(groups)].id,
+                text=f"Карточка {idx}",
+                author=me["name"],
+                author_id=me["id"],
+                color="#EADDFF",
+                position=idx,
+            )
+            db_session.add(card)
+            cards.append(card)
+        db_session.commit()
+
+        with connect(client, ws_board.id, token) as ws:
+            resp = client.post(
+                "/api/cards/bulk-update",
+                json={"card_ids": [c.id for c in cards], "column_id": col2.id},
+                headers=headers,
+            )
+            assert resp.status_code == 200
+
+            send(ws, "reaction", {"emoji": "👍"})
+            seen = []
+            while True:
+                msg = ws.receive_json()
+                seen.append(msg["event"])
+                if msg["event"] == "reaction":
+                    break
+
+            card_events = sum(1 for e in seen if e in ("card_moved", "card_updated"))
+            deleted_groups = sum(1 for e in seen if e == "group_deleted")
+            assert card_events == 100
+            assert deleted_groups == 35
+            assert card_events + deleted_groups > 128
+
+    def test_ws_schemas_rejects_bool_nan_and_unknown_events(self):
+        from app.ws_schemas import parse_ws_event
+
+        assert parse_ws_event("unknown", {}) is None
+        assert parse_ws_event("cursor_move", {"x": True, "y": 10}) is None
+        assert parse_ws_event("cursor_move", {"x": float("nan"), "y": 10}) is None
+        assert parse_ws_event("phase_change", {"phase": "bogus"}) is None
+        assert parse_ws_event("reaction", {"emoji": "🤖"}) is None
+        assert parse_ws_event("group_collapse", {"group_id": "g1", "collapsed": "yes"}) is None
+        assert parse_ws_event("facilitator_stop", {"lock_board": "false"}) is None
+        assert parse_ws_event("card_typing", {"column_id": "c1", "is_typing": "yes"}) is None
+        parsed_ready = parse_ws_event("ready_toggle", {"ready": "invalid"})
+        assert parsed_ready is not None and parsed_ready[1].ready is None
+        parsed_timer = parse_ws_event("timer_start", {"duration": 60, "remaining": 60, "junk": 1})
+        assert parsed_timer is not None and parsed_timer[1].sanitized() == {
+            "duration": 60,
+            "remaining": 60,
+        }

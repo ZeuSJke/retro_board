@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import HTTPException
 from sqlalchemy import func
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.board_view import (
@@ -12,8 +12,10 @@ from app.board_view import (
     card_view,
     cards_hidden,
     require_cards_visible,
+    visible_cards_sql_filter,
 )
 from app.database import release_connection
+from app.services.boards import clear_deleted_groups_state
 from app.services.common import BroadcastAction, dispatch_broadcasts, find_live_board
 from app.utils import get_or_404, require_unlocked_board
 from app.ws_manager import manager
@@ -211,6 +213,7 @@ def bulk_update_cards_sync(
 
     db.flush()
     deleted_groups = prune_empty_groups(db, touched_group_ids)
+    clear_deleted_groups_state(db, board.id, [p["id"] for p in deleted_groups], commit=False)
     db.commit()
 
     board_id = board.id
@@ -272,6 +275,11 @@ async def bulk_update_cards_for_workspace(
     return results
 
 
+def _escape_like(term: str) -> str:
+    """Экранировать спецсимволы `LIKE` (`\\`, `%`, `_`) для поиска подстроки."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def search_visible_cards(
     db: Session,
     workspace_id: str,
@@ -283,60 +291,71 @@ def search_visible_cards(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    """Поиск по тексту видимых карточек через Python `casefold()`.
-
-    Поиск выполняется в Python (а не через SQL `LIKE`), чтобы поведение кириллицы
-    было одинаковым на SQLite и PostgreSQL и чтобы скрытые нераскрытые карточки
-    (`cards_hidden=True`, чужие) гарантированно не просачивались через поиск.
-    """
-    q = query.strip().casefold()
+    """SQL-поиск по тексту видимых карточек через `func.lower()` и пагинацией."""
+    q = query.strip().lower()
     if not q:
         raise HTTPException(400, "Поисковый запрос не должен быть пустым")
 
-    load_options = (selectinload(models.Board.columns).selectinload(models.Column.cards),)
+    filters = [
+        models.Board.deleted_at.is_(None),
+        models.Board.workspace_id == workspace_id,
+        func.lower(models.Card.text).like(f"%{_escape_like(q)}%", escape="\\"),
+        visible_cards_sql_filter(viewer_id),
+    ]
     if board_id_or_slug:
-        boards = [
-            find_live_board(
-                db,
-                board_id_or_slug,
-                workspace_id,
-                options=load_options,
+        board_filter = find_live_board(db, board_id_or_slug, workspace_id)
+        filters.append(models.Board.id == board_filter.id)
+
+    col_filter = column_title.strip().lower() if column_title else ""
+    if col_filter:
+        filters.append(
+            func.lower(models.Column.title).like(
+                f"%{_escape_like(col_filter)}%", escape="\\"
             )
-        ]
-    else:
-        boards = (
-            db.query(models.Board)
-            .options(*load_options)
-            .filter(
-                models.Board.deleted_at.is_(None),
-                models.Board.workspace_id == workspace_id,
-            )
-            .order_by(models.Board.created_at.desc())
-            .all()
         )
 
-    col_filter = column_title.strip().casefold() if column_title else ""
+    total = (
+        db.query(func.count(models.Card.id))
+        .select_from(models.Card)
+        .join(models.Column, models.Card.column_id == models.Column.id)
+        .join(models.Board, models.Column.board_id == models.Board.id)
+        .filter(*filters)
+        .scalar()
+        or 0
+    )
+    if total == 0 or offset >= total or limit <= 0:
+        return [], total
+
+    rows = (
+        db.query(models.Card, models.Column, models.Board)
+        .join(models.Column, models.Card.column_id == models.Column.id)
+        .join(models.Board, models.Column.board_id == models.Board.id)
+        .filter(*filters)
+        .order_by(
+            models.Board.created_at.desc(),
+            models.Board.id.desc(),
+            models.Column.position.asc(),
+            models.Column.id.asc(),
+            models.Card.position.asc(),
+            models.Card.id.asc(),
+        )
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
     matches: list[dict] = []
-
-    for board in boards:
-        hidden = cards_hidden(board)
-        for col in sorted(board.columns, key=lambda c: c.position):
-            if col_filter and col_filter not in col.title.casefold():
-                continue
-            for card in sorted(col.cards, key=lambda c: c.position):
-                view = card_view(card, board, viewer_id, hidden=hidden)
-                if view["masked"]:
-                    continue
-                if q in view["text"].casefold():
-                    matches.append(
-                        {
-                            **view,
-                            "board_id": board.id,
-                            "board_name": board.name,
-                            "board_slug": board.slug,
-                            "column_title": col.title,
-                        }
-                    )
-
-    total = len(matches)
-    return matches[offset : offset + limit], total
+    for card, col, board in rows:
+        view = card_view(card, board, viewer_id)
+        if view["masked"]:
+            continue
+        matches.append(
+            {
+                **view,
+                "board_id": board.id,
+                "board_name": board.name,
+                "board_slug": board.slug,
+                "column_title": col.title,
+            }
+        )
+    return matches, total

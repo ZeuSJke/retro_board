@@ -19,6 +19,21 @@ export function isApiErrorReported(error: unknown): boolean {
   return error != null && typeof error === 'object' && reportedErrors.has(error)
 }
 
+/**
+ * Обернуть функцию запроса (например, `queryFn`), чтобы при ошибке не срабатывал
+ * запасной тост перехватчика — когда UI показывает ошибку сам или тихо деградирует.
+ */
+export function quietQuery<T>(fn: () => Promise<T>): () => Promise<T> {
+  return async () => {
+    try {
+      return await fn()
+    } catch (error) {
+      markApiErrorReported(error)
+      throw error
+    }
+  }
+}
+
 /** HTTP-статус ответа, если ошибка пришла от сервера. */
 export function getApiErrorStatus(error: unknown): number | undefined {
   if (error != null && typeof error === 'object') {

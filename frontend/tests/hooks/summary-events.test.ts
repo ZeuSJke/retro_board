@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
+import { useBoardSummary } from '../../hooks/useBoardSummary'
 import { useBoardWebSocket } from '../../hooks/useBoardWebSocket'
 
 let wsMessageHandler: ((msg: { event: string; data: unknown }) => void) | null = null
@@ -20,9 +21,12 @@ vi.mock('../../store/toastStore', () => ({
   showToast: vi.fn(),
 }))
 
-vi.mock('../../api', () => ({
+const apiMocks = vi.hoisted(() => ({
   getActionItems: vi.fn().mockResolvedValue([]),
+  getBoardSummary: vi.fn(),
 }))
+
+vi.mock('../../api', () => apiMocks)
 
 describe('useBoardWebSocket — событие summary_generated', () => {
   beforeEach(() => {
@@ -64,5 +68,87 @@ describe('useBoardWebSocket — событие summary_generated', () => {
     emit({ board_id: 'board-1', regenerated: 'yes' })
 
     expect(onSummaryGenerated).toHaveBeenCalledWith(false)
+  })
+})
+
+describe('useBoardSummary — защита от устаревшего ответа', () => {
+  beforeEach(() => {
+    apiMocks.getBoardSummary.mockReset()
+  })
+
+  it('игнорирует поздний ответ getBoardSummary после переключения boardId', async () => {
+    let resolveFirst!: (val: {
+      id: string
+      board_id: string
+      summary_text: string
+      key_themes: string[]
+      recommendations: string[]
+      created_at: string
+    }) => void
+    apiMocks.getBoardSummary.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve
+        }),
+    )
+
+    const { result, rerender } = renderHook(
+      ({ boardId }: { boardId: string }) =>
+        useBoardSummary({ boardId, hasSummary: true, onMarkHasSummary: vi.fn() }),
+      { initialProps: { boardId: 'board-1' } },
+    )
+
+    act(() => {
+      result.current.openSummary()
+    })
+    rerender({ boardId: 'board-2' })
+
+    let resolveSecond!: (val: {
+      id: string
+      board_id: string
+      summary_text: string
+      key_themes: string[]
+      recommendations: string[]
+      created_at: string
+    }) => void
+    apiMocks.getBoardSummary.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecond = resolve
+        }),
+    )
+    act(() => {
+      result.current.openSummary()
+    })
+
+    await act(async () => {
+      resolveFirst({
+        id: 'sum-old',
+        board_id: 'board-1',
+        summary_text: 'Старые итоги',
+        key_themes: [],
+        recommendations: [],
+        created_at: '2026-11-15T10:00:00Z',
+      })
+      await Promise.resolve()
+    })
+
+    expect(result.current.summary).toBeNull()
+    expect(result.current.summaryLoading).toBe(true)
+
+    await act(async () => {
+      resolveSecond({
+        id: 'sum-new',
+        board_id: 'board-2',
+        summary_text: 'Новые итоги',
+        key_themes: [],
+        recommendations: [],
+        created_at: '2026-11-15T10:01:00Z',
+      })
+      await Promise.resolve()
+    })
+
+    expect(result.current.summary?.id).toBe('sum-new')
+    expect(result.current.summaryLoading).toBe(false)
   })
 })

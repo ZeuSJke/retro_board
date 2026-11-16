@@ -7,6 +7,7 @@ from typing import Optional
 import httpx
 
 from app.config import settings
+from app.observability import record_ai_call
 
 
 @dataclass
@@ -66,9 +67,16 @@ class AIClient:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         if not _ai_slots.acquire(timeout=settings.ai_queue_timeout_s):
+            record_ai_call("busy", 0.0)
             raise RuntimeError("AI is busy: too many concurrent requests")
+        start = time.perf_counter()
         try:
-            return self._request(payload, headers, config)
+            result = self._request(payload, headers, config)
+            record_ai_call("ok", time.perf_counter() - start)
+            return result
+        except Exception:
+            record_ai_call("error", time.perf_counter() - start)
+            raise
         finally:
             _ai_slots.release()
 

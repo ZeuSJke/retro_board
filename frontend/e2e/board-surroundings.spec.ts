@@ -480,7 +480,9 @@ test.describe('Итоги: событие summary_generated', () => {
       const refreshed = page.waitForResponse((r) => r.url().endsWith(`/boards/${board.id}/summary`))
       fromServer({ summary: { id: 'sum-1' }, board_id: board.id, regenerated: true })
       await refreshed
-      await page.waitForTimeout(500)
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      )
       await expect(page.getByRole('dialog')).toHaveCount(0)
       await expect(page.locator('body > canvas')).toHaveCount(0)
 
@@ -496,7 +498,7 @@ test.describe('Итоги: событие summary_generated', () => {
       await expect(dialog).toContainText('Подменные итоги №', { timeout: 10000 })
 
       // Салют не нарушает CSP: в консоли нет ошибок (раньше — запрет воркера из blob:)
-      await page.waitForTimeout(500)
+      await page.waitForLoadState('networkidle')
       expect(consoleErrors).toEqual([])
     } finally {
       await ctx.close()
@@ -633,7 +635,10 @@ test.describe('Удаление последней доски и экспорт'
       await expect(owner.page.getByTestId('no-boards-screen')).toBeVisible({ timeout: 15000 })
       await expect(owner.page).toHaveURL(/\/board\/start$/)
       // Событие об удалении приходит и самому удаляющему: второго перехода и тоста от него нет
-      await owner.page.waitForTimeout(1000)
+      await owner.page.waitForLoadState('networkidle')
+      await owner.page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      )
       expect(navigations).toHaveLength(1)
       const toasts = owner.page.locator('[data-sonner-toast]')
       await expect(toasts).toHaveCount(1)

@@ -1,9 +1,11 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import AdminPage from '../../app/admin/page'
 import { generateSlugFromName } from '../../app/admin/AdminTeams'
 import { getAdminSessionHint, setAdminSessionHint } from '../../api/admin'
+import { makeQueryClient, queryKeys } from '../../lib/query-client'
 import { showToast } from '../../store/toastStore'
 
 const api = vi.hoisted(() => ({
@@ -55,16 +57,24 @@ function httpError(status: number, detail: unknown = '') {
   return Object.assign(new Error(`HTTP ${status}`), { response: { status, data: { detail } } })
 }
 
+function renderAdminPage(client = makeQueryClient()) {
+  const result = render(<AdminPage />, {
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  })
+  return { ...result, client }
+}
+
 /** Открыть админку уже вошедшим администратором со списком команд. */
-async function renderSignedIn(workspaces = [platform]) {
+async function renderSignedIn(workspaces = [platform], client = makeQueryClient()) {
   setAdminSessionHint(true)
   api.checkAdminSession.mockImplementation(() => {
     setAdminSessionHint(true)
     return Promise.resolve(true)
   })
   api.getAdminWorkspaces.mockResolvedValue(workspaces)
-  render(<AdminPage />)
+  renderAdminPage(client)
   await screen.findByRole('heading', { name: 'Команды' })
+  return client
 }
 
 function teamRow(name: string) {
@@ -91,7 +101,7 @@ describe('Админка /admin', () => {
 
   describe('вход', () => {
     it('без сессии показывает форму входа, проверив cookie без 401', async () => {
-      render(<AdminPage />)
+      renderAdminPage()
 
       expect(await screen.findByText('Панель администратора')).toBeInTheDocument()
       expect(api.checkAdminSession).toHaveBeenCalledTimes(1)
@@ -100,7 +110,7 @@ describe('Админка /admin', () => {
 
     it('пока проверяет сессию, можно вернуться к доскам', () => {
       api.checkAdminSession.mockImplementation(() => new Promise(() => {}))
-      render(<AdminPage />)
+      renderAdminPage()
 
       expect(screen.getByText('Проверка доступа...')).toBeInTheDocument()
       expect(screen.getByRole('link', { name: 'Вернуться к доскам' })).toHaveAttribute('href', '/')
@@ -118,7 +128,7 @@ describe('Админка /admin', () => {
     it('успешный вход открывает список команд', async () => {
       const user = userEvent.setup()
       api.getAdminWorkspaces.mockResolvedValue([platform])
-      render(<AdminPage />)
+      renderAdminPage()
 
       await user.type(screen.getByLabelText('Логин'), 'admin')
       await user.type(screen.getByLabelText('Пароль'), 'secret')
@@ -132,7 +142,7 @@ describe('Админка /admin', () => {
     it('неверный пароль — понятное сообщение, форма остаётся', async () => {
       const user = userEvent.setup()
       api.adminLogin.mockRejectedValueOnce(httpError(401, 'Неверный логин или пароль'))
-      render(<AdminPage />)
+      renderAdminPage()
 
       await user.type(screen.getByLabelText('Логин'), 'admin')
       await user.type(screen.getByLabelText('Пароль'), 'wrong')
@@ -153,7 +163,7 @@ describe('Админка /admin', () => {
         setAdminSessionHint(false)
         return Promise.reject(httpError(401))
       })
-      render(<AdminPage />)
+      renderAdminPage()
 
       expect(await screen.findByRole('alert')).toHaveTextContent(
         'Сессия администратора завершилась — войдите снова',
@@ -163,13 +173,15 @@ describe('Админка /admin', () => {
 
     it('«Выйти» возвращает форму входа без сообщения об истёкшей сессии', async () => {
       const user = userEvent.setup()
-      await renderSignedIn()
+      const client = await renderSignedIn()
+      expect(client.getQueryData(queryKeys.adminWorkspaces())).toEqual([platform])
 
       await user.click(screen.getByRole('button', { name: 'Выйти' }))
 
       expect(await screen.findByText('Панель администратора')).toBeInTheDocument()
       expect(api.adminLogout).toHaveBeenCalledTimes(1)
       expect(screen.queryByRole('alert')).toBeNull()
+      expect(client.getQueryData(queryKeys.adminWorkspaces())).toBeUndefined()
     })
 
     it('список не загрузился — ошибка и «Повторить», а не форма входа', async () => {
@@ -180,7 +192,7 @@ describe('Админка /admin', () => {
         return Promise.resolve(true)
       })
       api.getAdminWorkspaces.mockRejectedValueOnce(httpError(500, 'Внутренняя ошибка сервера'))
-      render(<AdminPage />)
+      renderAdminPage()
 
       expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось загрузить список команд')
       expect(screen.queryByText('Панель администратора')).toBeNull()

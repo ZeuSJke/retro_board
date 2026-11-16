@@ -1,8 +1,9 @@
 from collections.abc import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import make_url
-from sqlalchemy.orm import sessionmaker, DeclarativeBase, Session
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
 from app.config import settings
 
 
@@ -31,6 +32,15 @@ engine = create_engine(
     settings.sqlalchemy_database_url,
     **_engine_options(settings.sqlalchemy_database_url),
 )
+if engine.dialect.name == "sqlite":
+
+    @event.listens_for(engine, "connect")
+    def _register_sqlite_lower(dbapi_connection, _connection_record) -> None:
+        dbapi_connection.create_function(
+            "lower", 1, lambda value: value.lower() if value is not None else None
+        )
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

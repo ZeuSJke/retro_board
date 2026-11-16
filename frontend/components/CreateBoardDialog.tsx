@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   Copy,
   EyeOff,
@@ -12,8 +13,9 @@ import {
 } from 'lucide-react'
 import { createBoard, getBoardTemplates } from '@/api'
 import { COLUMN_COLOR_PALETTE } from '@/lib/board-themes'
+import { queryKeys } from '@/lib/query-client'
 import { useOpeningCount } from '@/lib/use-opening-count'
-import { getApiErrorMessage } from '@/utils/apiError'
+import { getApiErrorMessage, markApiErrorReported } from '@/utils/apiError'
 import { showToast } from '@/store/toastStore'
 import type { Board, BoardListItem, BoardTemplateInfo, ColumnSeed } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -142,7 +144,19 @@ interface CreateBoardFormProps {
 }
 
 function CreateBoardForm({ existingBoards, onCancel, onCreated }: CreateBoardFormProps) {
-  const [templates, setTemplates] = useState<BoardTemplateInfo[]>(FALLBACK_TEMPLATES)
+  const { data: serverTemplates } = useQuery({
+    queryKey: queryKeys.boardTemplates(),
+    queryFn: async () => {
+      try {
+        return await getBoardTemplates()
+      } catch (err) {
+        markApiErrorReported(err)
+        throw err
+      }
+    },
+    staleTime: 10 * 60_000,
+  })
+  const templates = serverTemplates && serverTemplates.length > 0 ? serverTemplates : FALLBACK_TEMPLATES
   const [name, setName] = useState('')
   const [template, setTemplate] = useState<string>('classic')
   const [maxVotes, setMaxVotes] = useState<number>(5)
@@ -156,16 +170,6 @@ function CreateBoardForm({ existingBoards, onCancel, onCreated }: CreateBoardFor
   const [anonymousVotes, setAnonymousVotes] = useState(false)
   const [allowMultipleVotes, setAllowMultipleVotes] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    getBoardTemplates()
-      .then((list) => {
-        if (list.length > 0) setTemplates(list)
-      })
-      .catch(() => {
-        /* fallback templates already loaded */
-      })
-  }, [])
 
   // Исходная доска: выбранная, пока она есть в списке, иначе самая свежая
   const selectedSourceBoard =

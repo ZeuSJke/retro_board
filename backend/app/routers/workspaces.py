@@ -4,9 +4,18 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
-from app.database import get_db, release_connection
 from app import models, schemas
+from app.config import settings
+from app.database import get_db, release_connection
+from app.limiter import (
+    INVITE_LIMIT,
+    TEAM_READ_LIMIT,
+    TEAM_WRITE_LIMIT,
+    entry_limit_key,
+    limiter,
+)
 from app.models import now_utc
+from app.services import agent_tokens as agent_token_service
 from app.workspace_auth import (
     clear_session_cookie,
     get_current_participant,
@@ -19,15 +28,6 @@ from app.workspace_auth import (
     token_from_request,
     verify_access_key,
 )
-from app.config import settings
-from app.limiter import (
-    INVITE_LIMIT,
-    TEAM_READ_LIMIT,
-    TEAM_WRITE_LIMIT,
-    entry_limit_key,
-    limiter,
-)
-from app.services import agent_tokens as agent_token_service
 from app.ws_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def workspace_login(
     key_ok = verify_access_key(body.access_key, key_hash)
     if not workspace or not key_ok:
         raise HTTPException(status_code=401, detail=_LOGIN_FAILED)
-    return _start_session(db, response, workspace, body.name)
+    return _start_session(db, response, workspace, body.name or "Участник")
 
 
 @router.post("/join", response_model=schemas.SessionOut)
@@ -93,7 +93,7 @@ def workspace_join(
 ):
     """Вход по ссылке-приглашению: токен из ссылки и имя."""
     workspace = _workspace_by_invite(db, body.invite_token)
-    return _start_session(db, response, workspace, body.name)
+    return _start_session(db, response, workspace, body.name or "Участник")
 
 
 def _workspace_by_invite(db: Session, token: str) -> models.Workspace:

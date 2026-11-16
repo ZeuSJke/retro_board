@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import {
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
   TouchSensor,
   useSensor,
   useSensors,
@@ -73,7 +73,9 @@ export function useBoardDragDrop({
   }, [])
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    // MouseSensor (а не PointerSensor): PointerSensor перехватывает pointerdown от touch,
+    // не давая сработать TouchSensor с delay-ограничением и обрываясь по pointercancel при скролле
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
     // С клавиатуры: пробел на ручке — взять, стрелки вверх/вниз — место в колонке,
     // влево/вправо — соседняя колонка, пробел — отпустить, Escape — отменить

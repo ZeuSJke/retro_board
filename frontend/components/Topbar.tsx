@@ -310,6 +310,7 @@ export default function Topbar({
                 size="sm"
                 className="h-8 gap-1.5 px-2.5 text-xs sm:px-3"
                 title="Экспорт и меню доски"
+                aria-label="Экспорт и меню доски"
                 data-testid="export-menu-btn"
               >
                 {/* На телефоне это общее меню доски: в нём всё, что не поместилось в шапку */}

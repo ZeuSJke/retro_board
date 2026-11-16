@@ -81,6 +81,7 @@ def test_board_isolation_between_workspaces(client, db_session, workspace_header
 
     # Создать второй workspace
     import bcrypt
+
     from app.models import Workspace
 
     ws2 = Workspace(
@@ -112,6 +113,7 @@ def test_get_board_cross_workspace_fails(
     """Доступ к доске из другого workspace → 404."""
     # Создать второй workspace
     import bcrypt
+
     from app.models import Workspace
 
     ws2 = Workspace(
@@ -133,3 +135,91 @@ def test_get_board_cross_workspace_fails(
     # Попытка получить доску из первого workspace вторым → 404
     resp = client.get(f"/api/boards/{sample_board['id']}", headers=headers2)
     assert resp.status_code == 404
+
+
+def test_cross_workspace_isolation_for_child_entities_and_admin_pagination(
+    client, db_session, workspace_headers, admin_headers, sample_board
+):
+    """Изоляция между командами: колонки, карточки, группы, задачи, итоги, настроение, health check."""
+    import bcrypt
+
+    from app.models import Workspace
+
+    col_id = sample_board["columns"][0]["id"]
+    card_id = client.post(
+        "/api/cards/",
+        json={"column_id": col_id, "text": "Секрет команды 1"},
+        headers=workspace_headers,
+    ).json()["id"]
+    group_id = client.post(
+        "/api/groups/",
+        json={"column_id": col_id, "title": "Группа 1"},
+        headers=workspace_headers,
+    ).json()["id"]
+    action_id = client.post(
+        "/api/action-items/",
+        json={"board_id": sample_board["id"], "text": "Задача 1"},
+        headers=workspace_headers,
+    ).json()["id"]
+
+    ws2 = Workspace(
+        id="workspace-2",
+        slug="team-2",
+        name="Team 2",
+        access_key_hash=bcrypt.hashpw(b"key2", bcrypt.gensalt(rounds=4)).decode(),
+    )
+    ws3 = Workspace(
+        id="workspace-3",
+        slug="team-3",
+        name="Team 3",
+        access_key_hash=bcrypt.hashpw(b"key3", bcrypt.gensalt(rounds=4)).decode(),
+    )
+    db_session.add_all([ws2, ws3])
+    db_session.commit()
+
+    resp_login = client.post(
+        "/api/workspaces/login", json={"workspace_slug": "team-2", "access_key": "key2"}
+    )
+    headers2 = {"X-Workspace-Token": resp_login.cookies["workspace_token"]}
+    client.cookies.clear()
+
+    # Дочерние ресурсы первой команды недоступны из второй
+    assert client.patch(f"/api/columns/{col_id}", json={"title": "X"}, headers=headers2).status_code == 404
+    assert client.delete(f"/api/columns/{col_id}", headers=headers2).status_code == 404
+    assert client.post("/api/cards/", json={"column_id": col_id, "text": "x"}, headers=headers2).status_code == 404
+    assert client.patch(f"/api/cards/{card_id}", json={"text": "x"}, headers=headers2).status_code == 404
+    assert client.post(f"/api/cards/{card_id}/like", headers=headers2).status_code == 404
+    assert client.delete(f"/api/cards/{card_id}", headers=headers2).status_code == 404
+    assert client.post("/api/groups/", json={"column_id": col_id, "title": "g"}, headers=headers2).status_code == 404
+    assert client.patch(f"/api/groups/{group_id}", json={"title": "g2"}, headers=headers2).status_code == 404
+    assert client.delete(f"/api/groups/{group_id}", headers=headers2).status_code == 404
+    assert client.get(f"/api/action-items/?board_id={sample_board['id']}", headers=headers2).status_code == 404
+    assert client.patch(f"/api/action-items/{action_id}", json={"status": "done"}, headers=headers2).status_code == 404
+    assert client.delete(f"/api/action-items/{action_id}", headers=headers2).status_code == 404
+    assert client.get("/api/action-items/all", headers=headers2).json() == []
+    assert client.get(f"/api/boards/{sample_board['id']}/summary", headers=headers2).status_code == 404
+    assert client.post(f"/api/boards/{sample_board['id']}/mood", json={"score": 5}, headers=headers2).status_code == 404
+    assert client.get(f"/api/boards/{sample_board['id']}/health-check", headers=headers2).status_code == 404
+    assert (
+        client.post(
+            f"/api/boards/{sample_board['id']}/health-check",
+            json={"answers": [{"question_id": "mission", "score": 3}]},
+            headers=headers2,
+        ).status_code
+        == 404
+    )
+
+    # Пагинация GET /api/admin/workspaces
+    admin_p1 = client.get("/api/admin/workspaces?limit=2&offset=0", headers=admin_headers)
+    assert admin_p1.status_code == 200
+    assert admin_p1.headers["X-Total-Count"] == "3"
+    assert len(admin_p1.json()) == 2
+    admin_p2 = client.get("/api/admin/workspaces?limit=2&offset=2", headers=admin_headers)
+    assert admin_p2.status_code == 200
+    assert admin_p2.headers["X-Total-Count"] == "3"
+    assert len(admin_p2.json()) == 1
+    assert {w["id"] for w in admin_p1.json() + admin_p2.json()} == {
+        "test-workspace-id",
+        "workspace-2",
+        "workspace-3",
+    }

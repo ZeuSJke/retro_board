@@ -7,6 +7,7 @@
 ```bash
 # В корне: make setup создаёт backend/.venv с requirements-dev.txt
 .venv/bin/ruff check .
+.venv/bin/mypy app main.py
 .venv/bin/alembic heads --verbose
 TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v
 TESTING=true DATABASE_URL=sqlite:// .venv/bin/pytest -v tests/test_boards.py::test_name
@@ -32,9 +33,9 @@ TESTING=true DATABASE_URL=sqlite:// TEST_DATABASE_URL=postgresql://… .venv/bin
 - **Health check** (`app/health.py`, `app/routers/health.py`): вопросы зашиты в код — меняя их состав, ломаешь сравнение между спринтами; наружу отдаётся только сводка и собственные ответы участника. Роутер подключён раньше досок, чтобы статические пути не перехватил `/{board_id}`.
 - **Права**: текст карточки правит автор (`can_edit_card_text`), удаляет автор или модератор (`can_delete_card`); доску и колонку с карточками удаляет модератор (`require_moderator`) — создатель доски или ведущий активной сессии; у досок без создателя (до участников) — любой.
 - **Soft delete и блокировка доски**: доски удаляются через `Board.deleted_at`. Во всех хендлерах досок и дочерних сущностей используйте `require_live_board()` и `require_unlocked_board()` из `app/utils.py` (`tests/test_audit_guards.py` проверяет `404` для удалённых досок и disambiguation slug, `tests/test_v3_features.py` — `423` для заблокированных досок).
-- **Уникальность**: у `Board` составные ограничения `uq_board_workspace_name` и `uq_board_workspace_slug`; коллизия slug при разных именах должна разрешаться суффиксом, а не 500.
+- **Уникальность и пагинация**: у `Board` частичные уникальные индексы `uq_board_workspace_name` и `uq_board_workspace_slug` (`WHERE deleted_at IS NULL`, миграция `0015`) — soft-deleted доски не мешают повторно использовать имя или slug, а коллизия slug при разных именах должна разрешаться суффиксом, а не 500. Списочные ручки с `limit`/`offset` (`/api/boards/`, `/api/action-items/all`, `/api/admin/workspaces`) возвращают заголовок `X-Total-Count` (проброшен через CORS `expose_headers`).
 - **Драйвер PostgreSQL** — psycopg 3. `DATABASE_URL` в окружениях задан как `postgresql://…`; драйвер подставляет `settings.sqlalchemy_database_url` — в движке и в `alembic/env.py` используйте его, а не `settings.database_url`.
-- **Журнал и пробы**: формат журнала с идентификатором запроса задаёт `app/request_context.py` (`X-Request-ID` в ответе и `[id]` в каждой записи); пишите через `logging`, не через `print`. `/api/health` — живость процесса, `/api/ready` — готовность с проверкой БД.
+- **Журнал, пробы и метрики**: формат журнала с идентификатором запроса задаёт `app/request_context.py` (`LOG_FORMAT=text|json`, `X-Request-ID` в ответе и `[id]` / `"request_id"` в каждой записи); пишите через `logging`, не через `print`. `/api/health` — живость процесса, `/api/ready` — готовность с проверкой БД, `/metrics` (`app/observability.py`) — метрики Prometheus (`retro_*`).
 - **Тесты на двух СУБД**: `tests/conftest.py` по умолчанию поднимает SQLite, а с `TEST_DATABASE_URL` — PostgreSQL; пишите тесты так, чтобы они проходили на обеих (без SQLite-специфики и без зависимости от порядка строк без `ORDER BY`). `alembic check` в CI сверяет модели со схемой: изменил модель — добавь миграцию.
 - **SQLite в тестах и Alembic**: `tests/conftest.py` подменяет `ARRAY` на `JSONEncodedList` и сбрасывает `ws_manager` между тестами. Любое изменение `models.py` требует миграции в `alembic/versions/` без неэкранированного Postgres-only DDL, ломающего SQLite-тесты.
 
@@ -50,9 +51,9 @@ TESTING=true DATABASE_URL=sqlite:// TEST_DATABASE_URL=postgresql://… .venv/bin
   - `_authenticate_ws` проверяет `Origin` по `CORS_ORIGINS` и JWT (`workspace_token` cookie в приоритете, query-параметр только для совместимости);
   - `assert_single_worker()` вызывается только в `lifespan` (не на уровне импорта);
   - личность сокета — `Peer(id, name)` участника из сессии, фиксируется при подключении; `identify` её не меняет. Ведущий хранится по `participant_id`: роль переживает переподключение, передаётся (`facilitator_transfer`) и перехватывается у пропавшего ведущего (`facilitator_takeover`, порог `FACILITATOR_TAKEOVER_SECONDS`); сессия без ведущего завершается через `FACILITATOR_GRACE_SECONDS`, в том числе восстановленная из БД после рестарта;
-  - события, меняющие данные доски, получают номер `seq` (список — `SEQUENCED_EVENTS` в `app/ws_manager.py`): новое событие с данными доски добавляйте в этот список, иначе клиент не заметит его потерю. Таймер и фокус сохраняются в `Board.session_state` (`_persist_session_state`) и поднимаются `manager.restore_state` один раз после рестарта;
+  - события, меняющие данные доски, получают номер `seq` (список — `SEQUENCED_EVENTS` в `app/ws_manager.py`): новое событие с данными доски добавляйте в этот список, иначе клиент не заметит его потерю. Состояние таймера (серверное `ends_at_ms` только внутри БД), фокуса и свёрнутых групп (`groups_collapsed`) сохраняется в `Board.session_state` (`_persist_session_state`) и поднимается `manager.restore_state` один раз после рестарта;
   - рассылка событий — `await manager.broadcast(board_id, "event_name", data_dict)`; если разным получателям положены разные данные — `manager.broadcast_each`. В `finally` grace-таймер фасилитатора планируется синхронно до любых `await`;
-  - всё, что прислал клиент, недоверенное: новые входящие события очищайте функцией из `app/ws_payloads.py` и рассылайте/сохраняйте в `ConnectionManager` только очищенный словарь с известными полями, а не исходный `data`.
+  - всё, что прислал клиент, недоверенное: новые входящие события описывайте Pydantic-схемами в `app/ws_schemas.py` с опорой на общие ограничители из `app/ws_payloads.py`, передавая в обработчики и `ConnectionManager` только очищенный словарь с известными полями, а не исходный `data`.
 
 ## AI-интеграция (`app/ai/`)
 

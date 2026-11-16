@@ -16,8 +16,9 @@ class TestBoardSummary:
         self, db_session, client, sample_board, workspace_headers
     ):
         """Test getting summary after it was created directly in DB."""
-        from app.models import BoardSummary
         import uuid
+
+        from app.models import BoardSummary
 
         # Create summary directly in DB
         summary = BoardSummary(
@@ -65,8 +66,9 @@ class TestSummaryModel:
 
     def test_summary_creation(self, db_session, sample_board):
         """Test creating a summary directly in the database."""
-        from app.models import BoardSummary
         import uuid
+
+        from app.models import BoardSummary
 
         summary = BoardSummary(
             id=str(uuid.uuid4()),
@@ -90,8 +92,9 @@ class TestSummaryModel:
 
     def test_summary_board_relationship(self, db_session, sample_board):
         """Test relationship between Board and BoardSummary."""
-        from app.models import BoardSummary
         import uuid
+
+        from app.models import BoardSummary
 
         summary = BoardSummary(
             id=str(uuid.uuid4()),

@@ -1,8 +1,9 @@
 """MCP-сервер RetroBoard на Streamable HTTP (`/mcp`)."""
 
-from contextlib import asynccontextmanager
 import logging
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from contextlib import asynccontextmanager
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import anyio

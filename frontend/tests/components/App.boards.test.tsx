@@ -1,5 +1,6 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../../components/App'
 import {
@@ -7,9 +8,17 @@ import {
   requestBoardsRefresh,
   unmarkOwnBoardDeletion,
 } from '../../lib/board-list-signals'
+import { makeQueryClient } from '../../lib/query-client'
 import { useAppStore } from '../../store'
 import { showToast } from '../../store/toastStore'
 import type { Board, BoardListItem, WsMessage } from '../../types'
+
+const render = (ui: React.ReactElement) => {
+  const client = makeQueryClient()
+  return rtlRender(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  })
+}
 
 const api = vi.hoisted(() => ({
   refreshWorkspaceSession: vi.fn(),
@@ -49,7 +58,7 @@ const workspaceSocket = vi.hoisted(() => ({
 
 vi.mock('../../hooks/useWebSocket', () => ({
   useWebSocket: (_room: string, onMessage: (msg: WsMessage) => void) => {
-    workspaceSocket.onMessage = onMessage
+    workspaceSocket.onMessage = onMessage as (msg: { event: string; data: Record<string, unknown> }) => void
     return { sendMessage: vi.fn(), connected: true }
   },
 }))

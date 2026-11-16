@@ -1,14 +1,16 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { useAppStore } from '../store'
 import { getBoard, getBoardBySlug, getBoards, refreshWorkspaceSession } from '../api'
 import { isOwnBoardDeletion, onBoardsRefreshRequested } from '../lib/board-list-signals'
 import { FIRST_BOARD_REF, FIRST_BOARD_ROUTE, boardPath, resolveStartBoard } from '../lib/board-routes'
+import { queryKeys } from '../lib/query-client'
 import { boardToBoardListItem } from '../utils/boardMapper'
-import { getApiErrorMessage, getApiErrorStatus, markApiErrorReported } from '../utils/apiError'
+import { getApiErrorMessage, getApiErrorStatus, markApiErrorReported, quietQuery } from '../utils/apiError'
 import type { Board, BoardListItem, WsBoardUpdatedData } from '../types'
 import BoardPage from './BoardPage'
 import CreateBoardDialog from './CreateBoardDialog'
@@ -25,13 +27,34 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export default function App({ boardId }: AppProps) {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const setCurrentBoard = useAppStore((s) => s.setCurrentBoard)
+  const workspaceId = useAppStore((s) => s.workspace?.workspaceId ?? null)
   const workspaceName = useAppStore((s) => s.workspace?.workspaceName)
   const hasWorkspace = useAppStore((s) => Boolean(s.workspace))
   const participantId = useAppStore((s) => s.participant?.id ?? null)
   const hasHydrated = useAppStore((s) => s._hasHydrated ?? true)
 
-  const [boards, setBoards] = useState<BoardListItem[]>([])
+  const boardsQueryKey = queryKeys.boards(workspaceId ?? 'anonymous')
+  const { data: boards = [] } = useQuery<BoardListItem[]>({
+    queryKey: boardsQueryKey,
+    queryFn: getBoards,
+    enabled: false,
+  })
+  const updateBoardsCache = useCallback(
+    (updater: (prev: BoardListItem[]) => BoardListItem[], targetWorkspaceId?: string) => {
+      const id = targetWorkspaceId ?? useAppStore.getState().workspace?.workspaceId ?? 'anonymous'
+      queryClient.setQueryData<BoardListItem[]>(queryKeys.boards(id), (prev = []) => updater(prev))
+    },
+    [queryClient],
+  )
+  const invalidateDashboard = useCallback(
+    (targetWorkspaceId?: string) => {
+      const id = targetWorkspaceId ?? useAppStore.getState().workspace?.workspaceId ?? 'anonymous'
+      void queryClient.invalidateQueries({ queryKey: ['dashboard', id] })
+    },
+    [queryClient],
+  )
   // Доска хранится вместе с участником, для которого её отдал сервер: карточки и голоса
   // собираются под получателя, показывать их другому участнику (повторный вход) нельзя
   const [loaded, setLoaded] = useState<{ board: Board; participantId: string } | null>(null)
@@ -58,9 +81,13 @@ export default function App({ boardId }: AppProps) {
     try {
       // Источник правды о сессии — сервер: участник, команда и признак ai_enabled
       await refreshWorkspaceSession()
-      const list = await getBoards()
+      const freshWorkspaceId = useAppStore.getState().workspace?.workspaceId ?? 'anonymous'
+      const list = await queryClient.fetchQuery({
+        queryKey: queryKeys.boards(freshWorkspaceId),
+        queryFn: quietQuery(getBoards),
+        staleTime: 0,
+      })
       if (stale()) return
-      setBoards(list)
 
       if (list.length === 0) {
         // Досок нет (новая команда или удалена последняя): молча доску не создаём
@@ -103,15 +130,19 @@ export default function App({ boardId }: AppProps) {
       setCurrentBoard(target.id)
       setError(null)
     } catch (err) {
-      if (stale()) return
+      if (stale()) {
+        markApiErrorReported(err)
+        return
+      }
       // 401: перехватчик уже сбросил сессию — показываем вход без экрана ошибки
       if (getApiErrorStatus(err) === 401 || !useAppStore.getState().participant) {
+        markApiErrorReported(err)
         setBoard(null)
         return
       }
       setError(getApiErrorMessage(err, 'Не удалось загрузить доску'))
     }
-  }, [hasHydrated, participantId, boardId, router, setCurrentBoard, setBoard])
+  }, [hasHydrated, participantId, boardId, queryClient, router, setCurrentBoard, setBoard])
 
   useEffect(() => {
     if (!hasHydrated || needsAuth) return
@@ -122,13 +153,16 @@ export default function App({ boardId }: AppProps) {
   // список, когда его открывают, — иначе он остаётся таким, каким был при загрузке страницы
   const refreshBoards = useCallback(async () => {
     try {
+      const currentWorkspaceId = useAppStore.getState().workspace?.workspaceId ?? 'anonymous'
       const list = await getBoards()
-      if (list.length > 0) setBoards(list)
+      if (list.length > 0) {
+        queryClient.setQueryData<BoardListItem[]>(queryKeys.boards(currentWorkspaceId), list)
+      }
     } catch (err) {
       // Фоновое обновление: старый список остаётся на месте, уведомление не нужно
       markApiErrorReported(err)
     }
-  }, [])
+  }, [queryClient])
 
   useEffect(() => {
     if (needsAuth) return
@@ -161,7 +195,7 @@ export default function App({ boardId }: AppProps) {
       existingBoards={boards}
       onCreated={(created) => {
         const listItem = boardToBoardListItem(created)
-        setBoards((prev) => (prev.some((b) => b.id === created.id) ? prev : [listItem, ...prev]))
+        updateBoardsCache((prev) => (prev.some((b) => b.id === created.id) ? prev : [listItem, ...prev]))
         setEmptyFor(null)
         router.push(boardPath(created))
       }}
@@ -233,7 +267,7 @@ export default function App({ boardId }: AppProps) {
         workspaceName={workspaceName || 'Команда'}
         onBoardUpdated={(updated) => {
           setBoard(updated)
-          setBoards((prev) =>
+          updateBoardsCache((prev) =>
             prev.map((b) =>
               b.id === updated.id
                 ? {
@@ -246,11 +280,13 @@ export default function App({ boardId }: AppProps) {
                 : b,
             ),
           )
+          invalidateDashboard()
         }}
         onBoardDeleted={(deletedId) => {
           // Доску удалил сам участник: один переход, уведомление уже показал диалог настроек
           const remaining = boards.filter((b) => b.id !== deletedId)
-          setBoards(remaining)
+          updateBoardsCache(() => remaining)
+          invalidateDashboard()
           router.replace(remaining.length > 0 ? boardPath(remaining[0]) : FIRST_BOARD_ROUTE)
         }}
         onSelectBoard={(b) => {
@@ -258,12 +294,13 @@ export default function App({ boardId }: AppProps) {
         }}
         onOpenCreateBoard={openCreateDialog}
         onBoardsListCreated={(created) => {
-          setBoards((prev) =>
+          updateBoardsCache((prev) =>
             prev.some((b) => b.id === created.id) ? prev : [created, ...prev],
           )
+          invalidateDashboard()
         }}
         onBoardsListUpdated={(data: WsBoardUpdatedData) => {
-          setBoards((prev) =>
+          updateBoardsCache((prev) =>
             prev.map((b) =>
               b.id === data.id
                 ? {
@@ -275,9 +312,11 @@ export default function App({ boardId }: AppProps) {
                 : b,
             ),
           )
+          invalidateDashboard()
         }}
         onBoardsListDeleted={(deletedId) => {
-          setBoards((prev) => prev.filter((b) => b.id !== deletedId))
+          updateBoardsCache((prev) => prev.filter((b) => b.id !== deletedId))
+          invalidateDashboard()
           // Событие об удалении приходит и самому удаляющему, причём раньше ответа на его
           // запрос: его переход выполнит onBoardDeleted, второй переход и уведомление не нужны
           if (deletedId === board.id && !isOwnBoardDeletion(deletedId)) {
