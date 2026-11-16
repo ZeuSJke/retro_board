@@ -11,7 +11,7 @@ import {
   API,
 } from './helpers'
 
-test.describe('v3 фичи — шаблоны, настроение, фокус, блокировка, канбан и тема', () => {
+test.describe('v3 фичи — шаблоны, фокус, блокировка, канбан и тема', () => {
   test.beforeEach(async ({ page, request }) => {
     const wsData = await ensureE2EWorkspace(request)
     await cleanupBoards(request, wsData.token)

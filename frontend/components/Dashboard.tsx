@@ -595,7 +595,8 @@ export default function Dashboard() {
     [boards, boardTaskStats],
   )
 
-  const hasMoodChart = moodTrends.some((m) => m.mood_avg !== null || m.cards_count > 0)
+  // Настроение больше не собираем на доске: показываем только историю старых досок
+  const hasMoodChart = moodTrends.some((m) => m.mood_avg !== null)
 
   const kpi = useMemo(() => {
     const open = items.filter((i) => i.status === 'open').length
@@ -1112,7 +1113,12 @@ export default function Dashboard() {
         ) : (
           <>
             {/* KPI Summary Grid */}
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div
+              className={cn(
+                'grid grid-cols-2 gap-3',
+                kpi.moodAvg !== null ? 'lg:grid-cols-4' : 'lg:grid-cols-3',
+              )}
+            >
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1181,25 +1187,29 @@ export default function Dashboard() {
                 </Card>
               </motion.div>
 
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.24, delay: 0.15 }}
-              >
-                <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
-                  <CardContent className="flex items-center justify-between gap-2 p-4">
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground">Индекс настроения</p>
-                      <p className="mt-1 font-mono text-2xl font-bold">
-                        {kpi.moodAvg !== null ? `${kpi.moodAvg.toFixed(1)}/5` : '—'}
-                      </p>
-                    </div>
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
-                      <HeartPulse className="h-5 w-5" />
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
+              {kpi.moodAvg !== null && (
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.24, delay: 0.15 }}
+                >
+                  <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
+                    <CardContent className="flex items-center justify-between gap-2 p-4">
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground">
+                          Индекс настроения
+                        </p>
+                        <p className="mt-1 font-mono text-2xl font-bold">
+                          {kpi.moodAvg.toFixed(1)}/5
+                        </p>
+                      </div>
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                        <HeartPulse className="h-5 w-5" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              )}
             </div>
 
             {/* Анализ между спринтами: вывод по доскам и темы команды */}
