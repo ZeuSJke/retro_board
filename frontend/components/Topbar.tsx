@@ -8,7 +8,6 @@ import {
   Crown,
   Download,
   FileText,
-  HeartPulse,
   Keyboard,
   Lock,
   Moon,
@@ -60,7 +59,6 @@ interface TopbarProps {
   onOpenBoardSettings: () => void
   onOpenUserSettings: () => void
   onOpenShortcuts?: () => void
-  onOpenMood: () => void
   onOpenSummary: () => void
   onExportMarkdown: () => void
   onExportPDF: () => void
@@ -81,17 +79,11 @@ export default function Topbar({
   onOpenBoardSettings,
   onOpenUserSettings,
   onOpenShortcuts,
-  onOpenMood,
   onOpenSummary,
   onExportMarkdown,
   onExportPDF,
 }: TopbarProps) {
   const { theme, setTheme } = useTheme()
-
-  const moodAvg =
-    board?.moods && board.moods.length > 0
-      ? (board.moods.reduce((s, m) => s + m.score, 0) / board.moods.length).toFixed(1)
-      : null
 
   // Пока сервер не прислал состав доски, показываем хотя бы себя
   const onlineList: Participant[] =
@@ -162,7 +154,7 @@ export default function Topbar({
         </button>
       </div>
 
-      {/* Правый блок: участники, настроение, панель управления, экспорт, настройки.
+      {/* Правый блок: участники, здоровье команды, панель управления, экспорт, настройки.
           На телефоне остаются участники, меню и профиль — остальное переезжает в меню. */}
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
         {/* Присутствие */}
@@ -260,26 +252,6 @@ export default function Topbar({
           </PopoverContent>
         </Popover>
 
-        {board && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={onOpenMood}
-                className="hidden h-8 gap-1.5 rounded-full px-2.5 text-xs sm:inline-flex"
-                data-testid="mood-checkin-btn"
-              >
-                <HeartPulse className="h-3.5 w-3.5 text-rose-500" />
-                <span className="hidden md:inline">Настроение</span>
-                {moodAvg && <span className="font-mono font-semibold">{moodAvg}</span>}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Чек-ин настроения команды</TooltipContent>
-          </Tooltip>
-        )}
-
         {board && <HealthCheckButton />}
 
         {/* Кнопка ведёт к задачам и отчётам всей команды, поэтому счётчика задач этой доски на ней нет */}
@@ -320,15 +292,6 @@ export default function Topbar({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                className="sm:hidden"
-                onClick={onOpenMood}
-                data-testid="menu-mood-item"
-              >
-                <HeartPulse className="h-4 w-4 text-rose-500" />
-                Настроение команды
-                {moodAvg && <span className="ml-auto font-mono text-xs">{moodAvg}</span>}
-              </DropdownMenuItem>
               <HealthCheckMenuItem />
               <DropdownMenuItem asChild className="sm:hidden">
                 <Link href="/dashboard" data-testid="menu-dashboard-item">

@@ -31,7 +31,7 @@ const POINTS: HealthTrendPoint[] = [
   },
 ]
 
-describe('ряды блока «Health check команды»', () => {
+describe('ряды блока «Здоровье команды»', () => {
   it('по ряду на вопрос и ряд оценки встречи, доски — от старых к новым', () => {
     const { rows, axis } = buildHealthTrendRows(QUESTIONS, POINTS)
     expect(axis.map((a) => a.fullName)).toEqual(['Спринт 1', 'Спринт 2', 'Спринт 3'])

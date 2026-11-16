@@ -15,7 +15,8 @@ interface UseBoardShortcutsOptions {
   readOnly: boolean
   userTotalVotes: number
   aiEnabled: boolean | null
-  isFacilitator: boolean
+  /** В сессии фокус включает ведущий, вне сессии — любой участник. */
+  canControlFocus: boolean
   selectedCount: number
   onFocusSearch: () => void
   onToggleMaster: () => void
@@ -23,7 +24,6 @@ interface UseBoardShortcutsOptions {
   onResetMyVotes: () => Promise<void>
   onOpenBoardSettings: () => void
   onOpenSummary: () => void
-  onOpenMood: () => void
   onOpenShortcuts: () => void
   onToggleReactionsPopover: () => void
   onOpenReactionsPopover: () => void
@@ -40,7 +40,7 @@ export function useBoardShortcuts({
   readOnly,
   userTotalVotes,
   aiEnabled,
-  isFacilitator,
+  canControlFocus,
   selectedCount,
   onFocusSearch,
   onToggleMaster,
@@ -48,7 +48,6 @@ export function useBoardShortcuts({
   onResetMyVotes,
   onOpenBoardSettings,
   onOpenSummary,
-  onOpenMood,
   onOpenShortcuts,
   onToggleReactionsPopover,
   onOpenReactionsPopover,
@@ -123,14 +122,8 @@ export function useBoardShortcuts({
         onSelect: onOpenSummary,
       },
       {
-        id: 'mood-checkin',
-        label: 'Чек-ин настроения',
-        keywords: 'mood оценка',
-        onSelect: onOpenMood,
-      },
-      {
         id: 'health-check',
-        label: 'Health check команды',
+        label: 'Здоровье команды',
         keywords: 'health опрос чек-ин светофор здоровье команды',
         onSelect: openHealthCheck,
       },
@@ -150,7 +143,6 @@ export function useBoardShortcuts({
     masterOpen,
     onFocusSearch,
     onOpenBoardSettings,
-    onOpenMood,
     onOpenReactionsPopover,
     onOpenShortcuts,
     onOpenSummary,
@@ -182,14 +174,15 @@ export function useBoardShortcuts({
           likesCount: (card.likes || []).length,
           onSelect: () => {
             flashCard(card.id)
-            // Поиск карточки — личное действие: фокус всей команде включает только ведущий
-            if (isFacilitator) onSelectSpotlightCard(card.id)
+            // Поиск карточки — личное действие: фокус всей команде включает ведущий,
+            // а вне сессии — любой участник
+            if (canControlFocus) onSelectSpotlightCard(card.id)
           },
         })
       }
     }
     return items
-  }, [columns, flashCard, isFacilitator, onSelectSpotlightCard])
+  }, [columns, flashCard, canControlFocus, onSelectSpotlightCard])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {

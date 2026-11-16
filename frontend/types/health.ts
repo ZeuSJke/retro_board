@@ -1,5 +1,5 @@
 /**
- * Health check команды и оценка встречи.
+ * Здоровье команды и оценка встречи.
  * Контракт: `backend/app/schemas.py` (HealthQuestion, HealthSummaryOut, HealthTrendPoint).
  */
 

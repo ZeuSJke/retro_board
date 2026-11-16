@@ -93,12 +93,6 @@ const FALLBACK_TEMPLATES: BoardTemplateInfo[] = [
       { title: '😄 Glad (Радует)', color: '#006E1C' },
     ],
   },
-  {
-    id: 'empty',
-    name: 'Пустая доска',
-    description: 'Без заранее заданных колонок',
-    columns: [],
-  },
 ]
 
 interface CreateBoardDialogProps {
@@ -156,15 +150,16 @@ function CreateBoardForm({ existingBoards, onCancel, onCreated }: CreateBoardFor
     },
     staleTime: 10 * 60_000,
   })
-  const templates = serverTemplates && serverTemplates.length > 0 ? serverTemplates : FALLBACK_TEMPLATES
+  // «Пустая доска» и «Свой набор колонок» — один выбор: пустой холст без готовых колонок
+  const templates = (serverTemplates && serverTemplates.length > 0
+    ? serverTemplates
+    : FALLBACK_TEMPLATES
+  ).filter((tpl) => tpl.id !== 'empty')
   const [name, setName] = useState('')
   const [template, setTemplate] = useState<string>('classic')
   const [maxVotes, setMaxVotes] = useState<number>(5)
   const [pickedSourceId, setPickedSourceId] = useState<string>('')
-  const [customColumns, setCustomColumns] = useState<ColumnSeed[]>([
-    { title: 'Плюсы', color: COLUMN_COLOR_PALETTE[0] },
-    { title: 'Риски', color: COLUMN_COLOR_PALETTE[1] },
-  ])
+  const [customColumns, setCustomColumns] = useState<ColumnSeed[]>([])
   const [carryForward, setCarryForward] = useState(false)
   const [hideCards, setHideCards] = useState(false)
   const [anonymousVotes, setAnonymousVotes] = useState(false)
@@ -341,7 +336,7 @@ function CreateBoardForm({ existingBoards, onCancel, onCreated }: CreateBoardFor
                 Свой набор колонок
               </div>
               <span className="text-xs text-muted-foreground">
-                Задайте названия и цвета вручную
+                Начните с пустой доски или задайте колонки сразу
               </span>
             </button>
           </div>
@@ -381,6 +376,12 @@ function CreateBoardForm({ existingBoards, onCancel, onCreated }: CreateBoardFor
               </Button>
             </div>
             <div className="space-y-2">
+              {customColumns.length === 0 && (
+                <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs leading-snug text-muted-foreground">
+                  Колонок пока нет — доска создастся пустой. Их можно добавить здесь или позже
+                  на самой доске.
+                </p>
+              )}
               {customColumns.map((col, idx) => (
                 <div key={idx} className="flex items-center gap-2">
                   <button
@@ -418,7 +419,7 @@ function CreateBoardForm({ existingBoards, onCancel, onCreated }: CreateBoardFor
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    disabled={customColumns.length <= 1}
+                    aria-label="Удалить колонку"
                     onClick={() =>
                       setCustomColumns((prev) => prev.filter((_, i) => i !== idx))
                     }
@@ -458,8 +459,7 @@ function CreateBoardForm({ existingBoards, onCancel, onCreated }: CreateBoardFor
                 Анонимный режим
               </div>
               <p className="text-xs text-muted-foreground">
-                Авторы карточек, голосовавшие и авторы оценок настроения скрыты от других
-                участников
+                Авторы карточек и голосовавшие скрыты от других участников
               </p>
             </div>
             <Switch

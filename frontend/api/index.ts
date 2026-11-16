@@ -7,7 +7,6 @@ import type {
   Board,
   BoardCreatePayload,
   BoardListItem,
-  BoardMood,
   BoardSummary,
   BoardTemplateInfo,
   BoardUpdatePayload,
@@ -108,11 +107,6 @@ export const deleteBoard = (id: string): Promise<void> => api.delete(`/boards/${
 /** Раскрыть карточки скрытого сбора вне сессии ведущего (модератор доски). */
 export const revealBoardCards = (id: string): Promise<Board> =>
   api.post<Board>(`/boards/${id}/reveal`).then((r) => r.data)
-/** Оценка настроения текущего участника: автора сервер берёт из сессии. */
-export const submitBoardMood = (
-  boardId: string,
-  data: { score: number; note?: string | null },
-): Promise<BoardMood> => api.post<BoardMood>(`/boards/${boardId}/mood`, data).then((r) => r.data)
 /** Снять все голоса текущего участника на доске. */
 export const resetBoardVotes = (
   boardId: string,

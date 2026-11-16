@@ -78,7 +78,7 @@ interface HealthSummaryViewProps {
   myAnswers: Record<string, HealthAnswerValue>
 }
 
-/** Сводка health check по команде: распределение ответов по вопросам, без имён. */
+/** Сводка здоровья команды: распределение ответов по вопросам, без имён. */
 export default function HealthSummaryView({ summary, myAnswers }: HealthSummaryViewProps) {
   const { participants, roti } = summary
   return (

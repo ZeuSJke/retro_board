@@ -84,15 +84,19 @@ BOARD_TEMPLATES: list[dict] = [
             {"title": "😄 Glad (Радует)", "color": "#006E1C"},
         ],
     },
-    {
-        "id": "empty",
-        "name": "Пустая доска",
-        "description": "Чистый холст — добавьте собственные колонки вручную",
-        "columns": [],
-    },
 ]
 
+# Шаблон без колонок не показывается в выборе: пустой холст задаётся через `custom`
+# без колонок. Оставляем `empty` в карте ради совместимости API и MCP-агентов.
+_EMPTY_TEMPLATE: dict = {
+    "id": "empty",
+    "name": "Пустая доска",
+    "description": "Чистый холст — добавьте собственные колонки вручную",
+    "columns": [],
+}
+
 _TEMPLATE_MAP: dict[str, dict] = {tpl["id"]: tpl for tpl in BOARD_TEMPLATES}
+_TEMPLATE_MAP["empty"] = _EMPTY_TEMPLATE
 
 # Адрес /board/start фронтенд использует как «открыть первую доску»
 _RESERVED_SLUGS = frozenset({"start"})

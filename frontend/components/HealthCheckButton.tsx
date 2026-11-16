@@ -17,7 +17,7 @@ export function openHealthCheck(): void {
 }
 
 /**
- * Кнопка «Health check» для шапки доски. Окно опроса открывается у нажавшего; запустить опрос
+ * Кнопка «Здоровье» для шапки доски. Окно опроса открывается у нажавшего; запустить опрос
  * у всей команды можно из самого окна («Запустить у всех» — ведущему, а вне сессии любому).
  *
  * На телефоне кнопки шапки, которые не помещаются, живут в её меню: там кнопка скрыта,
@@ -32,20 +32,20 @@ export default function HealthCheckButton() {
           variant="outline"
           size="sm"
           onClick={openHealthCheck}
-          aria-label="Health check команды"
+          aria-label="Здоровье команды"
           className="hidden h-8 gap-1.5 rounded-full px-2.5 text-xs sm:inline-flex"
           data-testid="health-check-btn"
         >
           <Activity className="h-3.5 w-3.5 text-emerald-500" />
-          <span className="hidden xl:inline">Health check</span>
+          <span className="hidden xl:inline">Здоровье</span>
         </Button>
       </TooltipTrigger>
-      <TooltipContent>Health check команды: короткий опрос о спринте</TooltipContent>
+      <TooltipContent>Здоровье команды: короткий опрос о спринте</TooltipContent>
     </Tooltip>
   )
 }
 
-/** Пункт «Health check» для меню шапки: виден на телефоне, где кнопка скрыта. */
+/** Пункт «Здоровье команды» для меню шапки: виден на телефоне, где кнопка скрыта. */
 export function HealthCheckMenuItem() {
   return (
     <DropdownMenuItem
@@ -54,7 +54,7 @@ export function HealthCheckMenuItem() {
       data-testid="menu-health-check-item"
     >
       <Activity className="h-4 w-4 text-emerald-500" />
-      Health check команды
+      Здоровье команды
     </DropdownMenuItem>
   )
 }

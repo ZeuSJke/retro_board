@@ -37,9 +37,9 @@ test.describe('v3 фичи — шаблоны, настроение, фокус,
     await expect(page.locator('body')).toContainText('Longed for (Хочется)')
   })
 
-  test('чек-ин настроения команды и переключение темы (Light/Dark)', async ({ page, request }) => {
+  test('переключение темы (Light/Dark)', async ({ page, request }) => {
     const wsData = await ensureE2EWorkspace(request)
-    const board = await createBoardViaAPI(request, 'Доска настроения', wsData.token)
+    const board = await createBoardViaAPI(request, 'Доска темы', wsData.token)
 
     await page.goto(`/board/${board.slug}`)
     await dismissWelcome(page)
@@ -50,15 +50,6 @@ test.describe('v3 фичи — шаблоны, настроение, фокус,
     await expect(page.locator('html')).toHaveClass(/dark/)
     await toggleBtn.click()
     await expect(page.locator('html')).not.toHaveClass(/dark/)
-
-    // Mood check-in
-    await page.getByTestId('mood-checkin-btn').click()
-    await expect(page.getByRole('heading', { name: /Чек-ин настроения/i })).toBeVisible()
-    await page.getByTestId('mood-option-5').click()
-    await page.getByLabel(/Короткий комментарий/i).fill('Отличный спринт!')
-    await page.getByRole('button', { name: 'Сохранить оценку' }).click()
-
-    await expect(page.getByTestId('mood-checkin-btn')).toContainText('5.0')
   })
 
   test('блокировка доски запрещает редактирование в UI и API (423)', async ({ page, request }) => {

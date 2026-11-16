@@ -102,6 +102,28 @@ describe('CreateBoardDialog — форма новой доски', () => {
     expect(submit.closest('form')).toBe(nameInput.closest('form'))
   })
 
+  it('«Свой набор колонок» начинает с пустой доски и создаёт её без колонок', async () => {
+    const user = userEvent.setup()
+    api.createBoard.mockResolvedValue({ id: 'b-new', name: 'Пусто', slug: 'pusto', columns: [] })
+    const props = dialogProps([])
+    renderWithQuery(<CreateBoardDialog {...props} />)
+
+    // «Пустая доска» больше не отдельный выбор — пустой холст задаётся своим набором
+    expect(screen.queryByRole('button', { name: /Пустая доска/ })).not.toBeInTheDocument()
+
+    await user.type(screen.getByTestId('create-board-name-input'), 'Пусто')
+    await user.click(screen.getByRole('button', { name: /Свой набор колонок/ }))
+    expect(screen.getByText(/Колонок пока нет/)).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('create-board-submit-btn'))
+
+    await waitFor(() =>
+      expect(api.createBoard).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Пусто', template: 'custom', custom_columns: [] }),
+      ),
+    )
+  })
+
   it('исходная доска для переноса задач: по умолчанию первая, выбранная не слетает от обновлений', async () => {
     const user = userEvent.setup()
     api.createBoard.mockResolvedValue({ id: 'b-new', name: 'Спринт 3', slug: 'sprint-3', columns: [] })

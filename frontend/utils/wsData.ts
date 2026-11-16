@@ -6,7 +6,6 @@
 import type {
   ActionItem,
   BoardListItem,
-  BoardMood,
   Card,
   CardGroup,
   Column,
@@ -75,15 +74,6 @@ export function isGroupCollapseData(d: unknown): d is WsGroupCollapseData {
 
 export function isGroupsCollapsedData(d: unknown): d is WsGroupsCollapsedData {
   return isRecord(d) && Array.isArray(d.group_ids) && d.group_ids.every((id) => typeof id === 'string')
-}
-
-export function isBoardMood(d: unknown): d is BoardMood {
-  return (
-    isRecord(d) &&
-    hasId(d) &&
-    typeof d.score === 'number' &&
-    Number.isFinite(d.score)
-  )
 }
 
 export function isSummaryFailedData(d: unknown): d is WsSummaryFailedData {

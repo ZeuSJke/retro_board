@@ -345,16 +345,6 @@ test.describe('Участники: личность, скрытый сбор, п
       expect(boardState.moods).toHaveLength(1)
       expect(boardState.moods[0].participant_id).toBeNull()
       expect(boardState.moods[0].author).toBe('Участник')
-
-      // В чек-ине настроения имён нет
-      await guest.page.getByTestId('mood-checkin-btn').click()
-      const moodDialog = guest.page.getByRole('dialog')
-      const entry = moodDialog.getByTestId('mood-entry')
-      await expect(entry).toHaveCount(1)
-      await expect(entry).toContainText('Участник')
-      await expect(entry).toContainText('Тяжёлый спринт')
-      await expect(moodDialog).not.toContainText(DEFAULT_USER_NAME)
-      await expect(moodDialog).toContainText('имена в откликах скрыты')
     } finally {
       await guest.ctx.close()
     }

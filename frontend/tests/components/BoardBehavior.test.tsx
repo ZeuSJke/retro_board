@@ -509,6 +509,45 @@ describe('Column — меню колонки', () => {
   })
 })
 
+describe('Column — композер карточки', () => {
+  it('раскрывается на месте кнопки и закрывается по Escape', async () => {
+    const user = userEvent.setup()
+    renderColumn()
+
+    await user.click(screen.getByRole('button', { name: 'Добавить карточку' }))
+    const textarea = await screen.findByPlaceholderText('Опишите мысль... (Enter — добавить)')
+    await waitFor(() => expect(textarea).toHaveFocus())
+
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByTestId('card-composer')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Добавить карточку' })).toBeInTheDocument()
+  })
+
+  it('создаёт карточку по Enter и оставляет композер открытым для следующей', async () => {
+    const user = userEvent.setup()
+    const created = makeCard('3', { text: 'Новая мысль' })
+    api.createCard.mockResolvedValueOnce(created)
+    const onCardCreated = vi.fn()
+    renderColumn({ onCardCreated })
+
+    await user.click(screen.getByRole('button', { name: 'Добавить карточку' }))
+    const textarea = await screen.findByPlaceholderText('Опишите мысль... (Enter — добавить)')
+    await user.type(textarea, 'Новая мысль{Enter}')
+
+    await waitFor(() =>
+      expect(api.createCard).toHaveBeenCalledWith({
+        column_id: 'col-1',
+        text: 'Новая мысль',
+        color: '#FFFFFF',
+      }),
+    )
+    expect(onCardCreated).toHaveBeenCalledWith(created)
+    expect(screen.getByTestId('card-composer')).toBeInTheDocument()
+    await waitFor(() => expect(textarea).toHaveValue(''))
+  })
+})
+
 describe('Column — мемоизация', () => {
   it('изменение другой колонки эту колонку и её карточки не перерисовывает', () => {
     const column = makeColumn()
@@ -761,7 +800,7 @@ describe('HealthCheckButton', () => {
       </TooltipProvider>,
     )
 
-    await user.click(screen.getByRole('button', { name: 'Health check команды' }))
+    await user.click(screen.getByRole('button', { name: 'Здоровье команды' }))
 
     expect(listener).toHaveBeenCalledTimes(1)
     window.removeEventListener(HEALTH_CHECK_OPEN_EVENT, listener)

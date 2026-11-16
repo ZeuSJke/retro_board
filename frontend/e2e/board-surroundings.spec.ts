@@ -286,7 +286,7 @@ test.describe('Панель сессии и шапка: вёрстка', () => {
 
       // Всё, что не поместилось в шапку, доступно из меню
       await phone.page.getByTestId('export-menu-btn').click()
-      await expect(phone.page.getByTestId('menu-mood-item')).toBeVisible()
+      await expect(phone.page.getByTestId('menu-health-check-item')).toBeVisible()
       await expect(phone.page.getByTestId('menu-dashboard-item')).toBeVisible()
       await phone.page.getByTestId('menu-board-settings-item').click()
       await expect(phone.page.getByRole('dialog')).toContainText('Настройки доски')

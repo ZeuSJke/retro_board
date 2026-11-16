@@ -18,7 +18,6 @@ import {
   asColumn,
   asGroup,
   isBoardListItem,
-  isBoardMood,
   isBoardUpdatedData,
   isCardMovedData,
   isDeletedData,
@@ -44,7 +43,6 @@ import type {
   ActionItem,
   Board,
   BoardListItem,
-  BoardMood,
   Column,
   FacilitatorInfo,
   Participant,
@@ -119,12 +117,11 @@ interface UseBoardWebSocketParams {
   onBoardCreated?: (board: BoardListItem) => void
   onBoardUpdated?: (board: WsBoardUpdatedData) => void
   onBoardDeleted?: (id: string) => void
-  onMoodUpdated?: (mood: BoardMood) => void
   /** Участник сменил имя. Подписи карточек хук обновляет сам. */
   onParticipantRenamed?: (participantId: string, name: string) => void
   /**
    * Доска перечитана с сервера: колонки хук уже заменил, владельцу остаётся обновить
-   * остальное (настройки, настроение).
+   * остальное (настройки доски).
    */
   onBoardSnapshot?: (board: Board) => void
   /** Перечитывание завершено (после переподключения, пропуска событий и т. п.). */
@@ -132,7 +129,7 @@ interface UseBoardWebSocketParams {
   /** Доски больше нет (удалена или недоступна): подключаться бессмысленно. */
   onBoardGone?: () => void
   /**
-   * События, которые хук не обрабатывает сам (health check). Вернуть `true`, если событие
+   * События, которые хук не обрабатывает сам (здоровье команды). Вернуть `true`, если событие
    * обработано. Пронумерованные события приходят сюда уже по порядку.
    */
   onServerEvent?: (msg: WsMessage) => boolean
@@ -181,7 +178,6 @@ export function useBoardWebSocket({
   onBoardCreated,
   onBoardUpdated,
   onBoardDeleted,
-  onMoodUpdated,
   onParticipantRenamed,
   onBoardSnapshot,
   onResynced,
@@ -248,7 +244,6 @@ export function useBoardWebSocket({
     onBoardCreated,
     onBoardUpdated,
     onBoardDeleted,
-    onMoodUpdated,
     onParticipantRenamed,
     onBoardSnapshot,
     onResynced,
@@ -267,8 +262,7 @@ export function useBoardWebSocket({
       onBoardCreated,
       onBoardUpdated,
       onBoardDeleted,
-      onMoodUpdated,
-      onParticipantRenamed,
+        onParticipantRenamed,
       onBoardSnapshot,
       onResynced,
       onBoardGone,
@@ -532,13 +526,6 @@ export function useBoardWebSocket({
           setReactions((prev) => prev.filter((r) => r.id !== id))
           delete reactionTimeouts.current[id]
         }, 3500)
-        return
-      }
-
-      if (event === 'mood_updated') {
-        if (isBoardMood(rawData)) {
-          callbacks.onMoodUpdated?.(rawData)
-        }
         return
       }
 

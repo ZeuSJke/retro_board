@@ -1252,7 +1252,7 @@ export default function Dashboard() {
                     <CardHeader className="pb-2">
                       <CardTitle className="flex items-center gap-2 text-sm font-semibold">
                         <Activity className="h-4 w-4 text-primary" aria-hidden="true" />
-                        Health check команды
+                        Здоровье команды
                       </CardTitle>
                       <CardDescription className="text-xs">
                         Средний ответ по каждому вопросу от 1 (плохо) до 3 (хорошо) и средняя оценка
@@ -1264,9 +1264,9 @@ export default function Dashboard() {
                         <HealthTrendsChart questions={healthQuestions} points={healthTrends} />
                       ) : (
                         <p className="rounded-xl border border-dashed p-3.5 text-sm text-muted-foreground">
-                          Ответов пока нет. Когда команда пройдёт health check на доске — пять
-                          вопросов со светофором и оценка встречи, — здесь появится динамика от
-                          спринта к спринту.
+                          Ответов пока нет. Когда команда пройдёт опрос «Здоровье команды» на
+                          доске — пять вопросов со светофором и оценка встречи, — здесь появится
+                          динамика от спринта к спринту.
                         </p>
                       )}
                     </CardContent>

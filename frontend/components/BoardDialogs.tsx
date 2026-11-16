@@ -10,7 +10,6 @@ import type {
   AutoClusterPreviewResult,
   Board,
   BoardListItem,
-  BoardMood,
   BoardSummary,
   Card,
   Column as ColumnType,
@@ -24,7 +23,6 @@ import BulkActionsBar from './BulkActionsBar'
 import type { CommandBoardAction, CommandSearchCard } from './CommandPalette'
 import CommandPalette from './CommandPaletteLazy'
 import MasterColumn from './MasterColumn'
-import MoodDialog from './MoodDialog'
 import ShortcutsDialog from './ShortcutsDialog'
 import SpotlightModal, { type SpotlightQueueItem } from './SpotlightModal'
 import SummaryModal from './SummaryModal'
@@ -91,12 +89,6 @@ export interface BoardDialogsProps {
   onBoardDeleted: (boardId: string) => void
   userSettingsOpen: boolean
   onUserSettingsOpenChange: (open: boolean) => void
-
-  // Mood
-  moodOpen: boolean
-  onMoodOpenChange: (open: boolean) => void
-  moods: BoardMood[]
-  onMoodSubmitted: (mood: BoardMood) => void
 
   // AI Summary
   summaryOpen: boolean
@@ -177,10 +169,6 @@ export default function BoardDialogs({
   onBoardDeleted,
   userSettingsOpen,
   onUserSettingsOpenChange,
-  moodOpen,
-  onMoodOpenChange,
-  moods,
-  onMoodSubmitted,
   summaryOpen,
   onSummaryOpenChange,
   summary,
@@ -301,15 +289,6 @@ export default function BoardDialogs({
         onOpenChange={onUserSettingsOpenChange}
       />
 
-      <MoodDialog
-        open={moodOpen}
-        onOpenChange={onMoodOpenChange}
-        boardId={board.id}
-        anonymous={anonymousMode}
-        moods={moods}
-        onMoodSubmitted={onMoodSubmitted}
-      />
-
       <SummaryModal
         open={summaryOpen}
         onOpenChange={onSummaryOpenChange}
@@ -373,7 +352,7 @@ export default function BoardDialogs({
         }}
       />
 
-      {/* Health check: запустить опрос у всех может ведущий, а вне сессии — любой участник */}
+      {/* Здоровье команды: запустить опрос у всех может ведущий, а вне сессии — любой участник */}
       <HealthCheckDialog
         health={health}
         onStartForTeam={

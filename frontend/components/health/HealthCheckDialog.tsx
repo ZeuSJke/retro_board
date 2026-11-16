@@ -188,7 +188,7 @@ function HealthCheckBody({
 }
 
 /**
- * Окно health check: вопросы со светофором (1 — красный, 2 — жёлтый, 3 — зелёный),
+ * Окно «Здоровье команды»: вопросы со светофором (1 — красный, 2 — жёлтый, 3 — зелёный),
  * после ответа — сводка по команде без имён. Сводка обновляется по событию `health_updated`.
  */
 export default function HealthCheckDialog({ health, onStartForTeam }: HealthCheckDialogProps) {
@@ -203,7 +203,7 @@ export default function HealthCheckDialog({ health, onStartForTeam }: HealthChec
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Activity className="h-5 w-5 text-primary" aria-hidden="true" />
-            Health check команды
+            Здоровье команды
           </DialogTitle>
           <DialogDescription>
             {health.requestedBy ? `${health.requestedBy} приглашает пройти опрос. ` : ''}

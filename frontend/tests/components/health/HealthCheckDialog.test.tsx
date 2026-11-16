@@ -44,7 +44,7 @@ function BoardStub({ sendMessage }: { sendMessage?: (msg: WsMessage) => void }) 
   return (
     <>
       <button type="button" onClick={health.openDialog}>
-        Health check
+        Здоровье
       </button>
       <HealthCheckDialog
         health={health}
@@ -74,7 +74,7 @@ describe('HealthCheckDialog', () => {
 
   it('пять вопросов со светофором; ответы отправляются, после ответа — сводка без имён', async () => {
     const user = await renderBoard()
-    await user.click(screen.getByRole('button', { name: 'Health check' }))
+    await user.click(screen.getByRole('button', { name: 'Здоровье' }))
 
     const dialog = await screen.findByTestId('health-check-dialog')
     for (const title of ['Темп', 'Качество', 'Процесс', 'Атмосфера', 'Ясность целей']) {
@@ -124,7 +124,7 @@ describe('HealthCheckDialog', () => {
       makeSummary({ pace: [0, 0, 1] }, { participants: 1, mine: { pace: 3 } }),
     )
     const user = await renderBoard()
-    await user.click(screen.getByRole('button', { name: 'Health check' }))
+    await user.click(screen.getByRole('button', { name: 'Здоровье' }))
 
     // Уже отвечал — окно открывается сразу на сводке
     expect(await screen.findByTestId('health-participants')).toHaveTextContent('Ответил 1 участник')
@@ -149,7 +149,7 @@ describe('HealthCheckDialog', () => {
       makeSummary({ pace: [0, 1, 0] }, { participants: 1, mine: { pace: 2 } }),
     )
     const user = await renderBoard()
-    await user.click(screen.getByRole('button', { name: 'Health check' }))
+    await user.click(screen.getByRole('button', { name: 'Здоровье' }))
 
     await user.click(await screen.findByTestId('health-edit-answers'))
     expect(screen.getByTestId('health-answer-pace-2')).toHaveAttribute('aria-pressed', 'true')
@@ -176,7 +176,7 @@ describe('HealthCheckDialog', () => {
 
   it('ошибка сохранения оставляет вопросы на экране', async () => {
     const user = await renderBoard()
-    await user.click(screen.getByRole('button', { name: 'Health check' }))
+    await user.click(screen.getByRole('button', { name: 'Здоровье' }))
     await user.click(await screen.findByTestId('health-answer-pace-1'))
 
     mockSubmitBoardHealth.mockRejectedValue({ response: { status: 500, data: {} } })
@@ -192,7 +192,7 @@ describe('HealthCheckDialog', () => {
   it('если сводка не загрузилась — сообщение и «Повторить»', async () => {
     mockGetBoardHealth.mockRejectedValue({ response: { status: 500, data: {} } })
     const user = await renderBoard()
-    await user.click(screen.getByRole('button', { name: 'Health check' }))
+    await user.click(screen.getByRole('button', { name: 'Здоровье' }))
 
     expect(await screen.findByText('Не удалось загрузить сводку опроса')).toBeInTheDocument()
 
@@ -211,7 +211,7 @@ describe('HealthCheckDialog', () => {
     mockGetBoardHealth.mockResolvedValue(
       makeSummary({ pace: [1, 1, 1] }, { participants: 3, mine: { pace: 3 } }),
     )
-    await user.click(screen.getByRole('button', { name: 'Health check' }))
+    await user.click(screen.getByRole('button', { name: 'Здоровье' }))
 
     await waitFor(() =>
       expect(screen.getByTestId('health-participants')).toHaveTextContent('Ответили 3 участника'),
@@ -221,7 +221,7 @@ describe('HealthCheckDialog', () => {
   it('«Запустить у всех» есть только при переданном обработчике и шлёт health_check_start', async () => {
     const sendMessage = vi.fn()
     const user = await renderBoard(sendMessage)
-    await user.click(screen.getByRole('button', { name: 'Health check' }))
+    await user.click(screen.getByRole('button', { name: 'Здоровье' }))
 
     await user.click(await screen.findByTestId('health-start-for-team'))
     expect(sendMessage).toHaveBeenCalledWith({ event: 'health_check_start', data: {} })
@@ -229,7 +229,7 @@ describe('HealthCheckDialog', () => {
 
   it('без обработчика кнопки запуска у всех нет', async () => {
     const user = await renderBoard()
-    await user.click(screen.getByRole('button', { name: 'Health check' }))
+    await user.click(screen.getByRole('button', { name: 'Здоровье' }))
     await screen.findByTestId('health-progress')
     expect(screen.queryByTestId('health-start-for-team')).not.toBeInTheDocument()
   })
@@ -242,7 +242,7 @@ describe('HealthCheckDialog', () => {
       ),
     )
     const user = await renderBoard()
-    await user.click(screen.getByRole('button', { name: 'Health check' }))
+    await user.click(screen.getByRole('button', { name: 'Здоровье' }))
     expect(await screen.findByTestId('health-summary-roti')).toHaveTextContent(
       'Оценка встречи4.5 из 5 · 2 оценки',
     )

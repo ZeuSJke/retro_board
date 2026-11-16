@@ -323,7 +323,7 @@ test.describe('Поведение доски', () => {
     }
   })
 
-  test('фокус обсуждения включает только ведущий; поиск карточки в палитре — личное действие', async ({
+  test('фокус обсуждения: вне сессии — любой участник, в сессии — только ведущий; поиск карточки в палитре — личное действие', async ({
     browser,
     request,
   }) => {
@@ -333,16 +333,24 @@ test.describe('Поведение доски', () => {
     const creator = await openBoardAs(browser, request, board)
     const guest = await openBoardAs(browser, request, board, 'Гость')
     try {
-      // Вне сессии кнопки нет ни у кого
+      // Вне сессии кнопка есть у любого участника
       await cardByText(creator.page, 'Обсудим это').hover()
-      await expect(cardByText(creator.page, 'Обсудим это').getByTitle('В фокус обсуждения')).toHaveCount(0)
+      await expect(cardByText(creator.page, 'Обсудим это').getByTitle('В фокус обсуждения')).toBeVisible()
+      await cardByText(guest.page, 'Обсудим это').hover()
+      await expect(cardByText(guest.page, 'Обсудим это').getByTitle('В фокус обсуждения')).toBeVisible()
+
+      // Фокус вне сессии включает любой участник — окно открывается у всех
+      await cardByText(creator.page, 'Обсудим это').getByTitle('В фокус обсуждения').click()
+      await expect(guest.page.getByRole('dialog')).toContainText('Обсудим это', { timeout: 10000 })
+      await creator.page.getByRole('button', { name: 'Снять фокус для всех' }).click()
+      await expect(guest.page.getByRole('dialog')).toHaveCount(0)
 
       await creator.page.getByTestId('become-facilitator-btn').click()
       await expect(creator.page.getByTestId('stop-facilitator-btn')).toBeVisible({ timeout: 10000 })
       await creator.page.getByTestId('phase-step-discuss').click()
       await expect(cardByText(guest.page, 'Обсудим это')).toBeVisible({ timeout: 10000 })
 
-      // У ведущего кнопка есть, у участника — нет
+      // В сессии у ведущего кнопка есть, у участника — нет
       await cardByText(creator.page, 'Обсудим это').hover()
       await expect(cardByText(creator.page, 'Обсудим это').getByTitle('В фокус обсуждения')).toBeVisible()
       await cardByText(guest.page, 'Обсудим это').hover()
@@ -492,7 +500,7 @@ test.describe('Поведение доски', () => {
       // Меню закрылось и вернуло фокус своей кнопке — только после этого открываем следующее
       await expect(page.getByTestId('column-rename-item')).toHaveCount(0)
 
-      // Health check на телефоне открывается из меню шапки: кнопка там не помещается
+      // Здоровье команды на телефоне открывается из меню шапки: кнопка там не помещается
       await expect(page.getByTestId('health-check-btn')).toBeHidden()
       await page.getByTestId('export-menu-btn').tap()
       await page.getByTestId('menu-health-check-item').tap()
