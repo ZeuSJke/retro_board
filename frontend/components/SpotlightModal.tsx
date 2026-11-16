@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
-import { Bot, ChevronLeft, ChevronRight, ListTodo, Sparkles, ThumbsUp, User } from 'lucide-react'
+import { Bot, ChevronLeft, ChevronRight, Focus, ListTodo, ThumbsUp, User } from 'lucide-react'
 import { getCardColorPreset, getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import { avatarSeed, countMyVotes, isOwnCard } from '@/lib/participants'
 import type { Card, Column } from '@/types'
@@ -138,7 +138,7 @@ export default function SpotlightModal({
         data-testid="spotlight-minimized"
         className="no-print flex shrink-0 items-center justify-center gap-2 border-t bg-primary/5 px-3 py-1.5 text-xs"
       >
-        <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <Focus className="h-3.5 w-3.5 shrink-0 text-primary" />
         <span className="min-w-0 truncate">
           <span className="font-medium">В фокусе обсуждения: </span>
           <span className="text-muted-foreground">
@@ -168,7 +168,7 @@ export default function SpotlightModal({
         <DialogHeader className="gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <DialogTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="h-4 w-4 text-primary" />
+              <Focus className="h-4 w-4 text-primary" />
               <span>В фокусе обсуждения</span>
               {column && (
                 <Badge variant="outline" className="ml-1 gap-1.5 font-normal">

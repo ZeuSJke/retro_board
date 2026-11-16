@@ -447,7 +447,7 @@ describe('Dashboard — темы команды, AI и health check', () => {
   it('health check: без ответов — объяснение, откуда возьмётся динамика', async () => {
     render(<Dashboard />)
     const card = await screen.findByTestId('health-trends-card')
-    expect(card).toHaveTextContent('Health check команды')
+    expect(card).toHaveTextContent('Здоровье команды')
     expect(card).toHaveTextContent('Ответов пока нет')
   })
 

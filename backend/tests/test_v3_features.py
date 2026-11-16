@@ -26,7 +26,9 @@ class TestBoardTemplatesAndCopy:
         assert "4ls" in ids
         assert "sailboat" in ids
         assert "mad_sad_glad" in ids
-        assert "empty" in ids
+        # Пустой холст задаётся через custom без колонок; старый id «empty» остаётся
+        # только для совместимости API/MCP и в списке шаблонов не показывается
+        assert "empty" not in ids
 
     def test_create_board_with_sailboat_template(self, client, workspace_headers):
         resp = client.post(

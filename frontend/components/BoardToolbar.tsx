@@ -39,6 +39,9 @@ interface BoardToolbarProps {
   onToggleMaster: () => void
   actionItemsCount: number
   onAddColumn: (title: string, color: string) => Promise<void>
+  /** Форма новой колонки открыта извне — например, кнопкой на пустом холсте. */
+  addColumnOpen?: boolean
+  onAddColumnOpenChange?: (open: boolean) => void
   /**
    * Почему сейчас нельзя перетаскивать карточки (сортировка по голосам, фильтр, поиск);
    * `null` — можно. Показывается рядом с фильтрами, чтобы отключение не было молчаливым.
@@ -64,9 +67,13 @@ export default function BoardToolbar({
   onToggleMaster,
   actionItemsCount,
   onAddColumn,
+  addColumnOpen,
+  onAddColumnOpenChange,
   dragDisabledReason = null,
 }: BoardToolbarProps) {
-  const [colPopoverOpen, setColPopoverOpen] = useState(false)
+  const [internalColPopoverOpen, setInternalColPopoverOpen] = useState(false)
+  const colPopoverOpen = addColumnOpen ?? internalColPopoverOpen
+  const setColPopoverOpen = onAddColumnOpenChange ?? setInternalColPopoverOpen
   const [colTitle, setColTitle] = useState('')
   const [colColor, setColColor] = useState(COLUMN_COLOR_PALETTE[0])
   const [creatingCol, setCreatingCol] = useState(false)

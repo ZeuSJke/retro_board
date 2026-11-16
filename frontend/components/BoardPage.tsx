@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { DndContext, DragOverlay, type DragEndEvent } from '@dnd-kit/core'
 import { AnimatePresence } from 'motion/react'
-import { ChevronLeft, ChevronRight, Layers } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Layers, Plus } from 'lucide-react'
 import {
   createActionItem,
   createColumn,
@@ -35,8 +35,6 @@ import {
   applyActionItemDeleted,
   applyActionItemChanged,
   applyActionItemSaved,
-  applyMoodUpdated,
-  applyParticipantRenamedToMoods,
   countMaskedCards,
 } from '@/lib/board-events'
 import { canModerateBoard, countMyVotesOnBoard } from '@/lib/participants'
@@ -45,7 +43,6 @@ import type {
   ActionItem,
   Board,
   BoardListItem,
-  BoardMood,
   Card,
   CardGroup,
   Column as ColumnType,
@@ -67,6 +64,7 @@ import SessionBar from './SessionBar'
 import type { SpotlightQueueItem } from './SpotlightModal'
 import Topbar from './Topbar'
 import { useHealthCheck } from '@/components/health'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 interface BoardPageProps {
@@ -109,9 +107,9 @@ export default function BoardPage({
   const dotGrid = useAppStore((s) => s.dotGrid)
 
   const [boardsPanelOpen, setBoardsPanelOpen] = useState(false)
+  const [addColumnOpen, setAddColumnOpen] = useState(false)
   const [boardSettingsOpen, setBoardSettingsOpen] = useState(false)
   const [userSettingsOpen, setUserSettingsOpen] = useState(false)
-  const [moodOpen, setMoodOpen] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
   const [masterOpen, setMasterOpen] = useState(true)
   const [masterWidth, setMasterWidth] = useState<number | null>(null)
@@ -140,7 +138,6 @@ export default function BoardPage({
   const [resettingVotes, setResettingVotes] = useState(false)
   const [revealing, setRevealing] = useState(false)
   const [spotlightQueueMode, setSpotlightQueueMode] = useState<'all' | 'top_votes'>('all')
-  const [moods, setMoods] = useState<BoardMood[]>(board.moods || [])
 
   const canvasRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -257,10 +254,9 @@ export default function BoardPage({
   })
 
   // Доска перечитана с сервера (после переподключения, пропуска событий, смены видимости
-  // карточек). Колонки заменил хук сокета; здесь — настройки доски и настроение.
+  // карточек). Колонки заменил хук сокета; здесь — настройки доски.
   const handleBoardSnapshot = useCallback(
     (fresh: Board) => {
-      setMoods(fresh.moods || [])
       onBoardUpdated({ ...boardRef.current, ...fresh })
     },
     [onBoardUpdated],
@@ -295,10 +291,6 @@ export default function BoardPage({
     [onBoardUpdated, onBoardsListUpdated],
   )
 
-  const handleWsMoodUpdated = useCallback((mood: BoardMood) => {
-    setMoods((prev) => applyMoodUpdated(prev, mood))
-  }, [])
-
   const applySnapshotRef = useRef<(board: Board) => void>(() => {})
 
   // Настройки сохранены этим участником. Ответ сервера — доска в его виде: если изменился
@@ -316,7 +308,7 @@ export default function BoardPage({
     [onBoardUpdated],
   )
 
-  // Health check и оценка встречи: состояние здесь, окна — в разметке ниже
+  // Здоровье команды и оценка встречи: состояние здесь, окна — в разметке ниже
   const health = useHealthCheck(board.id)
   const healthRef = useRef(health)
   useEffect(() => {
@@ -338,7 +330,6 @@ export default function BoardPage({
   }, [])
 
   const handleParticipantRenamed = useCallback((participantId: string, name: string) => {
-    setMoods((prev) => applyParticipantRenamedToMoods(prev, participantId, name))
     // Имя сменили в другой вкладке или на другом устройстве с той же сессией
     const store = useAppStore.getState()
     if (store.participant?.id === participantId && store.participant.name !== name) {
@@ -375,6 +366,7 @@ export default function BoardPage({
     handleMouseLeave,
   } = useBoardWebSocket({
     boardId: board.id,
+    initialColumns: board.columns,
     onTimerWsEvent: handleTimerWsEvent,
     onTimerAbsent: handleTimerAbsent,
     onFacilitatorChanged: handleFacilitatorChanged,
@@ -384,7 +376,6 @@ export default function BoardPage({
     onBoardCreated: onBoardsListCreated,
     onBoardUpdated: handleWsBoardUpdated,
     onBoardDeleted: onBoardsListDeleted,
-    onMoodUpdated: handleWsMoodUpdated,
     onParticipantRenamed: handleParticipantRenamed,
     onBoardSnapshot: handleBoardSnapshot,
     onResynced: handleResynced,
@@ -780,7 +771,6 @@ export default function BoardPage({
     if (!boardChanged) return
 
     resetBoard(initialBoard)
-    setMoods(initialBoard.moods || [])
     resetSummary(initialBoard.id, Boolean(initialBoard.has_summary))
     setColorFilter(null)
     resetBulkState()
@@ -975,7 +965,6 @@ export default function BoardPage({
     searchInputRef.current?.select()
   }, [])
   const openBoardSettings = useCallback(() => setBoardSettingsOpen(true), [])
-  const openMood = useCallback(() => setMoodOpen(true), [])
   const openShortcuts = useCallback(() => setShortcutsOpen(true), [])
   const toggleReactionsPopover = useCallback(() => setReactionsPopoverOpen((prev) => !prev), [])
   const openReactionsPopover = useCallback(() => setReactionsPopoverOpen(true), [])
@@ -988,7 +977,7 @@ export default function BoardPage({
     readOnly,
     userTotalVotes,
     aiEnabled,
-    isFacilitator,
+    canControlFocus: canControlSession,
     selectedCount: selectedCardIds.size,
     onFocusSearch: focusSearch,
     onToggleMaster: handleToggleMaster,
@@ -996,7 +985,6 @@ export default function BoardPage({
     onResetMyVotes: handleResetMyVotes,
     onOpenBoardSettings: openBoardSettings,
     onOpenSummary: openSummary,
-    onOpenMood: openMood,
     onOpenShortcuts: openShortcuts,
     onToggleReactionsPopover: toggleReactionsPopover,
     onOpenReactionsPopover: openReactionsPopover,
@@ -1043,7 +1031,7 @@ export default function BoardPage({
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <Topbar
-        board={{ ...board, moods }}
+        board={board}
         workspaceName={workspaceName}
         username={username}
         myId={myId}
@@ -1057,7 +1045,6 @@ export default function BoardPage({
         onOpenBoardSettings={() => setBoardSettingsOpen(true)}
         onOpenUserSettings={() => setUserSettingsOpen(true)}
         onOpenShortcuts={() => setShortcutsOpen(true)}
-        onOpenMood={() => setMoodOpen(true)}
         onOpenSummary={openSummary}
         onExportMarkdown={handleExportMarkdown}
         onExportPDF={handleExportPDF}
@@ -1115,6 +1102,8 @@ export default function BoardPage({
         onToggleMaster={handleToggleMaster}
         actionItemsCount={actionItems.length}
         onAddColumn={handleAddColumn}
+        addColumnOpen={addColumnOpen}
+        onAddColumnOpenChange={setAddColumnOpen}
         dragDisabledReason={readOnly ? null : dragDisabledReason}
       />
 
@@ -1182,6 +1171,34 @@ export default function BoardPage({
               onMouseLeave={handleMouseLeave}
               className="relative flex flex-1 items-stretch gap-3 sm:gap-4 overflow-x-auto overflow-y-hidden p-3 sm:p-4 snap-x snap-mandatory md:snap-none"
             >
+              {columns.length === 0 && (
+                <div
+                  data-testid="board-empty-columns"
+                  className="flex min-w-0 flex-1 items-center justify-center p-4"
+                >
+                  <div className="max-w-sm rounded-2xl border border-dashed bg-card/60 px-6 py-8 text-center">
+                    <p className="text-sm font-medium">На доске пока нет колонок</p>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      {readOnly
+                        ? 'Разблокируйте доску в настройках, чтобы добавить колонки.'
+                        : 'Добавьте первую колонку — в ней появятся карточки.'}
+                    </p>
+                    {!readOnly && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="mt-3 gap-1.5"
+                        onClick={() => setAddColumnOpen(true)}
+                        data-testid="empty-board-add-column"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Добавить колонку
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {columns.map((col, idx) => (
                 <Column
                   key={col.id}
@@ -1225,8 +1242,8 @@ export default function BoardPage({
                   onlyMine={onlyMine}
                   sortBy={sortBy}
                   spotlightCardId={spotlightCardId}
-                  // Фокус обсуждения — инструмент ведущего: остальным кнопка не показывается
-                  onSpotlight={isFacilitator ? handleSpotlight : undefined}
+                  // В сессии фокус включает только ведущий, вне сессии — любой участник
+                  onSpotlight={canControlSession ? handleSpotlight : undefined}
                   onCreateActionItem={cardsHidden ? undefined : handleCreateActionItemFromCard}
                   onPreviewAutoCluster={handleOpenClusterPreview}
                   allowMultipleVotes={Boolean(board.allow_multiple_votes_per_card)}
@@ -1366,10 +1383,6 @@ export default function BoardPage({
         onBoardDeleted={onBoardDeleted}
         userSettingsOpen={userSettingsOpen}
         onUserSettingsOpenChange={setUserSettingsOpen}
-        moodOpen={moodOpen}
-        onMoodOpenChange={setMoodOpen}
-        moods={moods}
-        onMoodSubmitted={handleWsMoodUpdated}
         summaryOpen={summaryOpen}
         onSummaryOpenChange={setSummaryOpen}
         summary={summary}

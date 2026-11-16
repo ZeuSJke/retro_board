@@ -3,7 +3,6 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BoardSettingsDialog from '../../components/BoardSettingsDialog'
 import HiddenCollectBanner from '../../components/HiddenCollectBanner'
-import MoodDialog from '../../components/MoodDialog'
 import SessionBar from '../../components/SessionBar'
 import SummaryModal from '../../components/SummaryModal'
 import Topbar from '../../components/Topbar'
@@ -12,13 +11,12 @@ import WelcomeDialog from '../../components/WelcomeDialog'
 import { TooltipProvider } from '../../components/ui/tooltip'
 import { useAppStore } from '../../store'
 import { showToast } from '../../store/toastStore'
-import type { Board, BoardMood, FacilitatorInfo } from '../../types'
+import type { Board, FacilitatorInfo } from '../../types'
 
 const api = vi.hoisted(() => ({
   loginToWorkspace: vi.fn(),
   logoutWorkspace: vi.fn(),
   renameParticipant: vi.fn(),
-  submitBoardMood: vi.fn(),
   updateBoard: vi.fn(),
   deleteBoard: vi.fn(),
   regenerateBoardSummary: vi.fn(),
@@ -394,7 +392,6 @@ function renderTopbar(props: Partial<React.ComponentProps<typeof Topbar>> = {}) 
         onOpenBoardsDrawer={vi.fn()}
         onOpenBoardSettings={vi.fn()}
         onOpenUserSettings={vi.fn()}
-        onOpenMood={vi.fn()}
         onOpenSummary={vi.fn()}
         onExportMarkdown={vi.fn()}
         onExportPDF={vi.fn()}
@@ -597,91 +594,6 @@ describe('BoardSettingsDialog — скрытый сбор, анонимност�
     )
     expect(screen.getByTestId('delete-board-btn')).toBeEnabled()
     expect(screen.queryByText('Удалить доску может её создатель или ведущий')).not.toBeInTheDocument()
-  })
-})
-
-// ── настроение ───────────────────────────────────────────────────────────────
-
-const mood = (id: string, extra: Partial<BoardMood> = {}): BoardMood => ({
-  id,
-  board_id: 'b-1',
-  author: 'Борис',
-  participant_id: 'p-boris',
-  score: 4,
-  note: null,
-  created_at: '2026-03-01T10:00:00Z',
-  mine: false,
-  ...extra,
-})
-
-describe('MoodDialog — своя оценка и анонимный режим', () => {
-  it('свою оценку берёт по признаку mine, а не по имени', () => {
-    render(
-      <MoodDialog
-        open
-        onOpenChange={vi.fn()}
-        boardId="b-1"
-        moods={[
-          // Оценка тёзки: то же имя, но не моя
-          mood('m-1', { author: 'Анна', participant_id: 'p-namesake', score: 1, note: 'чужая' }),
-          mood('m-2', { author: 'Анна', participant_id: 'p-me', score: 5, note: 'моя', mine: true }),
-        ]}
-        onMoodSubmitted={vi.fn()}
-      />,
-    )
-    expect(screen.getByLabelText(/Короткий комментарий/)).toHaveValue('моя')
-  })
-
-  it('отправляет только оценку и комментарий — автора сервер берёт из сессии', async () => {
-    const user = userEvent.setup()
-    const saved = mood('m-9', { author: 'Анна', participant_id: 'p-me', score: 2, mine: true })
-    api.submitBoardMood.mockResolvedValue(saved)
-    const onMoodSubmitted = vi.fn()
-    render(<MoodDialog open onOpenChange={vi.fn()} boardId="b-1" moods={[]} onMoodSubmitted={onMoodSubmitted} />)
-
-    await user.click(screen.getByTestId('mood-option-2'))
-    await user.click(screen.getByTestId('mood-submit-btn'))
-
-    await waitFor(() => expect(api.submitBoardMood).toHaveBeenCalledWith('b-1', { score: 2, note: null }))
-    await waitFor(() => expect(onMoodSubmitted).toHaveBeenCalledWith(saved))
-  })
-
-  it('в анонимном режиме имён в откликах нет', () => {
-    render(
-      <MoodDialog
-        open
-        onOpenChange={vi.fn()}
-        boardId="b-1"
-        anonymous
-        moods={[
-          mood('m-1', { author: 'Участник', participant_id: null, note: 'устали' }),
-          // Свою оценку сервер отдаёт с настоящим именем — показываем «Вы»
-          mood('m-2', { author: 'Анна', participant_id: 'p-me', mine: true }),
-        ]}
-        onMoodSubmitted={vi.fn()}
-      />,
-    )
-
-    const entries = screen.getAllByTestId('mood-entry')
-    expect(entries[0]).toHaveTextContent('Участник')
-    expect(entries[1]).toHaveTextContent('Вы')
-    expect(screen.queryByText('Анна')).not.toBeInTheDocument()
-    expect(screen.getByText(/имена в откликах скрыты/)).toBeInTheDocument()
-  })
-
-  it('вне анонимного режима имена видны, своя оценка помечена', () => {
-    render(
-      <MoodDialog
-        open
-        onOpenChange={vi.fn()}
-        boardId="b-1"
-        moods={[mood('m-1'), mood('m-2', { author: 'Анна', participant_id: 'p-me', mine: true })]}
-        onMoodSubmitted={vi.fn()}
-      />,
-    )
-    const entries = screen.getAllByTestId('mood-entry')
-    expect(entries[0]).toHaveTextContent('Борис')
-    expect(entries[1]).toHaveTextContent('Анна (вы)')
   })
 })
 

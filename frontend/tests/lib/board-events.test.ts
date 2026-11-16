@@ -21,16 +21,14 @@ import {
   applyGroupRelocated,
   applyGroupRestored,
   applyGroupUpdated,
-  applyMoodUpdated,
   applyParticipantRenamed,
-  applyParticipantRenamedToMoods,
   applyVotesReset,
   countMaskedCards,
   describeBoardChange,
   hasBoardEntity,
   type BoardChange,
 } from '../../lib/board-events'
-import type { ActionItem, BoardMood, Card, CardGroup, Column } from '../../types'
+import type { ActionItem, Card, CardGroup, Column } from '../../types'
 
 function card(id: string, position: number, extra: Partial<Card> = {}): Card {
   return {
@@ -460,40 +458,6 @@ describe('participant_renamed', () => {
     expect(next[1]).toBe(untouched)
   })
 
-  it('обновляет автора оценки настроения по participant_id', () => {
-    const moods: BoardMood[] = [
-      { id: 'm-1', board_id: 'b-1', author: 'Анна', participant_id: 'p-1', score: 4, note: null, created_at: '' },
-      { id: 'm-2', board_id: 'b-1', author: 'Анна', participant_id: 'p-2', score: 5, note: null, created_at: '' },
-      { id: 'm-3', board_id: 'b-1', author: 'Участник', participant_id: null, score: 3, note: null, created_at: '' },
-    ]
-    const next = applyParticipantRenamedToMoods(moods, 'p-1', 'Анна Петрова')
-    expect(next.map((m) => m.author)).toEqual(['Анна Петрова', 'Анна', 'Участник'])
-  })
-})
-
-describe('mood_updated', () => {
-  const mood = (id: string, extra: Partial<BoardMood> = {}): BoardMood => ({
-    id,
-    board_id: 'b-1',
-    author: 'Участник',
-    participant_id: null,
-    score: 3,
-    note: null,
-    created_at: '',
-    ...extra,
-  })
-
-  it('обновляет запись по id — имена в анонимном режиме одинаковые', () => {
-    const moods = [mood('m-1', { score: 2 }), mood('m-2', { score: 5 })]
-    const next = applyMoodUpdated(moods, mood('m-2', { score: 1 }))
-    expect(next.map((m) => m.score)).toEqual([2, 1])
-  })
-
-  it('добавляет новую оценку', () => {
-    const next = applyMoodUpdated([mood('m-1')], mood('m-2', { mine: true }))
-    expect(next).toHaveLength(2)
-    expect(next[1].mine).toBe(true)
-  })
 })
 
 describe('countMaskedCards', () => {

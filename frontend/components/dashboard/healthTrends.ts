@@ -42,7 +42,7 @@ function summarize(points: HealthTrendRowPoint[]): Pick<HealthTrendRow, 'latest'
 }
 
 /**
- * Собрать ряды для блока «Health check команды»: по ряду на вопрос и ряд оценки встречи.
+ * Собрать ряды для блока «Здоровье команды»: по ряду на вопрос и ряд оценки встречи.
  * Доски идут от старых к новым; вопросы — в порядке, заданном сервером.
  */
 export function buildHealthTrendRows(

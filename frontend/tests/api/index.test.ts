@@ -27,7 +27,6 @@ import {
   toggleLike,
   resetBoardVotes,
   revealBoardCards,
-  submitBoardMood,
   autoClusterPreview,
   AI_API_TIMEOUT_MS,
 } from '../../api'
@@ -97,14 +96,11 @@ describe('API client', () => {
     expect(api.post).toHaveBeenLastCalledWith('/cards/1/like', null, { params: { action: 'remove' } })
   })
 
-  it('resetBoardVotes и submitBoardMood не передают автора', async () => {
+  it('resetBoardVotes не передаёт автора', async () => {
     ;(api.post as ReturnType<typeof vi.fn>).mockResolvedValue({ data: {} })
 
     await resetBoardVotes('b-1')
     expect(api.post).toHaveBeenLastCalledWith('/boards/b-1/reset-votes')
-
-    await submitBoardMood('b-1', { score: 4, note: null })
-    expect(api.post).toHaveBeenLastCalledWith('/boards/b-1/mood', { score: 4, note: null })
   })
 
   it('revealBoardCards вызывает POST /boards/:id/reveal', async () => {

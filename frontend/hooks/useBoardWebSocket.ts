@@ -18,7 +18,6 @@ import {
   asColumn,
   asGroup,
   isBoardListItem,
-  isBoardMood,
   isBoardUpdatedData,
   isCardMovedData,
   isDeletedData,
@@ -44,7 +43,6 @@ import type {
   ActionItem,
   Board,
   BoardListItem,
-  BoardMood,
   Column,
   FacilitatorInfo,
   Participant,
@@ -108,6 +106,8 @@ const RESYNC_RETRY_MAX_MS = 30000
 
 interface UseBoardWebSocketParams {
   boardId: string
+  /** Колонки из загруженного снимка: доска рисуется сразу, без пустого кадра до чтения. */
+  initialColumns?: Column[]
   onTimerWsEvent?: (event: string, data: Record<string, unknown>) => void
   /** После подключения сервер не прислал таймер — значит, на сервере он не запущен. */
   onTimerAbsent?: () => void
@@ -119,12 +119,11 @@ interface UseBoardWebSocketParams {
   onBoardCreated?: (board: BoardListItem) => void
   onBoardUpdated?: (board: WsBoardUpdatedData) => void
   onBoardDeleted?: (id: string) => void
-  onMoodUpdated?: (mood: BoardMood) => void
   /** Участник сменил имя. Подписи карточек хук обновляет сам. */
   onParticipantRenamed?: (participantId: string, name: string) => void
   /**
    * Доска перечитана с сервера: колонки хук уже заменил, владельцу остаётся обновить
-   * остальное (настройки, настроение).
+   * остальное (настройки доски).
    */
   onBoardSnapshot?: (board: Board) => void
   /** Перечитывание завершено (после переподключения, пропуска событий и т. п.). */
@@ -132,7 +131,7 @@ interface UseBoardWebSocketParams {
   /** Доски больше нет (удалена или недоступна): подключаться бессмысленно. */
   onBoardGone?: () => void
   /**
-   * События, которые хук не обрабатывает сам (health check). Вернуть `true`, если событие
+   * События, которые хук не обрабатывает сам (здоровье команды). Вернуть `true`, если событие
    * обработано. Пронумерованные события приходят сюда уже по порядку.
    */
   onServerEvent?: (msg: WsMessage) => boolean
@@ -172,6 +171,7 @@ interface SyncState {
 
 export function useBoardWebSocket({
   boardId,
+  initialColumns,
   onTimerWsEvent,
   onTimerAbsent,
   onFacilitatorChanged,
@@ -181,7 +181,6 @@ export function useBoardWebSocket({
   onBoardCreated,
   onBoardUpdated,
   onBoardDeleted,
-  onMoodUpdated,
   onParticipantRenamed,
   onBoardSnapshot,
   onResynced,
@@ -190,7 +189,7 @@ export function useBoardWebSocket({
 }: UseBoardWebSocketParams) {
   // Личность — участник сессии
   const myId = useAppStore((s) => s.participant?.id ?? '')
-  const [columns, setColumns] = useState<Column[]>([])
+  const [columns, setColumns] = useState<Column[]>(() => initialColumns ?? [])
   // Курсоры хранятся по идентификатору участника: у тёзок они разные
   const cursorsRef = useRef<Record<string, CursorPos>>({})
   const cursorListenersRef = useRef<Set<() => void>>(new Set())
@@ -248,7 +247,6 @@ export function useBoardWebSocket({
     onBoardCreated,
     onBoardUpdated,
     onBoardDeleted,
-    onMoodUpdated,
     onParticipantRenamed,
     onBoardSnapshot,
     onResynced,
@@ -267,7 +265,6 @@ export function useBoardWebSocket({
       onBoardCreated,
       onBoardUpdated,
       onBoardDeleted,
-      onMoodUpdated,
       onParticipantRenamed,
       onBoardSnapshot,
       onResynced,
@@ -532,13 +529,6 @@ export function useBoardWebSocket({
           setReactions((prev) => prev.filter((r) => r.id !== id))
           delete reactionTimeouts.current[id]
         }, 3500)
-        return
-      }
-
-      if (event === 'mood_updated') {
-        if (isBoardMood(rawData)) {
-          callbacks.onMoodUpdated?.(rawData)
-        }
         return
       }
 

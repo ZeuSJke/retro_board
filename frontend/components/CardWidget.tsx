@@ -9,13 +9,13 @@ import {
   Bot,
   Check,
   EyeOff,
+  Focus,
   GripVertical,
   ListTodo,
   Minus,
   MoreHorizontal,
   Palette,
   Pencil,
-  Sparkles,
   ThumbsUp,
   Trash2,
   Unlink,
@@ -564,7 +564,7 @@ function CardWidget({
                       }}
                       title="В фокус обсуждения"
                     >
-                      <Sparkles className="h-3.5 w-3.5" />
+                      <Focus className="h-3.5 w-3.5" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>В фокус обсуждения</TooltipContent>
@@ -804,7 +804,7 @@ function CardWidget({
             <div className="flex items-center gap-1 text-[10px] text-muted-foreground/75">
               {isSpotlighted && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
-                  <Sparkles className="h-2.5 w-2.5" />В фокусе
+                  <Focus className="h-2.5 w-2.5" />В фокусе
                 </span>
               )}
             </div>

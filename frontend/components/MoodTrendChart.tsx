@@ -61,7 +61,8 @@ function CustomTooltip({
 }
 
 export default memo(function MoodTrendChart({ data }: Props) {
-  const valid = data.filter((d) => d.mood_avg !== null || d.cards_count > 0)
+  // Настроение больше не собирается на доске: на графике только доски с историей оценок
+  const valid = data.filter((d) => d.mood_avg !== null)
   if (valid.length === 0) return null
 
   // Точка — доска: на оси её название, дата — в подсказке (см. chartLabels.ts)

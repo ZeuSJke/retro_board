@@ -194,8 +194,7 @@ export default function BoardSettingsDialog({
                     Анонимный режим
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Авторы карточек, голосовавшие и авторы оценок настроения скрыты от других
-                    участников
+                    Авторы карточек и голосовавшие скрыты от других участников
                   </p>
                 </div>
                 <Switch

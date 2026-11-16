@@ -51,7 +51,6 @@ const board: Board = {
   max_votes: 5,
   created_at: '2026-03-01T10:00:00Z',
   columns: [],
-  moods: [],
 }
 
 beforeAll(() => {
@@ -83,7 +82,6 @@ function renderTopbar(props: Partial<React.ComponentProps<typeof Topbar>> = {}) 
     onOpenBoardsDrawer: vi.fn(),
     onOpenBoardSettings: vi.fn(),
     onOpenUserSettings: vi.fn(),
-    onOpenMood: vi.fn(),
     onOpenSummary: vi.fn(),
     onExportMarkdown: vi.fn(),
     onExportPDF: vi.fn(),
@@ -124,22 +122,18 @@ describe('Topbar — кнопка «Панель управления»', () => 
 })
 
 describe('Topbar — меню доски (на телефоне в нём всё, что не поместилось в шапку)', () => {
-  it('в меню есть настроение, панель управления, настройки доски и тема', async () => {
+  it('в меню есть панель управления, настройки доски и тема', async () => {
     const user = userEvent.setup()
-    const { onOpenMood, onOpenBoardSettings } = renderTopbar({
-      board: { ...board, moods: [{ id: 'm-1', board_id: 'b-1', author: 'Анна', score: 4, note: null, created_at: '' }] },
-    })
+    const { onOpenBoardSettings } = renderTopbar()
 
     await user.click(screen.getByTestId('export-menu-btn'))
     const menu = await screen.findByRole('menu')
 
     expect(within(menu).getByTestId('menu-dashboard-item')).toHaveAttribute('href', '/dashboard')
     expect(within(menu).getByRole('menuitem', { name: 'Итоги ретроспективы' })).toBeInTheDocument()
-    expect(within(menu).getByTestId('menu-mood-item')).toHaveTextContent('4.0')
+    expect(within(menu).getByTestId('menu-health-check-item')).toHaveTextContent('Здоровье команды')
 
-    await user.click(within(menu).getByTestId('menu-mood-item'))
-    expect(onOpenMood).toHaveBeenCalledTimes(1)
-
+    await user.keyboard('{Escape}')
     await user.click(screen.getByTestId('export-menu-btn'))
     await user.click(await screen.findByTestId('menu-board-settings-item'))
     expect(onOpenBoardSettings).toHaveBeenCalledTimes(1)

@@ -472,7 +472,7 @@ function Column({
       })
       onCardCreated(created)
       setDraftText('')
-      textareaRef.current?.focus()
+      textareaRef.current?.focus({ preventScroll: true })
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Не удалось создать карточку'), 'error')
     } finally {
@@ -824,109 +824,120 @@ function Column({
 
         {/* Inline card composer */}
         <div className="shrink-0 border-t px-3 py-2.5">
-          <AnimatePresence initial={false}>
+          <AnimatePresence initial={false} mode="wait">
             {composerOpen && canCreateCard ? (
               <motion.div
                 key="composer-form"
-                initial={{ opacity: 0, y: 6, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 4, scale: 0.98 }}
-                transition={{ duration: 0.16, ease: 'easeOut' }}
-                className="space-y-2 rounded-xl border bg-background p-2.5 shadow-xs"
+                data-testid="card-composer"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                className="-m-1 overflow-hidden p-1"
               >
-                <Textarea
-                  ref={textareaRef}
-                  value={draftText}
-                  onChange={(e) => {
-                    const nextVal = e.target.value
-                    setDraftText(nextVal)
-                    emitTyping(nextVal.trim().length > 0)
-                  }}
-                  onBlur={() => emitTyping(false)}
-                  rows={2}
-                  autoFocus
-                  placeholder="Опишите мысль... (Enter — добавить)"
-                  className="min-h-[60px] resize-none border-0 bg-transparent p-1 text-sm focus-visible:ring-0"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      emitTyping(false)
-                      void handleAddCard()
-                    } else if (e.key === 'Escape') {
-                      emitTyping(false)
-                      setComposerOpen(false)
-                    }
-                  }}
-                />
-                <div className="flex items-center justify-between gap-2 pt-1">
-                  <div className="flex items-center gap-1">
-                    {CARD_COLOR_PRESETS.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => setDraftColor(c.hex)}
-                        title={c.name}
-                        aria-label={`Цвет карточки: ${c.name}`}
-                        aria-pressed={draftColor.toLowerCase() === c.hex.toLowerCase()}
-                        className={cn(
-                          'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
-                          c.swatchClass,
-                          draftColor.toLowerCase() === c.hex.toLowerCase() &&
-                            'ring-2 ring-primary ring-offset-1 ring-offset-background',
-                        )}
-                      >
-                        {c.id !== 'default' && (
-                          <span
-                            className="h-2 w-2 rounded-full"
-                            style={{ backgroundColor: c.accentDot }}
-                          />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="h-7 w-7"
-                      onClick={() => {
-                        emitTyping(false)
-                        setComposerOpen(false)
-                      }}
-                      aria-label="Отменить"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="h-7 px-3 text-xs"
-                      disabled={!draftText.trim() || creating}
-                      onClick={() => {
+                <div className="space-y-2 rounded-xl border bg-background p-2.5 shadow-xs">
+                  <Textarea
+                    ref={textareaRef}
+                    value={draftText}
+                    onChange={(e) => {
+                      const nextVal = e.target.value
+                      setDraftText(nextVal)
+                      emitTyping(nextVal.trim().length > 0)
+                    }}
+                    onBlur={() => emitTyping(false)}
+                    rows={2}
+                    autoFocus
+                    placeholder="Опишите мысль... (Enter — добавить)"
+                    className="min-h-[60px] resize-none border-0 bg-transparent p-1 text-sm focus-visible:ring-0"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
                         emitTyping(false)
                         void handleAddCard()
-                      }}
-                    >
-                      {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      Добавить
-                    </Button>
+                      } else if (e.key === 'Escape') {
+                        emitTyping(false)
+                        setComposerOpen(false)
+                      }
+                    }}
+                  />
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <div className="flex items-center gap-1">
+                      {CARD_COLOR_PRESETS.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => setDraftColor(c.hex)}
+                          title={c.name}
+                          aria-label={`Цвет карточки: ${c.name}`}
+                          aria-pressed={draftColor.toLowerCase() === c.hex.toLowerCase()}
+                          className={cn(
+                            'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
+                            c.swatchClass,
+                            draftColor.toLowerCase() === c.hex.toLowerCase() &&
+                              'ring-2 ring-primary ring-offset-1 ring-offset-background',
+                          )}
+                        >
+                          {c.id !== 'default' && (
+                            <span
+                              className="h-2 w-2 rounded-full"
+                              style={{ backgroundColor: c.accentDot }}
+                            />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-7 w-7"
+                        onClick={() => {
+                          emitTyping(false)
+                          setComposerOpen(false)
+                        }}
+                        aria-label="Отменить"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-7 px-3 text-xs"
+                        disabled={!draftText.trim() || creating}
+                        onClick={() => {
+                          emitTyping(false)
+                          void handleAddCard()
+                        }}
+                      >
+                        {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        Добавить
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </motion.div>
             ) : (
-              <Button
+              <motion.div
                 key="composer-btn"
-                type="button"
-                variant="ghost"
-                data-column-add-btn="true"
-                disabled={!canCreateCard}
-                onClick={() => setComposerOpen(true)}
-                className="w-full justify-start gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+                className="-m-1 overflow-hidden p-1"
               >
-                <Plus className="h-4 w-4" />
-                Добавить карточку
-              </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  data-column-add-btn="true"
+                  disabled={!canCreateCard}
+                  onClick={() => setComposerOpen(true)}
+                  className="w-full justify-start gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+                >
+                  <Plus className="h-4 w-4" />
+                  Добавить карточку
+                </Button>
+              </motion.div>
             )}
           </AnimatePresence>
         </div>

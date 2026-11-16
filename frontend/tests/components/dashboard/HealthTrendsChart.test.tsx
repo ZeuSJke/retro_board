@@ -70,7 +70,7 @@ describe('HealthTrendsChart — динамика health check между дос�
 
   it('те же числа доступны таблицей: доски подписаны названиями', () => {
     render(<HealthTrendsChart questions={QUESTIONS} points={POINTS} />)
-    const table = screen.getByRole('table', { name: /Health check команды/ })
+    const table = screen.getByRole('table', { name: /Здоровье команды/ })
     expect(within(table).getByRole('columnheader', { name: 'Спринт 1' })).toBeInTheDocument()
     expect(within(table).getByRole('columnheader', { name: 'Спринт 2' })).toBeInTheDocument()
     const paceRow = within(table).getByRole('rowheader', { name: /Темп/ }).closest('tr')!

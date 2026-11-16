@@ -245,7 +245,6 @@ export type WsMessage = WsEnvelopeBase &
     | { event: 'groups_collapsed'; data: WsGroupsCollapsedData }
     | { event: 'cards_visibility_changed'; data: { hidden?: boolean } & Record<string, unknown> }
     | { event: 'participant_renamed'; data: WsParticipantRenamedData }
-    | { event: 'mood_updated'; data: BoardMood }
     | { event: 'action_item_created'; data: ActionItem }
     | { event: 'action_item_updated'; data: ActionItem }
     | { event: 'action_item_deleted'; data: WsDeletedData }

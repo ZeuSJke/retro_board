@@ -10,7 +10,6 @@ import {
   isDeletedData,
   isGroupCollapseData,
   isGroupsCollapsedData,
-  isBoardMood,
   isSummaryFailedData,
   isBoardListItem,
   isBoardUpdatedData,
@@ -69,10 +68,6 @@ describe('wsData runtime guards', () => {
     expect(isGroupsCollapsedData({ group_ids: [] })).toBe(true)
     expect(isGroupsCollapsedData({ group_ids: ['g-1', 2] })).toBe(false)
     expect(isGroupsCollapsedData({ group_ids: 'g-1' })).toBe(false)
-
-    expect(isBoardMood({ id: 'm-1', score: 4 })).toBe(true)
-    expect(isBoardMood({ id: 'm-1', score: Number.NaN })).toBe(false)
-    expect(isBoardMood({ id: 'm-1', score: '4' })).toBe(false)
 
     expect(isSummaryFailedData({ message: 'Ошибка AI' })).toBe(true)
     expect(isSummaryFailedData({ message: 500 })).toBe(false)

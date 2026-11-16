@@ -14,7 +14,6 @@
  */
 import type {
   ActionItem,
-  BoardMood,
   Card,
   CardGroup,
   Column,
@@ -473,27 +472,6 @@ export function applyParticipantRenamed(
       ),
     }
   })
-}
-
-export function applyParticipantRenamedToMoods(
-  moods: BoardMood[],
-  participantId: string,
-  name: string,
-): BoardMood[] {
-  if (!participantId) return moods
-  return moods.map((m) =>
-    m.participant_id === participantId && m.author !== name ? { ...m, author: name } : m,
-  )
-}
-
-/**
- * Оценка настроения сохранена или обновлена. Запись у участника на доске одна, её `id`
- * не меняется — по нему и сопоставляем (имена в анонимном режиме скрыты и не уникальны).
- */
-export function applyMoodUpdated(moods: BoardMood[], mood: BoardMood): BoardMood[] {
-  return moods.some((m) => m.id === mood.id)
-    ? moods.map((m) => (m.id === mood.id ? mood : m))
-    : [...moods, mood]
 }
 
 // ── Задачи ───────────────────────────────────────────────────────────────────
