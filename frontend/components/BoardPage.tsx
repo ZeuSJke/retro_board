@@ -364,6 +364,7 @@ export default function BoardPage({
     handleMouseLeave,
   } = useBoardWebSocket({
     boardId: board.id,
+    initialColumns: board.columns,
     onTimerWsEvent: handleTimerWsEvent,
     onTimerAbsent: handleTimerAbsent,
     onFacilitatorChanged: handleFacilitatorChanged,
@@ -1175,8 +1176,8 @@ export default function BoardPage({
                     <p className="text-sm font-medium">На доске пока нет колонок</p>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                       {readOnly
-                        ? 'Добавить колонки сможет создатель или ведущий после разблокировки доски.'
-                        : 'Добавьте первую кнопкой «Колонка» в панели инструментов.'}
+                        ? 'Разблокируйте доску в настройках, чтобы добавить колонки.'
+                        : 'Добавьте первую через панель инструментов.'}
                     </p>
                   </div>
                 </div>

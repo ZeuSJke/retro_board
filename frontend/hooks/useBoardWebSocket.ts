@@ -106,6 +106,8 @@ const RESYNC_RETRY_MAX_MS = 30000
 
 interface UseBoardWebSocketParams {
   boardId: string
+  /** Колонки из загруженного снимка: доска рисуется сразу, без пустого кадра до чтения. */
+  initialColumns?: Column[]
   onTimerWsEvent?: (event: string, data: Record<string, unknown>) => void
   /** После подключения сервер не прислал таймер — значит, на сервере он не запущен. */
   onTimerAbsent?: () => void
@@ -169,6 +171,7 @@ interface SyncState {
 
 export function useBoardWebSocket({
   boardId,
+  initialColumns,
   onTimerWsEvent,
   onTimerAbsent,
   onFacilitatorChanged,
@@ -186,7 +189,7 @@ export function useBoardWebSocket({
 }: UseBoardWebSocketParams) {
   // Личность — участник сессии
   const myId = useAppStore((s) => s.participant?.id ?? '')
-  const [columns, setColumns] = useState<Column[]>([])
+  const [columns, setColumns] = useState<Column[]>(() => initialColumns ?? [])
   // Курсоры хранятся по идентификатору участника: у тёзок они разные
   const cursorsRef = useRef<Record<string, CursorPos>>({})
   const cursorListenersRef = useRef<Set<() => void>>(new Set())
