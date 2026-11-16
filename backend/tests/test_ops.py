@@ -134,17 +134,21 @@ class TestObservabilityMetricsAndJsonLogs:
             ).status_code
             == 413
         )
+        client.request("FOOBAR", "/api/unmatched-method-probe")
 
         body = client.get("/metrics").text
         for probe in (
             "unmatched-404-probe-abc",
             "unmatched-csrf-probe-xyz",
             "unmatched-size-probe-qrs",
+            "unmatched-method-probe",
         ):
             assert probe not in body
+        assert "FOOBAR" not in body
         assert 'retro_http_requests_total{method="GET",route="<unmatched>",status="404"}' in body
         assert 'retro_http_requests_total{method="POST",route="<unmatched>",status="403"}' in body
         assert 'retro_http_requests_total{method="POST",route="<unmatched>",status="413"}' in body
+        assert 'method="OTHER"' in body
 
 
 class TestMigration0015Downgrade:

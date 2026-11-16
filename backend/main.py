@@ -232,7 +232,7 @@ async def health():
 
 
 @app.get("/metrics", tags=["health"], include_in_schema=False)
-def metrics() -> Response:
+async def metrics() -> Response:
     """Метрики Prometheus для мониторинга внутри кластера."""
     return Response(content=render_metrics(), media_type=CONTENT_TYPE_LATEST)
 

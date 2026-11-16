@@ -364,6 +364,17 @@ export default function Dashboard() {
     void refreshWorkspaceSession().catch(markApiErrorReported)
   }, [queriesEnabled, workspaceId])
 
+  // Второстепенные графики и темы показывают своё состояние или тихо деградируют,
+  // поэтому помечаем ошибку, чтобы перехватчик не дублировал тосты.
+  const queryQuietly = <T,>(fn: () => Promise<T>) => async () => {
+    try {
+      return await fn()
+    } catch (err) {
+      markApiErrorReported(err)
+      throw err
+    }
+  }
+
   const boardsQuery = useQuery({
     queryKey: boardsKey,
     queryFn: getBoards,
@@ -376,35 +387,27 @@ export default function Dashboard() {
   })
   const trendsQuery = useQuery({
     queryKey: trendsKey,
-    queryFn: getActionItemTrends,
+    queryFn: queryQuietly(getActionItemTrends),
     enabled: queriesEnabled,
   })
   const moodTrendsQuery = useQuery({
     queryKey: moodTrendsKey,
-    queryFn: getMoodTrends,
+    queryFn: queryQuietly(getMoodTrends),
     enabled: queriesEnabled,
   })
   const healthTrendsQuery = useQuery({
     queryKey: healthTrendsKey,
-    queryFn: getHealthTrends,
+    queryFn: queryQuietly(getHealthTrends),
     enabled: queriesEnabled,
   })
   const healthQuestionsQuery = useQuery({
     queryKey: healthQuestionsKey,
-    queryFn: getHealthQuestions,
+    queryFn: queryQuietly(getHealthQuestions),
     enabled: queriesEnabled,
   })
   const themesQuery = useQuery({
     queryKey: themesKey,
-    queryFn: async () => {
-      try {
-        return await getTeamThemes()
-      } catch (err) {
-        // Блок тем сам показывает ошибку и «Повторить» — общий тост не нужен
-        markApiErrorReported(err)
-        throw err
-      }
-    },
+    queryFn: queryQuietly(getTeamThemes),
     enabled: queriesEnabled,
   })
 

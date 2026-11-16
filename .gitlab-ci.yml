@@ -109,8 +109,15 @@ backend-tests-pg:
       from sqlalchemy import create_engine, text
       eng = create_engine(os.environ["DATABASE_URL"].replace("postgresql://", "postgresql+psycopg://"))
       with eng.begin() as conn:
-          conn.execute(text("INSERT INTO workspaces (id, name, slug, access_key_hash) VALUES ('mig-ws', 'Mig WS', 'mig-ws', 'hash')"))
-          conn.execute(text("INSERT INTO boards (id, workspace_id, name, slug, max_votes, deleted_at) VALUES ('mig-del', 'mig-ws', 'Sprint 1', 'sprint-1', 5, :ts)"), {"ts": datetime.now(UTC)})
+          ts = datetime.now(UTC)
+          conn.execute(
+              text("INSERT INTO workspaces (id, name, slug, access_key_hash, created_at) VALUES ('mig-ws', 'Mig WS', 'mig-ws', 'hash', :ts)"),
+              {"ts": ts},
+          )
+          conn.execute(
+              text("INSERT INTO boards (id, workspace_id, name, slug, max_votes, created_at, deleted_at) VALUES ('mig-del', 'mig-ws', 'Sprint 1', 'sprint-1', 5, :ts, :ts)"),
+              {"ts": ts},
+          )
       PY
     - alembic upgrade head
     - |
@@ -119,7 +126,7 @@ backend-tests-pg:
       from sqlalchemy import create_engine, text
       eng = create_engine(os.environ["DATABASE_URL"].replace("postgresql://", "postgresql+psycopg://"))
       with eng.begin() as conn:
-          conn.execute(text("INSERT INTO boards (id, workspace_id, name, slug, max_votes) VALUES ('mig-live', 'mig-ws', 'Sprint 1', 'sprint-1', 5)"))
+          conn.execute(text("INSERT INTO boards (id, workspace_id, name, slug, max_votes, created_at) VALUES ('mig-live', 'mig-ws', 'Sprint 1', 'sprint-1', 5, NOW())"))
       PY
     - alembic check
     - alembic downgrade base

@@ -11,7 +11,6 @@ export const queryKeys = {
   dashboardHealthTrends: (workspaceId: string) => ['dashboard', workspaceId, 'health-trends'] as const,
   dashboardMoodTrends: (workspaceId: string) => ['dashboard', workspaceId, 'mood-trends'] as const,
   dashboardThemes: (workspaceId: string) => ['dashboard', workspaceId, 'themes'] as const,
-  dashboardAgentTokens: (workspaceId: string) => ['dashboard', workspaceId, 'agent-tokens'] as const,
   adminWorkspaces: () => ['admin', 'workspaces'] as const,
 }
 

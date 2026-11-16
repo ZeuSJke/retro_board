@@ -82,6 +82,11 @@ def render_metrics() -> bytes:
     return generate_latest()
 
 
+_ALLOWED_HTTP_METHODS = frozenset(
+    {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+)
+
+
 class MetricsMiddleware:
     """ASGI-middleware для подсчёта HTTP-запросов и их длительности по шаблону маршрута."""
 
@@ -93,7 +98,8 @@ class MetricsMiddleware:
             await self.app(scope, receive, send)
             return
 
-        method = scope.get("method", "GET")
+        raw_method = str(scope.get("method", "GET")).upper()
+        method = raw_method if raw_method in _ALLOWED_HTTP_METHODS else "OTHER"
         status_code = "500"
         start = time.perf_counter()
 

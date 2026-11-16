@@ -232,7 +232,7 @@ class FacilitatorUpdateOut(TypedDict):
 
 class ReadyUpdateOut(TypedDict):
     ready_ids: list[str]
-    ready_names: list[str]
+    ready_users: list[str]
 
 
 class TimerStartOut(TypedDict, total=False):

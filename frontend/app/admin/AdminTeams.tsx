@@ -180,7 +180,14 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
 
   const tokensCountQuery = useQuery({
     queryKey: ['admin', 'agent-tokens', target?.id ?? ''],
-    queryFn: () => getAdminAgentTokens(target!.id),
+    queryFn: async () => {
+      try {
+        return await getAdminAgentTokens(target!.id)
+      } catch (err) {
+        markApiErrorReported(err)
+        throw err
+      }
+    },
     enabled: dialogMode === 'key' && Boolean(target),
     staleTime: 0,
   })

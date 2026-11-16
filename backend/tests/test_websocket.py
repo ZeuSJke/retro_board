@@ -774,6 +774,45 @@ class TestGroupCollapsePersistence:
                 seen3 = events_until(ws3, "presence_update")
                 assert "groups_collapsed" not in seen3
 
+    def test_auto_deleted_group_clears_collapsed_group_state(
+        self, client, ws_token_for, ws_board
+    ):
+        token = ws_token_for("Alice")
+        headers = {"X-Workspace-Token": token}
+        col = client.post(
+            "/api/columns/",
+            json={"board_id": ws_board.id, "title": "Колонка"},
+            headers=headers,
+        ).json()
+        card = client.post(
+            "/api/cards/",
+            json={"column_id": col["id"], "text": "Единственная карточка"},
+            headers=headers,
+        ).json()
+        grp = client.post(
+            "/api/groups/",
+            json={"column_id": col["id"], "title": "Автогруппа"},
+            headers=headers,
+        ).json()
+        assert (
+            client.post(f"/api/groups/{grp['id']}/set_card/{card['id']}", headers=headers).status_code
+            == 200
+        )
+
+        with connect(client, ws_board.id, token) as ws1:
+            send(ws1, "group_collapse", {"group_id": grp["id"], "collapsed": True})
+            assert recv_event(ws1, "group_collapse")["data"]["collapsed"] is True
+            assert grp["id"] in manager.get_collapsed_groups(ws_board.id)
+
+            del_resp = client.delete(f"/api/cards/{card['id']}", headers=headers)
+            assert del_resp.status_code == 204
+            assert recv_event(ws1, "group_deleted")["data"]["id"] == grp["id"]
+            assert grp["id"] not in manager.get_collapsed_groups(ws_board.id)
+
+            with connect(client, ws_board.id, ws_token_for("Bob"), drain=False) as ws2:
+                seen2 = events_until(ws2, "presence_update")
+                assert "groups_collapsed" not in seen2
+
 
 class TestBoardUpdateDeduplication:
     def test_patch_board_sends_single_board_updated_to_active_board(

@@ -884,6 +884,10 @@ class ConnectionManager:
         data: dict,
         exclude: WebSocket | None = None,
     ):
+        if event == "group_deleted":
+            gid = data.get("id")
+            if isinstance(gid, str):
+                self.remove_collapsed_group(board_id, gid)
         message = json.dumps({**self._envelope(board_id, event), "data": data}, default=str)
         await self._send_to_room(board_id, event, lambda ws: message, exclude)
 
