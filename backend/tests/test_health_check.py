@@ -170,7 +170,9 @@ class TestLiveEvents:
         board_id = sample_board["id"]
         with _ws(client, board_id, workspace_headers) as ws_fac, _ws(client, board_id, anya) as ws_anya:
             ws_fac.send_text(json.dumps({"event": "facilitator_start", "data": {}}))
-            _recv(ws_anya, "facilitator_update")
+            started = _recv(ws_anya, "facilitator_update")
+            while started["data"].get("facilitator") != "Tester":
+                started = _recv(ws_anya, "facilitator_update")
 
             # Участник запустить опрос за ведущего не может
             ws_anya.send_text(json.dumps({"event": "health_check_start", "data": {}}))

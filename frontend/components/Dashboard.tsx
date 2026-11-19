@@ -1368,7 +1368,11 @@ export default function Dashboard() {
                       </CardHeader>
                       <CardContent>
                         {healthTrends.length > 0 ? (
-                          <HealthTrendsChart questions={healthQuestions} points={healthTrends} />
+                          <HealthTrendsChart
+                            questions={healthQuestions}
+                            points={healthTrends}
+                            wide={computedTrends.length === 0 && !hasMoodChart}
+                          />
                         ) : (
                           <p className="rounded-xl border border-dashed p-3.5 text-sm text-muted-foreground">
                             Ответов пока нет. Когда команда пройдёт опрос «Здоровье команды» на
