@@ -715,10 +715,10 @@ class TestCarryForward:
 
 class TestGenerateTitle:
     def test_generate_title_success(self, client, workspace_headers):
-        from app.config import settings
+        from tests.conftest import configure_ai
 
         with (
-            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            configure_ai(),
             patch("app.routers.action_items.ai_client.generate") as mock_generate,
         ):
             mock_generate.return_value = "Тестовый title"
@@ -734,10 +734,10 @@ class TestGenerateTitle:
     def test_generate_title_when_ai_not_configured_skips_client(
         self, client, workspace_headers
     ):
-        from app.config import settings
+        from tests.conftest import configure_ai
 
         with (
-            patch.object(settings, "ai_base_url", ""),
+            configure_ai(enabled=False, base_url=""),
             patch("app.routers.action_items.ai_client.generate") as mock_generate,
         ):
             resp = client.post(
@@ -750,11 +750,11 @@ class TestGenerateTitle:
             mock_generate.assert_not_called()
 
     def test_generate_title_fallback_on_error(self, client, workspace_headers):
-        from app.config import settings
+        from tests.conftest import configure_ai
 
         original_text = "Очень длинный текст карточки для проверки fallback"
         with (
-            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            configure_ai(),
             patch("app.routers.action_items.ai_client.generate") as mock_generate,
         ):
             mock_generate.side_effect = Exception("AI error")

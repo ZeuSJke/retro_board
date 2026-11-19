@@ -233,11 +233,9 @@ class AdminAiSettingsOut(BaseModel):
     base_url: str
     model: str
     reasoning_effort: AIReasoningEffort
-    source: Literal["database", "env"]
     has_api_key: bool
     api_key_masked: Optional[str] = None
     key_decrypt_error: bool = False
-    env_configured: bool
     updated_at: Optional[datetime] = None
 
 

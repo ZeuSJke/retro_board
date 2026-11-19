@@ -1,11 +1,10 @@
 """Сервис настроек OpenAI-совместимого ИИ с хранением в БД и кэшем в процессе.
 
-По умолчанию используется конфигурация из переменных окружения (`Settings`).
-При сохранении настроек через `/admin` они записываются в таблицу-синглтон
-`ai_settings` (API-ключ шифруется `Fernet` на ключе, производном через `HKDF`)
-и кэшируются в памяти единственного воркера, чтобы горячий путь генерации и
-проверки `is_ai_configured()` не ходил в БД и не выполнял криптооперации на
-каждый запрос.
+Настройки подключения хранятся только в таблице-синглтоне `ai_settings` и
+управляются через `/admin` (API-ключ шифруется `Fernet` на ключе, производном
+через `HKDF`). Активная конфигурация кэшируется в памяти единственного воркера,
+чтобы горячий путь генерации и проверки `is_ai_configured()` не ходил в БД и
+не выполнял криптооперации на каждый запрос.
 """
 
 from __future__ import annotations
@@ -36,7 +35,6 @@ from app.models import now_utc
 logger = logging.getLogger(__name__)
 
 ReasoningEffort = Literal["default", "none", "low", "medium", "high", "max"]
-AISettingsSource = Literal["database", "env"]
 
 VALID_REASONING_EFFORTS: frozenset[str] = frozenset(
     {"default", "none", "low", "medium", "high", "max"}
@@ -68,15 +66,23 @@ class EffectiveAIConfig:
     api_key: str
     model: str
     reasoning_effort: ReasoningEffort
-    source: AISettingsSource
     updated_at: datetime | None = None
     key_decrypt_error: bool = False
-    # Только для обратной совместимости со старым env AI_DISABLE_THINKING (Qwen3)
-    legacy_disable_thinking: bool = False
 
     @property
     def is_configured(self) -> bool:
         return bool(self.enabled and self.base_url)
+
+
+_EMPTY_AI_CONFIG = EffectiveAIConfig(
+    enabled=False,
+    base_url="",
+    api_key="",
+    model="",
+    reasoning_effort="default",
+    updated_at=None,
+    key_decrypt_error=False,
+)
 
 
 def set_ai_settings_db_session_factory(factory: Callable[[], Session] | None) -> None:
@@ -266,23 +272,6 @@ def assert_safe_resolved_host(url: str) -> None:
             )
 
 
-def _env_config() -> EffectiveAIConfig:
-    base_url = normalize_ai_base_url(settings.ai_base_url)
-    legacy_disable = bool(settings.ai_disable_thinking)
-    effort: ReasoningEffort = "none" if legacy_disable else "default"
-    return EffectiveAIConfig(
-        enabled=bool(base_url),
-        base_url=base_url,
-        api_key=settings.ai_api_key or "",
-        model=settings.ai_model,
-        reasoning_effort=effort,
-        source="env",
-        updated_at=None,
-        key_decrypt_error=False,
-        legacy_disable_thinking=legacy_disable,
-    )
-
-
 def _config_from_row(row: models.AISettings) -> EffectiveAIConfig:
     effort: ReasoningEffort = (
         cast(ReasoningEffort, row.reasoning_effort)
@@ -299,10 +288,8 @@ def _config_from_row(row: models.AISettings) -> EffectiveAIConfig:
         api_key=api_key,
         model=row.model,
         reasoning_effort=effort,
-        source="database",
         updated_at=row.updated_at,
         key_decrypt_error=decrypt_error,
-        legacy_disable_thinking=False,
     )
 
 
@@ -348,26 +335,30 @@ def load_ai_settings_cache(db: Session | None = None) -> EffectiveAIConfig:
         if db is not None:
             raise
         logger.warning(
-            "Не удалось прочитать таблицу ai_settings; используются настройки окружения",
+            "Не удалось прочитать таблицу ai_settings; ИИ временно считается выключенным",
             exc_info=True,
         )
-        return _env_config()
+        return _EMPTY_AI_CONFIG
 
     db_cfg = _config_from_row(row) if row is not None else None
     _store_cached_db_config(db_cfg, expected_generation=gen)
-    return db_cfg if db_cfg is not None else _env_config()
+    return db_cfg if db_cfg is not None else _EMPTY_AI_CONFIG
 
 
 def get_effective_ai_config(db: Session | None = None) -> EffectiveAIConfig:
     """Вернуть эффективный конфиг ИИ (из памяти процесса; при холодном старте — из БД)."""
     with _cache_lock:
         if _cache_loaded:
-            return _cached_db_config if _cached_db_config is not None else _env_config()
+            return (
+                _cached_db_config
+                if _cached_db_config is not None
+                else _EMPTY_AI_CONFIG
+            )
     return load_ai_settings_cache(db=db)
 
 
 def is_ai_configured(db: Session | None = None) -> bool:
-    """Проверить, включён и настроен ли ИИ (с учётом overrides в БД и env)."""
+    """Проверить, включён и настроен ли ИИ в `/admin`."""
     return get_effective_ai_config(db=db).is_configured
 
 
@@ -378,11 +369,9 @@ def build_admin_ai_settings_out(cfg: EffectiveAIConfig) -> dict:
         "base_url": cfg.base_url,
         "model": cfg.model,
         "reasoning_effort": cfg.reasoning_effort,
-        "source": cfg.source,
         "has_api_key": bool(cfg.api_key) or cfg.key_decrypt_error,
         "api_key_masked": None if cfg.key_decrypt_error else mask_api_key(cfg.api_key),
         "key_decrypt_error": cfg.key_decrypt_error,
-        "env_configured": bool(settings.ai_base_url.strip()),
         "updated_at": cfg.updated_at,
     }
 
@@ -403,7 +392,7 @@ def save_admin_ai_settings(
     api_key: str | None,
     clear_api_key: bool,
 ) -> dict:
-    """Провалидировать и сохранить переопределение настроек ИИ в БД."""
+    """Провалидировать и сохранить настройки ИИ в БД."""
     if reasoning_effort not in VALID_REASONING_EFFORTS:
         raise ValueError("Неподдерживаемый уровень размышлений")
 
@@ -430,16 +419,9 @@ def save_admin_ai_settings(
             row.api_key_encrypted = None
         elif new_key:
             row.api_key_encrypted = encrypt_api_key(new_key)
-        else:
-            env_url = normalize_ai_base_url(settings.ai_base_url)
-            if prev_url is not None:
-                # При смене Base URL без явного нового ключа старый не переносим на другой хост
-                if prev_url != normalized_url:
-                    row.api_key_encrypted = None
-            elif normalized_url and normalized_url == env_url and settings.ai_api_key:
-                row.api_key_encrypted = encrypt_api_key(settings.ai_api_key)
-            else:
-                row.api_key_encrypted = None
+        elif prev_url is None or prev_url != normalized_url:
+            # При первом сохранении без ключа или при смене Base URL старый ключ не переносится
+            row.api_key_encrypted = None
 
         row.enabled = bool(enabled)
         row.base_url = normalized_url
@@ -454,19 +436,6 @@ def save_admin_ai_settings(
         _store_cached_db_config(cfg)
         _reset_shared_http_client()
         return build_admin_ai_settings_out(cfg)
-
-
-def reset_admin_ai_settings(db: Session) -> dict:
-    """Удалить переопределение из БД и вернуться к настройкам окружения."""
-    with _write_lock:
-        row = db.get(models.AISettings, _SINGLETON_ID)
-        if row is not None:
-            db.delete(row)
-            db.commit()
-
-        _store_cached_db_config(None)
-        _reset_shared_http_client()
-        return build_admin_ai_settings_out(_env_config())
 
 
 def resolve_probe_credentials(

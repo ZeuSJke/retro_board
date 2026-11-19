@@ -58,7 +58,6 @@ import {
   getAdminSession,
   getAdminSessionHint,
   getAdminWorkspaceInvite,
-  resetAdminAiSettings,
   rotateAdminWorkspaceInvite,
   setAdminSessionHint,
   subscribeAdminSessionHint,
@@ -247,22 +246,19 @@ describe('api/admin', () => {
   })
 
   describe('настройки ИИ', () => {
-    it('читает, сохраняет, сбрасывает и тестирует настройки ИИ по путям админского API', async () => {
+    it('читает, сохраняет и тестирует настройки ИИ по путям админского API', async () => {
       const sample = {
         enabled: true,
         base_url: 'https://api.example.com/v1',
         model: 'model-a',
         reasoning_effort: 'high' as const,
-        source: 'database' as const,
         has_api_key: true,
         api_key_masked: 'sk-••••1234',
         key_decrypt_error: false,
-        env_configured: false,
         updated_at: '2026-11-19T12:00:00Z',
       }
       adminApi().get.mockResolvedValueOnce({ data: sample })
       adminApi().put.mockResolvedValueOnce({ data: sample })
-      adminApi().delete.mockResolvedValueOnce({ data: { ...sample, source: 'env' } })
       adminApi().post
         .mockResolvedValueOnce({
           data: {
@@ -294,9 +290,6 @@ describe('api/admin', () => {
         reasoning_effort: 'high',
         api_key: 'sk-test-1234',
       })
-
-      await expect(resetAdminAiSettings()).resolves.toMatchObject({ source: 'env' })
-      expect(adminApi().delete).toHaveBeenCalledWith('/ai-settings')
 
       await expect(
         testAdminAiSettings({

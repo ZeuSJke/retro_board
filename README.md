@@ -20,7 +20,7 @@
 - **Доски и шаблоны** — создание доски из 5 готовых шаблонов (`classic`, `start_stop_continue`, `4ls`, `sailboat`, `mad_sad_glad`); пустой холст задаётся своим набором колонок без колонок (`template: "empty"` остаётся алиасом API/MCP), человекочитаемые slug, soft delete (`deleted_at`), блокировка изменений (`is_locked`), множественные голоса на одну карточку (`allow_multiple_votes_per_card`), сброс голосов (`reset-votes`)
 - **Колонки, карточки и группы** — настройка колонок и цветов, стикеры с поддержкой Markdown-ссылок и кода, фильтрация/поиск, голосование с лимитом на участника (`max_votes`), drag & drop карточек и целых групп (`@dnd-kit`), массовое редактирование/удаление (`bulk-update`, `bulk-delete`) и объединение карточек (`merge`)
 - **Real-time и сессия ведущего** — WebSocket-синхронизация состояния доски и списка досок команды (`/ws/{board_id}`, `/ws/workspace`) с номерами событий и сверкой после переподключения, режим ведущего с фазами (`brainstorm` → `reveal` → `discuss` → `vote` → `summary`), передача и перехват роли ведущего, общий таймер (переживает рестарт сервера), статус готовности (`ready_toggle`), индикатор набора текста (`card_typing`), spotlight карточки, живые курсоры и быстрые реакции
-- **AI-функции** *(опционально, через любой OpenAI-совместимый `/v1` API — OpenAI, LiteLLM, vLLM, Ollama и т.д.; при подключении задайте `AI_MODEL` и при необходимости `AI_DISABLE_THINKING=false`)*:
+- **AI-функции** *(опционально, настраиваются в `/admin` → «Настройки ИИ» через любой OpenAI-совместимый HTTPS `/v1` API — с выбором модели, уровня размышлений `reasoning_effort` и проверкой подключения)*:
   - **Кластеризация** — автогруппировка похожих карточек в колонке и предпросмотр кластеров до применения (`auto-cluster`, `auto-cluster-preview`, `apply-clusters`)
   - **Резюме ретро** — генерация и перегенерация итогов, ключевых тем и рекомендаций (`summary`, `summary/regenerate`)
   - **Action Items** — генерация заголовков и подбор задач из карточек (`generate-title`, `suggest`)
@@ -70,7 +70,7 @@ docker run -d --name retroboard-pg \
 
 ```bash
 cd backend
-cp .env.example .env          # отредактируйте секреты, POSTGRES/AI_* при необходимости
+cp .env.example .env          # отредактируйте секреты и DATABASE_URL при необходимости
 .venv/bin/alembic upgrade head
 .venv/bin/uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -155,7 +155,7 @@ helm upgrade --install retro-board k8s/helm/retro-board \
   --wait --timeout 5m
 ```
 
-Остальные параметры (`postgres.storageClassName`, `postgres.storageSize`, `<component>.resources`, `config.aiBaseUrl`, `config.aiModel`, `secrets.aiApiKey`, `networkPolicy.enabled`, `backup.*`) описаны в `k8s/helm/retro-board/values.yaml`. Сам чарт на этапе рендера/установки блокирует опасные конфигурации (`api.replicas != 1`, пустой или `*` `CORS_ORIGINS`, мутабельный тег без `Always`, слабые секреты), а `make helm-lint` дополнительно валидирует манифесты через `kubeconform` (требуется в `PATH`) и прогоняет тесты этих гардов.
+Остальные параметры (`postgres.storageClassName`, `postgres.storageSize`, `<component>.resources`, `networkPolicy.enabled`, `backup.*`) описаны в `k8s/helm/retro-board/values.yaml`. Сам чарт на этапе рендера/установки блокирует опасные конфигурации (`api.replicas != 1`, пустой или `*` `CORS_ORIGINS`, мутабельный тег без `Always`, слабые секреты), а `make helm-lint` дополнительно валидирует манифесты через `kubeconform` (требуется в `PATH`) и прогоняет тесты этих гардов.
 
 ---
 
@@ -274,6 +274,10 @@ retro_board/
 | `GET` | `/api/admin/workspaces/{workspace_id}/agent-tokens` | Список токенов MCP-агентов команды |
 | `POST` | `/api/admin/workspaces/{workspace_id}/agent-tokens` | Выпустить токен MCP-агента команды |
 | `DELETE` | `/api/admin/workspaces/{workspace_id}/agent-tokens/{token_id}` | Отозвать токен агента команды |
+| `GET` | `/api/admin/ai-settings` | Текущие настройки OpenAI-совместимого ИИ (`Cache-Control: no-store`, ключ маскируется) |
+| `PUT` | `/api/admin/ai-settings` | Сохранить настройки ИИ в БД и обновить кэш процесса без рестарта |
+| `POST` | `/api/admin/ai-settings/test` | Проверить подключение к ИИ-шлюзу (`/chat/completions`) с указанными параметрами |
+| `POST` | `/api/admin/ai-settings/models` | Загрузить список доступных моделей (`GET {base_url}/models`) |
 
 ### Boards (`/api/boards/*`)
 
@@ -472,10 +476,7 @@ bearer_token_env_var = "RETROBOARD_MCP_TOKEN"
 | `WORKSPACE_JWT_EXPIRE_HOURS` | Нет | Срок жизни workspace-токена в часах (по умолчанию: `720` — 30 дней; сессия продлевается при каждом заходе) |
 | `SECURE_COOKIES` | Нет | Флаг `Secure` на куках (по умолчанию: `true`; для локального HTTP — `false`) |
 | `CSRF_ENABLED` | Нет | CSRF-защита (по умолчанию: `true`; `false` — только для тестовых стендов) |
-| `AI_BASE_URL` | Нет | OpenAI-совместимый `/v1` эндпоинт AI-шлюза (без него AI-функции отключены) |
-| `AI_API_KEY` | Нет | API-ключ AI-шлюза |
-| `AI_MODEL` | При `AI_BASE_URL` | Имя модели в OpenAI-совместимом шлюзе (задайте явно под вашего провайдера) |
-| `AI_DISABLE_THINKING` | Нет | Передавать `chat_template_kwargs: {"enable_thinking": false}` для reasoning-моделей (по умолчанию: `true`; для стандартного OpenAI API выставьте `false`) |
+| `AI_SETTINGS_ENCRYPTION_KEY` | Нет | Ключ шифрования API-ключа ИИ из `/admin` (`>= 32` символов; если не задан, ключ выводится через `HKDF` от `ADMIN_JWT_SECRET`) |
 | `AI_MAX_CONCURRENCY` | Нет | Сколько запросов к модели выполняется одновременно (по умолчанию: `4`); остальные ждут `AI_QUEUE_TIMEOUT_S` секунд (по умолчанию: `15`) и получают отказ |
 | `AI_CONNECT_TIMEOUT_S` | Нет | Таймаут установки соединения с AI-шлюзом в секундах (по умолчанию: `5`) |
 | `DB_CONNECT_TIMEOUT_S` | Нет | Таймаут подключения к PostgreSQL в секундах (по умолчанию: `5`) |

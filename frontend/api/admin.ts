@@ -201,11 +201,9 @@ export interface AdminAiSettings {
   base_url: string
   model: string
   reasoning_effort: AIReasoningEffort
-  source: 'database' | 'env'
   has_api_key: boolean
   api_key_masked: string | null
   key_decrypt_error: boolean
-  env_configured: boolean
   updated_at: string | null
 }
 
@@ -248,13 +246,9 @@ export interface AdminAiModelsResponse {
 export const getAdminAiSettings = (): Promise<AdminAiSettings> =>
   adminApi.get<AdminAiSettings>('/ai-settings').then((r) => r.data)
 
-/** Сохранить переопределение настроек ИИ в БД без рестарта сервера. */
+/** Сохранить настройки ИИ в БД без рестарта сервера. */
 export const updateAdminAiSettings = (data: AdminAiSettingsUpdate): Promise<AdminAiSettings> =>
   adminApi.put<AdminAiSettings>('/ai-settings', data).then((r) => r.data)
-
-/** Удалить переопределение настроек ИИ и вернуться к переменным окружения. */
-export const resetAdminAiSettings = (): Promise<AdminAiSettings> =>
-  adminApi.delete<AdminAiSettings>('/ai-settings').then((r) => r.data)
 
 /** Выполнить пробный запрос /chat/completions с указанными в форме настройками. */
 export const testAdminAiSettings = (data: AdminAiTestRequest): Promise<AdminAiTestResponse> =>

@@ -25,11 +25,8 @@ class Settings(BaseSettings):
     # Secure cookies (set SECURE_COOKIES=false for local HTTP dev)
     secure_cookies: bool = True
 
-    # AI — self-hosted LiteLLM gateway (OpenAI-compatible /v1 API)
-    ai_base_url: str = ""  # env AI_BASE_URL, e.g. https://llm-api.kirillbessonov.ru/v1
-    ai_api_key: str = ""  # env AI_API_KEY (может быть пустым, если гейт без авторизации)
-    ai_model: str = "qwen3.6-35b-a3b-mtp-ud-q8_k_xl"  # env AI_MODEL
-    ai_disable_thinking: bool = True  # env AI_DISABLE_THINKING
+    # AI — подключение к OpenAI-совместимому шлюзу задаётся в /admin (БД);
+    # в окружении остаются только лимиты, таймауты и ключ шифрования настроек.
     # Сколько запросов к модели идёт одновременно; остальные ждут ai_queue_timeout_s
     ai_max_concurrency: int = 4  # env AI_MAX_CONCURRENCY
     ai_queue_timeout_s: float = 15.0  # env AI_QUEUE_TIMEOUT_S

@@ -1,5 +1,6 @@
 """Тесты админских настроек OpenAI-совместимого ИИ (`/api/admin/ai-settings*`)."""
 
+import json
 import socket
 from unittest.mock import patch
 
@@ -9,7 +10,6 @@ from sqlalchemy import event
 
 from app import models
 from app.ai import ai_client
-from app.config import settings
 from app.services.ai_settings import invalidate_ai_settings_cache
 from tests.conftest import engine as test_engine
 
@@ -35,7 +35,7 @@ def tracked_connections():
 
 
 class TestAdminAiSettingsAuth:
-    def test_requires_admin_auth_on_all_endpoints(self, client):
+    def test_requires_admin_auth_on_all_endpoints(self, client, admin_headers):
         assert client.get("/api/admin/ai-settings").status_code == 401
         assert (
             client.put(
@@ -49,7 +49,6 @@ class TestAdminAiSettingsAuth:
             ).status_code
             == 401
         )
-        assert client.delete("/api/admin/ai-settings").status_code == 401
         assert (
             client.post(
                 "/api/admin/ai-settings/test",
@@ -68,113 +67,101 @@ class TestAdminAiSettingsAuth:
             ).status_code
             == 401
         )
+        # DELETE-сброс на env удалён полностью
+        assert client.delete("/api/admin/ai-settings", headers=admin_headers).status_code == 405
 
 
 class TestAdminAiSettingsCRUD:
-    def test_get_returns_env_defaults_and_masks_key(self, client, admin_headers):
-        with (
-            patch.object(settings, "ai_base_url", "HTTPS://LLM.EXAMPLE.COM:443/v1/"),
-            patch.object(settings, "ai_api_key", "sk-secret-value-1234"),
-            patch.object(settings, "ai_model", "model-from-env"),
-            patch.object(settings, "ai_disable_thinking", True),
-        ):
-            resp = client.get("/api/admin/ai-settings", headers=admin_headers)
+    def test_get_returns_unconfigured_defaults(self, client, admin_headers):
+        resp = client.get("/api/admin/ai-settings", headers=admin_headers)
         assert resp.status_code == 200
         assert resp.headers.get("cache-control") == "no-store"
         data = resp.json()
-        assert data["source"] == "env"
-        assert data["enabled"] is True
-        assert data["base_url"] == "https://llm.example.com/v1"
-        assert data["model"] == "model-from-env"
-        assert data["reasoning_effort"] == "none"
-        assert data["has_api_key"] is True
-        assert data["api_key_masked"] == "sk-••••1234"
-        assert data["env_configured"] is True
-        assert "sk-secret-value-1234" not in resp.text
+        assert data == {
+            "enabled": False,
+            "base_url": "",
+            "model": "",
+            "reasoning_effort": "default",
+            "has_api_key": False,
+            "api_key_masked": None,
+            "key_decrypt_error": False,
+            "updated_at": None,
+        }
 
     def test_put_encrypts_key_updates_workspaces_me_and_switches_live_client(
         self, client, db_session, admin_headers, workspace_headers
     ):
-        with patch.object(settings, "ai_base_url", ""):
-            me_before = client.get("/api/workspaces/me", headers=workspace_headers).json()
-            assert me_before["ai_enabled"] is False
+        me_before = client.get("/api/workspaces/me", headers=workspace_headers).json()
+        assert me_before["ai_enabled"] is False
 
-            put_resp = client.put(
-                "/api/admin/ai-settings",
-                headers=admin_headers,
-                json={
-                    "enabled": True,
-                    "base_url": "HTTPS://API.EXAMPLE.COM:443/v1/",
-                    "model": "reasoning-model",
-                    "reasoning_effort": "high",
-                    "api_key": "sk-provider-secret-9876",
-                },
+        put_resp = client.put(
+            "/api/admin/ai-settings",
+            headers=admin_headers,
+            json={
+                "enabled": True,
+                "base_url": "HTTPS://API.EXAMPLE.COM:443/v1/",
+                "model": "reasoning-model",
+                "reasoning_effort": "high",
+                "api_key": "sk-provider-secret-9876",
+            },
+        )
+        assert put_resp.status_code == 200, put_resp.text
+        saved = put_resp.json()
+        assert saved["enabled"] is True
+        assert saved["base_url"] == "https://api.example.com/v1"
+        assert saved["model"] == "reasoning-model"
+        assert saved["reasoning_effort"] == "high"
+        assert saved["has_api_key"] is True
+        assert saved["api_key_masked"] == "sk-••••9876"
+        assert "source" not in saved
+        assert "env_configured" not in saved
+        assert "sk-provider-secret-9876" not in put_resp.text
+
+        row = db_session.get(models.AISettings, 1)
+        assert row is not None
+        assert row.api_key_encrypted is not None
+        assert "sk-provider-secret-9876" not in row.api_key_encrypted
+
+        me_after = client.get("/api/workspaces/me", headers=workspace_headers).json()
+        assert me_after["ai_enabled"] is True
+
+        # Живой вызов через глобальный ai_client идёт на новый URL с reasoning_effort и json_mode
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["json"] = json.loads(request.content)
+            seen["auth"] = request.headers.get("authorization")
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": "Готово"}}]}
             )
-            assert put_resp.status_code == 200, put_resp.text
-            saved = put_resp.json()
-            assert saved["source"] == "database"
-            assert saved["enabled"] is True
-            assert saved["base_url"] == "https://api.example.com/v1"
-            assert saved["model"] == "reasoning-model"
-            assert saved["reasoning_effort"] == "high"
-            assert saved["has_api_key"] is True
-            assert saved["api_key_masked"] == "sk-••••9876"
-            assert "sk-provider-secret-9876" not in put_resp.text
 
-            row = db_session.get(models.AISettings, 1)
-            assert row is not None
-            assert row.api_key_encrypted is not None
-            assert "sk-provider-secret-9876" not in row.api_key_encrypted
+        with patch.object(ai_client, "transport", httpx.MockTransport(handler)):
+            out = ai_client.generate("Привет")
 
-            me_after = client.get("/api/workspaces/me", headers=workspace_headers).json()
-            assert me_after["ai_enabled"] is True
-
-            # Живой вызов через глобальный ai_client идёт на новый URL с reasoning_effort и json_mode
-            seen = {}
-
-            def handler(request: httpx.Request) -> httpx.Response:
-                seen["url"] = str(request.url)
-                seen["json"] = json_loads(request.content)
-                seen["auth"] = request.headers.get("authorization")
-                return httpx.Response(
-                    200, json={"choices": [{"message": {"content": "Готово"}}]}
-                )
-
-            def json_loads(raw: bytes) -> dict:
-                import json as _json
-
-                return _json.loads(raw)
-
-            with patch.object(ai_client, "transport", httpx.MockTransport(handler)):
-                out = ai_client.generate("Привет")
-
-            assert out == "Готово"
-            assert seen["url"] == "https://api.example.com/v1/chat/completions"
-            assert seen["json"]["model"] == "reasoning-model"
-            assert seen["json"]["reasoning_effort"] == "high"
-            assert seen["auth"] == "Bearer sk-provider-secret-9876"
+        assert out == "Готово"
+        assert seen["url"] == "https://api.example.com/v1/chat/completions"
+        assert seen["json"]["model"] == "reasoning-model"
+        assert seen["json"]["reasoning_effort"] == "high"
+        assert seen["auth"] == "Bearer sk-provider-secret-9876"
 
     def test_key_lifecycle_preserve_canonical_url_drop_on_host_change_and_clear(
         self, client, db_session, admin_headers
     ):
-        # Первый PUT с тем же URL, что в env (но в другом регистре и с :443), переносит ключ из env
-        with (
-            patch.object(settings, "ai_base_url", "https://gw.example.com/v1"),
-            patch.object(settings, "ai_api_key", "sk-env-inherited-1111"),
-        ):
-            r_inherit = client.put(
-                "/api/admin/ai-settings",
-                headers=admin_headers,
-                json={
-                    "enabled": True,
-                    "base_url": "HTTPS://GW.EXAMPLE.COM:443/v1/",
-                    "model": "model-1",
-                    "reasoning_effort": "medium",
-                },
-            )
-            assert r_inherit.status_code == 200
-            assert r_inherit.json()["has_api_key"] is True
-            assert r_inherit.json()["api_key_masked"] == "sk-••••1111"
+        r_init = client.put(
+            "/api/admin/ai-settings",
+            headers=admin_headers,
+            json={
+                "enabled": True,
+                "base_url": "HTTPS://GW.EXAMPLE.COM:443/v1/",
+                "model": "model-1",
+                "reasoning_effort": "medium",
+                "api_key": "sk-saved-key-1111",
+            },
+        )
+        assert r_init.status_code == 200
+        assert r_init.json()["has_api_key"] is True
+        assert r_init.json()["api_key_masked"] == "sk-••••1111"
 
         # Повторный PUT с тем же каноническим URL (другой регистр / :443) сохраняет ключ
         r_keep = client.put(
@@ -236,47 +223,48 @@ class TestAdminAiSettingsCRUD:
         db_session.expire_all()
         assert db_session.get(models.AISettings, 1).api_key_encrypted is None
 
-    def test_delete_resets_to_env_and_disable_turns_off_ai_and_blocks_client(
+    def test_disable_turns_off_ai_and_blocks_client(
         self, client, admin_headers, workspace_headers
     ):
-        with (
-            patch.object(settings, "ai_base_url", "https://env-gw.example.com/v1"),
-            patch.object(settings, "ai_model", "env-model"),
-            patch.object(settings, "ai_api_key", "sk-env-9999"),
-        ):
-            r_disable = client.put(
-                "/api/admin/ai-settings",
-                headers=admin_headers,
-                json={
-                    "enabled": False,
-                    "base_url": "",
-                    "model": "",
-                    "reasoning_effort": "default",
-                },
-            )
-            assert r_disable.status_code == 200
-            assert r_disable.json()["source"] == "database"
-            assert r_disable.json()["enabled"] is False
-            assert (
-                client.get("/api/workspaces/me", headers=workspace_headers).json()[
-                    "ai_enabled"
-                ]
-                is False
-            )
-            with pytest.raises(RuntimeError, match="отключён"):
-                ai_client.generate("Привет")
+        r_enable = client.put(
+            "/api/admin/ai-settings",
+            headers=admin_headers,
+            json={
+                "enabled": True,
+                "base_url": "https://gw.example.com/v1",
+                "model": "model-1",
+                "reasoning_effort": "default",
+                "api_key": "sk-test-9999",
+            },
+        )
+        assert r_enable.status_code == 200
+        assert (
+            client.get("/api/workspaces/me", headers=workspace_headers).json()[
+                "ai_enabled"
+            ]
+            is True
+        )
 
-            r_reset = client.delete("/api/admin/ai-settings", headers=admin_headers)
-            assert r_reset.status_code == 200
-            reset_data = r_reset.json()
-            assert reset_data["source"] == "env"
-            assert reset_data["base_url"] == "https://env-gw.example.com/v1"
-            assert (
-                client.get("/api/workspaces/me", headers=workspace_headers).json()[
-                    "ai_enabled"
-                ]
-                is True
-            )
+        r_disable = client.put(
+            "/api/admin/ai-settings",
+            headers=admin_headers,
+            json={
+                "enabled": False,
+                "base_url": "https://gw.example.com/v1",
+                "model": "model-1",
+                "reasoning_effort": "default",
+            },
+        )
+        assert r_disable.status_code == 200
+        assert r_disable.json()["enabled"] is False
+        assert (
+            client.get("/api/workspaces/me", headers=workspace_headers).json()[
+                "ai_enabled"
+            ]
+            is False
+        )
+        with pytest.raises(RuntimeError, match="отключён"):
+            ai_client.generate("Привет")
 
     @pytest.mark.parametrize(
         "bad_url",
@@ -389,33 +377,7 @@ class TestAdminAiSettingsProbeEndpoints:
     def test_probe_uses_saved_key_for_canonical_url_and_releases_db_connection(
         self, client, admin_headers, tracked_connections
     ):
-        # 1. В режиме env ключ из настроек окружения тоже подставляется на совпадающий URL
-        with (
-            patch.object(settings, "ai_base_url", "https://env.example.com/v1"),
-            patch.object(settings, "ai_api_key", "sk-from-env"),
-        ):
-            env_seen: list[dict] = []
-
-            def env_probe(*, base_url, api_key, model, reasoning_effort):
-                env_seen.append(
-                    {"api_key": api_key, "open_conns": tracked_connections["open"]}
-                )
-                return True, 12, "ОК", None, False
-
-            with patch("app.routers.admin.probe_ai_connection", side_effect=env_probe):
-                r_env = client.post(
-                    "/api/admin/ai-settings/test",
-                    headers=admin_headers,
-                    json={
-                        "base_url": "HTTPS://ENV.EXAMPLE.COM:443/v1/",
-                        "model": "m1",
-                        "reasoning_effort": "default",
-                    },
-                )
-                assert r_env.status_code == 200
-            assert env_seen == [{"api_key": "sk-from-env", "open_conns": 0}]
-
-        # 2. В режиме database ключ подставляется только на тот же хост; соединение закрыто до запроса
+        # Ключ из БД подставляется только на тот же канонический хост; соединение закрыто до HTTP-вызова
         client.put(
             "/api/admin/ai-settings",
             headers=admin_headers,

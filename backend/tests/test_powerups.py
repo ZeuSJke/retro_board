@@ -3,9 +3,8 @@
 import json
 from unittest.mock import patch
 
-from app.config import settings
 from app.ws_manager import manager
-from tests.conftest import participant_id_of
+from tests.conftest import configure_ai, participant_id_of
 
 
 def _make_board(client, headers, name="Powerups Board", **extra):
@@ -197,9 +196,7 @@ class TestAIPreviewAndSuggestions:
                 "ungrouped": [],
             }
         )
-        with patch("app.ai.clustering.ai_client") as mock_ai, patch.object(
-            settings, "ai_base_url", "http://llm.test/v1"
-        ):
+        with patch("app.ai.clustering.ai_client") as mock_ai, configure_ai():
             mock_ai.generate.return_value = ai_resp
             prev = client.post(
                 "/api/groups/auto-cluster-preview",
@@ -256,9 +253,7 @@ class TestAIPreviewAndSuggestions:
                 ]
             }
         )
-        with patch("app.ai.prompts.action_item_suggestions.ai_client") as mock_ai, patch.object(
-            settings, "ai_base_url", "http://llm.test/v1"
-        ):
+        with patch("app.ai.prompts.action_item_suggestions.ai_client") as mock_ai, configure_ai():
             mock_ai.generate.return_value = ai_resp
             resp = client.post(
                 "/api/action-items/suggest",

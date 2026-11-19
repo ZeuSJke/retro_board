@@ -13,6 +13,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
 from app.ws_manager import manager
+from tests.conftest import configure_ai
 
 TEST_ORIGIN = "http://localhost:3000"
 
@@ -716,11 +717,10 @@ class TestSummaryEvents:
     ):
         from app.services import boards as boards_service
 
-        monkeypatch.setattr(settings, "ai_base_url", "http://llm.test/v1")
         monkeypatch.setattr(
             boards_service, "generate_summary_internal", lambda *args, **kwargs: None
         )
-        with connect(client, ws_board.id, ws_token) as ws:
+        with configure_ai(), connect(client, ws_board.id, ws_token) as ws:
             send(ws, "facilitator_start")
             recv_event(ws, "facilitator_update")
             send(ws, "phase_change", {"phase": "summary"})
@@ -734,20 +734,18 @@ class TestSummaryEvents:
         from app.services import boards as boards_service
 
         summary = {"id": "s1", "summary_text": "Итоги", "key_themes": [], "recommendations": []}
-        monkeypatch.setattr(settings, "ai_base_url", "http://llm.test/v1")
         monkeypatch.setattr(
             boards_service, "generate_summary_internal", lambda *args, **kwargs: summary
         )
-        with connect(client, ws_board.id, ws_token) as ws:
+        with configure_ai(), connect(client, ws_board.id, ws_token) as ws:
             send(ws, "facilitator_start")
             recv_event(ws, "facilitator_update")
             send(ws, "phase_change", {"phase": "summary"})
             ev = recv_event(ws, "summary_generated")
             assert ev["data"] == {"summary": summary, "board_id": ws_board.id, "regenerated": False}
 
-    def test_summary_failed_event_without_ai(self, client, ws_token, ws_board, monkeypatch):
-        monkeypatch.setattr(settings, "ai_base_url", "")
-        with connect(client, ws_board.id, ws_token) as ws:
+    def test_summary_failed_event_without_ai(self, client, ws_token, ws_board):
+        with configure_ai(enabled=False, base_url=""), connect(client, ws_board.id, ws_token) as ws:
             send(ws, "facilitator_start")
             recv_event(ws, "facilitator_update")
             send(ws, "phase_change", {"phase": "summary"})

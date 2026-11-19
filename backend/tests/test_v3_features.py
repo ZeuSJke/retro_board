@@ -3,7 +3,7 @@
 import json
 from unittest.mock import patch
 
-from app.config import settings
+from tests.conftest import configure_ai
 
 TEST_ORIGIN = "http://localhost:3000"
 
@@ -287,7 +287,7 @@ class TestMoodAndInsightsAndRegenerate:
     def test_workspace_insights_fallback_and_ai(
         self, client, sample_board, sample_card, workspace_headers
     ):
-        with patch.object(settings, "ai_base_url", ""):
+        with configure_ai(enabled=False, base_url=""):
             fallback_resp = client.post(
                 "/api/boards/workspace-insights", headers=workspace_headers
             )
@@ -305,11 +305,7 @@ class TestMoodAndInsightsAndRegenerate:
             },
             ensure_ascii=False,
         )
-        with patch.object(
-            settings,
-            "ai_base_url",
-            "https://mock-ai.local/v1",
-        ), patch(
+        with configure_ai(base_url="https://mock-ai.local/v1"), patch(
             "app.ai.prompts.workspace_insights.ai_client.generate",
             return_value=mock_ai_json,
         ):
@@ -325,16 +321,14 @@ class TestMoodAndInsightsAndRegenerate:
     def test_regenerate_summary_requires_ai_and_upserts(
         self, client, sample_board, sample_card, workspace_headers
     ):
-        with patch.object(settings, "ai_base_url", ""):
+        with configure_ai(enabled=False, base_url=""):
             r_503 = client.post(
                 f"/api/boards/{sample_board['id']}/summary/regenerate",
                 headers=workspace_headers,
             )
             assert r_503.status_code == 503
 
-        with patch.object(
-            settings, "ai_base_url", "https://mock-ai.local/v1"
-        ), patch(
+        with configure_ai(base_url="https://mock-ai.local/v1"), patch(
             "app.routers.boards.generate_summary",
             return_value={
                 "summary_text": "Первая версия итогов",

@@ -7,7 +7,7 @@ POST /api/groups/auto-cluster endpoint.
 import json
 from unittest.mock import patch
 
-from app.config import settings
+from tests.conftest import configure_ai
 
 # ---------------------------------------------------------------------------
 # Unit tests for parse_clustering_response
@@ -182,7 +182,7 @@ class TestAutoCluster:
         })
 
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+             configure_ai():
             mock_ai.generate.return_value = ai_response
 
             resp = client.post(
@@ -214,7 +214,7 @@ class TestAutoCluster:
             {"groups": [{"title": "Сборка", "card_ids": [c["id"] for c in cards]}], "ungrouped": []}
         )
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.object(settings, "ai_base_url", "http://llm.test/v1"), \
+             configure_ai(), \
              patch.object(manager, "broadcast", AsyncMock()) as broadcast:
             mock_ai.generate.return_value = ai_response
             resp = client.post(
@@ -241,7 +241,7 @@ class TestAutoCluster:
             client, sample_column["id"], ["Only card"], workspace_headers
         )
 
-        with patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+        with configure_ai():
             resp = client.post(
                 "/api/groups/auto-cluster",
                 json={"column_id": sample_column["id"]},
@@ -253,7 +253,7 @@ class TestAutoCluster:
         self, client, sample_column, workspace_headers
     ):
         """Column with no ungrouped cards → 400."""
-        with patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+        with configure_ai():
             resp = client.post(
                 "/api/groups/auto-cluster",
                 json={"column_id": sample_column["id"]},
@@ -263,7 +263,7 @@ class TestAutoCluster:
 
     def test_column_not_found_returns_404(self, client, workspace_headers):
         """Column not found → 404."""
-        with patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+        with configure_ai():
             resp = client.post(
                 "/api/groups/auto-cluster",
                 json={"column_id": "nonexistent-column-id"},
@@ -308,7 +308,7 @@ class TestAutoCluster:
         db_session.add(other_col)
         db_session.commit()
 
-        with patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+        with configure_ai():
             resp = client.post(
                 "/api/groups/auto-cluster",
                 json={"column_id": "other-col-id"},
@@ -343,7 +343,7 @@ class TestAutoCluster:
         })
 
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+             configure_ai():
             mock_ai.generate.return_value = ai_response
 
             resp = client.post(
@@ -375,7 +375,7 @@ class TestAutoCluster:
         )
 
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+             configure_ai():
             mock_ai.generate.side_effect = RuntimeError("Connection timeout")
 
             resp = client.post(
@@ -387,8 +387,8 @@ class TestAutoCluster:
         assert resp.status_code == 503
 
     def test_ai_not_configured_returns_503(self, client, sample_column, workspace_headers):
-        """AI_BASE_URL not configured → 503."""
-        with patch.object(settings, "ai_base_url", ""):
+        """AI not configured → 503."""
+        with configure_ai(enabled=False, base_url=""):
             resp = client.post(
                 "/api/groups/auto-cluster",
                 json={"column_id": sample_column["id"]},
@@ -415,7 +415,7 @@ class TestAutoCluster:
         })
 
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+             configure_ai():
             mock_ai.generate.return_value = ai_response
 
             resp = client.post(
@@ -457,7 +457,7 @@ class TestAutoCluster:
         })
 
         with patch("app.ai.clustering.ai_client") as mock_ai, \
-             patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+             configure_ai():
             mock_ai.generate.return_value = ai_response
 
             resp = client.post(

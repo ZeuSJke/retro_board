@@ -15,7 +15,7 @@ from app import workspace_auth
 from app.config import settings
 from app.limiter import rate_limit_key
 from app.models import Board, Card, Column
-from tests.conftest import login_headers, participant_id_of
+from tests.conftest import configure_ai, login_headers, participant_id_of
 
 TEST_ORIGIN = "http://localhost:3000"
 
@@ -95,12 +95,12 @@ class TestSession:
         assert wrong_key.json() == no_team.json()
 
     def test_me_returns_participant_and_capabilities(self, client, workspace_headers):
-        with patch.object(settings, "ai_base_url", ""):
+        with configure_ai(enabled=False, base_url=""):
             me = client.get("/api/workspaces/me", headers=workspace_headers).json()
         assert me["participant"]["name"] == "Tester"
         assert me["slug"] == "test-team"
         assert me["ai_enabled"] is False
-        with patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+        with configure_ai():
             assert client.get("/api/workspaces/me", headers=workspace_headers).json()["ai_enabled"]
 
     def test_me_renews_an_aging_session(self, client, workspace_headers, monkeypatch):
@@ -543,7 +543,7 @@ class TestHiddenCollection:
         anya = login_as("Аня")
         board, _mine, _theirs = self._setup(client, workspace_headers, anya)
         column = board["columns"][0]["id"]
-        with patch.object(settings, "ai_base_url", "http://llm.test/v1"):
+        with configure_ai():
             preview = client.post(
                 "/api/groups/auto-cluster-preview", json={"column_id": column}, headers=workspace_headers
             )
@@ -679,7 +679,7 @@ class TestAnonymousMode:
             return []
 
         with (
-            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            configure_ai(),
             patch("app.routers.boards.generate_summary", fake_summary),
             patch("app.ai.prompts.action_item_suggestions.suggest_action_items_from_cards", fake_suggest),
         ):

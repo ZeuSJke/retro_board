@@ -23,7 +23,6 @@ const api = vi.hoisted(() => ({
   revokeAdminAgentToken: vi.fn(),
   getAdminAiSettings: vi.fn(),
   updateAdminAiSettings: vi.fn(),
-  resetAdminAiSettings: vi.fn(),
   testAdminAiSettings: vi.fn(),
   fetchAdminAiModels: vi.fn(),
 }))
@@ -575,17 +574,26 @@ describe('токены агентов в админке', () => {
 })
 
 describe('настройки ИИ в админке', () => {
-  const envSettings = {
+  const initialSettings = {
+    enabled: false,
+    base_url: '',
+    model: '',
+    reasoning_effort: 'default' as const,
+    has_api_key: false,
+    api_key_masked: null,
+    key_decrypt_error: false,
+    updated_at: null,
+  }
+
+  const savedSettings = {
     enabled: true,
     base_url: 'https://llm-gw.example.com/v1',
-    model: 'model-from-env',
+    model: 'saved-model',
     reasoning_effort: 'none' as const,
-    source: 'env' as const,
     has_api_key: true,
     api_key_masked: 'sk-••••1234',
     key_decrypt_error: false,
-    env_configured: true,
-    updated_at: null,
+    updated_at: '2026-11-19T12:00:00Z',
   }
 
   beforeEach(() => {
@@ -597,9 +605,9 @@ describe('настройки ИИ в админке', () => {
     })
   })
 
-  it('переключение на вкладку «Настройки ИИ», выбор reasoning_effort, загрузка моделей, проверка, сохранение и сброс', async () => {
+  it('переключение на вкладку «Настройки ИИ», выбор reasoning_effort, загрузка моделей, проверка и сохранение', async () => {
     const user = userEvent.setup()
-    api.getAdminAiSettings.mockResolvedValueOnce(envSettings)
+    api.getAdminAiSettings.mockResolvedValueOnce(initialSettings)
     api.fetchAdminAiModels.mockResolvedValueOnce(['fast-model', 'smart-model'])
     api.testAdminAiSettings.mockResolvedValueOnce({
       ok: true,
@@ -613,14 +621,11 @@ describe('настройки ИИ в админке', () => {
       base_url: 'https://api.provider.example/v1',
       model: 'smart-model',
       reasoning_effort: 'high',
-      source: 'database',
       has_api_key: true,
       api_key_masked: 'sk-••••9999',
       key_decrypt_error: false,
-      env_configured: true,
       updated_at: '2026-11-19T12:20:00Z',
     })
-    api.resetAdminAiSettings.mockResolvedValueOnce(envSettings)
 
     await renderSignedIn()
     expect(api.getAdminAiSettings).not.toHaveBeenCalled()
@@ -630,13 +635,12 @@ describe('настройки ИИ в админке', () => {
 
     expect(await screen.findByRole('heading', { name: 'Настройки ИИ' })).toBeInTheDocument()
     expect(screen.queryByTestId('admin-create-team')).toBeNull()
-    expect(screen.getByTestId('ai-settings-source-badge')).toHaveTextContent('Из переменных окружения')
-    expect(screen.getByTestId('ai-base-url-input')).toHaveValue('https://llm-gw.example.com/v1')
-    expect(screen.getByTestId('ai-model-input')).toHaveValue('model-from-env')
+    expect(screen.getByTestId('ai-settings-status-badge')).toHaveTextContent('Не настроен')
+    expect(screen.queryByTestId('ai-reset-btn')).toBeNull()
+    expect(screen.queryByText(/Сбросить на env/)).toBeNull()
 
     // Редактирование полей и выбор универсального уровня размышлений
     const urlInput = screen.getByTestId('ai-base-url-input')
-    await user.clear(urlInput)
     await user.type(urlInput, 'https://api.provider.example/v1')
     await user.type(screen.getByTestId('ai-api-key-input'), 'sk-provider-9999')
 
@@ -656,7 +660,8 @@ describe('настройки ИИ в админке', () => {
     await user.click(await screen.findByRole('option', { name: 'smart-model' }))
     expect(screen.getByTestId('ai-model-input')).toHaveValue('smart-model')
 
-    // Проверка подключения (включая индикатор размышлений)
+    // Включаем ИИ, проверяем подключение и сохраняем
+    await user.click(screen.getByTestId('ai-enabled-switch'))
     await user.click(screen.getByTestId('ai-test-btn'))
     expect(await screen.findByTestId('ai-test-result')).toHaveTextContent(
       'Подключение успешно (87 мс · с размышлениями) — ответ: «ОК»',
@@ -688,26 +693,14 @@ describe('настройки ИИ в админке', () => {
         clear_api_key: undefined,
       }),
     )
-    expect(await screen.findByTestId('ai-settings-source-badge')).toHaveTextContent('Задано в админке')
+    expect(await screen.findByTestId('ai-settings-status-badge')).toHaveTextContent('Включён')
     expect(screen.getByTestId('ai-api-key-input')).toHaveValue('')
-
-    // Сброс на env с подтверждением
-    await user.click(screen.getByTestId('ai-reset-btn'))
-    const confirmDialog = await screen.findByRole('alertdialog')
-    await user.click(within(confirmDialog).getByRole('button', { name: 'Сбросить' }))
-
-    await waitFor(() => expect(api.resetAdminAiSettings).toHaveBeenCalledTimes(1))
-    expect(await screen.findByTestId('ai-settings-source-badge')).toHaveTextContent(
-      'Из переменных окружения',
-    )
-    expect(screen.getByTestId('ai-base-url-input')).toHaveValue('https://llm-gw.example.com/v1')
   })
 
   it('отклоняет http://, позволяет отключить ИИ, сбрасывает модели при смене URL и даёт удалить битый ключ', async () => {
     const user = userEvent.setup()
     api.getAdminAiSettings.mockResolvedValueOnce({
-      ...envSettings,
-      source: 'database',
+      ...savedSettings,
       key_decrypt_error: true,
       api_key_masked: null,
     })
@@ -724,9 +717,8 @@ describe('настройки ИИ в админке', () => {
     api.updateAdminAiSettings
       .mockRejectedValueOnce(httpError(422, 'Нестандартная запись IP-адреса запрещена'))
       .mockResolvedValueOnce({
-        ...envSettings,
+        ...savedSettings,
         enabled: true,
-        source: 'database',
         has_api_key: false,
         api_key_masked: null,
         key_decrypt_error: false,
@@ -786,7 +778,7 @@ describe('настройки ИИ в админке', () => {
       expect(api.updateAdminAiSettings).toHaveBeenLastCalledWith({
         enabled: true,
         base_url: 'https://llm-gw.example.com/v1',
-        model: 'model-from-env',
+        model: 'saved-model',
         reasoning_effort: 'none',
         api_key: undefined,
         clear_api_key: true,
@@ -795,41 +787,40 @@ describe('настройки ИИ в админке', () => {
     expect(screen.queryByText(/Сохранённый API-ключ не удалось расшифровать/)).toBeNull()
   })
 
-  it('позволяет отключить ИИ через переключатель', async () => {
+  it('позволяет отключить ИИ через переключатель и показывает бейдж «Выключен»', async () => {
     const user = userEvent.setup()
-    api.getAdminAiSettings.mockResolvedValueOnce(envSettings)
+    api.getAdminAiSettings.mockResolvedValueOnce(savedSettings)
     api.updateAdminAiSettings.mockResolvedValueOnce({
-      ...envSettings,
+      ...savedSettings,
       enabled: false,
-      base_url: '',
-      source: 'database',
     })
 
     await renderSignedIn()
     await user.click(screen.getByTestId('admin-tab-ai'))
     await screen.findByRole('heading', { name: 'Настройки ИИ' })
+    expect(screen.getByTestId('ai-settings-status-badge')).toHaveTextContent('Включён')
 
-    await user.clear(screen.getByTestId('ai-base-url-input'))
     await user.click(screen.getByTestId('ai-enabled-switch'))
     await user.click(screen.getByTestId('ai-save-btn'))
 
     await waitFor(() =>
       expect(api.updateAdminAiSettings).toHaveBeenCalledWith({
         enabled: false,
-        base_url: '',
-        model: 'model-from-env',
+        base_url: 'https://llm-gw.example.com/v1',
+        model: 'saved-model',
         reasoning_effort: 'none',
         api_key: undefined,
         clear_api_key: undefined,
       }),
     )
+    expect(await screen.findByTestId('ai-settings-status-badge')).toHaveTextContent('Выключен')
   })
 
   it('показывает ошибку загрузки настроек и позволяет повторить', async () => {
     const user = userEvent.setup()
     api.getAdminAiSettings
       .mockRejectedValueOnce(httpError(500, 'Сервер недоступен'))
-      .mockResolvedValueOnce(envSettings)
+      .mockResolvedValueOnce(savedSettings)
 
     await renderSignedIn()
     await user.click(screen.getByTestId('admin-tab-ai'))

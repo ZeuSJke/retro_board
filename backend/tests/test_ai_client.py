@@ -18,13 +18,13 @@ from app.ai.ai_client import (
     fetch_ai_models,
     probe_ai_connection,
 )
-from app.config import settings
+from tests.conftest import configure_ai
 
 
 class TestAIClient:
     """Tests for AIClient.generate() against the OpenAI-compatible API."""
 
-    def _client(self, handler, api_key=None, base_url="http://llm.test/v1"):
+    def _client(self, handler, api_key=None, base_url="https://llm.test/v1"):
         transport = httpx.MockTransport(handler)
         return AIClient(api_key=api_key, base_url=base_url, transport=transport)
 
@@ -40,7 +40,7 @@ class TestAIClient:
     def test_model_from_settings_when_config_empty(self):
         captured = {}
         client = self._client(self._capture_handler(captured))
-        with patch.object(settings, "ai_model", "test-model-from-settings"):
+        with configure_ai(model="test-model-from-settings"):
             client.generate("hi")
         assert captured["payload"]["model"] == "test-model-from-settings"
 
@@ -48,31 +48,32 @@ class TestAIClient:
         captured = {}
         client = self._client(self._capture_handler(captured))
         cfg = AIModelConfig(model="custom-model")
-        with patch.object(settings, "ai_model", "default-model"):
+        with configure_ai(model="default-model"):
             client.generate("hi", cfg)
         assert captured["payload"]["model"] == "custom-model"
 
-    def test_enable_thinking_false_sent_when_disabled(self):
+    def test_reasoning_effort_none_sends_param_without_token_expansion(self):
         captured = {}
         client = self._client(self._capture_handler(captured))
-        with patch.object(settings, "ai_disable_thinking", True):
+        with configure_ai(reasoning_effort="none"):
             client.generate("hi")
-        assert captured["payload"]["chat_template_kwargs"] == {
-            "enable_thinking": False
-        }
+        assert captured["payload"]["reasoning_effort"] == "none"
+        assert captured["payload"]["max_tokens"] == 100
+        assert "chat_template_kwargs" not in captured["payload"]
 
-    def test_no_thinking_param_when_enabled(self):
+    def test_reasoning_effort_default_omits_param_and_expands_tokens(self):
         captured = {}
         client = self._client(self._capture_handler(captured))
-        with patch.object(settings, "ai_disable_thinking", False):
+        with configure_ai(reasoning_effort="default"):
             client.generate("hi")
         assert "chat_template_kwargs" not in captured["payload"]
         assert "reasoning_effort" not in captured["payload"]
+        assert captured["payload"]["max_tokens"] == 4196
 
     def test_no_auth_header_without_key(self):
         captured = {}
         client = self._client(self._capture_handler(captured), api_key=None)
-        with patch.object(settings, "ai_api_key", ""):
+        with configure_ai(api_key=""):
             client.generate("hi")
         assert "authorization" not in {
             k.lower() for k in captured["headers"]
@@ -121,9 +122,12 @@ class TestAIClient:
 
     def test_no_base_url_raises(self):
         client = AIClient(api_key=None, base_url="")
-        with patch.object(settings, "ai_base_url", ""):
-            with pytest.raises(RuntimeError, match="AI_BASE_URL"):
-                client.generate("hi")
+        with pytest.raises(RuntimeError, match="AI не настроен"):
+            client.generate("hi")
+
+        with configure_ai(enabled=False, base_url=""):
+            with pytest.raises(RuntimeError, match="AI не настроен"):
+                AIClient().generate("hi")
 
     @pytest.mark.parametrize(
         ("effort", "expected_effort", "expected_tokens"),

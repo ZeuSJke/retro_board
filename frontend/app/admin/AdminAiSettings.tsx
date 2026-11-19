@@ -9,7 +9,6 @@ import {
   Loader2,
   PlugZap,
   RefreshCw,
-  RotateCcw,
   Save,
   Trash2,
   TriangleAlert,
@@ -18,7 +17,6 @@ import {
 import {
   fetchAdminAiModels,
   getAdminAiSettings,
-  resetAdminAiSettings,
   testAdminAiSettings,
   updateAdminAiSettings,
   type AdminAiSettings,
@@ -28,16 +26,6 @@ import {
 import { queryKeys } from '@/lib/query-client'
 import { showToast } from '@/store/toastStore'
 import { getApiErrorMessage, markApiErrorReported, type FieldLabels } from '@/utils/apiError'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -92,7 +80,7 @@ function normalizeUrl(raw: string): string {
 
 /**
  * Вкладка «Настройки ИИ» в `/admin`: единая настройка любого OpenAI-совместимого
- * эндпоинта, загрузка списка моделей, проверка подключения и сброс к env.
+ * эндпоинта, загрузка списка моделей и проверка подключения.
  */
 export default function AdminAiSettings() {
   const queryClient = useQueryClient()
@@ -130,8 +118,6 @@ export default function AdminAiSettings() {
   const [testResult, setTestResult] = useState<AdminAiTestResponse | null>(null)
 
   const [saving, setSaving] = useState(false)
-  const [resetting, setResetting] = useState(false)
-  const [confirmResetOpen, setConfirmResetOpen] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
   const applyServerState = (next: AdminAiSettings) => {
@@ -180,7 +166,7 @@ export default function AdminAiSettings() {
     )
   }
 
-  const busy = saving || testing || resetting || modelsLoading
+  const busy = saving || testing || modelsLoading
   const savedUrl = normalizeUrl(serverData.base_url)
   const currentUrl = normalizeUrl(baseUrl)
   const urlChangedFromSaved = Boolean(savedUrl) && currentUrl !== savedUrl
@@ -282,24 +268,12 @@ export default function AdminAiSettings() {
     }
   }
 
-  const handleConfirmReset = async () => {
-    setConfirmResetOpen(false)
-    setFormError(null)
-    setTestResult(null)
-    setResetting(true)
-    try {
-      const resetData = await resetAdminAiSettings()
-      queryClient.setQueryData(queryKeys.adminAiSettings(), resetData)
-      applyServerState(resetData)
-      setLoadedModels([])
-      setModelsError(null)
-      showToast('Восстановлены настройки из переменных окружения', 'success')
-    } catch (err: unknown) {
-      setFormError(getApiErrorMessage(err, 'Не удалось сбросить настройки ИИ', AI_FIELD_LABELS))
-    } finally {
-      setResetting(false)
-    }
-  }
+  const aiStatus =
+    serverData.enabled && Boolean(serverData.base_url)
+      ? { variant: 'default' as const, label: 'Включён' }
+      : Boolean(serverData.base_url)
+        ? { variant: 'secondary' as const, label: 'Выключен' }
+        : { variant: 'secondary' as const, label: 'Не настроен' }
 
   return (
     <div className="space-y-6">
@@ -310,11 +284,8 @@ export default function AdminAiSettings() {
             Общий OpenAI-совместимый шлюз для итогов доски, кластеризации, тем и названий задач
           </p>
         </div>
-        <Badge
-          variant={serverData.source === 'database' ? 'default' : 'secondary'}
-          data-testid="ai-settings-source-badge"
-        >
-          {serverData.source === 'database' ? 'Задано в админке' : 'Из переменных окружения'}
+        <Badge variant={aiStatus.variant} data-testid="ai-settings-status-badge">
+          {aiStatus.label}
         </Badge>
       </div>
 
@@ -628,68 +599,33 @@ export default function AdminAiSettings() {
               </div>
             )}
 
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleTest}
-                  disabled={busy || !baseUrl.trim() || !model.trim()}
-                  data-testid="ai-test-btn"
-                >
-                  {testing ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <PlugZap className="h-4 w-4" />
-                  )}
-                  Проверить подключение
-                </Button>
-                <Button type="submit" disabled={busy} data-testid="ai-save-btn">
-                  {saving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  Сохранить
-                </Button>
-              </div>
-
-              {serverData.source === 'database' && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setConfirmResetOpen(true)}
-                  disabled={busy}
-                  data-testid="ai-reset-btn"
-                >
-                  {resetting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RotateCcw className="h-4 w-4" />
-                  )}
-                  Сбросить на env
-                </Button>
-              )}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleTest}
+                disabled={busy || !baseUrl.trim() || !model.trim()}
+                data-testid="ai-test-btn"
+              >
+                {testing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PlugZap className="h-4 w-4" />
+                )}
+                Проверить подключение
+              </Button>
+              <Button type="submit" disabled={busy} data-testid="ai-save-btn">
+                {saving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                Сохранить
+              </Button>
             </div>
           </form>
         </CardContent>
       </Card>
-
-      <AlertDialog open={confirmResetOpen} onOpenChange={setConfirmResetOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Сбросить настройки ИИ на переменные окружения?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Настройки, сохранённые в админке, будут удалены, и приложение сразу переключится на
-              параметры окружения (AI_BASE_URL / AI_MODEL / AI_API_KEY).
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmReset}>Сбросить</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   )
 }

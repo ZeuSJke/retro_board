@@ -35,7 +35,7 @@ _MAX_OUTPUT_TOKENS_CAP = 16384
 
 @dataclass
 class AIModelConfig:
-    # Пустая строка = использовать текущую модель из настроек (БД или env).
+    # Пустая строка = использовать текущую модель из настроек /admin.
     model: str = ""
     temperature: float = 0.3
     max_tokens: int = 100
@@ -61,8 +61,6 @@ _ai_slots = threading.BoundedSemaphore(max(1, settings.ai_max_concurrency))
 def effective_max_tokens(
     base_max_tokens: int,
     reasoning_effort: ReasoningEffort,
-    *,
-    legacy_disable_thinking: bool = False,
 ) -> int:
     """Расширить лимит `max_tokens`, когда у модели могут идти размышления.
 
@@ -71,7 +69,7 @@ def effective_max_tokens(
     короткий лимит (например 100–1500), размышления исчерпают бюджет до вывода
     итогового JSON.
     """
-    if legacy_disable_thinking or reasoning_effort == "none":
+    if reasoning_effort == "none":
         return base_max_tokens
     bonus = _REASONING_TOKEN_BONUS.get(reasoning_effort, 4096)
     return min(_MAX_OUTPUT_TOKENS_CAP, max(base_max_tokens, 0) + bonus)
@@ -85,25 +83,17 @@ def build_chat_payload(
     max_tokens: int,
     reasoning_effort: ReasoningEffort = "default",
     json_mode: bool = False,
-    legacy_disable_thinking: bool = False,
 ) -> dict[str, Any]:
     """Сформировать универсальное тело `/chat/completions` с учётом reasoning и JSON."""
     payload: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
-        "max_tokens": effective_max_tokens(
-            max_tokens,
-            reasoning_effort,
-            legacy_disable_thinking=legacy_disable_thinking,
-        ),
+        "max_tokens": effective_max_tokens(max_tokens, reasoning_effort),
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    if legacy_disable_thinking:
-        # Обратная совместимость со старым env AI_DISABLE_THINKING=true для Qwen3.
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
-    elif reasoning_effort != "default":
+    if reasoning_effort != "default":
         payload["reasoning_effort"] = reasoning_effort
     return payload
 
@@ -267,7 +257,7 @@ class AIClient:
         effective = get_effective_ai_config()
         if (
             self._base_url_override is None
-            and effective.source == "database"
+            and effective.updated_at is not None
             and not effective.enabled
         ):
             raise RuntimeError("AI отключён в настройках администратора")
@@ -278,14 +268,11 @@ class AIClient:
             else effective.base_url
         )
         if not base_url:
-            raise RuntimeError(
-                "AI не настроен: задайте AI_BASE_URL или настройте ИИ в админке"
-            )
+            raise RuntimeError("AI не настроен: задайте подключение в /admin")
 
         if (
             self.transport is None
             and self._base_url_override is None
-            and effective.source == "database"
             and httpx.Client is _ORIGINAL_HTTPX_CLIENT
         ):
             try:
@@ -302,9 +289,6 @@ class AIClient:
         )
         model = config.model or self._model_override or effective.model
         reasoning_effort = self._reasoning_effort_override or effective.reasoning_effort
-        legacy_disable = (
-            self._reasoning_effort_override is None and effective.legacy_disable_thinking
-        )
 
         headers = _auth_headers(api_key)
         payload = build_chat_payload(
@@ -314,7 +298,6 @@ class AIClient:
             max_tokens=config.max_tokens,
             reasoning_effort=reasoning_effort,
             json_mode=config.json_mode,
-            legacy_disable_thinking=legacy_disable,
         )
         url = f"{base_url}/chat/completions"
 

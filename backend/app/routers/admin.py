@@ -360,7 +360,7 @@ def admin_get_ai_settings(
     db: Session = Depends(get_db),
     _: bool = Depends(get_admin_user),
 ):
-    """Текущие настройки OpenAI-совместимого ИИ (БД или env по умолчанию)."""
+    """Текущие настройки OpenAI-совместимого ИИ."""
     response.headers["Cache-Control"] = "no-store"
     return ai_settings_service.get_admin_ai_settings(db)
 
@@ -388,19 +388,6 @@ def admin_update_ai_settings(
         )
     except ValueError as err:
         raise HTTPException(status_code=422, detail=str(err)) from err
-
-
-@router.delete("/ai-settings", response_model=schemas.AdminAiSettingsOut)
-@limiter.limit("20/minute")
-def admin_reset_ai_settings(
-    request: Request,
-    response: Response,
-    db: Session = Depends(get_db),
-    _: bool = Depends(get_admin_user),
-):
-    """Сбросить переопределение ИИ в БД и вернуться к переменным окружения."""
-    response.headers["Cache-Control"] = "no-store"
-    return ai_settings_service.reset_admin_ai_settings(db)
 
 
 async def _resolve_probe_creds_async(
