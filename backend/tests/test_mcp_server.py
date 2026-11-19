@@ -1,4 +1,4 @@
-"""Тесты Streamable HTTP MCP-сервера (`/mcp`), 15 инструментов, 3 промптов и инвариантов."""
+"""Тесты Streamable HTTP MCP-сервера (`/mcp`), 16 инструментов, 3 промптов и инвариантов."""
 
 import asyncio
 import json
@@ -364,10 +364,12 @@ def test_mcp_scope_enforcement_lists_and_calls(client, test_workspace, workspace
 
     ro_names = {t["name"] for t in ro_tools}
     rw_names = {t["name"] for t in rw_tools}
-    assert len(rw_names) == 15
+    assert len(rw_names) == 16
     assert "create_card" in rw_names
     assert "save_summary" in rw_names
-    assert len(ro_names) == 9
+    assert "get_retro_brief" in rw_names
+    assert len(ro_names) == 10
+    assert "get_retro_brief" in ro_names
     assert ro_names.isdisjoint(
         {"create_board", "create_card", "group_cards", "create_action_item", "update_action_item", "save_summary"}
     )
@@ -1155,8 +1157,8 @@ async def test_mcp_real_streamable_http_client_and_concurrent_context_isolation(
                 _fetch_boards(secret_a),
                 _fetch_boards(secret_b),
             )
-            assert len(tools_a) == 9
-            assert len(tools_b) == 15
+            assert len(tools_a) == 10
+            assert len(tools_b) == 16
             assert boards_a == ["Доска Alpha"]
             assert boards_b == ["Доска Beta"]
     finally:
@@ -1309,3 +1311,75 @@ def test_mcp_search_cards_sql_filters_pagination_and_escaping(
     assert by_id[c_human_1["id"]]["author_kind"] == "human"
     assert by_id[c_agent_1["id"]]["author"] == "SearchBot"
     assert by_id[c_agent_1["id"]]["author_kind"] == "agent"
+
+
+def test_mcp_get_retro_brief_aggregates_context_and_isolates_workspace(
+    client, workspace_headers, admin_headers
+):
+    from tests.conftest import login_headers
+
+    board = client.post("/api/boards/", json={"name": "Спринт 42"}, headers=workspace_headers).json()
+    item_linked = client.post(
+        "/api/action-items/",
+        json={
+            "board_id": board["id"],
+            "title": "Своя задача со ссылкой",
+            "text": "Проверить алерт",
+            "external_url": "https://tracker.example/1",
+        },
+        headers=workspace_headers,
+    ).json()
+    item_plain = client.post(
+        "/api/action-items/",
+        json={
+            "board_id": board["id"],
+            "title": "Своя задача без ссылки",
+            "text": "Обновить доки",
+        },
+        headers=workspace_headers,
+    ).json()
+    client.post(
+        f"/api/boards/{board['id']}/health",
+        json={"answers": {"pace": 3, "clarity": 2}},
+        headers=workspace_headers,
+    )
+    client.post(f"/api/boards/{board['id']}/roti", json={"value": 4}, headers=workspace_headers)
+
+    resp = client.post(
+        "/api/admin/workspaces",
+        json={"name": "Чужая команда", "slug": "alien-team", "access_key": "alienkey123"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    other_headers = login_headers(client, "Чужой", slug="alien-team", key="alienkey123")
+    other_board = client.post("/api/boards/", json={"name": "Чужая доска"}, headers=other_headers).json()
+    client.post(
+        "/api/action-items/",
+        json={
+            "board_id": other_board["id"],
+            "title": "Секрет чужой команды",
+            "text": "Не должно утечь",
+        },
+        headers=other_headers,
+    )
+
+    ro_tok = _create_token(client, workspace_headers, name="BriefBot", scope="read_only")
+    err, data, _ = _call_tool(
+        client,
+        ro_tok["secret"],
+        "get_retro_brief",
+        {"board_id_or_slug": board["id"], "recent_boards": 3},
+    )
+    assert not err
+    assert isinstance(data, dict)
+    assert data["target_board"]["id"] == board["id"]
+    assert len(data["target_board"]["columns"]) >= 1
+    assert data["open_action_items_without_link"] == 1
+    titles = {item["id"]: item["title"] for item in data["open_action_items"]}
+    assert titles == {
+        item_linked["id"]: "Своя задача со ссылкой",
+        item_plain["id"]: "Своя задача без ссылки",
+    }
+    assert len(data["health_and_roti_trends"]) == 1
+    assert data["health_and_roti_trends"][0]["roti_average"] == 4.0
+    assert "Секрет чужой команды" not in json.dumps(data, ensure_ascii=False)

@@ -18,7 +18,9 @@ const STATS: BoardThemeStat[] = [
   { id: 't3', name: 'Новая тема', description: '', boards_count: 1, streak: 1 },
 ]
 
-const summaryWithStats = (theme_stats: unknown): BoardSummary & { theme_stats: unknown } => ({
+const summaryWithStats = <T = BoardThemeStat[] | undefined>(
+  theme_stats: T,
+): Omit<BoardSummary, 'theme_stats'> & { theme_stats: T } => ({
   id: 's1',
   board_id: 'b1',
   session_id: 1,

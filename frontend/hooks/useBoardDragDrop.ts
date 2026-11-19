@@ -92,6 +92,14 @@ export function useBoardDragDrop({
     return null
   }
 
+  const findGroup = (groupId: string) => {
+    for (const col of columns) {
+      const group = (col.groups || []).find((g) => g.id === groupId)
+      if (group) return { group, colId: col.id }
+    }
+    return null
+  }
+
   const finishDrag = () => {
     isDraggingRef.current = false
     groupModifierRef.current = false
@@ -156,15 +164,21 @@ export function useBoardDragDrop({
     if (!activeFound) return
     const overId = String(over.id)
     const isOverCol = overId.startsWith('col-')
-    const overFound = isOverCol ? null : findCard(overId)
-    const overColId = isOverCol ? overId.slice(4) : overFound?.colId
+    const isOverGroupDrop = overId.startsWith('group-drop-')
+    const overGroupFound = isOverGroupDrop ? findGroup(overId.slice(11)) : null
+    const overFound = isOverCol || isOverGroupDrop ? null : findCard(overId)
+    const overColId = isOverCol
+      ? overId.slice(4)
+      : isOverGroupDrop
+        ? overGroupFound?.colId
+        : overFound?.colId
 
     const targetGroupId = overFound?.card.group_id
     const activeGroupId = activeFound.card.group_id
 
     const canJoinExisting = Boolean(targetGroupId) && targetGroupId !== activeGroupId
     const canCreateNew = !targetGroupId && !activeGroupId && groupModifierRef.current
-    const overAnotherCard = !isOverCol && overId !== cardId && Boolean(overColId)
+    const overAnotherCard = !isOverCol && !isOverGroupDrop && overId !== cardId && Boolean(overColId)
 
     if (overAnotherCard && (canJoinExisting || canCreateNew)) {
       setGroupTargetId(overId)
@@ -202,176 +216,233 @@ export function useBoardDragDrop({
     const origin = originRef.current
     finishDrag()
 
-    if (!over) {
-      restoreOrigin(origin)
+    let released = false
+    const safeRelease = () => {
+      if (released) return
+      released = true
       release()
-      return
     }
 
-    // ── Группа ───────────────────────────────────────────────────────────
-    if (String(active.id).startsWith('group-')) {
-      const groupId = String(active.id).slice(6)
-      const overId = String(over.id)
-      const targetColId = overId.startsWith('col-') ? overId.slice(4) : findCard(overId)?.colId
-      const srcCol = columns.find((c) => (c.groups || []).some((g) => g.id === groupId))
-      if (!targetColId || !srcCol || targetColId === srcCol.id) {
-        release()
+    try {
+      if (!over) {
+        restoreOrigin(origin)
+        safeRelease()
         return
       }
-      const srcColId = srcCol.id
-      applyChange({ type: 'group_relocated', id: groupId, column_id: targetColId })
-      release()
-      try {
-        await moveGroup(groupId, { column_id: targetColId })
-      } catch (err) {
-        showToast(getApiErrorMessage(err, 'Не удалось переместить группу'), 'error')
-        applyChange({ type: 'group_relocated', id: groupId, column_id: srcColId })
-        onRejected?.(err)
-      }
-      return
-    }
 
-    // ── Карточка ─────────────────────────────────────────────────────────
-    const cardId = String(active.id)
-    const activeFound = findCard(cardId)
-    const overId = String(over.id)
-    const isOverCol = overId.startsWith('col-')
-    const overFound = isOverCol ? null : findCard(overId)
-    const overColId = isOverCol ? overId.slice(4) : overFound?.colId
-    const dstCol = overColId ? columns.find((c) => c.id === overColId) : undefined
-    if (!origin || !activeFound || !overColId || !dstCol) {
-      restoreOrigin(origin)
-      release()
-      return
-    }
-
-    const crossColumn = origin.columnId !== overColId
-    const targetCard = overFound && overId !== cardId ? overFound.card : null
-    const targetGroupId = targetCard?.group_id ?? null
-    const othersInTarget = dstCol.cards.filter((c) => c.id !== cardId).length
-
-    const rollback = (err: unknown, fallback: string, resync = false) => {
-      showToast(getApiErrorMessage(err, fallback), 'error')
-      restoreOrigin(origin)
-      onRejected?.(err, { resync })
-    }
-
-    // Карточку бросили на карточку из другой группы — она вступает в эту группу.
-    // Перенос в колонку и смена группы уходят одним запросом: частичного результата нет.
-    if (targetCard && targetGroupId && targetGroupId !== origin.groupId) {
-      if (crossColumn) {
-        applyChange({
-          type: 'card_relocated',
-          id: cardId,
-          column_id: overColId,
-          position: othersInTarget,
-          group_id: targetGroupId,
-        })
-      } else {
-        applyChange({
-          type: 'card_patched',
-          id: cardId,
-          patch: (card) => ({ ...card, group_id: targetGroupId }),
-        })
-      }
-      release()
-      try {
-        const updated = await bulkUpdateCards({
-          card_ids: [cardId],
-          ...(crossColumn ? { column_id: overColId } : {}),
-          group_id: targetGroupId,
-        })
-        for (const card of updated) applyChange({ type: 'card_updated', card }, 'rest')
-      } catch (err) {
-        rollback(err, 'Не удалось добавить в группу')
-      }
-      return
-    }
-
-    // Карточку с Alt или Shift бросили на карточку без группы — из двух получается группа.
-    // Сервер создаёт группу и кладёт в неё обе карточки одной транзакцией, поэтому
-    // пустая группа остаться не может.
-    if (targetCard && !targetGroupId && !origin.groupId && wantsNewGroup) {
-      if (crossColumn) {
-        applyChange({
-          type: 'card_relocated',
-          id: cardId,
-          column_id: overColId,
-          position: othersInTarget,
-          group_id: null,
-        })
-      }
-      release()
-      try {
-        const updated = await bulkUpdateCards({
-          card_ids: [overId, cardId],
-          ...(crossColumn ? { column_id: overColId } : {}),
-          group_title: NEW_GROUP_TITLE,
-        })
-        const groupId = updated[0]?.group_id
-        if (groupId) {
-          const lastPosition = (dstCol.groups || []).reduce((max, g) => Math.max(max, g.position), -1)
-          applyChange(
-            {
-              type: 'group_created',
-              group: {
-                id: groupId,
-                column_id: overColId,
-                title: NEW_GROUP_TITLE,
-                position: lastPosition + 1,
-              },
-            },
-            'rest',
-          )
+      // ── Группа ───────────────────────────────────────────────────────────
+      if (String(active.id).startsWith('group-')) {
+        const groupId = String(active.id).slice(6)
+        const overId = String(over.id)
+        const targetColId = overId.startsWith('col-')
+          ? overId.slice(4)
+          : overId.startsWith('group-drop-')
+            ? findGroup(overId.slice(11))?.colId
+            : findCard(overId)?.colId
+        const srcCol = columns.find((c) => (c.groups || []).some((g) => g.id === groupId))
+        if (!targetColId || !srcCol || targetColId === srcCol.id) {
+          safeRelease()
+          return
         }
-        for (const card of updated) applyChange({ type: 'card_updated', card }, 'rest')
+        const srcColId = srcCol.id
+        applyChange({ type: 'group_relocated', id: groupId, column_id: targetColId })
+        safeRelease()
+        try {
+          await moveGroup(groupId, { column_id: targetColId })
+        } catch (err) {
+          showToast(getApiErrorMessage(err, 'Не удалось переместить группу'), 'error')
+          applyChange({ type: 'group_relocated', id: groupId, column_id: srcColId })
+          onRejected?.(err)
+        }
+        return
+      }
+
+      // ── Карточка ─────────────────────────────────────────────────────────
+      const cardId = String(active.id)
+      const activeFound = findCard(cardId)
+      const overId = String(over.id)
+      const isOverCol = overId.startsWith('col-')
+      const isOverGroupDrop = overId.startsWith('group-drop-')
+      const overGroupFound = isOverGroupDrop ? findGroup(overId.slice(11)) : null
+      const overFound = isOverCol || isOverGroupDrop ? null : findCard(overId)
+      const overColId = isOverCol
+        ? overId.slice(4)
+        : isOverGroupDrop
+          ? overGroupFound?.colId
+          : overFound?.colId
+      const dstCol = overColId ? columns.find((c) => c.id === overColId) : undefined
+      if (!origin || !activeFound || !overColId || !dstCol) {
+        restoreOrigin(origin)
+        safeRelease()
+        return
+      }
+
+      const crossColumn = origin.columnId !== overColId
+      const targetCard = overFound && overId !== cardId ? overFound.card : null
+      const targetGroupId = overGroupFound?.group.id ?? targetCard?.group_id ?? null
+      const othersInTarget = dstCol.cards.filter((c) => c.id !== cardId).length
+
+      const rollback = (err: unknown, fallback: string, resync = false) => {
+        showToast(getApiErrorMessage(err, fallback), 'error')
+        restoreOrigin(origin)
+        onRejected?.(err, { resync })
+      }
+
+      // Карточку бросили прямо на шапку/зону группы (`group-drop-*`): переносим в её колонку и добавляем в группу.
+      if (overGroupFound) {
+        const dropGroupId = overGroupFound.group.id
+        if (dropGroupId === origin.groupId && !crossColumn) {
+          restoreOrigin(origin)
+          safeRelease()
+          return
+        }
+        if (crossColumn) {
+          applyChange({
+            type: 'card_relocated',
+            id: cardId,
+            column_id: overColId,
+            position: othersInTarget,
+            group_id: dropGroupId,
+          })
+        } else {
+          applyChange({
+            type: 'card_patched',
+            id: cardId,
+            patch: (card) => ({ ...card, group_id: dropGroupId }),
+          })
+        }
+        safeRelease()
+        try {
+          const updated = await bulkUpdateCards({
+            card_ids: [cardId],
+            ...(crossColumn ? { column_id: overColId } : {}),
+            group_id: dropGroupId,
+          })
+          for (const card of updated) applyChange({ type: 'card_updated', card }, 'rest')
+        } catch (err) {
+          rollback(err, 'Не удалось добавить в группу', crossColumn)
+        }
+        return
+      }
+
+      // Карточку бросили на карточку из другой группы — она вступает в эту группу.
+      // Перенос в колонку и смена группы уходят одним запросом: частичного результата нет.
+      if (targetCard && targetGroupId && targetGroupId !== origin.groupId) {
+        if (crossColumn) {
+          applyChange({
+            type: 'card_relocated',
+            id: cardId,
+            column_id: overColId,
+            position: othersInTarget,
+            group_id: targetGroupId,
+          })
+        } else {
+          applyChange({
+            type: 'card_patched',
+            id: cardId,
+            patch: (card) => ({ ...card, group_id: targetGroupId }),
+          })
+        }
+        safeRelease()
+        try {
+          const updated = await bulkUpdateCards({
+            card_ids: [cardId],
+            ...(crossColumn ? { column_id: overColId } : {}),
+            group_id: targetGroupId,
+          })
+          for (const card of updated) applyChange({ type: 'card_updated', card }, 'rest')
+        } catch (err) {
+          rollback(err, 'Не удалось добавить в группу')
+        }
+        return
+      }
+
+      // Карточку с Alt или Shift бросили на карточку без группы — из двух получается группа.
+      // Сервер создаёт группу и кладёт в неё обе карточки одной транзакцией, поэтому
+      // пустая группа остаться не может.
+      if (targetCard && !targetGroupId && !origin.groupId && wantsNewGroup) {
+        if (crossColumn) {
+          applyChange({
+            type: 'card_relocated',
+            id: cardId,
+            column_id: overColId,
+            position: othersInTarget,
+            group_id: null,
+          })
+        }
+        safeRelease()
+        try {
+          const updated = await bulkUpdateCards({
+            card_ids: [overId, cardId],
+            ...(crossColumn ? { column_id: overColId } : {}),
+            group_title: NEW_GROUP_TITLE,
+          })
+          const groupId = updated[0]?.group_id
+          if (groupId) {
+            const lastPosition = (dstCol.groups || []).reduce((max, g) => Math.max(max, g.position), -1)
+            applyChange(
+              {
+                type: 'group_created',
+                group: {
+                  id: groupId,
+                  column_id: overColId,
+                  title: NEW_GROUP_TITLE,
+                  position: lastPosition + 1,
+                },
+              },
+              'rest',
+            )
+          }
+          for (const card of updated) applyChange({ type: 'card_updated', card }, 'rest')
+        } catch (err) {
+          rollback(err, 'Не удалось создать группу')
+        }
+        return
+      }
+
+      // Обычный перенос или перестановка (внутри одной группы группа сохраняется)
+      const order = dstCol.cards.map((c) => c.id)
+      const activeIdx = order.indexOf(cardId)
+      const overIdx = isOverCol ? -1 : order.indexOf(overId)
+      if (activeIdx >= 0 && overIdx >= 0 && activeIdx !== overIdx) {
+        order.splice(activeIdx, 1)
+        order.splice(overIdx, 0, cardId)
+      }
+      const placed = order.indexOf(cardId)
+      const newPos = placed >= 0 ? placed : order.length
+      const sameGroupReorder =
+        !crossColumn && Boolean(origin.groupId) && Boolean(targetCard) && origin.groupId === targetGroupId
+      // Карточка, вынутая из группы перетаскиванием наружу, остаётся без группы;
+      // перестановка внутри той же группы сохраняет членство в ней
+      const leavesGroup = Boolean(origin.groupId) && !sameGroupReorder
+
+      if (!crossColumn && newPos === origin.index && (!leavesGroup || overId === cardId)) {
+        restoreOrigin(origin)
+        safeRelease()
+        return
+      }
+
+      applyChange({
+        type: 'card_relocated',
+        id: cardId,
+        column_id: overColId,
+        position: newPos,
+        group_id: sameGroupReorder ? origin.groupId : crossColumn || leavesGroup ? null : undefined,
+      })
+      safeRelease()
+
+      const ungroupFirst = leavesGroup && !crossColumn
+      try {
+        if (ungroupFirst && origin.groupId) {
+          await removeCardFromGroup(origin.groupId, cardId)
+        }
+        const moved = await moveCard(cardId, { column_id: overColId, position: newPos })
+        applyChange({ type: 'card_moved', card: moved }, 'rest')
       } catch (err) {
-        rollback(err, 'Не удалось создать группу')
+        rollback(err, 'Не удалось переместить карточку', ungroupFirst)
       }
-      return
-    }
-
-    // Обычный перенос или перестановка
-    const order = dstCol.cards.map((c) => c.id)
-    const activeIdx = order.indexOf(cardId)
-    const overIdx = isOverCol ? -1 : order.indexOf(overId)
-    if (activeIdx >= 0 && overIdx >= 0 && activeIdx !== overIdx) {
-      order.splice(activeIdx, 1)
-      order.splice(overIdx, 0, cardId)
-    }
-    const placed = order.indexOf(cardId)
-    const newPos = placed >= 0 ? placed : order.length
-    // Карточка, вынутая из группы перетаскиванием, остаётся без группы
-    const leavesGroup = Boolean(origin.groupId)
-
-    if (!crossColumn && newPos === origin.index && (!leavesGroup || overId === cardId)) {
-      // Бросили туда же, где взяли: запрос не нужен. Карточка из группы, отпущенная на самой
-      // себе (взяли с клавиатуры и сразу отпустили), из группы не выходит. Предпросмотр мог
-      // увести карточку в другую колонку и обратно — возвращаем её точно на прежнее место.
-      restoreOrigin(origin)
-      release()
-      return
-    }
-
-    applyChange({
-      type: 'card_relocated',
-      id: cardId,
-      column_id: overColId,
-      position: newPos,
-      group_id: crossColumn || leavesGroup ? null : undefined,
-    })
-    release()
-
-    const ungroupFirst = leavesGroup && !crossColumn
-    try {
-      if (ungroupFirst && origin.groupId) {
-        await removeCardFromGroup(origin.groupId, cardId)
-      }
-      const moved = await moveCard(cardId, { column_id: overColId, position: newPos })
-      applyChange({ type: 'card_moved', card: moved }, 'rest')
-    } catch (err) {
-      // Два шага могли выполниться наполовину (из группы вынули, но не переставили)
-      rollback(err, 'Не удалось переместить карточку', ungroupFirst)
+    } finally {
+      safeRelease()
     }
   }
 

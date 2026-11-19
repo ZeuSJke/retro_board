@@ -1,3 +1,4 @@
+import atexit
 import json
 import threading
 import time
@@ -8,6 +9,8 @@ import httpx
 
 from app.config import settings
 from app.observability import record_ai_call
+
+_ORIGINAL_HTTPX_CLIENT = httpx.Client
 
 
 @dataclass
@@ -38,6 +41,21 @@ class AIClient:
         self.api_key = api_key if api_key is not None else (settings.ai_api_key or None)
         self.base_url = (base_url or settings.ai_base_url).rstrip("/")
         self.transport = transport
+        self._client_lock = threading.Lock()
+        self._shared_client: httpx.Client | None = None
+
+    def close(self) -> None:
+        with self._client_lock:
+            client = self._shared_client
+            self._shared_client = None
+        if client is not None:
+            client.close()
+
+    def _get_shared_client(self, default_timeout: httpx.Timeout) -> httpx.Client:
+        with self._client_lock:
+            if self._shared_client is None or self._shared_client.is_closed:
+                self._shared_client = httpx.Client(timeout=default_timeout)
+            return self._shared_client
 
     def generate(
         self,
@@ -85,37 +103,47 @@ class AIClient:
         timeout = httpx.Timeout(config.timeout, connect=settings.ai_connect_timeout_s)
         last_error: Exception | None = None
         attempts = 0
-        for attempt in range(config.retries):
-            if attempt:
-                time.sleep(config.backoff * attempt)
-            attempts += 1
-            try:
-                with httpx.Client(timeout=timeout, transport=self.transport) as client:
+        url = f"{self.base_url}/chat/completions"
+
+        def _run_attempts(client: httpx.Client) -> str:
+            nonlocal last_error, attempts
+            for attempt in range(config.retries):
+                if attempt:
+                    time.sleep(config.backoff * attempt)
+                attempts += 1
+                try:
                     response = client.post(
-                        f"{self.base_url}/chat/completions",
+                        url,
                         json=payload,
                         headers=headers,
+                        timeout=timeout,
                     )
                     response.raise_for_status()
                     return _extract_content(response.json())
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                status = e.response.status_code
-                # Ошибку запроса повтор не исправит; 429 и 5xx — временные
-                if 400 <= status < 500 and status != 429:
-                    break
-            except (
-                httpx.HTTPError,
-                KeyError,
-                IndexError,
-                TypeError,
-                AttributeError,
-                json.JSONDecodeError,
-                ValueError,
-            ) as e:
-                last_error = e
+                except httpx.HTTPStatusError as e:
+                    last_error = e
+                    status = e.response.status_code
+                    # Ошибку запроса повтор не исправит; 429 и 5xx — временные
+                    if 400 <= status < 500 and status != 429:
+                        break
+                except (
+                    httpx.HTTPError,
+                    KeyError,
+                    IndexError,
+                    TypeError,
+                    AttributeError,
+                    json.JSONDecodeError,
+                    ValueError,
+                ) as e:
+                    last_error = e
+            raise RuntimeError(f"AI request failed after {attempts} attempt(s): {last_error}")
 
-        raise RuntimeError(f"AI request failed after {attempts} attempt(s): {last_error}")
+        # Когда транспорт не подменён тестом и httpx.Client не запатчен, переиспользуем пул соединений.
+        if self.transport is None and httpx.Client is _ORIGINAL_HTTPX_CLIENT:
+            return _run_attempts(self._get_shared_client(timeout))
+
+        with httpx.Client(timeout=timeout, transport=self.transport) as client:
+            return _run_attempts(client)
 
 
 def _extract_content(data: object) -> str:
@@ -132,3 +160,4 @@ def _extract_content(data: object) -> str:
 
 
 ai_client = AIClient()
+atexit.register(ai_client.close)

@@ -507,7 +507,7 @@ describe('BoardToolbar powerups', () => {
     await user.click(screen.getByTitle('Свернуть все группы'))
     expect(onToggleCollapseAllGroups).toHaveBeenCalledTimes(1)
 
-    await user.click(screen.getByTitle('Фильтр по цвету стикеров'))
+    await user.click(screen.getByTitle('Фильтр по цвету карточек'))
     await user.click(await screen.findByLabelText('Фильтр по цвету: Тёплый песок'))
     expect(onColorFilterChange).toHaveBeenCalledWith('amber')
   })

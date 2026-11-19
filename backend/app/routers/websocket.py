@@ -4,6 +4,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import anyio
@@ -70,6 +71,23 @@ def _open_ws_db(websocket: WebSocket):
     return db_dep()
 
 
+def _dump_state_snapshot(
+    db: Session, board_id: str, state: dict | None
+) -> str | None:
+    if not state:
+        return None
+    cleaned = dict(state)
+    collapsed = cleaned.get("collapsed_groups")
+    if isinstance(collapsed, list):
+        valid_group_ids = board_group_ids(db, board_id)
+        filtered = [g for g in collapsed if isinstance(g, str) and g in valid_group_ids]
+        if filtered:
+            cleaned["collapsed_groups"] = filtered
+        else:
+            cleaned.pop("collapsed_groups", None)
+    return json.dumps(cleaned) if cleaned else None
+
+
 def _sync_board_session_db(
     websocket: WebSocket | None,
     board_id: str,
@@ -79,13 +97,11 @@ def _sync_board_session_db(
     session_id: int | None,
     lock_board: bool = False,
     reveal: bool = False,
-) -> dict | None:
-    """Сохранить состояние сессии в строке доски.
+    state_snapshot: dict | None = None,
+) -> tuple[dict | None, bool | None]:
+    """Сохранить состояние сессии в строке доски (выполнять в worker-потоке).
 
-    Возвращает настройки доски, если они изменились (блокировка), иначе None.
-    Доски может не быть (тесты подключаются к синтетическим идентификаторам) —
-    тогда сохранять нечего. Сбой записи не должен рвать WebSocket, но обязан
-    попасть в журнал: иначе память и БД расходятся незаметно.
+    Возвращает `(настройки_доски_при_блокировке, identity_hidden)`.
     """
     from app.board_view import board_settings_payload
 
@@ -98,25 +114,24 @@ def _sync_board_session_db(
             or board.deleted_at is not None
             or (workspace_id is not None and board.workspace_id != workspace_id)
         ):
-            return None
+            return None, None
         board.active_facilitator = facilitator.name if facilitator else None
         board.active_facilitator_id = facilitator.id if facilitator else None
         board.active_phase = phase
         board.active_session_id = session_id
-        board.session_state = _dump_state(db, board_id)
+        board.session_state = _dump_state_snapshot(db, board_id, state_snapshot)
         if reveal:
             board.cards_revealed = True
         if lock_board:
             board.is_locked = True
         db.commit()
-        # Фаза меняет видимость карточек, а с ней — можно ли называть печатающего
-        manager.set_identity_hidden(board_id, _identity_hidden(board))
+        hidden = _identity_hidden(board)
         if lock_board:
-            return board_settings_payload(board)
-        return None
+            return board_settings_payload(board), hidden
+        return None, hidden
     except Exception:
         logger.warning("Failed to persist session state for board %s", board_id, exc_info=True)
-        return None
+        return None, None
     finally:
         try:
             next(db_gen)
@@ -136,7 +151,7 @@ def _board_is_locked(websocket: WebSocket, board_id: str) -> bool:
     try:
         db = next(db_gen)
         board = db.get(models.Board, board_id)
-        return bool(board is not None and board.is_locked)
+        return bool(board is None or board.deleted_at is not None or board.is_locked)
     except Exception:
         logger.warning("Failed to read lock state of board %s", board_id, exc_info=True)
         return False
@@ -147,20 +162,22 @@ def _board_is_locked(websocket: WebSocket, board_id: str) -> bool:
             pass
 
 
-def _dump_state(db: Session, board_id: str) -> str | None:
-    state = manager.export_state(board_id, valid_group_ids=board_group_ids(db, board_id))
-    return json.dumps(state) if state else None
+def _is_active_room_socket(ctx: _WsContext) -> bool:
+    """Проверить, что сокет всё ещё числится в комнате (доска не удалена через cleanup_board)."""
+    return ctx.websocket in manager.rooms.get(ctx.board_id, ())
 
 
-def _persist_session_state(websocket: WebSocket, board_id: str, workspace_id: str) -> None:
-    """Сохранить таймер, фокус и свёрнутые группы в строке доски."""
+def _persist_session_state(
+    websocket: WebSocket, board_id: str, workspace_id: str, state_snapshot: dict | None
+) -> None:
+    """Сохранить таймер, фокус и свёрнутые группы в строке доски (в worker-потоке)."""
     db_gen = _open_ws_db(websocket)
     try:
         db = next(db_gen)
         board = db.get(models.Board, board_id)
         if board is None or board.deleted_at is not None or board.workspace_id != workspace_id:
             return
-        board.session_state = _dump_state(db, board_id)
+        board.session_state = _dump_state_snapshot(db, board_id, state_snapshot)
         db.commit()
     except Exception:
         logger.warning("Failed to persist session state for board %s", board_id, exc_info=True)
@@ -171,8 +188,13 @@ def _persist_session_state(websocket: WebSocket, board_id: str, workspace_id: st
             pass
 
 
-def _clear_board_session_on_grace(board_id: str) -> None:
-    _sync_board_session_db(None, board_id, None, None, None, None)
+def _clear_board_session_on_grace(
+    board_id: str, state_snapshot: dict | None = None
+) -> bool | None:
+    _payload, hidden = _sync_board_session_db(
+        None, board_id, None, None, None, None, state_snapshot=state_snapshot
+    )
+    return hidden
 
 
 manager.on_session_cleared = _clear_board_session_on_grace
@@ -181,6 +203,14 @@ manager.on_session_cleared = _clear_board_session_on_grace
 # не должен запускать вторую генерацию, пока не закончилась первая. Новая
 # сессия на той же доске — другой ключ, её итоги не ждут чужую генерацию.
 _summary_tasks: dict[tuple[str, int | None], asyncio.Task] = {}
+
+
+def cancel_board_summary_tasks(board_id: str) -> None:
+    """Отменить и забыть незавершённые генерации итогов при удалении доски."""
+    for key in [k for k in _summary_tasks if k[0] == board_id]:
+        task = _summary_tasks.pop(key, None)
+        if task is not None and not task.done():
+            task.cancel()
 
 
 def _origin_allowed(websocket: WebSocket) -> bool:
@@ -371,215 +401,316 @@ async def _handle_cursor_leave(ctx: _WsContext, _payload: WsBasePayload) -> None
     )
 
 
-async def _handle_group_collapse(ctx: _WsContext, payload: WsBasePayload) -> None:
-    if not isinstance(payload, GroupCollapseIn):
-        return
-    db_gen = _open_ws_db(ctx.websocket)
+def _group_exists_sync(
+    websocket: WebSocket, board_id: str, workspace_id: str, group_id: str
+) -> bool:
+    db_gen = _open_ws_db(websocket)
     try:
         db = next(db_gen)
-        board = db.get(models.Board, ctx.board_id)
+        board = db.get(models.Board, board_id)
         if (
             board is None
             or board.deleted_at is not None
-            or board.workspace_id != ctx.workspace_id
+            or board.workspace_id != workspace_id
         ):
-            return
+            return False
         group_exists = (
             db.query(models.CardGroup.id)
             .join(models.Column, models.CardGroup.column_id == models.Column.id)
             .filter(
-                models.CardGroup.id == payload.group_id,
-                models.Column.board_id == ctx.board_id,
+                models.CardGroup.id == group_id,
+                models.Column.board_id == board_id,
             )
             .first()
         )
-        if group_exists is None:
-            return
-        changed = manager.set_group_collapsed(
-            ctx.board_id, payload.group_id, payload.collapsed
-        )
-        if changed:
-            try:
-                board.session_state = _dump_state(db, ctx.board_id)
-                db.commit()
-            except Exception:
-                logger.warning(
-                    "Failed to persist collapsed groups for board %s",
-                    ctx.board_id,
-                    exc_info=True,
-                )
+        return group_exists is not None
     finally:
         try:
             next(db_gen)
         except StopIteration:
             pass
-    collapse = {"group_id": payload.group_id, "collapsed": payload.collapsed}
-    # Broadcast to ALL (including sender) for sync
-    await manager.broadcast(ctx.board_id, "group_collapse", collapse)
+
+
+async def _handle_group_collapse(ctx: _WsContext, payload: WsBasePayload) -> None:
+    if not isinstance(payload, GroupCollapseIn):
+        return
+    async with manager.board_lock(ctx.board_id):
+        if not _is_active_room_socket(ctx):
+            return
+        if not await anyio.to_thread.run_sync(
+            _group_exists_sync, ctx.websocket, ctx.board_id, ctx.workspace_id, payload.group_id
+        ):
+            return
+        changed = manager.set_group_collapsed(
+            ctx.board_id, payload.group_id, payload.collapsed
+        )
+        if not changed:
+            # Не рассылаем отклонённое (MAX_COLLAPSED_GROUPS) или избыточное состояние
+            return
+        state_snapshot = manager.export_state(ctx.board_id)
+        await anyio.to_thread.run_sync(
+            _persist_session_state,
+            ctx.websocket,
+            ctx.board_id,
+            ctx.workspace_id,
+            state_snapshot,
+        )
+        collapse = {"group_id": payload.group_id, "collapsed": payload.collapsed}
+        # Broadcast to ALL (including sender) for sync
+        await manager.broadcast(ctx.board_id, "group_collapse", collapse)
 
 
 def _timer_handler(event: str) -> Callable[[_WsContext, WsBasePayload], Awaitable[None]]:
     async def _handle(ctx: _WsContext, payload: WsBasePayload) -> None:
-        # Only facilitator can control timer when session is active
-        if ctx.facilitator_id and not ctx.is_facilitator:
-            return
         timer_data: dict[str, Any] | None = None
-        if isinstance(payload, TimerStartIn):
-            timer_data = payload.sanitized()
-        elif isinstance(payload, TimerPauseIn):
-            timer_data = payload.sanitized()
-        elif isinstance(payload, TimerResetIn):
+        if isinstance(payload, (TimerStartIn, TimerPauseIn, TimerResetIn)):
             timer_data = payload.sanitized()
         if timer_data is None:
             return
-        manager.set_timer(ctx.board_id, event, timer_data)
-        _persist_session_state(ctx.websocket, ctx.board_id, ctx.workspace_id)
-        await manager.broadcast(ctx.board_id, event, timer_data)
+        async with manager.board_lock(ctx.board_id):
+            if not _is_active_room_socket(ctx):
+                return
+            # Only facilitator can control timer when session is active
+            facilitator_id = manager.get_facilitator(ctx.board_id)
+            if facilitator_id and facilitator_id != ctx.peer.id:
+                return
+            manager.set_timer(ctx.board_id, event, timer_data)
+            if event == "timer_start":
+                server_timer = manager.get_timer(ctx.board_id)
+                if server_timer and "ts" in server_timer:
+                    timer_data = {**timer_data, "ts": server_timer["ts"]}
+            state_snapshot = manager.export_state(ctx.board_id)
+            await anyio.to_thread.run_sync(
+                _persist_session_state,
+                ctx.websocket,
+                ctx.board_id,
+                ctx.workspace_id,
+                state_snapshot,
+            )
+            await manager.broadcast(ctx.board_id, event, timer_data)
 
     return _handle
 
 
 async def _handle_facilitator_start(ctx: _WsContext, _payload: WsBasePayload) -> None:
-    if ctx.facilitator_id:
-        return
-    # Заблокированная доска — архив: новая сессия скрыла бы её
-    # карточки у всех («Штурм»). Сначала доску нужно разблокировать.
-    if _board_is_locked(ctx.websocket, ctx.board_id):
-        return
-    had_ready, had_spot = manager.set_facilitator(ctx.board_id, ctx.peer)
-    _sync_board_session_db(
-        ctx.websocket,
-        ctx.board_id,
-        ctx.workspace_id,
-        ctx.peer,
-        "brainstorm",
-        manager.get_session_id(ctx.board_id),
-    )
-    await manager.broadcast(
-        ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
-    )
-    await _broadcast_session_reset(ctx.board_id, had_ready, had_spot)
-    # «Штурм» скрывает чужие карточки: клиенты перечитывают доску
-    await manager.broadcast(ctx.board_id, "cards_visibility_changed", {})
+    async with manager.board_lock(ctx.board_id):
+        if not _is_active_room_socket(ctx):
+            return
+        if manager.get_facilitator(ctx.board_id) is not None:
+            return
+        # Заблокированная доска — архив: новая сессия скрыла бы её
+        # карточки у всех («Штурм»). Сначала доску нужно разблокировать.
+        if await anyio.to_thread.run_sync(_board_is_locked, ctx.websocket, ctx.board_id):
+            return
+        if manager.get_facilitator(ctx.board_id) is not None:
+            return
+        had_ready, had_spot = manager.set_facilitator(ctx.board_id, ctx.peer)
+        session_id = manager.get_session_id(ctx.board_id)
+        state_snapshot = manager.export_state(ctx.board_id)
+        _board_payload, hidden = await anyio.to_thread.run_sync(
+            partial(
+                _sync_board_session_db,
+                ctx.websocket,
+                ctx.board_id,
+                ctx.workspace_id,
+                ctx.peer,
+                "brainstorm",
+                session_id,
+                state_snapshot=state_snapshot,
+            )
+        )
+        if hidden is not None:
+            manager.set_identity_hidden(ctx.board_id, hidden)
+        await manager.broadcast(
+            ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
+        )
+        await _broadcast_session_reset(ctx.board_id, had_ready, had_spot)
+        # «Штурм» скрывает чужие карточки: клиенты перечитывают доску
+        await manager.broadcast(ctx.board_id, "cards_visibility_changed", {})
 
 
 async def _handle_facilitator_stop(ctx: _WsContext, payload: WsBasePayload) -> None:
-    if not ctx.is_facilitator:
-        return
-    lock_board = bool(payload.lock_board) if isinstance(payload, FacilitatorStopIn) else False
-    had_ready, had_spot = manager.clear_session(ctx.board_id)
-    # Завершение сессии раскрывает всё, что было скрыто в «Штурме»
-    board_payload = _sync_board_session_db(
-        ctx.websocket,
-        ctx.board_id,
-        ctx.workspace_id,
-        None,
-        None,
-        None,
-        lock_board=lock_board,
-        reveal=True,
-    )
-    await manager.broadcast(
-        ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
-    )
-    await _broadcast_session_reset(ctx.board_id, had_ready, had_spot)
-    # Таймер сессии убран: без события он шёл бы до нуля у тех, кто
-    # был на доске, и отсутствовал у вошедших позже
-    ended_timer = manager.pop_ended_timer(ctx.board_id)
-    if ended_timer:
-        await manager.broadcast(ctx.board_id, "timer_reset", ended_timer)
-    await manager.broadcast(ctx.board_id, "cards_visibility_changed", {})
-    # Встреча закончилась — самое время спросить, была ли она полезной
-    await manager.broadcast(ctx.board_id, "roti_requested", {})
-    if board_payload:
-        await manager.broadcast(ctx.board_id, "board_updated", board_payload)
-        await manager.broadcast_workspace(
-            ctx.workspace_id,
-            "board_updated",
-            board_payload,
-            exclude_board_id=ctx.board_id,
+    async with manager.board_lock(ctx.board_id):
+        if not _is_active_room_socket(ctx):
+            return
+        if manager.get_facilitator(ctx.board_id) != ctx.peer.id:
+            return
+        lock_board = bool(payload.lock_board) if isinstance(payload, FacilitatorStopIn) else False
+        had_ready, had_spot = manager.clear_session(ctx.board_id)
+        state_snapshot = manager.export_state(ctx.board_id)
+        # Завершение сессии раскрывает всё, что было скрыто в «Штурме»
+        board_payload, hidden = await anyio.to_thread.run_sync(
+            partial(
+                _sync_board_session_db,
+                ctx.websocket,
+                ctx.board_id,
+                ctx.workspace_id,
+                None,
+                None,
+                None,
+                lock_board=lock_board,
+                reveal=True,
+                state_snapshot=state_snapshot,
+            )
         )
+        if hidden is not None:
+            manager.set_identity_hidden(ctx.board_id, hidden)
+        await manager.broadcast(
+            ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
+        )
+        await _broadcast_session_reset(ctx.board_id, had_ready, had_spot)
+        # Таймер сессии убран: без события он шёл бы до нуля у тех, кто
+        # был на доске, и отсутствовал у вошедших позже
+        ended_timer = manager.pop_ended_timer(ctx.board_id)
+        if ended_timer:
+            await manager.broadcast(ctx.board_id, "timer_reset", ended_timer)
+        await manager.broadcast(ctx.board_id, "cards_visibility_changed", {})
+        # Встреча закончилась — самое время спросить, была ли она полезной
+        await manager.broadcast(ctx.board_id, "roti_requested", {})
+        if board_payload:
+            await manager.broadcast(ctx.board_id, "board_updated", board_payload)
+            await manager.broadcast_workspace(
+                ctx.workspace_id,
+                "board_updated",
+                board_payload,
+                exclude_board_id=ctx.board_id,
+            )
 
 
 async def _handle_facilitator_transfer(ctx: _WsContext, payload: WsBasePayload) -> None:
-    # Ведущий передаёт роль участнику, который сейчас на доске
-    if not ctx.is_facilitator or not isinstance(payload, FacilitatorTransferIn):
+    if not isinstance(payload, FacilitatorTransferIn):
         return
-    target = next((p for p in manager.get_users(ctx.board_id) if p.id == payload.participant_id), None)
-    if target is None or target.id == ctx.peer.id:
-        return
-    manager.transfer_facilitator(ctx.board_id, target)
-    _sync_board_session_db(
-        ctx.websocket,
-        ctx.board_id,
-        ctx.workspace_id,
-        target,
-        manager.get_phase(ctx.board_id),
-        manager.get_session_id(ctx.board_id),
-    )
-    await manager.broadcast(
-        ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
-    )
+    async with manager.board_lock(ctx.board_id):
+        if not _is_active_room_socket(ctx):
+            return
+        # Ведущий передаёт роль участнику, который сейчас на доске
+        if manager.get_facilitator(ctx.board_id) != ctx.peer.id:
+            return
+        target = next(
+            (p for p in manager.get_users(ctx.board_id) if p.id == payload.participant_id),
+            None,
+        )
+        if target is None or target.id == ctx.peer.id:
+            return
+        manager.transfer_facilitator(ctx.board_id, target)
+        phase = manager.get_phase(ctx.board_id)
+        session_id = manager.get_session_id(ctx.board_id)
+        state_snapshot = manager.export_state(ctx.board_id)
+        _board_payload, hidden = await anyio.to_thread.run_sync(
+            partial(
+                _sync_board_session_db,
+                ctx.websocket,
+                ctx.board_id,
+                ctx.workspace_id,
+                target,
+                phase,
+                session_id,
+                state_snapshot=state_snapshot,
+            )
+        )
+        if hidden is not None:
+            manager.set_identity_hidden(ctx.board_id, hidden)
+        await manager.broadcast(
+            ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
+        )
 
 
 async def _handle_facilitator_takeover(ctx: _WsContext, _payload: WsBasePayload) -> None:
-    # Любой участник забирает роль, если ведущий пропал
-    if not manager.can_take_over(ctx.board_id):
-        return
-    manager.transfer_facilitator(ctx.board_id, ctx.peer)
-    _sync_board_session_db(
-        ctx.websocket,
-        ctx.board_id,
-        ctx.workspace_id,
-        ctx.peer,
-        manager.get_phase(ctx.board_id),
-        manager.get_session_id(ctx.board_id),
-    )
-    await manager.broadcast(
-        ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
-    )
+    async with manager.board_lock(ctx.board_id):
+        if not _is_active_room_socket(ctx):
+            return
+        # Любой участник забирает роль, если ведущий пропал
+        if not manager.can_take_over(ctx.board_id):
+            return
+        manager.transfer_facilitator(ctx.board_id, ctx.peer)
+        phase = manager.get_phase(ctx.board_id)
+        session_id = manager.get_session_id(ctx.board_id)
+        state_snapshot = manager.export_state(ctx.board_id)
+        _board_payload, hidden = await anyio.to_thread.run_sync(
+            partial(
+                _sync_board_session_db,
+                ctx.websocket,
+                ctx.board_id,
+                ctx.workspace_id,
+                ctx.peer,
+                phase,
+                session_id,
+                state_snapshot=state_snapshot,
+            )
+        )
+        if hidden is not None:
+            manager.set_identity_hidden(ctx.board_id, hidden)
+        await manager.broadcast(
+            ctx.board_id, "facilitator_update", manager.facilitator_payload(ctx.board_id)
+        )
 
 
 async def _handle_phase_change(ctx: _WsContext, payload: WsBasePayload) -> None:
-    if not ctx.is_facilitator or not isinstance(payload, PhaseChangeIn):
+    if not isinstance(payload, PhaseChangeIn):
         return
-    phase = payload.phase
-    previous_phase = manager.get_phase(ctx.board_id)
-    had_ready, had_spot = manager.set_phase(ctx.board_id, phase)
-    # Выход из «Штурма» раскрывает карточки насовсем
-    leaving_brainstorm = previous_phase == "brainstorm" and phase != "brainstorm"
-    _sync_board_session_db(
-        ctx.websocket,
-        ctx.board_id,
-        ctx.workspace_id,
-        ctx.peer,
-        phase,
-        manager.get_session_id(ctx.board_id),
-        reveal=leaving_brainstorm,
-    )
-    await manager.broadcast(ctx.board_id, "phase_update", {"phase": phase})
-    await _broadcast_session_reset(ctx.board_id, had_ready, had_spot)
-    if leaving_brainstorm or phase == "brainstorm":
-        await manager.broadcast(ctx.board_id, "cards_visibility_changed", {})
-    if phase == "summary":
-        logger.info("Summary phase entered on board %s", ctx.board_id)
-        _start_summary_generation(ctx.board_id, ctx.peer.id, ctx.workspace_id)
+    async with manager.board_lock(ctx.board_id):
+        if not _is_active_room_socket(ctx):
+            return
+        if manager.get_facilitator(ctx.board_id) != ctx.peer.id:
+            return
+        phase = payload.phase
+        previous_phase = manager.get_phase(ctx.board_id)
+        had_ready, had_spot = manager.set_phase(ctx.board_id, phase)
+        # Выход из «Штурма» раскрывает карточки насовсем
+        leaving_brainstorm = previous_phase == "brainstorm" and phase != "brainstorm"
+        session_id = manager.get_session_id(ctx.board_id)
+        state_snapshot = manager.export_state(ctx.board_id)
+        _board_payload, hidden = await anyio.to_thread.run_sync(
+            partial(
+                _sync_board_session_db,
+                ctx.websocket,
+                ctx.board_id,
+                ctx.workspace_id,
+                ctx.peer,
+                phase,
+                session_id,
+                reveal=leaving_brainstorm,
+                state_snapshot=state_snapshot,
+            )
+        )
+        if hidden is not None:
+            manager.set_identity_hidden(ctx.board_id, hidden)
+        await manager.broadcast(ctx.board_id, "phase_update", {"phase": phase})
+        await _broadcast_session_reset(ctx.board_id, had_ready, had_spot)
+        if leaving_brainstorm or phase == "brainstorm":
+            await manager.broadcast(ctx.board_id, "cards_visibility_changed", {})
+        if phase == "summary":
+            logger.info("Summary phase entered on board %s", ctx.board_id)
+            _start_summary_generation(ctx.board_id, ctx.peer.id, ctx.workspace_id)
 
 
 async def _handle_ready_toggle(ctx: _WsContext, payload: WsBasePayload) -> None:
+    if not _is_active_room_socket(ctx):
+        return
     ready_flag = payload.ready if isinstance(payload, ReadyToggleIn) else None
     manager.toggle_ready(ctx.board_id, ctx.peer.id, ready=ready_flag)
     await manager.broadcast(ctx.board_id, "ready_update", manager.ready_payload(ctx.board_id))
 
 
 async def _handle_spotlight_card(ctx: _WsContext, payload: WsBasePayload) -> None:
-    if ctx.facilitator_id and not ctx.is_facilitator:
-        return
     if not isinstance(payload, SpotlightCardIn):
         return
-    manager.set_spotlight(ctx.board_id, payload.card_id)
-    _persist_session_state(ctx.websocket, ctx.board_id, ctx.workspace_id)
-    await manager.broadcast(ctx.board_id, "spotlight_update", {"card_id": payload.card_id})
+    async with manager.board_lock(ctx.board_id):
+        if not _is_active_room_socket(ctx):
+            return
+        facilitator_id = manager.get_facilitator(ctx.board_id)
+        if facilitator_id and facilitator_id != ctx.peer.id:
+            return
+        manager.set_spotlight(ctx.board_id, payload.card_id)
+        state_snapshot = manager.export_state(ctx.board_id)
+        await anyio.to_thread.run_sync(
+            _persist_session_state,
+            ctx.websocket,
+            ctx.board_id,
+            ctx.workspace_id,
+            state_snapshot,
+        )
+        await manager.broadcast(ctx.board_id, "spotlight_update", {"card_id": payload.card_id})
 
 
 async def _handle_reaction(ctx: _WsContext, payload: WsBasePayload) -> None:
@@ -611,6 +742,8 @@ async def _handle_health_check_start(ctx: _WsContext, _payload: WsBasePayload) -
 
 async def _handle_card_typing(ctx: _WsContext, payload: WsBasePayload) -> None:
     if not isinstance(payload, CardTypingIn):
+        return
+    if not _is_active_room_socket(ctx):
         return
     if payload.is_typing:
         column_id = payload.sanitized_column_id()
@@ -649,6 +782,50 @@ _EVENT_HANDLERS: dict[str, Callable[[_WsContext, WsBasePayload], Awaitable[None]
 }
 
 
+def _resolve_workspace_ws_sync(websocket: WebSocket, claims: dict) -> tuple[str, str]:
+    db_gen = _open_ws_db(websocket)
+    try:
+        db = next(db_gen)
+        workspace, participant = resolve_session(db, claims)
+        return workspace.id, participant.id
+    finally:
+        try:
+            next(db_gen)
+        except StopIteration:
+            pass
+
+
+def _resolve_board_ws_sync(websocket: WebSocket, board_id: str, claims: dict) -> dict | None:
+    db_gen = _open_ws_db(websocket)
+    try:
+        db = next(db_gen)
+        workspace, participant = resolve_session(db, claims)
+        workspace_id = workspace.id
+        board = db.get(models.Board, board_id)
+        if board is None or board.workspace_id != workspace_id or board.deleted_at is not None:
+            return None
+        try:
+            saved_state = json.loads(board.session_state) if board.session_state else None
+        except ValueError:
+            saved_state = None
+        return {
+            "workspace_id": workspace_id,
+            "peer": Peer(participant.id, participant.name),
+            "identity_hidden": _identity_hidden(board),
+            "saved_state": saved_state,
+            "valid_groups": board_group_ids(db, board_id),
+            "active_facilitator_id": board.active_facilitator_id,
+            "active_facilitator": board.active_facilitator,
+            "active_phase": board.active_phase,
+            "active_session_id": board.active_session_id,
+        }
+    finally:
+        try:
+            next(db_gen)
+        except StopIteration:
+            pass
+
+
 @router.websocket("/ws/workspace")
 async def workspace_websocket_endpoint(
     websocket: WebSocket,
@@ -659,24 +836,21 @@ async def workspace_websocket_endpoint(
     if not claims:
         return
 
-    db_gen = _open_ws_db(websocket)
     try:
-        db = next(db_gen)
-        workspace, participant = resolve_session(db, claims)
-        workspace_id = workspace.id
-        participant_id = participant.id
+        workspace_id, participant_id = await anyio.to_thread.run_sync(
+            _resolve_workspace_ws_sync, websocket, claims
+        )
     except HTTPException:
         await websocket.close(code=1008, reason="Session expired")
         return
     except Exception:
-        logger.warning("Workspace WS handshake DB error for %s", workspace_id if "workspace_id" in locals() else "unknown", exc_info=True)
+        logger.warning("Workspace WS handshake DB error", exc_info=True)
         await websocket.close(code=1011, reason="Server error")
         return
-    finally:
-        try:
-            next(db_gen)
-        except StopIteration:
-            pass
+
+    if not manager.can_accept_connection(workspace_id):
+        await websocket.close(code=1008, reason="Too many connections")
+        return
 
     await manager.connect_workspace(workspace_id, websocket, participant_id)
     try:
@@ -700,79 +874,90 @@ async def websocket_endpoint(
     if not claims:
         return
 
-    db_gen = _open_ws_db(websocket)
-    try:
-        db = next(db_gen)
-        try:
-            workspace, participant = resolve_session(db, claims)
-        except HTTPException:
-            await websocket.close(code=1008, reason="Session expired")
-            return
-        workspace_id = workspace.id
-        # Личность сокета фиксируется здесь и больше не меняется сообщениями клиента
-        peer = Peer(participant.id, participant.name)
-
-        # Подключиться можно только к живой доске своей команды
-        board = db.get(models.Board, board_id)
-        if board is None or board.workspace_id != workspace_id or board.deleted_at is not None:
-            await websocket.close(code=1008, reason="Board not found")
-            return
-        manager.set_identity_hidden(board_id, _identity_hidden(board))
-        # Таймер, фокус и свёрнутые группы поднимаются из БД один раз после рестарта процесса
-        try:
-            saved_state = json.loads(board.session_state) if board.session_state else None
-        except ValueError:
-            saved_state = None
-        valid_groups = board_group_ids(db, board_id)
-        manager.restore_state(board_id, saved_state, valid_group_ids=valid_groups)
-        manager.prune_collapsed_groups(board_id, valid_groups)
-        if manager.get_facilitator(board_id) is None and board.active_facilitator_id:
-            manager.hydrate_session(
-                board_id,
-                board.active_facilitator_id,
-                board.active_facilitator,
-                board.active_phase,
-                board.active_session_id,
-            )
-    except Exception:
-        logger.warning("Board WS handshake DB error for %s", board_id, exc_info=True)
-        await websocket.close(code=1011, reason="Server error")
-        return
-    finally:
-        try:
-            next(db_gen)
-        except StopIteration:
-            pass
-
-    await manager.connect(board_id, websocket, workspace_id=workspace_id, peer=peer)
-    msg_timestamps: list[float] = []
-    cursor_timestamps: list[float] = []
+    reject_code: int | None = None
+    reject_reason = ""
+    workspace_id = ""
+    peer: Peer | None = None
+    connected = False
 
     try:
-        # Начальное состояние: кто на доске, сессия ведущего, готовность, фокус, свёрнутые группы, таймер
-        await _send(websocket, "facilitator_update", manager.facilitator_payload(board_id))
-        if manager.get_ready_ids(board_id):
-            await _send(websocket, "ready_update", manager.ready_payload(board_id))
-        spotlight_id = manager.get_spotlight(board_id)
-        if spotlight_id:
-            await _send(websocket, "spotlight_update", {"card_id": spotlight_id})
-        collapsed_groups = manager.get_collapsed_groups(board_id)
-        if collapsed_groups:
-            await _send(websocket, "groups_collapsed", {"group_ids": collapsed_groups})
-        typing_users = manager.typing_for(board_id, peer.id)
-        if typing_users:
-            await _send(websocket, "typing_update", {"typing": typing_users})
-        timer = manager.get_timer(board_id)
-        timer_message = _timer_snapshot_message(timer) if timer else None
-        if timer_message:
-            await _send(websocket, timer_message["event"], timer_message["data"])
-        # Участник известен с момента подключения — сообщаем о нём всем сразу
-        await manager.broadcast(board_id, "presence_update", manager.presence_payload(board_id))
-        if manager.get_facilitator(board_id) == peer.id:
-            # Ведущий вернулся: остальным пора убрать «ведущий не в сети»
-            await manager.broadcast(
-                board_id, "facilitator_update", manager.facilitator_payload(board_id)
-            )
+        async with manager.board_lock(board_id):
+            try:
+                snapshot = await anyio.to_thread.run_sync(
+                    _resolve_board_ws_sync, websocket, board_id, claims
+                )
+            except HTTPException:
+                reject_code = 1008
+                reject_reason = "Session expired"
+                snapshot = None
+            except Exception:
+                logger.warning("Board WS handshake DB error for %s", board_id, exc_info=True)
+                reject_code = 1011
+                reject_reason = "Server error"
+                snapshot = None
+
+            if reject_code is None and snapshot is None:
+                reject_code = 1008
+                reject_reason = "Board not found"
+
+            if reject_code is None and snapshot is not None:
+                workspace_id = snapshot["workspace_id"]
+                if not manager.can_accept_connection(workspace_id):
+                    reject_code = 1008
+                    reject_reason = "Too many connections"
+                else:
+                    peer = snapshot["peer"]
+                    manager.set_identity_hidden(board_id, snapshot["identity_hidden"])
+                    valid_groups = snapshot["valid_groups"]
+                    manager.restore_state(
+                        board_id, snapshot["saved_state"], valid_group_ids=valid_groups
+                    )
+                    manager.prune_collapsed_groups(board_id, valid_groups)
+                    if manager.get_facilitator(board_id) is None and snapshot["active_facilitator_id"]:
+                        manager.hydrate_session(
+                            board_id,
+                            snapshot["active_facilitator_id"],
+                            snapshot["active_facilitator"],
+                            snapshot["active_phase"],
+                            snapshot["active_session_id"],
+                        )
+
+                    await manager.connect(board_id, websocket, workspace_id=workspace_id, peer=peer)
+                    connected = True
+
+                    # Начальное состояние: кто на доске, сессия ведущего, готовность, фокус, свёрнутые группы, таймер
+                    await _send(websocket, "facilitator_update", manager.facilitator_payload(board_id))
+                    if manager.get_ready_ids(board_id):
+                        await _send(websocket, "ready_update", manager.ready_payload(board_id))
+                    spotlight_id = manager.get_spotlight(board_id)
+                    if spotlight_id:
+                        await _send(websocket, "spotlight_update", {"card_id": spotlight_id})
+                    collapsed_groups = manager.get_collapsed_groups(board_id)
+                    if collapsed_groups:
+                        await _send(websocket, "groups_collapsed", {"group_ids": collapsed_groups})
+                    typing_users = manager.typing_for(board_id, peer.id)
+                    if typing_users:
+                        await _send(websocket, "typing_update", {"typing": typing_users})
+                    timer = manager.get_timer(board_id)
+                    timer_message = _timer_snapshot_message(timer) if timer else None
+                    if timer_message:
+                        await _send(websocket, timer_message["event"], timer_message["data"])
+                    # Участник известен с момента подключения — сообщаем о нём всем сразу
+                    await manager.broadcast(
+                        board_id, "presence_update", manager.presence_payload(board_id)
+                    )
+                    if manager.get_facilitator(board_id) == peer.id:
+                        # Ведущий вернулся: остальным пора убрать «ведущий не в сети»
+                        await manager.broadcast(
+                            board_id, "facilitator_update", manager.facilitator_payload(board_id)
+                        )
+
+        if reject_code is not None or peer is None:
+            await websocket.close(code=reject_code or 1008, reason=reject_reason or "Unauthorized")
+            return
+
+        msg_timestamps: list[float] = []
+        cursor_timestamps: list[float] = []
 
         while True:
             data = await websocket.receive_text()
@@ -824,6 +1009,8 @@ async def websocket_endpoint(
                 )
                 handler = _EVENT_HANDLERS.get(event)
                 if handler is not None:
+                    if websocket not in manager.rooms.get(board_id, ()):
+                        break
                     await handler(ctx, payload)
 
             except (json.JSONDecodeError, KeyError):
@@ -841,40 +1028,41 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         pass
     finally:
-        gone, still_present, fac_disconnected = manager.disconnect(board_id, websocket)
-        # Синхронно планируем grace-таймер и чистим ready ДО любых await,
-        # иначе CancelledError при отмене задачи оборвёт finally до планирования.
-        if fac_disconnected and gone:
-            manager.schedule_facilitator_grace(board_id, gone.id)
-        if gone and not still_present:
-            ready_changed = manager.remove_ready_user(board_id, gone.id)
-            typing_changed = manager.set_typing(board_id, gone.id, None)
-            try:
-                # Защищаем рассылку о выходе от CancelledError при отмене задачи сокета
-                # (обрыв соединения или остановка ASGI-сервера), иначе cursor_leave и
-                # presence_update обрываются на await и клиенты остаются с призраком участника.
-                with anyio.CancelScope(shield=True):
-                    with anyio.move_on_after(2.0):
-                        await manager.broadcast(
-                            board_id,
-                            "cursor_leave",
-                            {"participant_id": gone.id, "username": gone.name},
-                        )
-                        await manager.broadcast(
-                            board_id, "presence_update", manager.presence_payload(board_id)
-                        )
-                        if fac_disconnected:
-                            # Остальные видят, что ведущий не в сети и роль можно забрать
+        if connected:
+            gone, still_present, fac_disconnected = manager.disconnect(board_id, websocket)
+            # Синхронно планируем grace-таймер и чистим ready ДО любых await,
+            # иначе CancelledError при отмене задачи оборвёт finally до планирования.
+            if fac_disconnected and gone:
+                manager.schedule_facilitator_grace(board_id, gone.id)
+            if gone and not still_present:
+                ready_changed = manager.remove_ready_user(board_id, gone.id)
+                typing_changed = manager.set_typing(board_id, gone.id, None)
+                try:
+                    # Защищаем рассылку о выходе от CancelledError при отмене задачи сокета
+                    # (обрыв соединения или остановка ASGI-сервера), иначе cursor_leave и
+                    # presence_update обрываются на await и клиенты остаются с призраком участника.
+                    with anyio.CancelScope(shield=True):
+                        with anyio.move_on_after(2.0):
                             await manager.broadcast(
                                 board_id,
-                                "facilitator_update",
-                                manager.facilitator_payload(board_id),
+                                "cursor_leave",
+                                {"participant_id": gone.id, "username": gone.name},
                             )
-                        if ready_changed:
                             await manager.broadcast(
-                                board_id, "ready_update", manager.ready_payload(board_id)
+                                board_id, "presence_update", manager.presence_payload(board_id)
                             )
-                        if typing_changed:
-                            await manager.broadcast_typing(board_id)
-            except Exception:
-                pass
+                            if fac_disconnected:
+                                # Остальные видят, что ведущий не в сети и роль можно забрать
+                                await manager.broadcast(
+                                    board_id,
+                                    "facilitator_update",
+                                    manager.facilitator_payload(board_id),
+                                )
+                            if ready_changed:
+                                await manager.broadcast(
+                                    board_id, "ready_update", manager.ready_payload(board_id)
+                                )
+                            if typing_changed:
+                                await manager.broadcast_typing(board_id)
+                except Exception:
+                    pass

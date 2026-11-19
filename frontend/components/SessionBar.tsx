@@ -6,9 +6,13 @@ import {
   ArrowRight,
   Check,
   Crown,
+  EyeOff,
+  FileText,
   Lock,
   RotateCcw,
+  Shield,
   SmilePlus,
+  Sparkles,
   Square,
   UserCheck,
   Vote,
@@ -70,6 +74,11 @@ interface SessionBarProps {
   onNextPhase: () => void
   onToggleReady: () => void
   onSendReaction: (emoji: string) => void
+  /** Правила доски для компактных бейджей и индикатора живого штурма. */
+  hideCardsUntilReveal?: boolean
+  anonymousVotes?: boolean
+  allowMultipleVotes?: boolean
+  cardsCount?: number
 }
 
 /**
@@ -145,6 +154,10 @@ export default function SessionBar({
   onNextPhase,
   onToggleReady,
   onSendReaction,
+  hideCardsUntilReveal = false,
+  anonymousVotes = false,
+  allowMultipleVotes = false,
+  cardsCount,
 }: SessionBarProps) {
   const [stopDialogOpen, setStopDialogOpen] = useState(false)
   const [lockOnStop, setLockOnStop] = useState(false)
@@ -261,6 +274,56 @@ export default function SessionBar({
           )}
 
           <div className="ml-auto flex flex-wrap items-center gap-2 xl:shrink-0 xl:flex-nowrap">
+            {(hideCardsUntilReveal || anonymousVotes || allowMultipleVotes) && (
+              <div
+                className="hidden items-center gap-1 lg:flex"
+                data-testid="board-rules-badges"
+              >
+                {hideCardsUntilReveal && (
+                  <Badge
+                    variant="outline"
+                    className="gap-1 bg-background/80 text-[11px] font-normal text-muted-foreground"
+                    title="Карточки скрыты до раскрытия ведущим или создателем"
+                  >
+                    <EyeOff className="h-3 w-3" />
+                    Скрытый сбор
+                  </Badge>
+                )}
+                {anonymousVotes && (
+                  <Badge
+                    variant="outline"
+                    className="gap-1 bg-background/80 text-[11px] font-normal text-muted-foreground"
+                    title="Авторы карточек и голосов скрыты"
+                  >
+                    <Shield className="h-3 w-3" />
+                    Анонимно
+                  </Badge>
+                )}
+                {allowMultipleVotes && (
+                  <Badge
+                    variant="outline"
+                    className="gap-1 bg-background/80 text-[11px] font-normal text-muted-foreground"
+                    title="Можно отдавать несколько голосов одной карточке"
+                  >
+                    <Sparkles className="h-3 w-3 text-primary" />
+                    Dot Voting
+                  </Badge>
+                )}
+              </div>
+            )}
+
+            {hasSession && phase === 'brainstorm' && hideCardsUntilReveal && typeof cardsCount === 'number' && (
+              <Badge
+                variant="outline"
+                className="hidden gap-1.5 border-emerald-500/35 bg-emerald-500/10 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 sm:inline-flex"
+                data-testid="brainstorm-cards-pulse"
+              >
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                <FileText className="h-3 w-3" />
+                Написано карточек: {cardsCount}
+              </Badge>
+            )}
+
             {hasSession && isLocked && (
               <Badge
                 variant="outline"
@@ -362,7 +425,7 @@ export default function SessionBar({
                 title={amIReady ? 'Снять отметку готовности' : 'Отметить, что вы закончили этап'}
                 className={cn(
                   'h-8 shrink-0 rounded-full text-xs',
-                  amIReady && 'bg-emerald-600 hover:bg-emerald-700 text-white',
+                  amIReady && 'bg-emerald-700 hover:bg-emerald-800 text-white',
                 )}
               >
                 <Check className="h-3.5 w-3.5" />

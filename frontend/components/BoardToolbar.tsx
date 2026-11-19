@@ -151,7 +151,7 @@ export default function BoardToolbar({
                 variant={colorFilter ? 'secondary' : 'outline'}
                 size="sm"
                 className="h-8 gap-1.5 text-xs transition-transform active:scale-95"
-                title="Фильтр по цвету стикеров"
+                title="Фильтр по цвету карточек"
               >
                 {colorFilter ? (
                   <span

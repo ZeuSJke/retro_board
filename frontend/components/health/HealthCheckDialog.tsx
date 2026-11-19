@@ -77,7 +77,12 @@ function HealthCheckBody({
     return (
       <>
         <DialogBody>
-          <HealthSummaryView summary={summary} myAnswers={health.myAnswers} />
+          <HealthSummaryView
+            summary={summary}
+            myAnswers={health.myAnswers}
+            myRoti={health.myRoti}
+            onRateRoti={health.openRoti}
+          />
         </DialogBody>
         <DialogFooter className="sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">

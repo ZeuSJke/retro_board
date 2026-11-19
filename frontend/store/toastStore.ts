@@ -1,10 +1,17 @@
 import { toast } from 'sonner'
 
+export interface ToastAction {
+  label: string
+  onClick: () => void
+}
+
 export interface ToastOptions {
   /** Пояснение под заголовком: что произошло и что делать дальше. */
   description?: string
   /** Сколько показывать, мс. Длинному тексту нужно больше стандартных четырёх секунд. */
   duration?: number
+  /** Кнопка быстрого действия (например, «Отменить»). */
+  action?: ToastAction
 }
 
 export function showToast(

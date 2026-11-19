@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Check, Layers, Sparkles, X } from 'lucide-react'
 import type { AutoClusterPreviewResult, Card } from '../types'
 import { RichCardText } from './RichCardText'
@@ -44,21 +44,58 @@ export default function AutoClusterPreviewDialog({
   applying = false,
   onApply,
 }: AutoClusterPreviewDialogProps) {
-  const [clusters, setClusters] = useState<EditableCluster[]>([])
+  const previewKey = preview
+    ? `${preview.column_id}:${preview.groups.map((g) => `${g.title}(${g.card_ids.join(',')})`).join('|')}`
+    : 'empty'
 
-  useEffect(() => {
-    if (!preview) {
-      setClusters([])
-      return
-    }
-    setClusters(
-      preview.groups.map((g) => ({
-        title: g.title,
-        cardIds: [...g.card_ids],
-        included: true,
-      })),
-    )
-  }, [preview])
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent layout="structured" className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            Предпросмотр AI-кластеризации
+          </DialogTitle>
+          <DialogDescription>
+            Колонка «{columnTitle}». Отредактируйте названия, снимите галочки с лишних групп или
+            уберите карточки перед применением.
+          </DialogDescription>
+        </DialogHeader>
+        <AutoClusterPreviewBody
+          key={previewKey}
+          preview={preview}
+          cards={cards}
+          applying={applying}
+          onApply={onApply}
+          onClose={() => onOpenChange(false)}
+        />
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AutoClusterPreviewBody({
+  preview,
+  cards,
+  applying,
+  onApply,
+  onClose,
+}: {
+  preview: AutoClusterPreviewResult | null
+  cards: Card[]
+  applying: boolean
+  onApply: (groups: { title: string; card_ids: string[] }[]) => Promise<void>
+  onClose: () => void
+}) {
+  const [clusters, setClusters] = useState<EditableCluster[]>(() =>
+    preview
+      ? preview.groups.map((g) => ({
+          title: g.title,
+          cardIds: [...g.card_ids],
+          included: true,
+        }))
+      : [],
+  )
 
   const cardMap = useMemo(() => {
     const map = new Map<string, Card>()
@@ -93,19 +130,7 @@ export default function AutoClusterPreviewDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent layout="structured" className="sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" />
-            Предпросмотр AI-кластеризации
-          </DialogTitle>
-          <DialogDescription>
-            Колонка «{columnTitle}». Отредактируйте названия, снимите галочки с лишних групп или
-            уберите карточки перед применением.
-          </DialogDescription>
-        </DialogHeader>
-
+    <>
         <DialogBody className="space-y-3 bg-muted/15">
           {clusters.length === 0 ? (
             <div className="rounded-xl border border-dashed bg-background/60 py-10 text-center text-sm text-muted-foreground">
@@ -189,7 +214,7 @@ export default function AutoClusterPreviewDialog({
         </DialogBody>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={applying}>
+          <Button variant="outline" onClick={onClose} disabled={applying}>
             Отмена
           </Button>
           <Button
@@ -201,7 +226,6 @@ export default function AutoClusterPreviewDialog({
             {applying ? 'Применяем...' : `Создать групп: ${validGroups.length}`}
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   )
 }

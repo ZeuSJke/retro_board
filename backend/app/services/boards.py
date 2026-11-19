@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
+import anyio
 from fastapi import HTTPException
 from slugify import slugify
 from sqlalchemy import and_, case, exists, func, or_
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas, themes
 from app.ai.prompts.summary_generation import generate_summary
-from app.board_view import ANON_AUTHOR, board_view, require_cards_visible
+from app.board_view import ANON_AUTHOR, board_view, cards_hidden, require_cards_visible
 from app.database import release_connection
 from app.models import now_utc
 from app.services.action_items import copy_unresolved_action_items
@@ -382,25 +383,50 @@ def create_board_sync(
     slug = resolve_unique_slug(db, body.name, workspace_id)
     uid = str(uuid.uuid4())
     participant_id = participant.id
-    board = models.Board(
-        id=uid,
-        name=body.name,
-        slug=slug,
-        max_votes=body.max_votes,
-        template=body.template,
-        hide_cards_until_reveal=body.hide_cards_until_reveal,
-        anonymous_votes=body.anonymous_votes,
-        allow_multiple_votes_per_card=body.allow_multiple_votes_per_card,
-        workspace_id=workspace_id,
-        # Агент не бывает ведущим в браузере — доской, подготовленной агентом, может управлять любой человек команды
-        created_by_id=None if (participant.kind or "human") == "agent" else participant_id,
-    )
+    created_by_id = None if (participant.kind or "human") == "agent" else participant_id
+
+    def _new_board_model(board_slug: str) -> models.Board:
+        return models.Board(
+            id=uid,
+            name=body.name,
+            slug=board_slug,
+            max_votes=body.max_votes,
+            template=body.template,
+            hide_cards_until_reveal=body.hide_cards_until_reveal,
+            anonymous_votes=body.anonymous_votes,
+            allow_multiple_votes_per_card=body.allow_multiple_votes_per_card,
+            workspace_id=workspace_id,
+            # Агент не бывает ведущим в браузере — доской, подготовленной агентом, может управлять любой человек команды
+            created_by_id=created_by_id,
+        )
+
+    board = _new_board_model(slug)
     db.add(board)
     try:
         db.flush()
     except IntegrityError as err:
         db.rollback()
-        raise HTTPException(409, "Измени название, такая доска уже есть") from err
+        # Если коллизия произошла по slug от конкурентного запроса с другим именем,
+        # пробуем перегенерировать slug; если имя занято — отдаём 409.
+        dup_name = (
+            db.query(models.Board.id)
+            .filter(
+                models.Board.name == body.name,
+                models.Board.deleted_at.is_(None),
+                models.Board.workspace_id == workspace_id,
+            )
+            .first()
+        )
+        if dup_name is not None:
+            raise HTTPException(409, "Измени название, такая доска уже есть") from err
+        slug = f"{make_slug(body.name)[:72]}-{uuid.uuid4().hex[:6]}"
+        board = _new_board_model(slug)
+        db.add(board)
+        try:
+            db.flush()
+        except IntegrityError as retry_err:
+            db.rollback()
+            raise HTTPException(409, "Измени название, такая доска уже есть") from retry_err
 
     for i, col in enumerate(columns_spec):
         db.add(
@@ -414,7 +440,18 @@ def create_board_sync(
         )
 
     carried_count = 0
-    if body.carry_forward_items:
+    superseded_items: list[schemas.ActionItemOut] = []
+    if body.carry_forward_item_ids is not None:
+        if body.carry_forward_item_ids:
+            carried, superseded_items = copy_unresolved_action_items(
+                db,
+                None,
+                board.id,
+                item_ids=body.carry_forward_item_ids,
+                workspace_id=workspace_id,
+            )
+            carried_count = len(carried)
+    elif body.carry_forward_items:
         carry_src_id = src_board.id if src_board else None
         if carry_src_id is None:
             prev_board = (
@@ -429,7 +466,9 @@ def create_board_sync(
             )
             carry_src_id = prev_board[0] if prev_board else None
         if carry_src_id:
-            carried, _superseded = copy_unresolved_action_items(db, carry_src_id, board.id)
+            carried, superseded_items = copy_unresolved_action_items(
+                db, carry_src_id, board.id
+            )
             carried_count = len(carried)
 
     db.commit()
@@ -438,9 +477,14 @@ def create_board_sync(
     list_item.action_items_total = carried_count
     list_item.action_items_open = carried_count
     payload = list_item.model_dump(mode="json")
+    superseded_payloads = [
+        (item.board_id, item.model_dump(mode="json")) for item in superseded_items
+    ]
 
     async def _send() -> None:
         await manager.broadcast_workspace(workspace_id, "board_created", payload)
+        for src_bid, item_payload in superseded_payloads:
+            await manager.broadcast(src_bid, "action_item_updated", item_payload)
 
     return board_view(board, participant_id), [_send]
 
@@ -454,14 +498,19 @@ async def create_board_for_workspace(
     source_board_id_or_slug: str | None = None,
 ) -> dict:
     """Создать доску команды, перенести открытые задачи и разослать `board_created`."""
-    view, broadcasts = create_board_sync(
-        db,
-        workspace_id,
-        participant,
-        body,
-        source_board_id_or_slug=source_board_id_or_slug,
-    )
-    release_connection(db)
+
+    def _op():
+        res = create_board_sync(
+            db,
+            workspace_id,
+            participant,
+            body,
+            source_board_id_or_slug=source_board_id_or_slug,
+        )
+        release_connection(db)
+        return res
+
+    view, broadcasts = await anyio.to_thread.run_sync(_op)
     await dispatch_broadcasts(broadcasts)
     return view
 
@@ -619,17 +668,22 @@ async def persist_board_summary(
     update_latest_when_no_session: bool = False,
 ) -> schemas.BoardSummaryOut:
     """Применить темы команды, сохранить или обновить BoardSummary и разослать WS."""
-    out, broadcasts = persist_board_summary_sync(
-        db,
-        board,
-        workspace_id,
-        summary_text=summary_text,
-        themes_payload=themes_payload,
-        key_themes=key_themes,
-        recommendations=recommendations,
-        update_latest_when_no_session=update_latest_when_no_session,
-    )
-    release_connection(db)
+
+    def _op():
+        res = persist_board_summary_sync(
+            db,
+            board,
+            workspace_id,
+            summary_text=summary_text,
+            themes_payload=themes_payload,
+            key_themes=key_themes,
+            recommendations=recommendations,
+            update_latest_when_no_session=update_latest_when_no_session,
+        )
+        release_connection(db)
+        return res
+
+    out, broadcasts = await anyio.to_thread.run_sync(_op)
     await dispatch_broadcasts(broadcasts)
     return out
 
@@ -789,6 +843,20 @@ def generate_summary_internal(
         except Exception as e:
             logger.error(
                 "AI summary generation failed for board %s: %s", board_id, e
+            )
+            return None
+
+        # Пока модель работала, доску могли удалить или снова скрыть карточки
+        reloaded_board = db.get(models.Board, board_data["id"])
+        if (
+            reloaded_board is None
+            or reloaded_board.deleted_at is not None
+            or reloaded_board.workspace_id != workspace_id
+            or cards_hidden(reloaded_board)
+        ):
+            logger.info(
+                "Skipping summary persist for board %s: board removed or cards hidden",
+                board_id,
             )
             return None
 

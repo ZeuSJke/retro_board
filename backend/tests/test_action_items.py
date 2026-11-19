@@ -126,10 +126,10 @@ class TestSourceCardIdsValidation:
         )
         assert resp.status_code == 400
 
-    def test_create_with_card_from_other_board_returns_400(
+    def test_create_with_card_from_other_board_in_same_workspace_succeeds(
         self, client, workspace_headers, sample_board, sample_card
     ):
-        # Create another board and try to reference card from first board
+        # После переноса задачи между досками команды Undo должен сохранять связь с исходной карточкой
         other_board = client.post(
             "/api/boards/", json={"name": "Other Board"}, headers=workspace_headers
         ).json()
@@ -137,10 +137,55 @@ class TestSourceCardIdsValidation:
             "/api/action-items/",
             json={
                 "board_id": other_board["id"],
-                "text": "Item referencing wrong board card",
+                "text": "Item referencing previous workspace board card",
                 "source_card_ids": [sample_card["id"]],
             },
             headers=workspace_headers,
+        )
+        assert resp.status_code == 201
+        assert resp.json()["source_card_ids"] == [sample_card["id"]]
+
+    def test_create_with_card_from_deleted_board_returns_400(
+        self, client, workspace_headers, sample_board, sample_card
+    ):
+        other_board = client.post(
+            "/api/boards/", json={"name": "Live Board"}, headers=workspace_headers
+        ).json()
+        assert client.delete(f"/api/boards/{sample_board['id']}", headers=workspace_headers).status_code == 204
+        resp = client.post(
+            "/api/action-items/",
+            json={
+                "board_id": other_board["id"],
+                "text": "Item referencing deleted board card",
+                "source_card_ids": [sample_card["id"]],
+            },
+            headers=workspace_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_create_with_card_from_other_workspace_returns_400(
+        self, client, admin_headers, sample_card
+    ):
+        from tests.conftest import login_headers
+
+        other_ws = client.post(
+            "/api/admin/workspaces",
+            json={"name": "Чужая команда", "slug": "other-src-ws", "access_key": "other-src-key"},
+            headers=admin_headers,
+        )
+        assert other_ws.status_code == 201
+        other_headers = login_headers(client, "Гость", slug="other-src-ws", key="other-src-key")
+        other_board = client.post(
+            "/api/boards/", json={"name": "Other Workspace Board"}, headers=other_headers
+        ).json()
+        resp = client.post(
+            "/api/action-items/",
+            json={
+                "board_id": other_board["id"],
+                "text": "Cross-workspace card leak",
+                "source_card_ids": [sample_card["id"]],
+            },
+            headers=other_headers,
         )
         assert resp.status_code == 400
 
@@ -670,7 +715,12 @@ class TestCarryForward:
 
 class TestGenerateTitle:
     def test_generate_title_success(self, client, workspace_headers):
-        with patch("app.routers.action_items.ai_client.generate") as mock_generate:
+        from app.config import settings
+
+        with (
+            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            patch("app.routers.action_items.ai_client.generate") as mock_generate,
+        ):
             mock_generate.return_value = "Тестовый title"
             resp = client.post(
                 "/api/action-items/generate-title",
@@ -681,9 +731,32 @@ class TestGenerateTitle:
             assert resp.json()["title"] == "Тестовый title"
             mock_generate.assert_called_once()
 
+    def test_generate_title_when_ai_not_configured_skips_client(
+        self, client, workspace_headers
+    ):
+        from app.config import settings
+
+        with (
+            patch.object(settings, "ai_base_url", ""),
+            patch("app.routers.action_items.ai_client.generate") as mock_generate,
+        ):
+            resp = client.post(
+                "/api/action-items/generate-title",
+                json={"text": "Текст карточки для fallback без AI"},
+                headers=workspace_headers,
+            )
+            assert resp.status_code == 200
+            assert resp.json()["title"] == "Текст карточки для fallback без AI"
+            mock_generate.assert_not_called()
+
     def test_generate_title_fallback_on_error(self, client, workspace_headers):
+        from app.config import settings
+
         original_text = "Очень длинный текст карточки для проверки fallback"
-        with patch("app.routers.action_items.ai_client.generate") as mock_generate:
+        with (
+            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            patch("app.routers.action_items.ai_client.generate") as mock_generate,
+        ):
             mock_generate.side_effect = Exception("AI error")
             resp = client.post(
                 "/api/action-items/generate-title",

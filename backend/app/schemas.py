@@ -15,15 +15,6 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
-def _strip_non_empty(v: str | None, field_name: str = "Поле") -> str | None:
-    if v is None:
-        return v
-    stripped = v.strip()
-    if not stripped:
-        raise ValueError(f"{field_name} не должно быть пустым")
-    return stripped
-
-
 def _utf8_encodable(v: str) -> str:
     """Отклонить строку, которую нельзя передать в БД и в bcrypt (одиночный суррогат)."""
     try:
@@ -33,16 +24,31 @@ def _utf8_encodable(v: str) -> str:
     return v
 
 
+def _utf8_optional(v: str | None) -> str | None:
+    return None if v is None else _utf8_encodable(v)
+
+
+def _strip_non_empty(v: str | None, field_name: str = "Поле") -> str | None:
+    if v is None:
+        return v
+    stripped = _utf8_encodable(v).strip()
+    if not stripped:
+        raise ValueError(f"{field_name} не должно быть пустым")
+    return stripped
+
+
 # bcrypt учитывает только первые 72 байта; кириллица в UTF-8 — по два байта на букву
 _BCRYPT_MAX_BYTES = 72
 
 
 def _access_key_within_bcrypt_limit(v: str | None) -> str | None:
-    if v is not None and len(v.encode()) > _BCRYPT_MAX_BYTES:
-        raise ValueError(
-            "Ключ доступа слишком длинный: не больше 72 байт "
-            "(72 латинских символа или 36 кириллических)"
-        )
+    if v is not None:
+        _utf8_encodable(v)
+        if len(v.encode()) > _BCRYPT_MAX_BYTES:
+            raise ValueError(
+                "Ключ доступа слишком длинный: не больше 72 байт "
+                "(72 латинских символа или 36 кириллических)"
+            )
     return v
 
 
@@ -346,11 +352,13 @@ class ColumnUpdate(BaseModel):
         return v
 
 
-class ColumnInfo(ColumnBase):
+class ColumnInfo(BaseModel):
     """Свойства колонки без карточек — для ответов и событий об изменении колонки."""
 
     id: str
     board_id: str
+    title: str
+    color: str = "#6750A4"
     position: int
 
     model_config = {"from_attributes": True}
@@ -370,7 +378,7 @@ class BoardBase(BaseModel):
     @field_validator("name")
     @classmethod
     def name_no_html(cls, v: str) -> str:
-        v = v.strip()
+        v = _utf8_encodable(v).strip()
         if not v:
             raise ValueError("Название доски не должно быть пустым")
         if _HTML_TAG_RE.search(v):
@@ -403,7 +411,7 @@ class BoardMoodCreate(BaseModel):
     def validate_note(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        stripped = v.strip()
+        stripped = _utf8_encodable(v).strip()
         if not stripped:
             return None
         if _HTML_TAG_RE.search(stripped):
@@ -436,6 +444,7 @@ class BoardCreate(BoardBase):
     custom_columns: Optional[list[ColumnSeed]] = Field(default=None, max_length=10)
     source_board_id: Optional[str] = Field(default=None, max_length=100)
     carry_forward_items: bool = False
+    carry_forward_item_ids: Optional[list[str]] = Field(default=None, max_length=200)
     hide_cards_until_reveal: bool = False
     anonymous_votes: bool = False
     allow_multiple_votes_per_card: bool = False
@@ -448,13 +457,14 @@ class BoardUpdate(BaseModel):
     hide_cards_until_reveal: Optional[bool] = None
     anonymous_votes: Optional[bool] = None
     allow_multiple_votes_per_card: Optional[bool] = None
+    reset_cards_revealed: bool = False
 
     @field_validator("name")
     @classmethod
     def name_no_html(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        v = v.strip()
+        v = _utf8_encodable(v).strip()
         if not v:
             raise ValueError("Название доски не должно быть пустым")
         if _HTML_TAG_RE.search(v):
@@ -462,8 +472,9 @@ class BoardUpdate(BaseModel):
         return v
 
 
-class BoardOut(BoardBase):
+class BoardOut(BaseModel):
     id: str
+    name: str
     slug: Optional[str] = None
     max_votes: int
     template: str = "classic"
@@ -491,8 +502,9 @@ class BoardOut(BoardBase):
     moods: list[BoardMoodOut] = []
 
 
-class BoardListItem(BoardBase):
+class BoardListItem(BaseModel):
     id: str
+    name: str
     slug: Optional[str] = None
     max_votes: int
     template: str = "classic"
@@ -543,6 +555,16 @@ class ActionItemCreate(BaseModel):
     source_card_ids: list[str] = []
     status: ActionItemStatus = "open"
 
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str) -> str:
+        return _utf8_encodable(v)
+
+    @field_validator("assignee")
+    @classmethod
+    def validate_assignee(cls, v: str | None) -> str | None:
+        return _utf8_optional(v)
+
     @field_validator("text")
     @classmethod
     def validate_text(cls, v: str) -> str:
@@ -560,6 +582,11 @@ class ActionItemUpdate(BaseModel):
     assignee: Optional[str] = Field(default=None, max_length=60)
     external_url: Optional[str] = Field(default=None, max_length=500)
     status: Optional[ActionItemStatus] = None
+
+    @field_validator("title", "assignee")
+    @classmethod
+    def validate_optional_utf8(cls, v: str | None) -> str | None:
+        return _utf8_optional(v)
 
     @field_validator("text")
     @classmethod
@@ -595,6 +622,11 @@ class DashboardActionItem(ActionItemOut):
 
 class GenerateTitleRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v: str) -> str:
+        return _utf8_encodable(v)
 
 
 class GenerateTitleResponse(BaseModel):
@@ -706,6 +738,11 @@ class BulkCardsUpdateRequest(BaseModel):
     group_title: Optional[str] = Field(default=None, max_length=120)
     color: Optional[str] = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
 
+    @field_validator("group_title")
+    @classmethod
+    def validate_group_title(cls, v: str | None) -> str | None:
+        return _utf8_optional(v)
+
 
 class BulkCardsDeleteRequest(BaseModel):
     card_ids: list[str] = Field(..., min_length=1, max_length=100)
@@ -714,6 +751,11 @@ class BulkCardsDeleteRequest(BaseModel):
 class MergeCardsRequest(BaseModel):
     card_ids: list[str] = Field(..., min_length=2, max_length=20)
     target_text: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("target_text")
+    @classmethod
+    def validate_target_text(cls, v: str | None) -> str | None:
+        return _utf8_optional(v)
 
 
 class ActionItemSuggestRequest(BaseModel):
@@ -747,6 +789,11 @@ class ApplyClusterGroup(BaseModel):
     # Длина совпадает с CardGroup.title в БД (String(120))
     title: str = Field(..., min_length=1, max_length=120)
     card_ids: list[str] = Field(..., min_length=2, max_length=100)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str) -> str:
+        return _strip_non_empty(v, "Название группы") or ""
 
 
 class ApplyClustersRequest(BaseModel):

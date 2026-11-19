@@ -30,4 +30,17 @@ describe('showToast', () => {
     expect(toastMock.success).toHaveBeenCalledWith('Готово')
     expect(toastMock).not.toHaveBeenCalled()
   })
+
+  it('пробрасывает duration и action для отмены действия', () => {
+    const onUndo = vi.fn()
+    showToast('Карточка удалена', 'info', {
+      duration: 5000,
+      action: { label: 'Отменить', onClick: onUndo },
+    })
+
+    expect(toastMock).toHaveBeenCalledWith('Карточка удалена', {
+      duration: 5000,
+      action: { label: 'Отменить', onClick: onUndo },
+    })
+  })
 })

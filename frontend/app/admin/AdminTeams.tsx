@@ -322,10 +322,18 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
     if (!targetId) return null
     return {
       list: () => getAdminAgentTokens(targetId),
-      create: (payload) => createAdminAgentToken(targetId, payload),
-      revoke: (tokenId) => revokeAdminAgentToken(targetId, tokenId),
+      create: async (payload) => {
+        const res = await createAdminAgentToken(targetId, payload)
+        void queryClient.invalidateQueries({ queryKey: queryKeys.adminWorkspaces() })
+        return res
+      },
+      revoke: async (tokenId) => {
+        const res = await revokeAdminAgentToken(targetId, tokenId)
+        void queryClient.invalidateQueries({ queryKey: queryKeys.adminWorkspaces() })
+        return res
+      },
     }
-  }, [targetId])
+  }, [queryClient, targetId])
 
   // До первого ответа сервера страницу не показываем: если сессия закончилась, вместо неё
   // сразу появится форма входа

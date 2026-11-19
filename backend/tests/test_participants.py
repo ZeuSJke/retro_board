@@ -484,7 +484,8 @@ class TestHiddenCollection:
         assert moved.status_code == 200
         assert moved.json()["masked"] is True and moved.json()["text"] == ""
         liked = client.post(f"/api/cards/{theirs['id']}/like", headers=workspace_headers)
-        assert liked.json()["text"] == ""
+        assert liked.status_code == 409
+        assert "Секрет" not in liked.text
 
     def test_only_moderator_reveals(self, client, workspace_headers, login_as):
         anya = login_as("Аня")

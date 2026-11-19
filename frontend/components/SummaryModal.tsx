@@ -11,6 +11,7 @@ import {
   Loader2,
   RefreshCw,
   Sparkles,
+  Star,
   Tag,
 } from 'lucide-react'
 import { getBoardSummary, regenerateBoardSummary } from '@/api'
@@ -42,6 +43,7 @@ interface SummaryModalProps {
   /** Почему итогов нет: не удалось загрузить сохранённые или сгенерировать новые. */
   error: string | null
   onSummaryUpdated: (summary: BoardSummary) => void
+  onOpenRoti?: () => void
 }
 
 type SummaryTab = 'summary' | 'markdown'
@@ -55,6 +57,7 @@ export default function SummaryModal({
   loading,
   error,
   onSummaryUpdated,
+  onOpenRoti,
 }: SummaryModalProps) {
   const aiEnabled = useAppStore((s) => s.aiEnabled)
   const [regenerating, setRegenerating] = useState(false)
@@ -417,21 +420,32 @@ export default function SummaryModal({
         <DialogFooter className="sm:justify-between">
           {/* Одно действие на состояние: без итогов — «Сгенерировать» в теле окна, с итогами —
               «Перегенерировать» здесь. На вкладке экспорта и без AI кнопки генерации нет. */}
-          {summary && exportTab === 'summary' && aiEnabled !== false ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleRegenerate}
-              disabled={busy || Boolean(aiBlockedReason)}
-              title={aiBlockedReason ?? undefined}
-              data-testid="regenerate-summary-btn"
-            >
-              <RefreshCw className={`h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
-              Перегенерировать
-            </Button>
-          ) : (
-            <span />
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {summary && exportTab === 'summary' && aiEnabled !== false && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleRegenerate}
+                disabled={busy || Boolean(aiBlockedReason)}
+                title={aiBlockedReason ?? undefined}
+                data-testid="regenerate-summary-btn"
+              >
+                <RefreshCw className={`h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
+                Перегенерировать
+              </Button>
+            )}
+            {onOpenRoti && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onOpenRoti}
+                data-testid="summary-rate-roti-btn"
+              >
+                <Star className="h-4 w-4 text-amber-500" />
+                Оценить встречу (ROTI)
+              </Button>
+            )}
+          </div>
           <Button type="button" onClick={() => onOpenChange(false)}>
             Готово
           </Button>

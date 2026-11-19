@@ -1,9 +1,10 @@
 'use client'
 
-import { Users } from 'lucide-react'
-import type { HealthAnswerValue, HealthQuestionSummary, HealthSummary } from '@/types/health'
+import { Star, Users } from 'lucide-react'
+import type { HealthAnswerValue, HealthQuestionSummary, HealthSummary, RotiValue } from '@/types/health'
 import { cn } from '@/lib/utils'
 import { formatAverage, pluralRu } from '@/components/dashboard/format'
+import { Button } from '@/components/ui/button'
 import { HEALTH_OPTIONS, ROTI_MAX, TONE_CLASSES } from './scale'
 
 function QuestionRow({
@@ -76,10 +77,17 @@ function QuestionRow({
 interface HealthSummaryViewProps {
   summary: HealthSummary
   myAnswers: Record<string, HealthAnswerValue>
+  myRoti?: RotiValue | null
+  onRateRoti?: () => void
 }
 
 /** Сводка здоровья команды: распределение ответов по вопросам, без имён. */
-export default function HealthSummaryView({ summary, myAnswers }: HealthSummaryViewProps) {
+export default function HealthSummaryView({
+  summary,
+  myAnswers,
+  myRoti,
+  onRateRoti,
+}: HealthSummaryViewProps) {
   const { participants, roti } = summary
   return (
     <div className="space-y-4" data-testid="health-summary">
@@ -115,20 +123,40 @@ export default function HealthSummaryView({ summary, myAnswers }: HealthSummaryV
         ))}
       </ul>
 
-      {roti.answers > 0 && roti.average !== null && (
-        <p
-          className="flex flex-wrap items-baseline justify-between gap-2 rounded-xl border bg-muted/30 px-3.5 py-2.5 text-sm"
-          data-testid="health-summary-roti"
+      {(roti.answers > 0 && roti.average !== null) || onRateRoti ? (
+        <div
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-muted/30 px-3.5 py-2.5 text-sm"
+          data-testid={roti.answers > 0 && roti.average !== null ? 'health-summary-roti' : undefined}
         >
-          <span className="font-medium">Оценка встречи</span>
-          <span className="text-muted-foreground">
-            <span className="font-mono font-semibold text-foreground">
-              {formatAverage(roti.average)}
-            </span>{' '}
-            из {ROTI_MAX} · {roti.answers} {pluralRu(roti.answers, ['оценка', 'оценки', 'оценок'])}
-          </span>
-        </p>
-      )}
+          <div>
+            <span className="font-medium">Оценка встречи</span>
+            {roti.answers > 0 && roti.average !== null ? (
+              <p className="text-xs text-muted-foreground">
+                <span className="font-mono font-semibold text-foreground">
+                  {formatAverage(roti.average)}
+                </span>{' '}
+                из {ROTI_MAX} · {roti.answers} {pluralRu(roti.answers, ['оценка', 'оценки', 'оценок'])}
+                {myRoti ? ` · ваша: ${myRoti}` : ''}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Оценок встречи пока нет</p>
+            )}
+          </div>
+          {onRateRoti && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={onRateRoti}
+              data-testid="rate-roti-btn"
+            >
+              <Star className="h-3.5 w-3.5 text-amber-500" />
+              {myRoti ? 'Изменить оценку (ROTI)' : 'Оценить встречу (ROTI)'}
+            </Button>
+          )}
+        </div>
+      ) : null}
 
       <p className="text-xs text-muted-foreground">
         Команда видит только общее распределение ответов, без имён.

@@ -2,13 +2,15 @@ import logging
 import secrets
 from typing import Optional
 
+import anyio
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.config import settings
-from app.database import get_db
+from app.database import get_db, release_connection
 from app.limiter import entry_limit_key, limiter
 from app.services import agent_tokens as agent_token_service
 from app.workspace_auth import (
@@ -53,7 +55,13 @@ def admin_login(request: Request, body: schemas.AdminLoginRequest, response: Res
 @router.post("/logout")
 def admin_logout(response: Response):
     """Выход администратора."""
-    response.delete_cookie("admin_token")
+    response.delete_cookie(
+        "admin_token",
+        httponly=True,
+        samesite="lax",
+        secure=settings.secure_cookies,
+        path="/",
+    )
     return {"ok": True}
 
 
@@ -152,9 +160,16 @@ def create_workspace(
             slug=body.slug,
             name=body.name,
             access_key_hash=hashed_key,
+            invite_token=new_invite_token(),
         )
         db.add(ws)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as err:
+            db.rollback()
+            raise HTTPException(
+                status_code=409, detail="Команда с таким кодом уже существует"
+            ) from err
         db.refresh(ws)
         logger.info(f"Successfully created workspace: {body.slug}")
         return ws
@@ -237,20 +252,35 @@ def rotate_workspace_invite(
 
 @router.delete("/workspaces/{workspace_id}", status_code=204)
 @limiter.limit("30/minute")
-def delete_workspace(
+async def delete_workspace(
     request: Request,
     workspace_id: str,
-    background: BackgroundTasks,
     db: Session = Depends(get_db),
     _: bool = Depends(get_admin_user),
 ):
     """Удалить workspace и все его доски."""
-    ws = db.get(models.Workspace, workspace_id)
-    if not ws:
-        raise HTTPException(status_code=404, detail="Команда не найдена")
-    db.delete(ws)
-    db.commit()
-    background.add_task(manager.disconnect_workspace_sessions, workspace_id)
+    from app.routers.websocket import cancel_board_summary_tasks
+
+    def _op() -> list[str]:
+        ws = db.get(models.Workspace, workspace_id)
+        if not ws:
+            raise HTTPException(status_code=404, detail="Команда не найдена")
+        board_ids = [
+            row[0]
+            for row in db.query(models.Board.id)
+            .filter(models.Board.workspace_id == workspace_id)
+            .all()
+        ]
+        db.delete(ws)
+        db.commit()
+        release_connection(db)
+        return board_ids
+
+    board_ids = await anyio.to_thread.run_sync(_op)
+    for bid in board_ids:
+        cancel_board_summary_tasks(bid)
+        await manager.cleanup_board(bid)
+    await manager.disconnect_workspace_sessions(workspace_id)
 
 
 @router.get(

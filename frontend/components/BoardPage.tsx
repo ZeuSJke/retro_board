@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
 import { DndContext, DragOverlay, type DragEndEvent } from '@dnd-kit/core'
 import { AnimatePresence } from 'motion/react'
@@ -11,6 +11,7 @@ import {
   generateActionItemTitle,
   resetBoardVotes,
   revealBoardCards,
+  toggleLike,
   updateActionItem,
   updateColumn,
 } from '../api'
@@ -18,9 +19,9 @@ import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
 import { useBoardBulkActions } from '../hooks/useBoardBulkActions'
 import { useBoardDragDrop } from '../hooks/useBoardDragDrop'
-import { useBoardShortcuts } from '../hooks/useBoardShortcuts'
+import { flashBoardCard, useBoardShortcuts } from '../hooks/useBoardShortcuts'
 import { useBoardSummary } from '../hooks/useBoardSummary'
-import { NO_FACILITATOR, useBoardWebSocket } from '../hooks/useBoardWebSocket'
+import { NO_FACILITATOR, useBoardWebSocket, type CursorPos } from '../hooks/useBoardWebSocket'
 import { shallowEqualRecords, useStableValue } from '../hooks/useStableValue'
 import { useFacilitator } from '../hooks/useFacilitator'
 import { useTimer } from '../hooks/useTimer'
@@ -37,7 +38,7 @@ import {
   applyActionItemSaved,
   countMaskedCards,
 } from '@/lib/board-events'
-import { canModerateBoard, countMyVotesOnBoard } from '@/lib/participants'
+import { canModerateBoard, countMyVotes, countMyVotesOnBoard } from '@/lib/participants'
 import { getApiErrorMessage, getApiErrorStatus } from '../utils/apiError'
 import type {
   ActionItem,
@@ -84,6 +85,83 @@ const MASTER_WIDTH_STORAGE_KEY = 'retro_master_width'
 const MIN_MASTER_WIDTH = 280
 const MAX_MASTER_WIDTH = 560
 
+const masterWidthListeners = new Set<() => void>()
+
+function notifyMasterWidthListeners(): void {
+  masterWidthListeners.forEach((cb) => cb())
+}
+
+function subscribeMasterWidth(listener: () => void): () => void {
+  masterWidthListeners.add(listener)
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === MASTER_WIDTH_STORAGE_KEY) listener()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    masterWidthListeners.delete(listener)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
+function getMasterWidthSnapshot(): number | null {
+  try {
+    const raw = window.localStorage.getItem(MASTER_WIDTH_STORAGE_KEY)
+    if (!raw) return null
+    const saved = Number(raw)
+    return !Number.isNaN(saved) && saved >= MIN_MASTER_WIDTH && saved <= MAX_MASTER_WIDTH
+      ? saved
+      : null
+  } catch {
+    return null
+  }
+}
+
+function getMasterWidthServerSnapshot(): number | null {
+  return null
+}
+
+const CursorLayer = memo(function CursorLayer({
+  cursorsRef,
+  subscribeCursors,
+  myId,
+}: {
+  cursorsRef: React.RefObject<Record<string, CursorPos>>
+  subscribeCursors: (cb: () => void) => () => void
+  myId: string
+}) {
+  const [peers, setPeers] = useState<Array<{ id: string; name: string }>>([])
+
+  useEffect(() => {
+    const sync = () => {
+      const next = Object.entries(cursorsRef.current || {})
+        .filter(([id]) => id !== myId)
+        .map(([id, c]) => ({ id, name: c.name || 'Участник' }))
+      setPeers((prev) =>
+        prev.length === next.length &&
+        prev.every((p, i) => p.id === next[i].id && p.name === next[i].name)
+          ? prev
+          : next,
+      )
+    }
+    sync()
+    return subscribeCursors(sync)
+  }, [cursorsRef, subscribeCursors, myId])
+
+  return (
+    <AnimatePresence>
+      {peers.map((p) => (
+        <CursorMarker
+          key={p.id}
+          cursorId={p.id}
+          username={p.name}
+          posRef={cursorsRef}
+          subscribeCursors={subscribeCursors}
+        />
+      ))}
+    </AnimatePresence>
+  )
+})
+
 export default function BoardPage({
   board,
   boards,
@@ -112,22 +190,20 @@ export default function BoardPage({
   const [userSettingsOpen, setUserSettingsOpen] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
   const [masterOpen, setMasterOpen] = useState(true)
-  const [masterWidth, setMasterWidth] = useState<number | null>(null)
+  const persistedMasterWidth = useSyncExternalStore(
+    subscribeMasterWidth,
+    getMasterWidthSnapshot,
+    getMasterWidthServerSnapshot,
+  )
+  const [dragMasterWidth, setDragMasterWidth] = useState<number | null>(null)
+  const masterWidth = dragMasterWidth ?? persistedMasterWidth
   const [resizingMaster, setResizingMaster] = useState(false)
   const [mobileMasterOpen, setMobileMasterOpen] = useState(false)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
+  const resizeCleanupRef = useRef<(() => void) | null>(null)
 
-  useEffect(() => {
-    try {
-      const saved = Number(window.localStorage.getItem(MASTER_WIDTH_STORAGE_KEY))
-      if (!Number.isNaN(saved) && saved >= MIN_MASTER_WIDTH && saved <= MAX_MASTER_WIDTH) {
-        setMasterWidth(saved)
-      }
-    } catch {
-      // ignore storage restrictions
-    }
-  }, [])
+  useEffect(() => () => resizeCleanupRef.current?.(), [])
 
   const [searchQuery, setSearchQuery] = useState('')
   const [onlyMine, setOnlyMine] = useState(false)
@@ -142,8 +218,6 @@ export default function BoardPage({
   const canvasRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const typingStateRef = useRef<Record<string, boolean>>({})
-  const cursorNodeTick = useState(0)
-  const forceCursorRender = cursorNodeTick[1]
 
   const boardRef = useRef(board)
   useEffect(() => {
@@ -164,32 +238,52 @@ export default function BoardPage({
 
   const startMasterResize = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
+    resizeCleanupRef.current?.()
     setResizingMaster(true)
     const onMove = (moveEvent: PointerEvent) => {
       const raw = window.innerWidth - moveEvent.clientX
       const clamped = Math.max(MIN_MASTER_WIDTH, Math.min(MAX_MASTER_WIDTH, raw))
-      setMasterWidth(clamped)
+      setDragMasterWidth(clamped)
+    }
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      resizeCleanupRef.current = null
     }
     const onUp = (upEvent: PointerEvent) => {
       setResizingMaster(false)
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
+      cleanup()
       const raw = window.innerWidth - upEvent.clientX
       const clamped = Math.max(MIN_MASTER_WIDTH, Math.min(MAX_MASTER_WIDTH, raw))
       try {
         window.localStorage.setItem(MASTER_WIDTH_STORAGE_KEY, String(clamped))
+        notifyMasterWidthListeners()
       } catch {
         // ignore storage errors
       }
+      setDragMasterWidth(null)
+    }
+    const onCancel = () => {
+      setResizingMaster(false)
+      cleanup()
+      setDragMasterWidth(null)
+    }
+    resizeCleanupRef.current = () => {
+      cleanup()
+      setResizingMaster(false)
+      setDragMasterWidth(null)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   const resetMasterWidth = () => {
-    setMasterWidth(null)
+    setDragMasterWidth(null)
     try {
       window.localStorage.removeItem(MASTER_WIDTH_STORAGE_KEY)
+      notifyMasterWidthListeners()
     } catch {
       // ignore storage errors
     }
@@ -398,13 +492,6 @@ export default function BoardPage({
     return () => observer.disconnect()
   }, [updateCanvasScrollState, columns.length, masterOpen, masterWidth])
 
-  // Subscribe cursor arrivals to render CursorMarker components dynamically
-  useEffect(() => {
-    return subscribeCursors(() => {
-      forceCursorRender((n) => n + 1)
-    })
-  }, [subscribeCursors, forceCursorRender])
-
   // Авто-переход: таймер дошёл до нуля у ведущего — переходим к следующей фазе
   useEffect(() => {
     timerExpiredRef.current = () => {
@@ -519,7 +606,12 @@ export default function BoardPage({
   }, [anonymousMode, onlineParticipants, columns, myId])
 
   const createActionItemFromCards = useCallback(
-    async (text: string, sourceCardIds: string[], authorHint?: string | null) => {
+    async (
+      text: string,
+      sourceCardIds: string[],
+      authorHint?: string | null,
+      explicitAssignee?: string | null,
+    ) => {
       // Задачи видны всей команде (сервер их не скрывает): пока идёт скрытый сбор,
       // текст карточки не должен попасть в «Итоги» и экспорт в обход раскрытия
       if (cardsHidden && sourceCardIds.length > 0) {
@@ -527,31 +619,41 @@ export default function BoardPage({
         return
       }
       try {
+        const fallbackTitle = text.slice(0, 60) || 'Задача'
+        const skipAi = aiEnabled === false
+        const resolvedAssignee =
+          explicitAssignee !== undefined
+            ? explicitAssignee || undefined
+            : !anonymousMode && authorHint
+              ? authorHint
+              : undefined
         const item = await createActionItem({
           board_id: board.id,
-          title: 'Генерация...',
+          title: skipAi ? fallbackTitle : 'Генерация...',
           text,
-          assignee: !anonymousMode && authorHint ? authorHint : undefined,
+          assignee: resolvedAssignee,
           source_card_ids: sourceCardIds,
         })
         setActionItems((prev) => (prev.some((i) => i.id === item.id) ? prev : applyActionItemSaved(prev, item)))
         showToast('Добавлено в задачи', 'success')
-        generateActionItemTitle(text)
-          .then((generatedTitle) =>
-            updateActionItem(item.id, { title: generatedTitle }).then((updated) => {
-              setActionItems((prev) => applyActionItemSaved(prev, updated))
-            }),
-          )
-          .catch(() => {
-            updateActionItem(item.id, {
-              title: text.slice(0, 60) || 'Задача',
-            }).catch(() => {})
-          })
+        if (!skipAi) {
+          generateActionItemTitle(text)
+            .then((generatedTitle) =>
+              updateActionItem(item.id, { title: generatedTitle }).then((updated) => {
+                setActionItems((prev) => applyActionItemSaved(prev, updated))
+              }),
+            )
+            .catch(() => {
+              updateActionItem(item.id, {
+                title: fallbackTitle,
+              }).catch(() => {})
+            })
+        }
       } catch (err) {
         showToast(getApiErrorMessage(err, 'Не удалось создать задачу'), 'error')
       }
     },
-    [anonymousMode, board.id, cardsHidden, setActionItems],
+    [aiEnabled, anonymousMode, board.id, cardsHidden, setActionItems],
   )
 
   const handleCreateActionItemFromCard = useCallback(
@@ -930,11 +1032,44 @@ export default function BoardPage({
 
   const handleResetMyVotes = useCallback(async () => {
     if (readOnly || resettingVotes || userTotalVotes <= 0) return
+    const savedVotes: Array<{ cardId: string; count: number }> = []
+    for (const col of columnsRef.current) {
+      for (const card of col.cards) {
+        const cnt = countMyVotes(card, myId)
+        if (cnt > 0) savedVotes.push({ cardId: card.id, count: cnt })
+      }
+    }
     setResettingVotes(true)
     try {
       await resetBoardVotes(board.id)
       applyChange({ type: 'votes_reset', participant_id: myId })
-      showToast('Все ваши голоса сброшены', 'success')
+      if (savedVotes.length > 0) {
+        showToast('Все ваши голоса сброшены', 'info', {
+          duration: 5000,
+          action: {
+            label: 'Отменить',
+            onClick: () => {
+              void (async () => {
+                try {
+                  for (const v of savedVotes) {
+                    for (let i = 0; i < v.count; i++) {
+                      const updated = await toggleLike(v.cardId, 'add')
+                      applyChange({ type: 'card_updated', card: updated }, 'rest')
+                    }
+                  }
+                } catch (restoreErr) {
+                  showToast(
+                    getApiErrorMessage(restoreErr, 'Не удалось вернуть голоса'),
+                    'error',
+                  )
+                }
+              })()
+            },
+          },
+        })
+      } else {
+        showToast('Все ваши голоса сброшены', 'success')
+      }
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Не удалось сбросить голоса'), 'error')
     } finally {
@@ -977,7 +1112,6 @@ export default function BoardPage({
     readOnly,
     userTotalVotes,
     aiEnabled,
-    canControlFocus: canControlSession,
     selectedCount: selectedCardIds.size,
     onFocusSearch: focusSearch,
     onToggleMaster: handleToggleMaster,
@@ -989,7 +1123,6 @@ export default function BoardPage({
     onToggleReactionsPopover: toggleReactionsPopover,
     onOpenReactionsPopover: openReactionsPopover,
     onClearSelection: clearSelection,
-    onSelectSpotlightCard: handleSelectSpotlightCard,
   })
 
   useEffect(() => {
@@ -1025,11 +1158,8 @@ export default function BoardPage({
       .catch(() => showToast('Не удалось подготовить отчёт для печати', 'error'))
   }
 
-  // Курсоры других участников; свой (из второй вкладки той же сессии) не показываем
-  const remoteCursors = Object.entries(cursorsRef.current).filter(([id]) => id !== myId)
-
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+    <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
       <Topbar
         board={board}
         workspaceName={workspaceName}
@@ -1082,6 +1212,10 @@ export default function BoardPage({
         onSendReaction={(emoji) =>
           sendMessage({ event: 'reaction', data: { emoji } })
         }
+        hideCardsUntilReveal={Boolean(board.hide_cards_until_reveal)}
+        anonymousVotes={anonymousMode}
+        allowMultipleVotes={Boolean(board.allow_multiple_votes_per_card)}
+        cardsCount={columns.reduce((sum, col) => sum + col.cards.length, 0)}
       />
 
       <BoardToolbar
@@ -1258,16 +1392,7 @@ export default function BoardPage({
               ))}
 
               {/* Multiplayer cursors layer */}
-              <AnimatePresence>
-                {remoteCursors.map(([id, cursor]) => (
-                  <CursorMarker
-                    key={id}
-                    cursorId={id}
-                    username={cursor.name || 'Участник'}
-                    posRef={cursorsRef}
-                  />
-                ))}
-              </AnimatePresence>
+              <CursorLayer cursorsRef={cursorsRef} subscribeCursors={subscribeCursors} myId={myId} />
             </div>
           </div>
 
@@ -1309,6 +1434,7 @@ export default function BoardPage({
                 onUpdated={handleActionItemChanged}
                 onRestored={handleActionItemSaved}
                 onDeleted={handleActionItemDeleted}
+                onFocusCard={flashBoardCard}
                 dropDisabled={readOnly || cardsHidden}
                 readOnly={readOnly}
                 cardsHidden={cardsHidden}
@@ -1405,6 +1531,7 @@ export default function BoardPage({
         onSelectSpotlightCard={handleSelectSpotlightCard}
         onCreateActionItemFromCard={createActionItemFromCards}
         onSpotlightCardUpdated={handleCardUpdated}
+        timer={timer}
         health={health}
         sendMessage={sendMessage}
       />

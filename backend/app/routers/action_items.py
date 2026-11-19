@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Optional
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
@@ -14,11 +15,12 @@ from app.ai.prompts.title_generation import (
     clean_generated_title,
 )
 from app.board_view import ANON_AUTHOR, require_cards_visible
+from app.config import settings
 from app.database import get_db, release_connection
 from app.limiter import TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.services import action_items as action_items_service
 from app.services.action_items import copy_unresolved_action_items
-from app.utils import get_or_404, require_live_board
+from app.utils import get_or_404, require_live_board, require_unlocked_board
 from app.workspace_auth import get_current_workspace
 from app.ws_manager import manager
 
@@ -118,22 +120,29 @@ async def carry_forward(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Copy unresolved action items from source board to target board."""
-    src_board = get_or_404(
-        db, models.Board, body.source_board_id, "Исходная доска не найдена"
-    )
-    require_live_board(src_board, workspace.id, "Исходная доска не найдена")
-    tgt_board = get_or_404(
-        db, models.Board, body.target_board_id, "Целевая доска не найдена"
-    )
-    require_live_board(tgt_board, workspace.id, "Целевая доска не найдена")
+    workspace_id = workspace.id
 
-    if body.source_board_id == body.target_board_id:
-        raise HTTPException(400, "Исходная и целевая доски совпадают")
+    def _op():
+        src_board = get_or_404(
+            db, models.Board, body.source_board_id, "Исходная доска не найдена"
+        )
+        require_live_board(src_board, workspace_id, "Исходная доска не найдена")
+        tgt_board = get_or_404(
+            db, models.Board, body.target_board_id, "Целевая доска не найдена"
+        )
+        require_unlocked_board(tgt_board, workspace_id, "Целевая доска не найдена")
 
-    created, carried = copy_unresolved_action_items(
-        db, body.source_board_id, body.target_board_id, body.item_ids
-    )
-    db.commit()
+        if body.source_board_id == body.target_board_id:
+            raise HTTPException(400, "Исходная и целевая доски совпадают")
+
+        created, carried = copy_unresolved_action_items(
+            db, body.source_board_id, body.target_board_id, body.item_ids
+        )
+        db.commit()
+        release_connection(db)
+        return created, carried
+
+    created, carried = await anyio.to_thread.run_sync(_op)
 
     for out in created:
         await manager.broadcast(
@@ -177,6 +186,8 @@ async def generate_action_item_title(
     """Generate action item title from card text using AI."""
     # Проверка токена уже открыла сессию — на время вызова модели она не нужна
     release_connection(db)
+    if not settings.ai_configured:
+        return schemas.GenerateTitleResponse(title=body.text[:50])
     prompt = build_title_prompt(body.text)
     try:
         title = await asyncio.to_thread(
@@ -201,36 +212,45 @@ async def suggest_action_items(
 ):
     """Suggest concrete action items from board cards using AI."""
     from app.ai.prompts.action_item_suggestions import suggest_action_items_from_cards
-    from app.config import settings
 
-    board = get_or_404(db, models.Board, body.board_id, "Доска не найдена")
-    require_live_board(board, workspace.id)
-    if not settings.ai_configured:
-        raise HTTPException(503, "AI сервис не настроен")
-    # Подбор задач читает тексты всех карточек — до раскрытия он выдал бы скрытое
-    require_cards_visible(board)
+    workspace_id = workspace.id
 
-    rows = (
-        db.query(models.Card, models.Column.title)
-        .join(models.Column, models.Card.column_id == models.Column.id)
-        .filter(models.Column.board_id == board.id)
-        .all()
-    )
-    if not rows:
-        return schemas.ActionItemSuggestResponse(board_id=board.id, suggestions=[])
+    def _collect() -> tuple[str, list[dict]]:
+        board = get_or_404(db, models.Board, body.board_id, "Доска не найдена")
+        require_live_board(board, workspace_id)
+        if not settings.ai_configured:
+            raise HTTPException(503, "AI сервис не настроен")
+        # Подбор задач читает тексты всех карточек — до раскрытия он выдал бы скрытое
+        require_cards_visible(board)
 
-    cards_snapshot = [
-        {
-            "id": card.id,
-            "column": col_title,
-            "text": card.text,
-            "author": ANON_AUTHOR if (board.anonymous_votes and card.author_kind != "agent") else card.author,
-            "likes_count": len(card.likes or []),
-        }
-        for card, col_title in rows
-    ]
-    board_pk = board.id
-    release_connection(db)
+        rows = (
+            db.query(models.Card, models.Column.title)
+            .join(models.Column, models.Card.column_id == models.Column.id)
+            .filter(models.Column.board_id == board.id)
+            .all()
+        )
+        cards_snapshot = [
+            {
+                "id": card.id,
+                "column": col_title,
+                "text": card.text,
+                "author": (
+                    ANON_AUTHOR
+                    if (board.anonymous_votes and card.author_kind != "agent")
+                    else card.author
+                ),
+                "likes_count": len(card.likes or []),
+            }
+            for card, col_title in rows
+        ]
+        board_pk = board.id
+        release_connection(db)
+        return board_pk, cards_snapshot
+
+    board_pk, cards_snapshot = await anyio.to_thread.run_sync(_collect)
+    if not cards_snapshot:
+        return schemas.ActionItemSuggestResponse(board_id=board_pk, suggestions=[])
+
     try:
         raw_suggestions = await asyncio.to_thread(suggest_action_items_from_cards, cards_snapshot)
     except RuntimeError as exc:
@@ -261,7 +281,7 @@ async def create_action_item(
         external_url=body.external_url,
         source_card_ids=body.source_card_ids,
         status=body.status,
-        require_unlocked=False,
+        require_unlocked=True,
     )
 
 
@@ -284,7 +304,7 @@ async def update_action_item(
         assignee=body.assignee,
         external_url=body.external_url,
         status=body.status,
-        restrict_locked_fields=False,
+        restrict_locked_fields=True,
     )
 
 
@@ -296,13 +316,22 @@ async def delete_action_item(
     db: Session = Depends(get_db),
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
-    item = get_or_404(db, models.ActionItem, item_id, "Задача не найдена")
-    require_live_board(
-        db.get(models.Board, item.board_id), workspace.id, "Задача не найдена"
-    )
-    board_id = item.board_id
-    db.delete(item)
-    db.commit()
+    workspace_id = workspace.id
+
+    def _op() -> str:
+        item = get_or_404(db, models.ActionItem, item_id, "Задача не найдена")
+        require_unlocked_board(
+            db.get(models.Board, item.board_id), workspace_id, "Задача не найдена"
+        )
+        if item.superseded_by_id is not None:
+            raise HTTPException(409, "Перенесённую задачу нельзя удалить")
+        board_id = item.board_id
+        db.delete(item)
+        db.commit()
+        release_connection(db)
+        return board_id
+
+    board_id = await anyio.to_thread.run_sync(_op)
     await manager.broadcast(
         board_id, "action_item_deleted", {"id": item_id, "board_id": board_id}
     )

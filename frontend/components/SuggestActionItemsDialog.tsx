@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Check, Inbox, Loader2, RefreshCw, Settings2, Sparkles, User } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { AlertTriangle, Check, Inbox, Layers, Loader2, RefreshCw, Settings2, Sparkles, User } from 'lucide-react'
 import type { ActionItemSuggestion } from '../types'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -57,17 +57,42 @@ export default function SuggestActionItemsDialog({
   submitting = false,
   onCreateSelected,
 }: SuggestActionItemsDialogProps) {
-  const [items, setItems] = useState<EditableSuggestion[]>([])
+  const suggestionsKey = suggestions
+    .map((s) => `${s.title}:${s.text}:${(s.source_card_ids || []).join(',')}`)
+    .join('|')
 
-  useEffect(() => {
-    setItems(
-      suggestions.map((s) => ({
-        ...s,
-        checked: true,
-        assignee: s.assignee_hint || '',
-      })),
-    )
-  }, [suggestions])
+  return (
+    <SuggestActionItemsBody
+      key={suggestionsKey}
+      open={open}
+      onOpenChange={onOpenChange}
+      loading={loading}
+      suggestions={suggestions}
+      failure={failure}
+      onRetry={onRetry}
+      submitting={submitting}
+      onCreateSelected={onCreateSelected}
+    />
+  )
+}
+
+function SuggestActionItemsBody({
+  open,
+  onOpenChange,
+  loading,
+  suggestions,
+  failure = null,
+  onRetry,
+  submitting = false,
+  onCreateSelected,
+}: SuggestActionItemsDialogProps) {
+  const [items, setItems] = useState<EditableSuggestion[]>(() =>
+    suggestions.map((s) => ({
+      ...s,
+      checked: true,
+      assignee: s.assignee_hint || '',
+    })),
+  )
 
   const selectedItems = useMemo(
     () =>
@@ -212,21 +237,29 @@ export default function SuggestActionItemsDialog({
                         placeholder="Описание задачи и ожидаемый результат"
                         className="min-h-[68px] bg-background/80 text-sm leading-relaxed"
                       />
-                      <div className="flex items-center gap-2">
-                        <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <Input
-                          value={item.assignee}
-                          onChange={(e) =>
-                            setItems((prev) =>
-                              prev.map((x, i) =>
-                                i === idx ? { ...x, assignee: e.target.value } : x,
-                              ),
-                            )
-                          }
-                          placeholder="Ответственный (опционально)"
-                          className="h-7 bg-background/80 text-xs sm:max-w-xs"
-                          maxLength={60}
-                        />
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <Input
+                            value={item.assignee}
+                            onChange={(e) =>
+                              setItems((prev) =>
+                                prev.map((x, i) =>
+                                  i === idx ? { ...x, assignee: e.target.value } : x,
+                                ),
+                              )
+                            }
+                            placeholder="Ответственный (опционально)"
+                            className="h-7 bg-background/80 text-xs sm:max-w-xs"
+                            maxLength={60}
+                          />
+                        </div>
+                        {item.source_card_ids?.length > 0 && (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-md border bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+                            <Layers className="h-3 w-3" aria-hidden="true" />
+                            Карточек: {item.source_card_ids.length}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>

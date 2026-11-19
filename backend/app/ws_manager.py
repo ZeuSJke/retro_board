@@ -78,6 +78,9 @@ class ConnectionManager:
     MAX_SOCKET_QUEUE: int = 128
     SEND_TIMEOUT_SECONDS: float = 5.0
     MAX_COLLAPSED_GROUPS: int = 200
+    MAX_WS_CONNECTIONS_GLOBAL: int = 2000
+    MAX_WS_CONNECTIONS_PER_WORKSPACE: int = 200
+    MAX_NAMES_CACHE: int = 5000
     # Не 1008 (policy violation): при переполнении или таймауте клиент должен
     # автоматически переподключиться и пересинхронизироваться по снимку.
     SLOW_CONSUMER_CLOSE_CODE: int = 4008
@@ -115,6 +118,18 @@ class ConnectionManager:
         self.identity_hidden: dict[str, bool] = {}
         self.ended_timers: dict[str, float] = {}  # длительность таймера завершённой сессии
         self.workspace_peers: dict[int, str] = {}  # id(ws) сокета команды → участник
+        # Сериализация мутаций сессии/таймера/фокуса на уровне доски (ключ — board_id)
+        self._board_locks: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
+
+    def board_lock(self, board_id: str) -> asyncio.Lock:
+        """Вернуть per-board asyncio.Lock (пересоздаётся при смене event loop)."""
+        loop = asyncio.get_running_loop()
+        entry = self._board_locks.get(board_id)
+        if entry is None or entry[0] is not loop:
+            lock = asyncio.Lock()
+            self._board_locks[board_id] = (loop, lock)
+            return lock
+        return entry[1]
 
     def reset(self) -> None:
         """Сбросить всё in-memory состояние (для изоляции тестов)."""
@@ -151,6 +166,7 @@ class ConnectionManager:
         self.identity_hidden.clear()
         self.ended_timers.clear()
         self.workspace_peers.clear()
+        self._board_locks.clear()
         self.epoch = uuid.uuid4().hex[:12]
 
     # ── Исходящие очереди сокетов ────────────────────────────────────────────
@@ -290,6 +306,35 @@ class ConnectionManager:
 
     # ── Подключения ──────────────────────────────────────────────────────────
 
+    def can_accept_connection(self, workspace_id: str | None = None) -> bool:
+        """Проверить глобальный и командный лимиты числа WS-подключений."""
+        board_sockets, workspace_sockets = self.connection_counts()
+        if board_sockets + workspace_sockets >= self.MAX_WS_CONNECTIONS_GLOBAL:
+            return False
+        if workspace_id is not None:
+            ws_count = sum(1 for wid in self.ws_workspaces.values() if wid == workspace_id)
+            if ws_count >= self.MAX_WS_CONNECTIONS_PER_WORKSPACE:
+                return False
+        return True
+
+    def _remember_name(self, participant_id: str, name: str) -> None:
+        self.names.pop(participant_id, None)
+        self.names[participant_id] = name
+        while len(self.names) > self.MAX_NAMES_CACHE:
+            oldest = next(iter(self.names))
+            del self.names[oldest]
+
+    def _maybe_prune_name(self, participant_id: str) -> None:
+        if any(p.id == participant_id for p in self.peers.values()):
+            return
+        if any(pid == participant_id for pid in self.workspace_peers.values()):
+            return
+        if any(fid == participant_id for fid in self.facilitators.values()):
+            return
+        if any(participant_id in ready for ready in self.ready_users.values()):
+            return
+        self.names.pop(participant_id, None)
+
     async def connect(
         self,
         board_id: str,
@@ -306,7 +351,7 @@ class ConnectionManager:
             self.ws_workspaces[id(ws)] = workspace_id
         if peer:
             self.peers[id(ws)] = peer
-            self.names[peer.id] = peer.name
+            self._remember_name(peer.id, peer.name)
             if self.facilitators.get(board_id) == peer.id:
                 self.cancel_facilitator_grace(board_id)
                 self.facilitator_offline_since.pop(board_id, None)
@@ -330,7 +375,9 @@ class ConnectionManager:
         if not self.workspace_rooms[workspace_id]:
             self.workspace_rooms.pop(workspace_id, None)
         self.ws_workspaces.pop(id(ws), None)
-        self.workspace_peers.pop(id(ws), None)
+        pid = self.workspace_peers.pop(id(ws), None)
+        if pid:
+            self._maybe_prune_name(pid)
 
     def disconnect(self, board_id: str, ws: WebSocket) -> tuple[Peer | None, bool, bool]:
         """Отключить сокет доски.
@@ -351,6 +398,8 @@ class ConnectionManager:
         )
         if fac_disconnected:
             self.facilitator_offline_since[board_id] = time.monotonic()
+        if peer and not still_present and not fac_disconnected:
+            self._maybe_prune_name(peer.id)
         return peer, still_present, fac_disconnected
 
     def get_peer(self, ws: WebSocket) -> Peer | None:
@@ -419,17 +468,53 @@ class ConnectionManager:
     async def _close_all(self, sockets: list[WebSocket], reason: str) -> None:
         for ws in sockets:
             self._stop_writer(ws)
+        if not sockets:
+            return
+
+        async def _close_one(ws: WebSocket) -> None:
             try:
-                await ws.close(code=1008, reason=reason)
+                await asyncio.wait_for(ws.close(code=1008, reason=reason), timeout=2.0)
             except Exception:
                 logger.debug("Socket is already closed")
+
+        await asyncio.gather(*(_close_one(ws) for ws in sockets), return_exceptions=True)
+
+    async def cleanup_board(self, board_id: str) -> None:
+        """Освободить всё in-memory состояние доски и закрыть её сокеты при удалении."""
+        async with self.board_lock(board_id):
+            self.cancel_facilitator_grace(board_id)
+            sockets = list(self.rooms.pop(board_id, ()))
+            removed_peers: list[str] = []
+            for ws in sockets:
+                self.ws_workspaces.pop(id(ws), None)
+                peer = self.peers.pop(id(ws), None)
+                if peer:
+                    removed_peers.append(peer.id)
+            self.facilitators.pop(board_id, None)
+            self.facilitator_names.pop(board_id, None)
+            self.facilitator_offline_since.pop(board_id, None)
+            self.phases.pop(board_id, None)
+            self.session_ids.pop(board_id, None)
+            self.ready_users.pop(board_id, None)
+            self.typing_users.pop(board_id, None)
+            self.spotlights.pop(board_id, None)
+            self.timers.pop(board_id, None)
+            self.ended_timers.pop(board_id, None)
+            self.collapsed_groups.pop(board_id, None)
+            self.identity_hidden.pop(board_id, None)
+            self.restored.discard(board_id)
+            self.seq.pop(board_id, None)
+            for pid in removed_peers:
+                self._maybe_prune_name(pid)
+            self._board_locks.pop(board_id, None)
+        await self._close_all(sockets, "Board deleted")
 
     def name_of(self, participant_id: str) -> str:
         return self.names.get(participant_id, "Участник")
 
     def rename(self, participant_id: str, name: str) -> list[str]:
         """Обновить имя участника во всех его сокетах. Возвращает затронутые доски."""
-        self.names[participant_id] = name
+        self._remember_name(participant_id, name)
         boards: list[str] = []
         for board_id, sockets in self.rooms.items():
             touched = False
@@ -465,31 +550,47 @@ class ConnectionManager:
         async def _grace_clear():
             try:
                 await asyncio.sleep(self.FACILITATOR_GRACE_SECONDS)
-                if self.facilitators.get(board_id) == participant_id and not self.is_online(
-                    board_id, participant_id
-                ):
-                    self.clear_session(board_id)
-                    if self.on_session_cleared:
-                        try:
-                            self.on_session_cleared(board_id)
-                        except Exception:
-                            # Память уже очищена; если БД не обновилась, после
-                            # рестарта сессия «воскреснет» — это должно быть видно.
-                            logger.warning(
-                                "Failed to clear persisted session for board %s",
-                                board_id,
-                                exc_info=True,
-                            )
-                    await self.broadcast(
-                        board_id, "facilitator_update", self.facilitator_payload(board_id)
-                    )
-                    await self.broadcast(board_id, "ready_update", self.ready_payload(board_id))
-                    await self.broadcast(board_id, "spotlight_update", {"card_id": None})
-                    ended_timer = self.pop_ended_timer(board_id)
-                    if ended_timer:
-                        await self.broadcast(board_id, "timer_reset", ended_timer)
-                    # Сессия закончилась — видимость карточек могла измениться
-                    await self.broadcast(board_id, "cards_visibility_changed", {})
+                async with self.board_lock(board_id):
+                    if self.facilitators.get(board_id) == participant_id and not self.is_online(
+                        board_id, participant_id
+                    ):
+                        self.clear_session(board_id)
+                        state_snapshot = self.export_state(board_id)
+                        if self.on_session_cleared:
+                            try:
+                                cleared_res = await asyncio.to_thread(
+                                    self.on_session_cleared, board_id, state_snapshot
+                                )
+                                if isinstance(cleared_res, bool):
+                                    self.set_identity_hidden(board_id, cleared_res)
+                            except TypeError:
+                                # Поддержка пользовательского callback(board_id) с одним аргументом
+                                try:
+                                    await asyncio.to_thread(self.on_session_cleared, board_id)
+                                except Exception:
+                                    logger.warning(
+                                        "Failed to clear persisted session for board %s",
+                                        board_id,
+                                        exc_info=True,
+                                    )
+                            except Exception:
+                                # Память уже очищена; если БД не обновилась, после
+                                # рестарта сессия «воскреснет» — это должно быть видно.
+                                logger.warning(
+                                    "Failed to clear persisted session for board %s",
+                                    board_id,
+                                    exc_info=True,
+                                )
+                        await self.broadcast(
+                            board_id, "facilitator_update", self.facilitator_payload(board_id)
+                        )
+                        await self.broadcast(board_id, "ready_update", self.ready_payload(board_id))
+                        await self.broadcast(board_id, "spotlight_update", {"card_id": None})
+                        ended_timer = self.pop_ended_timer(board_id)
+                        if ended_timer:
+                            await self.broadcast(board_id, "timer_reset", ended_timer)
+                        # Сессия закончилась — видимость карточек могла измениться
+                        await self.broadcast(board_id, "cards_visibility_changed", {})
             except asyncio.CancelledError:
                 return
             finally:
@@ -961,14 +1062,29 @@ class ConnectionManager:
         exclude: WebSocket | None,
     ):
         dead: list[WebSocket] = []
+        stalled: list[tuple[WebSocket, str]] = []
         for ws in list(self.rooms.get(board_id, [])):
             if ws is exclude:
                 continue
             message = render(ws)
             if message is None:
                 continue
-            if not await self._send_raw(ws, message):
+            queue = self._queues.get(id(ws))
+            if queue is None:
                 dead.append(ws)
+                continue
+            try:
+                queue.put_nowait(message)
+            except asyncio.QueueFull:
+                stalled.append((ws, message))
+        if stalled:
+            results = await asyncio.gather(
+                *(self._send_raw(ws, msg) for ws, msg in stalled),
+                return_exceptions=True,
+            )
+            for (ws, _msg), ok in zip(stalled, results, strict=True):
+                if ok is not True:
+                    dead.append(ws)
         if dead:
             await self._drop_dead(board_id, dead, event)
 
@@ -1003,13 +1119,29 @@ class ConnectionManager:
         ws_message = json.dumps({"event": event, "data": data}, default=str)
 
         dead_ws_sockets: list[WebSocket] = []
+        stalled_ws_sockets: list[WebSocket] = []
         for ws in list(self.workspace_rooms.get(workspace_id, [])):
-            if not await self._send_raw(ws, ws_message):
+            queue = self._queues.get(id(ws))
+            if queue is None:
                 dead_ws_sockets.append(ws)
+                continue
+            try:
+                queue.put_nowait(ws_message)
+            except asyncio.QueueFull:
+                stalled_ws_sockets.append(ws)
+        if stalled_ws_sockets:
+            results = await asyncio.gather(
+                *(self._send_raw(ws, ws_message) for ws in stalled_ws_sockets),
+                return_exceptions=True,
+            )
+            for ws, ok in zip(stalled_ws_sockets, results, strict=True):
+                if ok is not True:
+                    dead_ws_sockets.append(ws)
         for ws in dead_ws_sockets:
             self.disconnect_workspace(workspace_id, ws)
 
         dead_by_board: dict[str, list[WebSocket]] = defaultdict(list)
+        stalled_board_targets: list[tuple[str, WebSocket, str]] = []
         for b_id, sockets in list(self.rooms.items()):
             if exclude_board_id is not None and b_id == exclude_board_id:
                 continue
@@ -1021,7 +1153,22 @@ class ConnectionManager:
             envelope = self._envelope(b_id, event)
             board_message = json.dumps({**envelope, "data": data}, default=str)
             for ws in targets:
-                if not await self._send_raw(ws, board_message):
+                queue = self._queues.get(id(ws))
+                if queue is None:
+                    dead_by_board[b_id].append(ws)
+                    continue
+                try:
+                    queue.put_nowait(board_message)
+                except asyncio.QueueFull:
+                    stalled_board_targets.append((b_id, ws, board_message))
+
+        if stalled_board_targets:
+            results = await asyncio.gather(
+                *(self._send_raw(ws, msg) for _b_id, ws, msg in stalled_board_targets),
+                return_exceptions=True,
+            )
+            for (b_id, ws, _msg), ok in zip(stalled_board_targets, results, strict=True):
+                if ok is not True:
                     dead_by_board[b_id].append(ws)
 
         for b_id, dead in dead_by_board.items():

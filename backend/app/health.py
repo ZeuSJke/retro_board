@@ -7,6 +7,7 @@
 """
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -49,10 +50,9 @@ ROTI_KEY = "roti"
 ROTI_MIN, ROTI_MAX = 1, 5
 
 
-def save_answers(
+def _upsert_answers_once(
     db: Session, board_id: str, participant_id: str, answers: dict[str, int]
 ) -> None:
-    """Записать ответы участника (без commit): повторный ответ заменяет прежний."""
     existing = {
         row.question: row
         for row in db.query(models.BoardHealthAnswer).filter(
@@ -75,6 +75,26 @@ def save_answers(
         else:
             row.value = value
             row.created_at = models.now_utc()
+
+
+def save_answers(
+    db: Session, board_id: str, participant_id: str, answers: dict[str, int]
+) -> None:
+    """Записать ответы участника (без commit): повторный ответ заменяет прежний."""
+    _upsert_answers_once(db, board_id, participant_id, answers)
+
+
+def save_answers_and_commit(
+    db: Session, board_id: str, participant_id: str, answers: dict[str, int]
+) -> None:
+    """Записать ответы участника и зафиксировать транзакцию с защитой от гонки INSERT."""
+    _upsert_answers_once(db, board_id, participant_id, answers)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        _upsert_answers_once(db, board_id, participant_id, answers)
+        db.commit()
 
 
 def _empty_question(question: dict[str, str]) -> dict:

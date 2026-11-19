@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useContext, useState } from 'react'
 import Link from 'next/link'
+import { QueryClientContext } from '@tanstack/react-query'
 import { useTheme } from 'next-themes'
 import { Check, Grid3X3, Loader2, LogOut, Moon, Palette, Shield, Sun, User } from 'lucide-react'
 import { logoutWorkspace, renameParticipant } from '@/api'
@@ -38,24 +39,54 @@ interface UserSettingsDialogProps {
 export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogProps) {
   const participant = useAppStore((s) => s.participant)
   const savedName = useAppStore((s) => s.username)
+  const username = participant?.name ?? savedName
+  const formKey = `${participant?.id ?? 'anon'}:${username}`
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <User className="h-5 w-5 text-primary" />
+            Профиль и оформление
+          </DialogTitle>
+          <DialogDescription>
+            Персональные настройки отображения и имя участника на доске.
+          </DialogDescription>
+        </DialogHeader>
+        {open && (
+          <UserSettingsForm
+            key={formKey}
+            username={username}
+            onClose={() => onOpenChange(false)}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function UserSettingsForm({
+  username,
+  onClose,
+}: {
+  username: string
+  onClose: () => void
+}) {
+  const queryClient = useContext(QueryClientContext)
+  const participant = useAppStore((s) => s.participant)
   const setParticipant = useAppStore((s) => s.setParticipant)
   const workspace = useAppStore((s) => s.workspace)
   const clearSession = useAppStore((s) => s.clearSession)
   const dotGrid = useAppStore((s) => s.dotGrid)
   const setDotGrid = useAppStore((s) => s.setDotGrid)
-  const username = participant?.name ?? savedName
 
-  const { theme, setTheme } = useTheme()
+  const { theme, resolvedTheme, setTheme } = useTheme()
+  const isDark = (resolvedTheme ?? theme) === 'dark'
   const [nameInput, setNameInput] = useState(username)
-  const [accent, setAccent] = useState<AccentKey>('violet')
+  const [accent, setAccent] = useState<AccentKey>(() => resolveInitialAccent())
   const [saving, setSaving] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
-
-  useEffect(() => {
-    if (!open) return
-    setNameInput(username)
-    setAccent(resolveInitialAccent())
-  }, [open, username])
 
   const handleAccentSelect = (key: AccentKey) => {
     setAccent(key)
@@ -67,7 +98,7 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
     const trimmed = nameInput.trim()
     if (!trimmed || saving) return
     if (trimmed === username) {
-      onOpenChange(false)
+      onClose()
       return
     }
     setSaving(true)
@@ -76,7 +107,7 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
       const updated = await renameParticipant(trimmed)
       setParticipant(updated)
       showToast(`Имя изменено на «${updated.name}»`, 'success')
-      onOpenChange(false)
+      onClose()
     } catch (err) {
       // Ответ 422 разбирается по полям: «Имя: не длиннее 60 символов», «Имя не должно содержать HTML-теги»
       showToast(getApiErrorMessage(err, 'Не удалось изменить имя', { name: 'Имя' }), 'error')
@@ -93,7 +124,9 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
       // иначе экран входа показан, а запросы продолжают проходить
       await logoutWorkspace()
       clearSession()
-      onOpenChange(false)
+      useAppStore.setState({ currentBoardId: null })
+      queryClient?.clear()
+      onClose()
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Не удалось выйти: сервер недоступен'), 'error')
     } finally {
@@ -102,19 +135,7 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <User className="h-5 w-5 text-primary" />
-            Профиль и оформление
-          </DialogTitle>
-          <DialogDescription>
-            Персональные настройки отображения и имя участника на доске.
-          </DialogDescription>
-        </DialogHeader>
-
-        <form onSubmit={handleSave} className="min-w-0 space-y-5">
+    <form onSubmit={handleSave} className="min-w-0 space-y-5">
           <div className="flex items-center gap-4">
             <div
               className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br/srgb text-base font-bold text-white shadow-sm ${getUserAvatarGradient(
@@ -138,7 +159,7 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
           <div className="space-y-2.5 rounded-xl border p-3.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm font-medium">
-                {theme === 'dark' ? (
+                {isDark ? (
                   <Moon className="h-4 w-4 text-primary" />
                 ) : (
                   <Sun className="h-4 w-4 text-amber-500" />
@@ -146,7 +167,7 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
                 Тёмная тема
               </div>
               <Switch
-                checked={theme === 'dark'}
+                checked={isDark}
                 onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
                 aria-label="Тёмная тема"
               />
@@ -242,7 +263,7 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={onClose}>
               Закрыть
             </Button>
             <Button type="submit" disabled={!nameInput.trim() || saving} data-testid="profile-save-btn">
@@ -251,7 +272,5 @@ export default function UserSettingsDialog({ open, onOpenChange }: UserSettingsD
             </Button>
           </DialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
   )
 }

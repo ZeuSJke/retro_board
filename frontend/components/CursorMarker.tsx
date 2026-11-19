@@ -11,9 +11,15 @@ interface CursorMarkerProps {
   /** Подпись курсора — имя участника. */
   username: string
   posRef: React.RefObject<Record<string, CursorPos>>
+  subscribeCursors?: (cb: () => void) => () => void
 }
 
-export default memo(function CursorMarker({ cursorId, username, posRef }: CursorMarkerProps) {
+export default memo(function CursorMarker({
+  cursorId,
+  username,
+  posRef,
+  subscribeCursors,
+}: CursorMarkerProps) {
   const color = userColor(cursorId)
   const nodeRef = useRef<HTMLDivElement>(null)
   const arrowRef = useRef<SVGSVGElement>(null)
@@ -28,39 +34,60 @@ export default memo(function CursorMarker({ cursorId, username, posRef }: Cursor
   useEffect(() => {
     let running = true
 
+    function scheduleTick() {
+      if (!running || rafRef.current !== 0) return
+      rafRef.current = requestAnimationFrame(tick)
+    }
+
     function tick() {
+      rafRef.current = 0
       if (!running) return
       const pos = posRef.current?.[cursorId]
       const el = nodeRef.current
+      let needsAnotherFrame = false
       if (el && pos) {
         const s = smoothRef.current
         if (!s.initialized) {
           s.x = pos.x
           s.y = pos.y
           s.initialized = true
+          s.tilt = 0
         } else {
           const dx = pos.x - s.x
           const dy = pos.y - s.y
-          s.x += dx * 0.28
-          s.y += dy * 0.28
-          // Лёгкий естественный наклон стрелки по горизонтальной скорости
-          const targetTilt = Math.max(-10, Math.min(10, dx * 0.35))
-          s.tilt += (targetTilt - s.tilt) * 0.2
+          if (Math.abs(dx) < 0.25 && Math.abs(dy) < 0.25 && Math.abs(s.tilt) < 0.25) {
+            s.x = pos.x
+            s.y = pos.y
+            s.tilt = 0
+          } else {
+            s.x += dx * 0.28
+            s.y += dy * 0.28
+            const targetTilt = Math.max(-10, Math.min(10, dx * 0.35))
+            s.tilt += (targetTilt - s.tilt) * 0.2
+            needsAnotherFrame = true
+          }
         }
         el.style.transform = `translate3d(${s.x.toFixed(1)}px, ${s.y.toFixed(1)}px, 0)`
         if (arrowRef.current) {
           arrowRef.current.style.transform = `rotate(${s.tilt.toFixed(1)}deg)`
         }
       }
-      rafRef.current = requestAnimationFrame(tick)
+      if (needsAnotherFrame || !subscribeCursors) {
+        scheduleTick()
+      }
     }
 
-    rafRef.current = requestAnimationFrame(tick)
+    scheduleTick()
+    const unsubscribe = subscribeCursors?.(() => scheduleTick())
     return () => {
       running = false
-      cancelAnimationFrame(rafRef.current)
+      unsubscribe?.()
+      if (rafRef.current !== 0) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = 0
+      }
     }
-  }, [cursorId, posRef])
+  }, [cursorId, posRef, subscribeCursors])
 
   return (
     <div
@@ -90,9 +117,9 @@ export default memo(function CursorMarker({ cursorId, username, posRef }: Cursor
           />
         </svg>
         <div
-          className="absolute left-3.5 top-4 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold text-white shadow-md"
+          className="absolute left-3.5 top-4 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold text-white shadow-md ring-1 ring-black/20"
           // Подпись того же цвета, что и стрелка: по нему различаются курсоры тёзок
-          style={{ backgroundColor: color }}
+          style={{ backgroundColor: color, textShadow: '0 1px 2px rgb(0 0 0 / 0.45)' }}
         >
           {username}
         </div>

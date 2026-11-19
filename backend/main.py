@@ -5,6 +5,7 @@ import traceback
 from contextlib import asynccontextmanager
 from typing import cast
 
+import anyio
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -47,11 +48,64 @@ logger = logging.getLogger("retroboard")
 configure_logging()
 
 
+def _load_active_sessions_sync() -> list[tuple[str, str | None, str | None, str | None, int | None, bool, object]]:
+    from app import models
+    from app.board_view import cards_hidden
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(models.Board)
+            .filter(
+                models.Board.deleted_at.is_(None),
+                models.Board.active_facilitator_id.is_not(None),
+            )
+            .all()
+        )
+        result = []
+        for board in rows:
+            try:
+                saved_state = json.loads(board.session_state) if board.session_state else None
+            except ValueError:
+                saved_state = None
+            result.append(
+                (
+                    board.id,
+                    board.active_facilitator_id,
+                    board.active_facilitator,
+                    board.active_phase,
+                    board.active_session_id,
+                    bool(board.anonymous_votes or cards_hidden(board)),
+                    saved_state,
+                )
+            )
+        return result
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from app.ws_manager import assert_single_worker
+    from app.ws_manager import assert_single_worker, manager
 
     assert_single_worker()
+    try:
+        active_sessions = await anyio.to_thread.run_sync(_load_active_sessions_sync)
+        for (
+            board_id,
+            fac_id,
+            fac_name,
+            phase,
+            session_id,
+            identity_hidden,
+            saved_state,
+        ) in active_sessions:
+            manager.set_identity_hidden(board_id, identity_hidden)
+            manager.restore_state(board_id, saved_state)
+            manager.hydrate_session(board_id, fac_id, fac_name, phase, session_id)
+    except Exception:
+        logger.warning("Failed to restore active sessions on startup", exc_info=True)
     async with mcp_lifespan():
         yield
 
@@ -152,7 +206,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         cookie_token = request.cookies.get(self.COOKIE_NAME)
         header_token = request.headers.get(self.HEADER_NAME)
-        if not cookie_token or cookie_token != header_token:
+        if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
             return JSONResponse(
                 status_code=403,
                 content={"detail": "CSRF token missing or invalid"},

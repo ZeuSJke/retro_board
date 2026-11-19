@@ -595,6 +595,49 @@ describe('BoardSettingsDialog — скрытый сбор, анонимност�
     expect(screen.getByTestId('delete-board-btn')).toBeEnabled()
     expect(screen.queryByText('Удалить доску может её создатель или ведущий')).not.toBeInTheDocument()
   })
+
+  it('не модератор не может заблокировать доску', () => {
+    render(
+      <BoardSettingsDialog
+        open
+        onOpenChange={vi.fn()}
+        board={board}
+        canModerate={false}
+        onBoardUpdated={vi.fn()}
+        onBoardDeleted={vi.fn()}
+      />,
+    )
+    expect(screen.getByTestId('lock-board-switch')).toBeDisabled()
+  })
+
+  it('модератор может начать новый скрытый сбор после раскрытия карточек', async () => {
+    const user = userEvent.setup()
+    const updatedBoard = {
+      ...board,
+      hide_cards_until_reveal: true,
+      cards_revealed: false,
+      cards_hidden: true,
+    }
+    api.updateBoard.mockResolvedValueOnce(updatedBoard)
+    const onBoardUpdated = vi.fn()
+
+    render(
+      <BoardSettingsDialog
+        open
+        onOpenChange={vi.fn()}
+        board={{ ...board, hide_cards_until_reveal: true, cards_revealed: true }}
+        canModerate
+        onBoardUpdated={onBoardUpdated}
+        onBoardDeleted={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByTestId('reset-hidden-collect-btn'))
+    await waitFor(() =>
+      expect(api.updateBoard).toHaveBeenCalledWith('b-1', { reset_cards_revealed: true }),
+    )
+    expect(onBoardUpdated).toHaveBeenCalledWith(updatedBoard)
+  })
 })
 
 // ── AI недоступен ────────────────────────────────────────────────────────────

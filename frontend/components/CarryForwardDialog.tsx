@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ArrowRight, Loader2, Repeat } from 'lucide-react'
 import { carryForward } from '../api'
 import { showToast } from '../store/toastStore'
@@ -37,20 +37,30 @@ export default function CarryForwardDialog({
   boards,
   onCarried,
 }: CarryForwardDialogProps) {
-  const [sourceId, setSourceId] = useState('')
-  const [targetId, setTargetId] = useState('')
+  const [sourceOverride, setSourceOverride] = useState('')
+  const [targetOverride, setTargetOverride] = useState('')
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => {
-    if (!open || boards.length < 2) return
+  const defaultSourceId = useMemo(() => {
+    if (boards.length < 2) return ''
     const withOpen = boards.find((b) => b.action_items_open > 0)
-    const first = withOpen || boards[1] || boards[0]
-    const target = boards.find((b) => b.id !== first.id) || boards[0]
-    setSourceId((prev) => (prev && boards.some((b) => b.id === prev) ? prev : first.id))
-    setTargetId((prev) =>
-      prev && prev !== first.id && boards.some((b) => b.id === prev) ? prev : target.id,
-    )
-  }, [open, boards])
+    return (withOpen || boards[1] || boards[0]).id
+  }, [boards])
+
+  const sourceId =
+    sourceOverride && boards.some((b) => b.id === sourceOverride) ? sourceOverride : defaultSourceId
+
+  const targetId = useMemo(() => {
+    if (boards.length < 2) return ''
+    if (
+      targetOverride &&
+      targetOverride !== sourceId &&
+      boards.some((b) => b.id === targetOverride)
+    ) {
+      return targetOverride
+    }
+    return (boards.find((b) => b.id !== sourceId) || boards[0]).id
+  }, [boards, sourceId, targetOverride])
 
   const handleConfirm = async () => {
     if (!sourceId || !targetId || sourceId === targetId || loading) return
@@ -91,7 +101,7 @@ export default function CarryForwardDialog({
         <div className="space-y-4 py-2">
           <div className="space-y-2">
             <Label>Откуда перенести</Label>
-            <Select value={sourceId} onValueChange={setSourceId}>
+            <Select value={sourceId} onValueChange={setSourceOverride}>
               <SelectTrigger>
                 <SelectValue placeholder="Выберите исходную доску" />
               </SelectTrigger>
@@ -111,7 +121,7 @@ export default function CarryForwardDialog({
 
           <div className="space-y-2">
             <Label>На какую доску перенести</Label>
-            <Select value={targetId} onValueChange={setTargetId}>
+            <Select value={targetId} onValueChange={setTargetOverride}>
               <SelectTrigger>
                 <SelectValue placeholder="Выберите целевую доску" />
               </SelectTrigger>

@@ -83,7 +83,8 @@ export default function Topbar({
   onExportMarkdown,
   onExportPDF,
 }: TopbarProps) {
-  const { theme, setTheme } = useTheme()
+  const { theme, resolvedTheme, setTheme } = useTheme()
+  const isDark = (resolvedTheme ?? theme) === 'dark'
 
   // Пока сервер не прислал состав доски, показываем хотя бы себя
   const onlineList: Participant[] =
@@ -325,11 +326,11 @@ export default function Topbar({
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="sm:hidden"
-                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                onClick={() => setTheme(isDark ? 'light' : 'dark')}
                 data-testid="menu-theme-item"
               >
-                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                {theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+                {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                {isDark ? 'Светлая тема' : 'Тёмная тема'}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -377,14 +378,32 @@ export default function Topbar({
           <TooltipTrigger asChild>
             <Button
               type="button"
+              variant="outline"
+              size="sm"
+              className="hidden gap-1.5 md:inline-flex"
+              onClick={onOpenSummary}
+              data-testid="topbar-summary-btn"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              Итоги
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Итоги ретроспективы</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
               variant="ghost"
               size="icon-sm"
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onClick={() => setTheme(isDark ? 'light' : 'dark')}
               aria-label="Переключить тему"
-              className="hidden sm:inline-flex"
+              className="relative hidden sm:inline-flex"
               data-testid="theme-toggle-btn"
             >
-              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+              <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Сменить тему</TooltipContent>
