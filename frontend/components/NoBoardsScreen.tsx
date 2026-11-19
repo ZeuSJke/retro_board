@@ -34,7 +34,17 @@ export default function NoBoardsScreen({
     },
     [onBoardAppeared],
   )
-  useWebSocket('workspace', handleWorkspaceEvent, undefined, { expectPong: true })
+  useWebSocket(
+    'workspace',
+    handleWorkspaceEvent,
+    useCallback(
+      (info) => {
+        if (info.reconnected) onBoardAppeared()
+      },
+      [onBoardAppeared],
+    ),
+    { expectPong: true },
+  )
 
   return (
     <div

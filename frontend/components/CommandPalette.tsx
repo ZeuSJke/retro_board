@@ -13,6 +13,7 @@ import {
   ThumbsUp,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
+import { blockingOverlay } from '@/lib/hotkeys'
 import type { BoardListItem } from '@/types'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 
@@ -70,6 +71,7 @@ export default function CommandPalette({
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'k' || e.code === 'KeyK')) {
+        if (!open && blockingOverlay() === 'modal') return
         e.preventDefault()
         setOpen(!open)
       }
@@ -187,7 +189,7 @@ export default function CommandPalette({
                   {searchableCards.map((c) => (
                     <Command.Item
                       key={c.id}
-                      value={`card ${c.text} ${c.columnTitle}`}
+                      value={`card ${c.text} ${c.columnTitle} ${c.id}`}
                       onSelect={() => {
                         setOpen(false)
                         c.onSelect()

@@ -2,10 +2,23 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
-import { Bot, ChevronLeft, ChevronRight, Focus, ListTodo, ThumbsUp, User } from 'lucide-react'
+import {
+  Bot,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Focus,
+  ListTodo,
+  Minus,
+  Plus,
+  ThumbsUp,
+  User,
+} from 'lucide-react'
+import { ACTION_ITEM_STATUS_META } from '@/lib/action-items'
 import { getCardColorPreset, getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import { avatarSeed, countMyVotes, isOwnCard } from '@/lib/participants'
-import type { Card, Column } from '@/types'
+import { timerDisplaySeconds } from '@/lib/timer'
+import type { ActionItem, Card, Column, TimerState } from '@/types'
 import { RichCardText } from './RichCardText'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -18,7 +31,117 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+
+function formatMmSs(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds))
+  const m = Math.floor(safe / 60)
+  const s = safe % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+function SpotlightTimerBadge({ timer }: { timer: TimerState }) {
+  const [now, setNow] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!timer.running) return
+    let active = true
+    void Promise.resolve().then(() => {
+      if (active) setNow(Date.now())
+    })
+    const id = setInterval(() => {
+      setNow(Date.now())
+    }, 500)
+    return () => {
+      active = false
+      clearInterval(id)
+    }
+  }, [timer.running])
+
+  const displaySeconds =
+    timer.running && now !== null
+      ? timerDisplaySeconds(timer, now)
+      : Math.ceil(Math.max(0, timer.remaining))
+  const low = displaySeconds <= 30 && displaySeconds > 0
+
+  return (
+    <Badge
+      variant="outline"
+      data-testid="spotlight-timer-badge"
+      className={cn(
+        'gap-1 font-mono text-xs tabular-nums',
+        timer.running && !low && 'border-primary/40 bg-primary/5 text-primary',
+        low && 'border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+      )}
+    >
+      <Clock className="h-3 w-3" />
+      {formatMmSs(displaySeconds)}
+    </Badge>
+  )
+}
+
+function SpotlightQuickTaskForm({
+  card,
+  readOnly,
+  onSubmit,
+}: {
+  card: Card
+  readOnly: boolean
+  onSubmit: (card: Card, text: string, assignee: string | null) => Promise<void> | void
+}) {
+  const [text, setText] = useState('')
+  const [assignee, setAssignee] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = text.trim()
+    if (!trimmed || readOnly || saving) return
+    setSaving(true)
+    try {
+      await onSubmit(card, trimmed, assignee.trim() || null)
+      setText('')
+      setAssignee('')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-wrap items-center gap-2 pt-1">
+      <Input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Быстрая задача по этой карточке..."
+        disabled={readOnly || saving}
+        maxLength={500}
+        className="h-8 min-w-[180px] flex-1 text-xs"
+        data-testid="spotlight-quick-task-input"
+      />
+      <Input
+        value={assignee}
+        onChange={(e) => setAssignee(e.target.value)}
+        placeholder="Ответственный"
+        disabled={readOnly || saving}
+        maxLength={80}
+        className="h-8 w-36 text-xs"
+        data-testid="spotlight-quick-task-assignee"
+      />
+      <Button
+        type="submit"
+        size="sm"
+        variant="outline"
+        disabled={readOnly || saving || !text.trim()}
+        className="h-8 gap-1 text-xs"
+        data-testid="spotlight-quick-task-submit"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Добавить
+      </Button>
+    </form>
+  )
+}
 
 export interface SpotlightQueueItem {
   card: Card
@@ -46,7 +169,11 @@ interface SpotlightModalProps {
   onSelectCard?: (cardId: string) => void
   onClose: () => void
   onCreateActionItem: (card: Card) => void
+  onQuickCreateActionItem?: (card: Card, text: string, assignee: string | null) => Promise<void> | void
   onLike: (cardId: string) => void
+  onRemoveVote?: (cardId: string) => void
+  timer?: TimerState
+  actionItems?: ActionItem[]
 }
 
 export default function SpotlightModal({
@@ -65,7 +192,11 @@ export default function SpotlightModal({
   onSelectCard,
   onClose,
   onCreateActionItem,
+  onQuickCreateActionItem,
   onLike,
+  onRemoveVote,
+  timer,
+  actionItems,
 }: SpotlightModalProps) {
   // Участник закрыл окно у себя: фокус ведущего остаётся, доска снова доступна. Пока ведущий
   // листает карточки, окно не всплывает заново; новый фокус (после снятия) откроет его снова.
@@ -121,6 +252,10 @@ export default function SpotlightModal({
   const voteDisabled = readOnly || limitReached
   const isAgent = card.author_kind === 'agent' && !card.masked
   const showAuthor = !anonymous || isOwnCard(card, currentUserId) || isAgent
+  const linkedTasks = (actionItems ?? []).filter(
+    (item) => !item.superseded_by_id && item.source_card_ids?.includes(card.id),
+  )
+  const showTimerBadge = Boolean(timer && (timer.running || timer.remaining !== timer.duration))
 
   // Крестик, Esc и клик по фону: у управляющего фокусом снимают его для всех,
   // у остальных только прячут окно на своём экране
@@ -181,11 +316,14 @@ export default function SpotlightModal({
               )}
             </DialogTitle>
 
-            {queueCards.length > 0 && currentIdx >= 0 && (
-              <Badge variant="secondary" className="font-mono text-xs tabular-nums">
-                {currentIdx + 1} / {queueCards.length}
-              </Badge>
-            )}
+            <div className="flex items-center gap-2">
+              {showTimerBadge && timer && <SpotlightTimerBadge timer={timer} />}
+              {queueCards.length > 0 && currentIdx >= 0 && (
+                <Badge variant="secondary" className="font-mono text-xs tabular-nums">
+                  {currentIdx + 1} / {queueCards.length}
+                </Badge>
+              )}
+            </div>
           </div>
 
           <DialogDescription className="text-xs">
@@ -255,9 +393,9 @@ export default function SpotlightModal({
           )}
         </DialogHeader>
 
-        {/* Фиксированная высота сцены исключает прыжки кнопок навигации и футера при смене карточки */}
-        <DialogBody className="flex-none overflow-visible py-5">
-          <div className={cn('relative flex h-[280px] sm:h-[300px] flex-col rounded-2xl border p-5 transition-colors', preset.cardClass)}>
+        <DialogBody className="flex flex-col gap-4 py-5">
+          {/* Фиксированная высота самой карточки исключает прыжки при перелистывании, а прокручиваемый DialogBody вмещает и задачи ниже */}
+          <div className={cn('relative flex h-[280px] sm:h-[300px] shrink-0 flex-col rounded-2xl border p-5 transition-colors', preset.cardClass)}>
             {preset.id !== 'default' && (
               <div
                 className="absolute bottom-4 left-0 top-4 w-1 rounded-r-full"
@@ -311,38 +449,110 @@ export default function SpotlightModal({
                   )}
                 </div>
 
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={liked ? 'default' : 'outline'}
-                  disabled={voteDisabled}
-                  title={
-                    readOnly
-                      ? 'Доска заблокирована для правок'
-                      : limitReached
-                        ? 'Лимит голосов исчерпан'
-                        : liked && !allowMultipleVotes
-                          ? 'Убрать лайк'
-                          : 'Лайк'
-                  }
-                  onClick={() => onLike(card.id)}
-                  className="gap-1.5 font-mono transition-transform active:scale-95"
-                >
-                  <motion.span
-                    key={liked ? 'liked' : 'idle'}
-                    initial={liked ? { scale: 1.3, rotate: -12 } : false}
-                    animate={{ scale: 1, rotate: 0 }}
-                    transition={{ type: 'spring', stiffness: 500, damping: 18 }}
-                    className="inline-flex"
+                <div className="flex items-center gap-1.5">
+                  {allowMultipleVotes && myVotes > 0 && onRemoveVote && (
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="outline"
+                      disabled={readOnly}
+                      title={readOnly ? 'Доска заблокирована для правок' : 'Убрать один голос'}
+                      aria-label="Убрать голос"
+                      onClick={() => onRemoveVote(card.id)}
+                      data-testid="spotlight-unlike-btn"
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={liked ? 'default' : 'outline'}
+                    disabled={voteDisabled}
+                    title={
+                      readOnly
+                        ? 'Доска заблокирована для правок'
+                        : limitReached
+                          ? 'Лимит голосов исчерпан'
+                          : liked && !allowMultipleVotes
+                            ? 'Убрать лайк'
+                            : 'Лайк'
+                    }
+                    onClick={() => onLike(card.id)}
+                    className="gap-1.5 font-mono transition-transform active:scale-95"
                   >
-                    <ThumbsUp className="h-3.5 w-3.5" />
-                  </motion.span>
-                  {card.likes.length}
-                  {allowMultipleVotes && myVotes > 0 ? ` (×${myVotes})` : ''}
-                </Button>
+                    <motion.span
+                      key={liked ? 'liked' : 'idle'}
+                      initial={liked ? { scale: 1.3, rotate: -12 } : false}
+                      animate={{ scale: 1, rotate: 0 }}
+                      transition={{ type: 'spring', stiffness: 500, damping: 18 }}
+                      className="inline-flex"
+                    >
+                      <ThumbsUp className="h-3.5 w-3.5" />
+                    </motion.span>
+                    {card.likes.length}
+                    {allowMultipleVotes && myVotes > 0 ? ` (×${myVotes})` : ''}
+                  </Button>
+                </div>
               </div>
             </motion.div>
           </div>
+
+          {(linkedTasks.length > 0 || onQuickCreateActionItem) && (
+            <div
+              className="shrink-0 space-y-2 rounded-xl border bg-muted/25 p-3"
+              data-testid="spotlight-tasks-section"
+            >
+              <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <ListTodo className="h-3.5 w-3.5 text-primary" />
+                  Задачи по карточке
+                </span>
+                {linkedTasks.length > 0 && (
+                  <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+                    {linkedTasks.length}
+                  </Badge>
+                )}
+              </div>
+
+              {linkedTasks.length > 0 && (
+                <ul className="space-y-1.5">
+                  {linkedTasks.map((t) => {
+                    const statusMeta = ACTION_ITEM_STATUS_META[t.status]
+                    return (
+                      <li
+                        key={t.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 text-xs"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-foreground">
+                          {t.title || t.text}
+                        </span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {t.assignee && (
+                            <span className="max-w-[90px] truncate text-[11px] text-muted-foreground">
+                              {t.assignee}
+                            </span>
+                          )}
+                          <Badge variant={statusMeta.badgeVariant} className="text-[10px]">
+                            {statusMeta.label}
+                          </Badge>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+
+              {onQuickCreateActionItem && (
+                <SpotlightQuickTaskForm
+                  key={card.id}
+                  card={card}
+                  readOnly={readOnly}
+                  onSubmit={onQuickCreateActionItem}
+                />
+              )}
+            </div>
+          )}
         </DialogBody>
 
         <DialogFooter className="sm:justify-between">
@@ -350,6 +560,8 @@ export default function SpotlightModal({
             <Button
               type="button"
               variant="secondary"
+              disabled={readOnly}
+              title={readOnly ? 'Доска заблокирована для правок' : undefined}
               onClick={() => onCreateActionItem(card)}
               className="gap-1.5"
             >
@@ -360,6 +572,8 @@ export default function SpotlightModal({
               <Button
                 type="button"
                 variant="outline"
+                disabled={readOnly}
+                title={readOnly ? 'Доска заблокирована для правок' : undefined}
                 onClick={() => {
                   onCreateActionItem(card)
                   onSelectCard(nextItem.card.id)

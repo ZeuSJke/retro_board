@@ -535,3 +535,278 @@ class TestLivenessDoesNotWaitForThreads:
 
         assert inspect.iscoroutinefunction(main.health)
         assert not inspect.iscoroutinefunction(main.ready)
+
+
+class TestHardeningAndKanbanCarryForward:
+    def test_participant_cannot_lock_or_reset_reveal(self, client, workspace_headers, login_as):
+        anya = login_as("Аня")
+        board = _board(client, workspace_headers, "Права на блокировку", hide_cards_until_reveal=True)
+        assert client.post(f"/api/boards/{board['id']}/reveal", headers=workspace_headers).status_code == 200
+
+        for body in ({"is_locked": True}, {"reset_cards_revealed": True}):
+            resp = client.patch(f"/api/boards/{board['id']}", json=body, headers=anya)
+            assert resp.status_code == 403
+
+        locked = client.patch(f"/api/boards/{board['id']}", json={"is_locked": True}, headers=workspace_headers)
+        assert locked.status_code == 200 and locked.json()["is_locked"] is True
+        unlocked_and_hidden = client.patch(
+            f"/api/boards/{board['id']}",
+            json={"is_locked": False, "reset_cards_revealed": True},
+            headers=workspace_headers,
+        )
+        assert unlocked_and_hidden.status_code == 200
+        assert unlocked_and_hidden.json()["cards_revealed"] is False
+        assert unlocked_and_hidden.json()["cards_hidden"] is True
+
+    def test_action_items_lock_and_superseded_parity(self, client, workspace_headers):
+        b1 = _board(client, workspace_headers, "Спринт 1")
+        b2 = _board(client, workspace_headers, "Спринт 2")
+        item = client.post(
+            "/api/action-items/",
+            json={"board_id": b1["id"], "title": "Исправить алерт", "text": "Починить пороговый алерт"},
+            headers=workspace_headers,
+        ).json()
+
+        # Переносим на b2 -> исходный item помечается superseded и удалять его нельзя
+        carried = client.post(
+            "/api/action-items/carry-forward",
+            json={"source_board_id": b1["id"], "target_board_id": b2["id"]},
+            headers=workspace_headers,
+        )
+        assert carried.status_code == 201 and len(carried.json()) == 1
+        assert client.delete(f"/api/action-items/{item['id']}", headers=workspace_headers).status_code == 409
+
+        # Блокируем b2: создание, редактирование полей (кроме status), удаление и перенос на неё -> 423
+        assert (
+            client.patch(f"/api/boards/{b2['id']}", json={"is_locked": True}, headers=workspace_headers).status_code
+            == 200
+        )
+        new_item_id = carried.json()[0]["id"]
+        assert (
+            client.post(
+                "/api/action-items/",
+                json={"board_id": b2["id"], "title": "Лишняя", "text": "В заблокированную"},
+                headers=workspace_headers,
+            ).status_code
+            == 423
+        )
+        assert (
+            client.patch(
+                f"/api/action-items/{new_item_id}", json={"title": "Другой текст"}, headers=workspace_headers
+            ).status_code
+            == 423
+        )
+        assert (
+            client.patch(
+                f"/api/action-items/{new_item_id}", json={"status": "done"}, headers=workspace_headers
+            ).status_code
+            == 200
+        )
+        assert client.delete(f"/api/action-items/{new_item_id}", headers=workspace_headers).status_code == 423
+        assert (
+            client.post(
+                "/api/action-items/carry-forward",
+                json={"source_board_id": b1["id"], "target_board_id": b2["id"]},
+                headers=workspace_headers,
+            ).status_code
+            == 423
+        )
+
+    def test_create_board_multi_board_carry_forward_and_supersedes(self, client, workspace_headers):
+        b1 = _board(client, workspace_headers, "Ретро А")
+        b2 = _board(client, workspace_headers, "Ретро Б")
+        i1 = client.post(
+            "/api/action-items/",
+            json={"board_id": b1["id"], "title": "Из доски А", "text": "Задача А", "status": "open"},
+            headers=workspace_headers,
+        ).json()
+        i2 = client.post(
+            "/api/action-items/",
+            json={"board_id": b2["id"], "title": "Из доски Б", "text": "Задача Б", "status": "in_progress"},
+            headers=workspace_headers,
+        ).json()
+
+        b3 = _board(
+            client,
+            workspace_headers,
+            "Ретро В",
+            carry_forward_item_ids=[i1["id"], i2["id"]],
+        )
+        b3_items = client.get(
+            "/api/action-items/", params={"board_id": b3["id"]}, headers=workspace_headers
+        ).json()
+        assert {it["title"] for it in b3_items} == {"Из доски А", "Из доски Б"}
+
+        all_items = {
+            it["id"]: it
+            for it in client.get("/api/action-items/all", headers=workspace_headers).json()
+        }
+        assert i1["id"] not in all_items
+        assert i2["id"] not in all_items
+        b1_items = client.get(
+            "/api/action-items/", params={"board_id": b1["id"]}, headers=workspace_headers
+        ).json()
+        b2_items = client.get(
+            "/api/action-items/", params={"board_id": b2["id"]}, headers=workspace_headers
+        ).json()
+        assert b1_items[0]["superseded_by_id"] is not None
+        assert b2_items[0]["superseded_by_id"] is not None
+
+    def test_apply_clusters_blocked_when_cards_hidden(self, client, workspace_headers):
+        board = _board(client, workspace_headers, "Скрытая кластеризация", hide_cards_until_reveal=True)
+        col_id = board["columns"][0]["id"]
+        c1 = _card(client, workspace_headers, col_id, "Первая")
+        c2 = _card(client, workspace_headers, col_id, "Вторая")
+
+        blocked = client.post(
+            "/api/groups/apply-clusters",
+            json={"column_id": col_id, "groups": [{"title": "Кластер", "card_ids": [c1["id"], c2["id"]]}]},
+            headers=workspace_headers,
+        )
+        assert blocked.status_code == 409
+
+        assert client.post(f"/api/boards/{board['id']}/reveal", headers=workspace_headers).status_code == 200
+        ok = client.post(
+            "/api/groups/apply-clusters",
+            json={"column_id": col_id, "groups": [{"title": "Кластер", "card_ids": [c1["id"], c2["id"]]}]},
+            headers=workspace_headers,
+        )
+        assert ok.status_code == 200 and len(ok.json()["created_groups"]) == 1
+
+    def test_delete_board_cleans_ws_manager_state(self, client, workspace_headers):
+        from app.ws_manager import manager
+
+        board = _board(client, workspace_headers, "Убираемая")
+        with _ws(client, board["id"], workspace_headers) as ws:
+            ws.send_json({"event": "timer_start", "data": {"duration": 60, "remaining": 60}})
+            _ = ws.receive_json()
+            assert board["id"] in manager.timers
+
+        resp = client.delete(f"/api/boards/{board['id']}", headers=workspace_headers)
+        assert resp.status_code == 204
+        assert board["id"] not in manager.rooms
+        assert board["id"] not in manager.timers
+        assert board["id"] not in manager.facilitators
+
+    def test_workspace_insights_returns_health_and_roti_without_ai(self, client, workspace_headers):
+        board = _board(client, workspace_headers, "Health Ретро")
+        client.post(
+            f"/api/boards/{board['id']}/health",
+            json={"answers": {"pace": 3, "quality": 2}},
+            headers=workspace_headers,
+        )
+        client.post(f"/api/boards/{board['id']}/roti", json={"value": 5}, headers=workspace_headers)
+
+        resp = client.post("/api/boards/workspace-insights", headers=workspace_headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["boards_analyzed"] == 1
+        assert "1" in body["summary_text"]
+        assert "ROTI" in body["summary_text"]
+
+    def test_admin_logout_cookie_flags(self, client):
+        resp = client.post("/api/admin/logout")
+        assert resp.status_code == 200
+        set_cookie = resp.headers.get("set-cookie", "").lower()
+        assert "admin_token=" in set_cookie
+        assert "httponly" in set_cookie
+        assert "samesite=lax" in set_cookie
+        assert "path=/" in set_cookie
+
+
+class TestReviewRound1Fixes:
+    def test_concurrent_facilitator_start_serialized_by_board_lock(self):
+        import asyncio
+        import time
+        from types import SimpleNamespace
+        from typing import cast
+        from unittest.mock import AsyncMock, patch
+
+        from fastapi import WebSocket
+
+        from app.routers import websocket as ws_router
+        from app.ws_manager import Peer, manager
+        from app.ws_schemas import WsBasePayload
+
+        board_id = "b-concurrent-fac"
+        sync_calls: list[str] = []
+
+        def slow_lock_check(_ws, _bid):
+            time.sleep(0.05)
+            return False
+
+        def fake_sync(_ws, _bid, _wid, peer, phase, session_id, **_kwargs):
+            sync_calls.append(peer.id if peer else "")
+            assert session_id is not None
+            return None, False
+
+        async def _run():
+            ws = cast(WebSocket, SimpleNamespace())
+            ctx1 = ws_router._WsContext(
+                websocket=ws,
+                board_id=board_id,
+                workspace_id="ws-1",
+                peer=Peer("p-1", "Анна"),
+                facilitator_id=None,
+                is_facilitator=False,
+            )
+            ctx2 = ws_router._WsContext(
+                websocket=ws,
+                board_id=board_id,
+                workspace_id="ws-1",
+                peer=Peer("p-2", "Борис"),
+                facilitator_id=None,
+                is_facilitator=False,
+            )
+            lock1 = manager.board_lock(board_id)
+            lock2 = manager.board_lock(board_id)
+            assert lock1 is lock2
+            manager.rooms[board_id].append(ws)
+
+            with (
+                patch.object(ws_router, "_board_is_locked", slow_lock_check),
+                patch.object(ws_router, "_sync_board_session_db", fake_sync),
+                patch.object(manager, "broadcast", AsyncMock()),
+            ):
+                await asyncio.gather(
+                    ws_router._handle_facilitator_start(ctx1, WsBasePayload()),
+                    ws_router._handle_facilitator_start(ctx2, WsBasePayload()),
+                )
+
+            assert manager.get_facilitator(board_id) == "p-1"
+            assert sync_calls == ["p-1"]
+            await manager.cleanup_board(board_id)
+            assert board_id not in manager._board_locks
+            # После очистки доски запоздалый кадр не должен воскрешать сессию ведущего
+            with (
+                patch.object(ws_router, "_board_is_locked", slow_lock_check),
+                patch.object(ws_router, "_sync_board_session_db", fake_sync),
+                patch.object(manager, "broadcast", AsyncMock()),
+            ):
+                await ws_router._handle_facilitator_start(ctx2, WsBasePayload())
+            assert manager.get_facilitator(board_id) is None
+            assert sync_calls == ["p-1"]
+
+        asyncio.run(_run())
+
+    def test_set_card_group_prunes_emptied_source_group(self, client, workspace_headers):
+        board = _board(client, workspace_headers, "Пустые группы при переносе")
+        col_id = board["columns"][0]["id"]
+        c1 = _card(client, workspace_headers, col_id, "Единственная карточка")
+        g1 = client.post(
+            "/api/groups/", json={"column_id": col_id, "title": "Старая"}, headers=workspace_headers
+        ).json()
+        g2 = client.post(
+            "/api/groups/", json={"column_id": col_id, "title": "Новая"}, headers=workspace_headers
+        ).json()
+
+        r1 = client.post(f"/api/groups/{g1['id']}/set_card/{c1['id']}", headers=workspace_headers)
+        assert r1.status_code == 200
+
+        r2 = client.post(f"/api/groups/{g2['id']}/set_card/{c1['id']}", headers=workspace_headers)
+        assert r2.status_code == 200
+        assert r2.json()["group_id"] == g2["id"]
+
+        loaded = _get_board(client, workspace_headers, board["id"])
+        group_ids = [g["id"] for g in loaded["columns"][0]["groups"]]
+        assert group_ids == [g2["id"]]

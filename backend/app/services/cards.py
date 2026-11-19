@@ -2,6 +2,7 @@
 
 import uuid
 
+import anyio
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -115,15 +116,20 @@ async def create_card_for_participant(
     color: str = "#FFFFFF",
 ) -> dict:
     """Создать карточку от имени участника (человека или агента) и разослать WS."""
-    view, broadcasts = create_card_sync(
-        db,
-        workspace_id,
-        participant,
-        column_id=column_id,
-        text=text,
-        color=color,
-    )
-    release_connection(db)
+
+    def _op():
+        res = create_card_sync(
+            db,
+            workspace_id,
+            participant,
+            column_id=column_id,
+            text=text,
+            color=color,
+        )
+        release_connection(db)
+        return res
+
+    view, broadcasts = await anyio.to_thread.run_sync(_op)
     await dispatch_broadcasts(broadcasts)
     return view
 
@@ -258,19 +264,24 @@ async def bulk_update_cards_for_workspace(
     require_visible_for_grouping: bool = False,
 ) -> list[dict]:
     """Массово переместить/сгруппировать/перекрасить карточки с WS-рассылкой."""
-    results, broadcasts = bulk_update_cards_sync(
-        db,
-        workspace_id,
-        participant,
-        card_ids=card_ids,
-        provided_fields=provided_fields,
-        column_id=column_id,
-        group_title=group_title,
-        group_id=group_id,
-        color=color,
-        require_visible_for_grouping=require_visible_for_grouping,
-    )
-    release_connection(db)
+
+    def _op():
+        res = bulk_update_cards_sync(
+            db,
+            workspace_id,
+            participant,
+            card_ids=card_ids,
+            provided_fields=provided_fields,
+            column_id=column_id,
+            group_title=group_title,
+            group_id=group_id,
+            color=color,
+            require_visible_for_grouping=require_visible_for_grouping,
+        )
+        release_connection(db)
+        return res
+
+    results, broadcasts = await anyio.to_thread.run_sync(_op)
     await dispatch_broadcasts(broadcasts)
     return results
 

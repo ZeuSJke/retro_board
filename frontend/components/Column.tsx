@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { autoClusterColumn, createCard, deleteColumn, updateColumn } from '../api'
+import { addCardToGroup, autoClusterColumn, createCard, deleteCard, deleteColumn, updateColumn } from '../api'
 import {
   CARD_COLOR_PRESETS,
   COLUMN_COLOR_PALETTE,
@@ -121,6 +121,192 @@ interface ColumnProps {
   onTypingChange?: (columnId: string, isTyping: boolean) => void
 }
 
+interface ColumnComposerProps {
+  columnId: string
+  open: boolean
+  canCreateCard: boolean
+  onOpenChange: (open: boolean) => void
+  onCardCreated: (card: Card) => void
+  onTypingChange?: (columnId: string, isTyping: boolean) => void
+}
+
+const ColumnComposer = memo(function ColumnComposer({
+  columnId,
+  open,
+  canCreateCard,
+  onOpenChange,
+  onCardCreated,
+  onTypingChange,
+}: ColumnComposerProps) {
+  const [draftText, setDraftText] = useState('')
+  const [draftColor, setDraftColor] = useState<string>('#FFFFFF')
+  const [creating, setCreating] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const emitTyping = (active: boolean) => {
+    if (!onTypingChange) return
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current)
+      typingTimerRef.current = null
+    }
+    onTypingChange(columnId, active)
+    if (active) {
+      typingTimerRef.current = setTimeout(() => {
+        onTypingChange(columnId, false)
+      }, 3500)
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current)
+      onTypingChange?.(columnId, false)
+    }
+  }, [columnId, onTypingChange])
+
+  const handleAddCard = async () => {
+    const text = draftText.trim()
+    if (!text || creating || !canCreateCard) return
+    setCreating(true)
+    try {
+      const created = await createCard({
+        column_id: columnId,
+        text,
+        color: draftColor,
+      })
+      onCardCreated(created)
+      setDraftText('')
+      textareaRef.current?.focus({ preventScroll: true })
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось создать карточку'), 'error')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="shrink-0 border-t px-3 py-2.5">
+      <AnimatePresence initial={false} mode="wait">
+        {open && canCreateCard ? (
+          <motion.div
+            key="composer-form"
+            data-testid="card-composer"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            className="-m-1 overflow-hidden p-1"
+          >
+            <div className="space-y-2 rounded-xl border bg-background p-2.5 shadow-xs">
+              <Textarea
+                ref={textareaRef}
+                value={draftText}
+                onChange={(e) => {
+                  const nextVal = e.target.value
+                  setDraftText(nextVal)
+                  emitTyping(nextVal.trim().length > 0)
+                }}
+                onBlur={() => emitTyping(false)}
+                rows={2}
+                autoFocus
+                placeholder="Опишите мысль... (Enter — добавить)"
+                className="min-h-[60px] resize-none border-0 bg-transparent p-1 text-sm focus-visible:ring-0"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    emitTyping(false)
+                    void handleAddCard()
+                  } else if (e.key === 'Escape') {
+                    emitTyping(false)
+                    onOpenChange(false)
+                  }
+                }}
+              />
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <div className="flex items-center gap-1">
+                  {CARD_COLOR_PRESETS.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setDraftColor(c.hex)}
+                      title={c.name}
+                      aria-label={`Цвет карточки: ${c.name}`}
+                      aria-pressed={draftColor.toLowerCase() === c.hex.toLowerCase()}
+                      className={cn(
+                        'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
+                        c.swatchClass,
+                        draftColor.toLowerCase() === c.hex.toLowerCase() &&
+                          'ring-2 ring-primary ring-offset-1 ring-offset-background',
+                      )}
+                    >
+                      {c.id !== 'default' && (
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: c.accentDot }}
+                        />
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="h-7 w-7"
+                    onClick={() => {
+                      emitTyping(false)
+                      onOpenChange(false)
+                    }}
+                    aria-label="Отменить"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 px-3 text-xs"
+                    disabled={!draftText.trim() || creating}
+                    onClick={() => {
+                      emitTyping(false)
+                      void handleAddCard()
+                    }}
+                  >
+                    {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    Добавить
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="composer-btn"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+            className="-m-1 overflow-hidden p-1"
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              data-column-add-btn="true"
+              disabled={!canCreateCard}
+              onClick={() => onOpenChange(true)}
+              className="w-full justify-start gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              <Plus className="h-4 w-4" />
+              Добавить карточку
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+})
+
 function Column({
   column,
   maxVotes = 0,
@@ -194,40 +380,28 @@ function Column({
 
   // Inline card creation
   const [composerOpen, setComposerOpen] = useState(false)
-  const [draftText, setDraftText] = useState('')
-  const [draftColor, setDraftColor] = useState<string>('#FFFFFF')
-  const [creating, setCreating] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const emitTyping = (active: boolean) => {
-    if (!onTypingChange) return
-    if (typingTimerRef.current) {
-      clearTimeout(typingTimerRef.current)
-      typingTimerRef.current = null
-    }
-    onTypingChange(column.id, active)
-    if (active) {
-      typingTimerRef.current = setTimeout(() => {
-        onTypingChange(column.id, false)
-      }, 3500)
-    }
-  }
-
-  useEffect(() => {
-    return () => {
-      if (typingTimerRef.current) clearTimeout(typingTimerRef.current)
-      onTypingChange?.(column.id, false)
-    }
-  }, [column.id, onTypingChange])
+  const [deleteCardTarget, setDeleteCardTarget] = useState<Card | null>(null)
 
   // Отслеживаем свежесозданные/прилетевшие по WS карточки и эффект проявки при Reveal
   const initializedCardsRef = useRef(false)
   const prevCardIdsRef = useRef<Set<string>>(new Set())
   const prevHiddenIdsRef = useRef<Set<string>>(new Set())
+  const newTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const revealTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [recentNewIds, setRecentNewIds] = useState<Set<string>>(() => new Set())
   const [revealedCardIds, setRevealedCardIds] = useState<Set<string>>(() => new Set())
   const [revealDelayMap, setRevealDelayMap] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    const newTimers = newTimersRef.current
+    const revealTimers = revealTimersRef.current
+    return () => {
+      newTimers.forEach(clearTimeout)
+      newTimers.clear()
+      revealTimers.forEach(clearTimeout)
+      revealTimers.clear()
+    }
+  }, [])
 
   useEffect(() => {
     const cards = column.cards || []
@@ -250,23 +424,28 @@ function Column({
     prevCardIdsRef.current = currentIds
     prevHiddenIdsRef.current = currentHiddenIds
 
-    const timers: ReturnType<typeof setTimeout>[] = []
-
     if (added.length > 0) {
       setRecentNewIds((prev) => {
         const next = new Set(prev)
         added.forEach((id) => next.add(id))
         return next
       })
-      timers.push(
-        setTimeout(() => {
-          setRecentNewIds((prev) => {
-            const next = new Set(prev)
-            added.forEach((id) => next.delete(id))
-            return next
-          })
-        }, 1450),
-      )
+      for (const id of added) {
+        const existing = newTimersRef.current.get(id)
+        if (existing) clearTimeout(existing)
+        newTimersRef.current.set(
+          id,
+          setTimeout(() => {
+            newTimersRef.current.delete(id)
+            setRecentNewIds((prev) => {
+              if (!prev.has(id)) return prev
+              const next = new Set(prev)
+              next.delete(id)
+              return next
+            })
+          }, 1450),
+        )
+      }
     }
 
     if (revealed.length > 0) {
@@ -280,19 +459,22 @@ function Column({
         revealed.forEach((id) => next.add(id))
         return next
       })
-      timers.push(
-        setTimeout(() => {
-          setRevealedCardIds((prev) => {
-            const next = new Set(prev)
-            revealed.forEach((id) => next.delete(id))
-            return next
-          })
-        }, 850),
-      )
-    }
-
-    return () => {
-      timers.forEach(clearTimeout)
+      for (const id of revealed) {
+        const existing = revealTimersRef.current.get(id)
+        if (existing) clearTimeout(existing)
+        revealTimersRef.current.set(
+          id,
+          setTimeout(() => {
+            revealTimersRef.current.delete(id)
+            setRevealedCardIds((prev) => {
+              if (!prev.has(id)) return prev
+              const next = new Set(prev)
+              next.delete(id)
+              return next
+            })
+          }, 850),
+        )
+      }
     }
   }, [column.cards])
 
@@ -374,14 +556,43 @@ function Column({
   // Список приходит уже без текущего участника (он исключён по идентификатору)
   const otherTypingUsers = typingUsernames
 
-  const groups = column.groups || []
-  const groupIds = new Set(groups.map((g) => g.id))
-  const ungroupedCards = filteredAndSortedCards.filter(
-    (c) => !c.group_id || !groupIds.has(c.group_id),
+  const groups = useMemo(() => column.groups || [], [column.groups])
+  const groupIds = useMemo(() => new Set(groups.map((g) => g.id)), [groups])
+  const allCardIdsByGroup = useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const g of groups) map.set(g.id, [])
+    for (const c of column.cards || []) {
+      if (c.group_id && map.has(c.group_id)) {
+        map.get(c.group_id)!.push(c.id)
+      }
+    }
+    return map
+  }, [groups, column.cards])
+  const cardsByGroup = useMemo(() => {
+    const map = new Map<string, Card[]>()
+    for (const g of groups) map.set(g.id, [])
+    for (const c of filteredAndSortedCards) {
+      if (c.group_id && map.has(c.group_id)) {
+        map.get(c.group_id)!.push(c)
+      }
+    }
+    return map
+  }, [groups, filteredAndSortedCards])
+  const ungroupedCards = useMemo(
+    () => filteredAndSortedCards.filter((c) => !c.group_id || !groupIds.has(c.group_id)),
+    [filteredAndSortedCards, groupIds],
   )
-  const ungroupedTotalCount = (column.cards || []).filter(
-    (c) => !c.group_id || !groupIds.has(c.group_id),
-  ).length
+  const ungroupedTotalCount = useMemo(
+    () => (column.cards || []).filter((c) => !c.group_id || !groupIds.has(c.group_id)).length,
+    [column.cards, groupIds],
+  )
+  const visibleOrderedCardIds = useMemo(
+    () => [
+      ...groups.flatMap((g) => cardsByGroup.get(g.id) ?? []),
+      ...ungroupedCards,
+    ].map((c) => c.id),
+    [groups, cardsByGroup, ungroupedCards],
+  )
 
   const saveTitle = async () => {
     setEditingTitle(false)
@@ -460,23 +671,46 @@ function Column({
     }
   }
 
-  const handleAddCard = async () => {
-    const text = draftText.trim()
-    if (!text || creating || readOnly || cardCreationDisabled) return
-    setCreating(true)
+  const handleConfirmCardDelete = async () => {
+    if (!deleteCardTarget) return
+    const target = deleteCardTarget
+    setDeleteCardTarget(null)
+    onCardDeleted(target.id)
     try {
-      const created = await createCard({
-        column_id: column.id,
-        text,
-        color: draftColor,
+      await deleteCard(target.id)
+      showToast('Карточка удалена', 'info', {
+        duration: 5000,
+        action: {
+          label: 'Отменить',
+          onClick: () => {
+            void (async () => {
+              try {
+                let restored = await createCard({
+                  column_id: target.column_id,
+                  text: target.text,
+                  color: target.color,
+                })
+                if (target.group_id) {
+                  try {
+                    restored = await addCardToGroup(target.group_id, restored.id)
+                  } catch {
+                    // Группа могла быть расформирована за это время — карточку всё равно возвращаем.
+                  }
+                }
+                onCardCreated(restored)
+              } catch (restoreErr) {
+                showToast(
+                  getApiErrorMessage(restoreErr, 'Не удалось восстановить карточку'),
+                  'error',
+                )
+              }
+            })()
+          },
+        },
       })
-      onCardCreated(created)
-      setDraftText('')
-      textareaRef.current?.focus({ preventScroll: true })
     } catch (err) {
-      showToast(getApiErrorMessage(err, 'Не удалось создать карточку'), 'error')
-    } finally {
-      setCreating(false)
+      onCardRestored?.(target, err)
+      showToast(getApiErrorMessage(err, 'Не удалось удалить карточку'), 'error')
     }
   }
 
@@ -710,17 +944,18 @@ function Column({
             className="scrollbar-subtle flex-1 space-y-2.5 overflow-y-auto px-3 pt-1.5 pb-3 min-h-[72px]"
           >
           <SortableContext
-            items={filteredAndSortedCards.map((c) => c.id)}
+            items={visibleOrderedCardIds}
             strategy={verticalListSortingStrategy}
           >
             {groups.map((group) => {
-              const groupCards = filteredAndSortedCards.filter((c) => c.group_id === group.id)
+              const groupCards = cardsByGroup.get(group.id) ?? []
               if (groupCards.length === 0 && (searchQuery.trim() || onlyMine || Boolean(colorFilter))) return null
               return (
                 <CardGroupWidget
                   key={group.id}
                   group={group}
                   cards={groupCards}
+                  allCardIds={allCardIdsByGroup.get(group.id)}
                   collapsed={Boolean(collapsedGroups[group.id])}
                   onToggleCollapse={onToggleCollapse}
                   currentUserId={myId}
@@ -734,6 +969,7 @@ function Column({
                   onCardUpdated={onCardUpdated}
                   onCardPatched={onCardPatched}
                   onCardDeleted={onCardDeleted}
+                  onRequestCardDelete={setDeleteCardTarget}
                   onCardRestored={onCardRestored}
                   onCardRejected={onCardRejected}
                   groupTargetId={groupTargetId}
@@ -768,6 +1004,7 @@ function Column({
                 onUpdated={onCardUpdated}
                 onPatched={onCardPatched}
                 onDeleted={onCardDeleted}
+                onRequestDelete={setDeleteCardTarget}
                 onRestored={onCardRestored}
                 onRejected={onCardRejected}
                 isGroupTarget={groupTargetId === card.id}
@@ -823,125 +1060,35 @@ function Column({
         </div>
 
         {/* Inline card composer */}
-        <div className="shrink-0 border-t px-3 py-2.5">
-          <AnimatePresence initial={false} mode="wait">
-            {composerOpen && canCreateCard ? (
-              <motion.div
-                key="composer-form"
-                data-testid="card-composer"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                className="-m-1 overflow-hidden p-1"
-              >
-                <div className="space-y-2 rounded-xl border bg-background p-2.5 shadow-xs">
-                  <Textarea
-                    ref={textareaRef}
-                    value={draftText}
-                    onChange={(e) => {
-                      const nextVal = e.target.value
-                      setDraftText(nextVal)
-                      emitTyping(nextVal.trim().length > 0)
-                    }}
-                    onBlur={() => emitTyping(false)}
-                    rows={2}
-                    autoFocus
-                    placeholder="Опишите мысль... (Enter — добавить)"
-                    className="min-h-[60px] resize-none border-0 bg-transparent p-1 text-sm focus-visible:ring-0"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        emitTyping(false)
-                        void handleAddCard()
-                      } else if (e.key === 'Escape') {
-                        emitTyping(false)
-                        setComposerOpen(false)
-                      }
-                    }}
-                  />
-                  <div className="flex items-center justify-between gap-2 pt-1">
-                    <div className="flex items-center gap-1">
-                      {CARD_COLOR_PRESETS.map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => setDraftColor(c.hex)}
-                          title={c.name}
-                          aria-label={`Цвет карточки: ${c.name}`}
-                          aria-pressed={draftColor.toLowerCase() === c.hex.toLowerCase()}
-                          className={cn(
-                            'flex h-4 w-4 items-center justify-center rounded-full border transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary',
-                            c.swatchClass,
-                            draftColor.toLowerCase() === c.hex.toLowerCase() &&
-                              'ring-2 ring-primary ring-offset-1 ring-offset-background',
-                          )}
-                        >
-                          {c.id !== 'default' && (
-                            <span
-                              className="h-2 w-2 rounded-full"
-                              style={{ backgroundColor: c.accentDot }}
-                            />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-7 w-7"
-                        onClick={() => {
-                          emitTyping(false)
-                          setComposerOpen(false)
-                        }}
-                        aria-label="Отменить"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="h-7 px-3 text-xs"
-                        disabled={!draftText.trim() || creating}
-                        onClick={() => {
-                          emitTyping(false)
-                          void handleAddCard()
-                        }}
-                      >
-                        {creating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                        Добавить
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="composer-btn"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
-                className="-m-1 overflow-hidden p-1"
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  data-column-add-btn="true"
-                  disabled={!canCreateCard}
-                  onClick={() => setComposerOpen(true)}
-                  className="w-full justify-start gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
-                >
-                  <Plus className="h-4 w-4" />
-                  Добавить карточку
-                </Button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+        <ColumnComposer
+          columnId={column.id}
+          open={composerOpen}
+          canCreateCard={canCreateCard}
+          onOpenChange={setComposerOpen}
+          onCardCreated={onCardCreated}
+          onTypingChange={onTypingChange}
+        />
       </motion.section>
+
+      <AlertDialog open={Boolean(deleteCardTarget)} onOpenChange={(o) => !o && setDeleteCardTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить карточку?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Карточка будет удалена с доски для всех участников.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmCardDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

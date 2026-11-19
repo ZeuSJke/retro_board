@@ -24,10 +24,13 @@ const KEY_RIGHT = 'ArrowRight'
 
 const COLUMN_PREFIX = 'col-'
 const GROUP_PREFIX = 'group-'
+const GROUP_DROP_PREFIX = 'group-drop-'
 const MASTER_ID = 'master-col'
 
 const isColumnId = (id: UniqueIdentifier) => String(id).startsWith(COLUMN_PREFIX)
-const isCardId = (id: UniqueIdentifier) => !isColumnId(id) && String(id) !== MASTER_ID
+const isGroupDropId = (id: UniqueIdentifier) => String(id).startsWith(GROUP_DROP_PREFIX)
+const isCardId = (id: UniqueIdentifier) =>
+  !isColumnId(id) && !isGroupDropId(id) && String(id) !== MASTER_ID
 
 interface ColumnRect {
   /** Идентификатор колонки (без префикса зоны сброса). */
@@ -136,8 +139,10 @@ export const boardCollisionDetection: CollisionDetection = (args) => {
     if (columns.length > 0) return columns
     return closestCenter(args)
   }
-  const cards = pointer.filter((c) => !isColumnId(c.id))
+  const cards = pointer.filter((c) => !isColumnId(c.id) && !isGroupDropId(c.id))
   if (cards.length > 0) return cards
+  const groupDrops = pointer.filter((c) => isGroupDropId(c.id))
+  if (groupDrops.length > 0) return groupDrops
   if (pointer.length > 0) return pointer
   return closestCenter(args)
 }

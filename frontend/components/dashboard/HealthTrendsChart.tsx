@@ -25,6 +25,8 @@ import { buildHealthTrendRows, type HealthTrendRow, type HealthTrendRowPoint } f
 interface Props {
   questions: HealthQuestion[]
   points: HealthTrendPoint[]
+  /** Двухколоночная раскладка строк только на всю ширину страницы, иначе спарклайн сжимается. */
+  wide?: boolean
 }
 
 // Линия нейтральная: сам показатель несут точки. У вопросов точка окрашена по светофору
@@ -199,7 +201,7 @@ function TrendRow({ row }: { row: HealthTrendRow }) {
  * У каждого ряда своя шкала (вопросы — от 1 до 3, оценка встречи — от 1 до 5),
  * поэтому это отдельные мини-графики с общей осью досок, а не линии на одном поле.
  */
-export default memo(function HealthTrendsChart({ questions, points }: Props) {
+export default memo(function HealthTrendsChart({ questions, points, wide = false }: Props) {
   const { rows, axis } = useMemo(() => buildHealthTrendRows(questions, points), [questions, points])
   if (axis.length === 0) return null
 
@@ -208,7 +210,11 @@ export default memo(function HealthTrendsChart({ questions, points }: Props) {
 
   return (
     <div data-testid="health-trends">
-      <div className="grid grid-cols-1 gap-x-10 lg:grid-cols-2">
+      <div
+        className={
+          wide ? 'grid grid-cols-1 gap-x-10 lg:grid-cols-2' : 'grid grid-cols-1 divide-y divide-border/40'
+        }
+      >
         {rows.map((row) => (
           <TrendRow key={row.key} row={row} />
         ))}

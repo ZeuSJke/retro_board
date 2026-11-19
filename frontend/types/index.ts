@@ -1,4 +1,5 @@
 import type { HealthTeamSummary, WsHealthCheckRequestedData } from './health'
+import type { BoardThemeStat } from './themes'
 
 export interface BoardMood {
   id: string
@@ -64,6 +65,7 @@ export interface BoardCreatePayload {
   custom_columns?: ColumnSeed[]
   source_board_id?: string | null
   carry_forward_items?: boolean
+  carry_forward_item_ids?: string[]
   hide_cards_until_reveal?: boolean
   anonymous_votes?: boolean
   allow_multiple_votes_per_card?: boolean
@@ -74,6 +76,7 @@ export interface BoardUpdatePayload {
   max_votes?: number
   is_locked?: boolean
   hide_cards_until_reveal?: boolean
+  reset_cards_revealed?: boolean
   anonymous_votes?: boolean
   allow_multiple_votes_per_card?: boolean
 }
@@ -255,7 +258,7 @@ export type WsMessage = WsEnvelopeBase &
     | { event: 'board_updated'; data: WsBoardUpdatedData }
     | { event: 'board_deleted'; data: WsDeletedData }
     | { event: 'column_created'; data: Column }
-    | { event: 'column_updated'; data: Column }
+    | { event: 'column_updated'; data: ColumnInfo | Column }
     | { event: 'column_deleted'; data: WsDeletedData }
     | { event: 'card_created'; data: Card }
     | { event: 'card_updated'; data: Card }
@@ -440,6 +443,7 @@ export interface BoardSummary {
   key_themes: string[]
   recommendations: string[]
   created_at: string
+  theme_stats?: BoardThemeStat[]
 }
 
 export interface AppStore {

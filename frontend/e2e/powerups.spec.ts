@@ -89,7 +89,7 @@ test.describe('Курсор, автоссылки и улучшения доск
     await expect(secondColumn.getByTestId('card-widget').filter({ hasText: 'пайплайн' })).toBeVisible()
   })
 
-  test('фильтр по цвету стикеров и навигация Prev/Next в Spotlight', async ({ page, request }) => {
+  test('фильтр по цвету карточек и навигация Prev/Next в Spotlight', async ({ page, request }) => {
     const wsData = await ensureE2EWorkspace(request)
     const board = await createBoardViaAPI(request, 'E2E Spotlight Filter', wsData.token)
     const csrf = await getCsrfHeaders(request)
@@ -112,7 +112,7 @@ test.describe('Курсор, автоссылки и улучшения доск
     await expect(page.getByText('Вторая зелёная карточка')).toBeVisible()
 
     // Filter by amber color
-    await page.getByTitle('Фильтр по цвету стикеров').click()
+    await page.getByTitle('Фильтр по цвету карточек').click()
     await page.getByLabel('Фильтр по цвету: Тёплый песок').click()
     await expect(page.getByText('Первая жёлтая карточка')).toBeVisible()
     await expect(page.getByText('Вторая зелёная карточка')).toHaveCount(0)

@@ -1,11 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { create } from 'zustand'
 import { ArrowLeft, Maximize2, RefreshCw, Share2 } from 'lucide-react'
 import { getWorkspaceInviteToken } from '@/api/invite'
 import { useOpeningCount } from '@/lib/use-opening-count'
 import { useAppStore } from '@/store'
+import { useUiStore } from '@/store/uiStore'
 import type { Board } from '@/types'
 import { getApiErrorMessage } from '@/utils/apiError'
 import { buildInviteLink } from '@/utils/inviteLinks'
@@ -179,23 +179,9 @@ function ShareBoardContent({ board }: { board: ShareableBoard }) {
 
 // ── Кнопка в шапке доски ─────────────────────────────────────────────────────
 
-interface ShareDialogState {
-  open: boolean
-  setOpen: (open: boolean) => void
-}
-
-/**
- * Открыт ли диалог — вне компонентов: кнопка в шапке и пункт меню на телефоне стоят
- * в разных местах разметки, а диалог один.
- */
-const useShareDialog = create<ShareDialogState>()((set) => ({
-  open: false,
-  setOpen: (open) => set({ open }),
-}))
-
 /** Открыть «Поделиться» из любого места доски. Сам диалог рисует `ShareBoardButton`. */
 export function openShareBoardDialog(): void {
-  useShareDialog.getState().setOpen(true)
+  useUiStore.getState().setShareDialogOpen(true)
 }
 
 /**
@@ -206,11 +192,11 @@ export function openShareBoardDialog(): void {
  * значок с подписью.
  */
 export function ShareBoardButton({ board }: { board: ShareableBoard }) {
-  const open = useShareDialog((s) => s.open)
-  const setOpen = useShareDialog((s) => s.setOpen)
+  const open = useUiStore((s) => s.shareDialogOpen)
+  const setOpen = useUiStore((s) => s.setShareDialogOpen)
 
   // Шапка исчезла (выход, смена сессии) — диалог не должен всплыть при следующем показе
-  useEffect(() => () => useShareDialog.getState().setOpen(false), [])
+  useEffect(() => () => useUiStore.getState().setShareDialogOpen(false), [])
 
   return (
     <>

@@ -272,10 +272,37 @@ async def broadcast_card(
     await card_broadcast_action(board, event, card, wrap)()
 
 
-async def broadcast_mood(board: models.Board, mood: models.BoardMood) -> None:
-    await manager.broadcast_each(
-        board.id, "mood_updated", lambda viewer_id: mood_view(mood, board, viewer_id)
+def mood_broadcast_action(
+    board: models.Board, mood: models.BoardMood
+) -> Callable[[], Awaitable[None]]:
+    """Снять поля настроения и доски до закрытия сессии и вернуть корутину рассылки."""
+    board_snap = SimpleNamespace(id=board.id, anonymous_votes=board.anonymous_votes)
+    mood_snap = SimpleNamespace(
+        id=mood.id,
+        board_id=mood.board_id,
+        author=mood.author,
+        participant_id=mood.participant_id,
+        score=mood.score,
+        note=mood.note,
+        created_at=mood.created_at,
     )
+
+    async def _send() -> None:
+        await manager.broadcast_each(
+            board_snap.id,
+            "mood_updated",
+            lambda viewer_id: mood_view(
+                cast(models.BoardMood, mood_snap),
+                cast(models.Board, board_snap),
+                viewer_id,
+            ),
+        )
+
+    return _send
+
+
+async def broadcast_mood(board: models.Board, mood: models.BoardMood) -> None:
+    await mood_broadcast_action(board, mood)()
 
 
 # ── Права ────────────────────────────────────────────────────────────────────

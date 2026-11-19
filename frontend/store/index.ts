@@ -153,7 +153,8 @@ export const useAppStore = create<AppStore>()(
           username: participant.name,
         })),
       setAiEnabled: (enabled) => set({ aiEnabled: enabled }),
-      clearSession: () => set({ workspace: null, participant: null }),
+      clearSession: () =>
+        set({ workspace: null, participant: null, aiEnabled: null }),
       setHasHydrated: (hydrated: boolean) => set({ _hasHydrated: hydrated }),
     }),
     {

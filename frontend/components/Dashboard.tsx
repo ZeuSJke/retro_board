@@ -7,30 +7,12 @@ import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { motion } from 'motion/react'
 import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
-  useDraggable,
-  useDroppable,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from '@dnd-kit/core'
-import { BrandMark } from '@/components/BrandLogo'
-import {
   Activity,
   ArrowLeft,
   ArrowRight,
   Bot,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   Circle,
-  Clock,
-  ExternalLink,
-  GripVertical,
   HeartPulse,
   Kanban,
   Layers,
@@ -45,9 +27,9 @@ import {
   Search,
   Sparkles,
   Sun,
-  Trash2,
 } from 'lucide-react'
 import {
+  createActionItem,
   deleteActionItem,
   getActionItemTrends,
   getAllActionItems,
@@ -63,8 +45,15 @@ import { createAgentToken, getAgentTokens, revokeAgentToken } from '../api/agent
 import { getHealthQuestions, getHealthTrends } from '../api/health'
 import { getTeamThemes } from '../api/themes'
 import { useAppStore } from '../store'
-import { useWebSocket } from '../hooks/useWebSocket'
+import { useWebSocket, type WsOpenInfo } from '../hooks/useWebSocket'
+import {
+  ACTION_ITEM_NEXT_STATUS,
+  restoreDeletedActionItem,
+  withoutCarriedOriginals,
+} from '@/lib/action-items'
 import { queryKeys } from '../lib/query-client'
+import { parseSafeExternalUrl } from '@/lib/urls'
+import { useOpeningCount } from '@/lib/use-opening-count'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage, getApiErrorStatus, markApiErrorReported, quietQuery } from '../utils/apiError'
 import { boardToBoardListItem } from '../utils/boardMapper'
@@ -72,6 +61,7 @@ import { isBoardListItem, isBoardUpdatedData, isDeletedData } from '../utils/wsD
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
 import { avatarSeed } from '@/lib/participants'
 import type {
+  ActionItem,
   ActionItemStatus,
   Board,
   BoardListItem,
@@ -83,7 +73,8 @@ import type {
   WsMessage,
 } from '../types'
 import type { HealthTrendPoint } from '../types/health'
-import ActionItemExternalLink from './ActionItemExternalLink'
+import ActionItemCard from './action-items/ActionItemCard'
+import ActionItemsKanban from './action-items/ActionItemsKanban'
 import AgentTokensDialog, { type AgentTokensAdapter } from './AgentTokensDialog'
 import BoardsPanel from './BoardsPanel'
 import CarryForwardDialog from './CarryForwardDialog'
@@ -106,7 +97,17 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -118,7 +119,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { RichCardText } from './RichCardText'
+import { BrandMark } from '@/components/BrandLogo'
 
 // Графики тянут recharts — самую тяжёлую зависимость дашборда. Грузим их отдельным чанком
 // и только когда есть что рисовать; заглушка держит высоту, чтобы карточка не прыгала.
@@ -138,138 +139,183 @@ const HealthTrendsChart = dynamic(() => import('./dashboard/HealthTrendsChart'),
   loading: HealthPlaceholder,
 })
 
-/** Задача с признаком переноса: оригинал, перенесённый на другую доску, открытым не считается. */
-type CarriedAwareItem = DashboardActionItem & { superseded_by_id?: string | null }
-
-/** Одна реальная задача — одна запись: перенесённые оригиналы представлены своими копиями. */
-function withoutCarriedOriginals(list: CarriedAwareItem[]): DashboardActionItem[] {
-  return list.filter((item) => !item.superseded_by_id)
+interface CreateTaskFormProps {
+  boards: BoardListItem[]
+  defaultBoardId: string
+  onCancel: () => void
+  onCreated: (item: DashboardActionItem) => void
 }
 
-const KANBAN_VISIBLE_LIMIT = 6
+function CreateTaskForm({ boards, defaultBoardId, onCancel, onCreated }: CreateTaskFormProps) {
+  const [boardId, setBoardId] = useState(defaultBoardId)
+  const [title, setTitle] = useState('')
+  const [text, setText] = useState('')
+  const [assignee, setAssignee] = useState('')
+  const [status, setStatus] = useState<ActionItemStatus>('open')
+  const [externalUrl, setExternalUrl] = useState('')
+  const [urlError, setUrlError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
-const NEXT_STATUS: Record<ActionItemStatus, ActionItemStatus> = {
-  open: 'in_progress',
-  in_progress: 'done',
-  done: 'open',
-}
-
-const STATUS_META: Record<
-  ActionItemStatus,
-  { label: string; colorClass: string; badgeVariant: 'warning' | 'secondary' | 'success'; Icon: typeof Circle }
-> = {
-  open: {
-    label: 'Открыто',
-    colorClass: 'text-amber-600 dark:text-amber-400',
-    badgeVariant: 'warning',
-    Icon: Circle,
-  },
-  in_progress: {
-    label: 'В работе',
-    colorClass: 'text-sky-600 dark:text-sky-400',
-    badgeVariant: 'secondary',
-    Icon: Clock,
-  },
-  done: {
-    label: 'Выполнено',
-    colorClass: 'text-emerald-600 dark:text-emerald-400',
-    badgeVariant: 'success',
-    Icon: CheckCircle2,
-  },
-}
-
-interface DragBindings {
-  setNodeRef: (el: HTMLElement | null) => void
-  attributes: ReturnType<typeof useDraggable>['attributes']
-  listeners: ReturnType<typeof useDraggable>['listeners']
-  isDragging: boolean
-}
-
-function KanbanColumnDropzone({
-  status,
-  count,
-  meta,
-  collapsed,
-  onToggleCollapse,
-  children,
-}: {
-  status: ActionItemStatus
-  count: number
-  meta: (typeof STATUS_META)[ActionItemStatus]
-  collapsed: boolean
-  onToggleCollapse: () => void
-  children: React.ReactNode
-}) {
-  const { setNodeRef, isOver } = useDroppable({ id: status })
-  const Icon = meta.Icon
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmedText = text.trim()
+    const trimmedUrl = externalUrl.trim()
+    if (!trimmedText || !boardId || saving) return
+    if (trimmedUrl && !parseSafeExternalUrl(trimmedUrl)) {
+      setUrlError('Укажите корректную ссылку http:// или https://')
+      return
+    }
+    setSaving(true)
+    setUrlError(null)
+    try {
+      const created = await createActionItem({
+        board_id: boardId,
+        title: title.trim() || undefined,
+        text: trimmedText,
+        assignee: assignee.trim() || undefined,
+        status,
+        external_url: trimmedUrl || undefined,
+      })
+      const boardName = boards.find((b) => b.id === boardId)?.name ?? ''
+      onCreated({ ...created, board_name: boardName })
+      showToast('Задача создана', 'success')
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось создать задачу'), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
-    <div
-      ref={setNodeRef}
-      data-testid={`kanban-column-${status}`}
-      className={cn(
-        'flex flex-col rounded-2xl border bg-muted/30 p-3 transition-colors',
-        isOver && 'border-primary/70 bg-primary/5 ring-2 ring-primary/15',
-      )}
-    >
-      <div className="mb-3 flex items-center justify-between gap-2 px-1">
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? `Развернуть колонку ${meta.label}` : `Свернуть колонку ${meta.label}`}
-          className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground transition-colors hover:text-primary"
+    <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <ListTodo className="h-5 w-5 text-primary" />
+          Новая задача
+        </DialogTitle>
+        <DialogDescription>
+          Создайте задачу команды и привяжите её к доске ретроспективы.
+        </DialogDescription>
+      </DialogHeader>
+
+      <DialogBody className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="new-task-board">Доска</Label>
+            <Select value={boardId} onValueChange={setBoardId}>
+              <SelectTrigger id="new-task-board">
+                <SelectValue placeholder="Выберите доску" />
+              </SelectTrigger>
+              <SelectContent>
+                {boards.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="new-task-status">Статус</Label>
+            <Select value={status} onValueChange={(v) => setStatus(v as ActionItemStatus)}>
+              <SelectTrigger id="new-task-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="open">Открыто</SelectItem>
+                <SelectItem value="in_progress">В работе</SelectItem>
+                <SelectItem value="done">Выполнено</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="new-task-title">Заголовок</Label>
+          <Input
+            id="new-task-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Краткое название (необязательно)"
+            maxLength={200}
+            autoFocus
+            data-testid="new-task-title-input"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="new-task-text">Описание</Label>
+          <Textarea
+            id="new-task-text"
+            autoResize
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Что именно нужно сделать и какой ожидаемый результат..."
+            maxLength={1000}
+            className="min-h-[84px]"
+            data-testid="new-task-text-input"
+          />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="new-task-assignee">Ответственный</Label>
+            <Input
+              id="new-task-assignee"
+              value={assignee}
+              onChange={(e) => setAssignee(e.target.value)}
+              placeholder="Имя участника"
+              maxLength={80}
+              data-testid="new-task-assignee-input"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="new-task-url">Внешняя ссылка</Label>
+            <Input
+              id="new-task-url"
+              value={externalUrl}
+              onChange={(e) => {
+                setExternalUrl(e.target.value)
+                if (urlError) setUrlError(null)
+              }}
+              placeholder="https://tracker.company.ru/TASK-1"
+              data-testid="new-task-url-input"
+            />
+            {urlError && <p className="text-[11px] text-destructive">{urlError}</p>}
+          </div>
+        </div>
+      </DialogBody>
+
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Отмена
+        </Button>
+        <Button
+          type="submit"
+          disabled={!text.trim() || !boardId || saving}
+          data-testid="new-task-submit-btn"
         >
-          {collapsed ? (
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+          {saving ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Создаём...
+            </>
           ) : (
-            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+            'Создать задачу'
           )}
-          <Icon className={cn('h-4 w-4 shrink-0', meta.colorClass)} />
-          <span className="truncate">{meta.label}</span>
-        </button>
-        <Badge variant="secondary" className="tabular-nums">
-          {count}
-        </Badge>
-      </div>
-
-      {collapsed ? (
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          className="rounded-xl border border-dashed border-border/80 bg-background/50 px-3 py-4 text-center text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-        >
-          Колонка свёрнута ({count}) — нажмите, чтобы развернуть
-        </button>
-      ) : (
-        children
-      )}
-    </div>
+        </Button>
+      </DialogFooter>
+    </form>
   )
-}
-
-function KanbanDraggableCard({
-  item,
-  dragDisabled,
-  renderCard,
-}: {
-  item: DashboardActionItem
-  dragDisabled: boolean
-  renderCard: (item: DashboardActionItem, kanbanMode: boolean, drag?: DragBindings) => React.ReactNode
-}) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: item.id,
-    data: { status: item.status },
-    disabled: dragDisabled,
-  })
-
-  return <>{renderCard(item, true, { setNodeRef, attributes, listeners, isDragging })}</>
 }
 
 export default function Dashboard() {
   const router = useRouter()
   const queryClient = useQueryClient()
-  const { theme, setTheme } = useTheme()
+  const { theme, resolvedTheme, setTheme } = useTheme()
+  const isDark = (resolvedTheme ?? theme) === 'dark'
   const workspace = useAppStore((s) => s.workspace)
   const participant = useAppStore((s) => s.participant)
   const savedName = useAppStore((s) => s.username)
@@ -289,7 +335,7 @@ export default function Dashboard() {
   if (workspace && !hadWorkspace) setHadWorkspace(true)
 
   const workspaceId = workspace?.workspaceId ?? 'anonymous'
-  const queriesEnabled = hasHydrated && Boolean(workspace)
+  const queriesEnabled = hasHydrated && Boolean(workspace && participant)
   const boardsKey = useMemo(() => queryKeys.boards(workspaceId), [workspaceId])
   const itemsKey = useMemo(
     () => queryKeys.dashboardActionItems(workspaceId, { status: 'all', boardId: 'all', assignee: '' }),
@@ -310,30 +356,9 @@ export default function Dashboard() {
   const [boardFilter, setBoardFilter] = useState<string>('all')
   const [assigneeFilter, setAssigneeFilter] = useState<string>('')
   const [doneCollapsed, setDoneCollapsed] = useState(true)
-  const [collapsedKanbanCols, setCollapsedKanbanCols] = useState<Record<ActionItemStatus, boolean>>({
-    open: false,
-    in_progress: false,
-    done: false,
-  })
-  const [expandedKanbanCols, setExpandedKanbanCols] = useState<Record<ActionItemStatus, boolean>>({
-    open: false,
-    in_progress: false,
-    done: false,
-  })
-  const [activeDragId, setActiveDragId] = useState<string | null>(null)
-
-  const kanbanSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor),
-  )
-
-  const [editingTitleId, setEditingTitleId] = useState<string | null>(null)
-  const [editTitle, setEditTitle] = useState('')
-  const [editingDescId, setEditingDescId] = useState<string | null>(null)
-  const [editDesc, setEditDesc] = useState('')
-  const [editAssigneeId, setEditAssigneeId] = useState<string | null>(null)
-  const [editAssignee, setEditAssignee] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<DashboardActionItem | null>(null)
+  const [newTaskOpen, setNewTaskOpen] = useState(false)
+  const newTaskOpening = useOpeningCount(newTaskOpen)
 
   const [createBoardOpen, setCreateBoardOpen] = useState(false)
   const [carryOpen, setCarryOpen] = useState(false)
@@ -425,7 +450,10 @@ export default function Dashboard() {
 
   const primaryError = boardsQuery.error ?? itemsQuery.error
   const authError = primaryError !== null && getApiErrorStatus(primaryError) === 401
-  const needsAuth = (hasHydrated && !workspace) || (hadWorkspace && !workspace) || authError
+  const needsAuth =
+    (hasHydrated && (!workspace || !participant)) ||
+    (hadWorkspace && (!workspace || !participant)) ||
+    authError
   // До гидрации стора и до первого ответа не показываем нулевые счётчики.
   const loading =
     !hasHydrated ||
@@ -478,6 +506,7 @@ export default function Dashboard() {
         // Вместе с доской уходят её задачи и точки на графиках
         setBoards((prev) => prev.filter((b) => b.id !== deletedId))
         setItems((prev) => prev.filter((i) => i.board_id !== deletedId))
+        setSummaryModalBoard((prev) => (prev?.id === deletedId ? null : prev))
         queryClient.setQueryData<TrendPoint[]>(trendsKey, (prev = []) =>
           prev.filter((t) => t.board_id !== deletedId),
         )
@@ -487,12 +516,20 @@ export default function Dashboard() {
         queryClient.setQueryData<HealthTrendPoint[]>(healthTrendsKey, (prev = []) =>
           prev.filter((h) => h.board_id !== deletedId),
         )
+        void queryClient.invalidateQueries({ queryKey: themesKey })
       }
     },
-    [queryClient, setBoards, setItems, trendsKey, moodTrendsKey, healthTrendsKey],
+    [queryClient, setBoards, setItems, trendsKey, moodTrendsKey, healthTrendsKey, themesKey],
   )
 
-  useWebSocket('workspace', handleWorkspaceWs, undefined, { expectPong: true })
+  const handleWorkspaceOpen = useCallback(
+    (info: WsOpenInfo) => {
+      if (info.reconnected) void loadData()
+    },
+    [loadData],
+  )
+
+  useWebSocket('workspace', handleWorkspaceWs, handleWorkspaceOpen, { expectPong: true })
 
   const openBoardSummary = async (item: BoardListItem) => {
     if (summaryOpeningId) return
@@ -645,24 +682,25 @@ export default function Dashboard() {
   )
 
   const toggleStatus = async (item: DashboardActionItem, explicitStatus?: ActionItemStatus) => {
-    const next = explicitStatus ?? NEXT_STATUS[item.status]
+    const next = explicitStatus ?? ACTION_ITEM_NEXT_STATUS[item.status]
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: next } : i)))
     try {
       const updated = await updateActionItem(item.id, { status: next })
       setItems((prev) =>
         prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)),
       )
+      void queryClient.invalidateQueries({ queryKey: trendsKey })
     } catch (err) {
       setItems((prev) => prev.map((i) => (i.id === item.id ? item : i)))
       showToast(getApiErrorMessage(err, 'Не удалось обновить статус'), 'error')
     }
   }
 
-  const saveTitle = async (id: string) => {
-    setEditingTitleId(null)
-    if (!editTitle.trim()) return
+  const saveTitle = async (id: string, nextTitle: string) => {
+    const trimmed = nextTitle.trim()
+    if (!trimmed) return
     try {
-      const updated = await updateActionItem(id, { title: editTitle.trim() })
+      const updated = await updateActionItem(id, { title: trimmed })
       setItems((prev) =>
         prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)),
       )
@@ -671,11 +709,11 @@ export default function Dashboard() {
     }
   }
 
-  const saveDesc = async (id: string) => {
-    setEditingDescId(null)
-    if (!editDesc.trim()) return
+  const saveDesc = async (id: string, nextText: string) => {
+    const trimmed = nextText.trim()
+    if (!trimmed) return
     try {
-      const updated = await updateActionItem(id, { text: editDesc.trim() })
+      const updated = await updateActionItem(id, { text: trimmed })
       setItems((prev) =>
         prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)),
       )
@@ -684,10 +722,9 @@ export default function Dashboard() {
     }
   }
 
-  const saveAssignee = async (id: string) => {
-    setEditAssigneeId(null)
+  const saveAssignee = async (id: string, nextAssignee: string | null) => {
     try {
-      const updated = await updateActionItem(id, { assignee: editAssignee.trim() || null })
+      const updated = await updateActionItem(id, { assignee: nextAssignee })
       setItems((prev) =>
         prev.map((i) => (i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i)),
       )
@@ -703,6 +740,32 @@ export default function Dashboard() {
     try {
       await deleteActionItem(target.id)
       setItems((prev) => prev.filter((i) => i.id !== target.id))
+      void queryClient.invalidateQueries({ queryKey: trendsKey })
+      void queryClient.invalidateQueries({ queryKey: boardsKey })
+      showToast('Задача удалена', 'info', {
+        duration: 5000,
+        action: {
+          label: 'Отменить',
+          onClick: () => {
+            void (async () => {
+              try {
+                const restored = await restoreDeletedActionItem(target)
+                setItems((prev) => [
+                  { ...restored, board_name: target.board_name },
+                  ...prev.filter((i) => i.id !== restored.id),
+                ])
+                void queryClient.invalidateQueries({ queryKey: trendsKey })
+                void queryClient.invalidateQueries({ queryKey: boardsKey })
+              } catch (restoreErr) {
+                showToast(
+                  getApiErrorMessage(restoreErr, 'Не удалось восстановить задачу'),
+                  'error',
+                )
+              }
+            })()
+          },
+        },
+      })
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Не удалось удалить задачу'), 'error')
     }
@@ -729,249 +792,32 @@ export default function Dashboard() {
     )
   }
 
-  const activeDragItem = useMemo(
-    () => (activeDragId ? items.find((i) => i.id === activeDragId) ?? null : null),
-    [activeDragId, items],
-  )
-
-  const handleKanbanDragStart = (event: DragStartEvent) => {
-    setActiveDragId(String(event.active.id))
-  }
-
-  const handleKanbanDragEnd = (event: DragEndEvent) => {
-    setActiveDragId(null)
-    if (!event.over) return
-    const targetStatus = String(event.over.id) as ActionItemStatus
-    if (targetStatus !== 'open' && targetStatus !== 'in_progress' && targetStatus !== 'done') {
-      return
-    }
-    const dragged = items.find((i) => i.id === String(event.active.id))
-    if (dragged && dragged.status !== targetStatus) {
-      void toggleStatus(dragged, targetStatus)
-    }
-  }
-
-  const renderTaskCard = (
-    item: DashboardActionItem,
-    kanbanMode = false,
-    drag?: DragBindings,
-    isOverlay = false,
-  ) => {
-    const meta = STATUS_META[item.status]
-    const StatusIcon = meta.Icon
-    const isDone = item.status === 'done'
-    const isEditing =
-      editingTitleId === item.id || editingDescId === item.id || editAssigneeId === item.id
-    return (
-      <div
-        key={item.id}
-        ref={drag?.setNodeRef}
-        {...(drag && !isEditing ? drag.attributes : {})}
-        {...(drag && !isEditing ? drag.listeners : {})}
-        className={cn(
-          'group rounded-xl border bg-card p-3.5 shadow-xs transition-all hover:shadow-md',
-          isDone && 'opacity-75',
-          drag?.isDragging && 'opacity-35 ring-1 ring-primary/40',
-          isOverlay && 'rotate-1 scale-[1.02] shadow-2xl opacity-95 border-primary/40',
-        )}
-      >
-        <div className="flex items-start gap-2">
-          {kanbanMode && (
-            <span
-              data-testid={`kanban-drag-handle-${item.id}`}
-              title="Перетащить задачу в другую колонку"
-              aria-hidden="true"
-              className="mt-0.5 flex h-4 w-4 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/55 transition-colors hover:bg-foreground/10 hover:text-foreground group-hover:text-muted-foreground active:cursor-grabbing dark:hover:bg-white/15"
-            >
-              <GripVertical className="h-3.5 w-3.5" />
-            </span>
-          )}
-
-          <button
-            type="button"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => toggleStatus(item)}
-            title={`${meta.label} → ${STATUS_META[NEXT_STATUS[item.status]].label}`}
-            className={cn('mt-0.5 shrink-0 transition-transform hover:scale-110', meta.colorClass)}
-          >
-            <StatusIcon className="h-4 w-4" />
-          </button>
-
-          <div className="min-w-0 flex-1 space-y-1">
-            {editingTitleId === item.id ? (
-              <Input
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                onBlur={() => saveTitle(item.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void saveTitle(item.id)
-                  if (e.key === 'Escape') setEditingTitleId(null)
-                }}
-                autoFocus
-                className="h-7 text-xs font-semibold"
-              />
-            ) : (
-              <div
-                onDoubleClick={() => {
-                  setEditingTitleId(item.id)
-                  setEditTitle(item.title || item.text)
-                }}
-                title="Двойной клик — редактировать"
-                className={cn('cursor-text text-sm font-semibold leading-snug', isDone && 'line-through')}
-              >
-                <RichCardText text={item.title || item.text} />
-              </div>
-            )}
-
-            {editingDescId === item.id ? (
-              <Textarea
-                autoResize
-                value={editDesc}
-                onChange={(e) => setEditDesc(e.target.value)}
-                onBlur={() => saveDesc(item.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && e.ctrlKey) void saveDesc(item.id)
-                  if (e.key === 'Escape') setEditingDescId(null)
-                }}
-                autoFocus
-                className="min-h-[54px] text-xs"
-              />
-            ) : (
-              <p
-                onDoubleClick={() => {
-                  setEditingDescId(item.id)
-                  setEditDesc(item.text)
-                }}
-                title="Двойной клик — редактировать описание"
-                className="cursor-text whitespace-pre-wrap wrap-break-word text-xs text-muted-foreground"
-              >
-                <RichCardText text={item.text} />
-              </p>
-            )}
-          </div>
-
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onPointerDown={(e) => e.stopPropagation()}
-            className="h-7 w-7 opacity-80 sm:opacity-0 transition-opacity sm:group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
-            onClick={() => setDeleteTarget(item)}
-            title="Удалить"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-2.5 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            {editAssigneeId === item.id ? (
-              <Input
-                value={editAssignee}
-                onChange={(e) => setEditAssignee(e.target.value)}
-                onBlur={() => saveAssignee(item.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void saveAssignee(item.id)
-                  if (e.key === 'Escape') setEditAssigneeId(null)
-                }}
-                placeholder="Ответственный"
-                autoFocus
-                className="h-6 w-36 text-xs"
-              />
-            ) : (
-              <button
-                type="button"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => {
-                  setEditAssigneeId(item.id)
-                  setEditAssignee(item.assignee || '')
-                }}
-                className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] hover:bg-accent"
-              >
-                {item.assignee ? (
-                  <>
-                    <span
-                      className={`flex h-4 w-4 items-center justify-center rounded-full bg-linear-to-br/srgb text-[8px] font-bold text-white ${getUserAvatarGradient(item.assignee)}`}
-                    >
-                      {getUserInitials(item.assignee)}
-                    </span>
-                    <span>{item.assignee}</span>
-                  </>
-                ) : (
-                  <span className="text-muted-foreground">+ Назначить</span>
-                )}
-              </button>
-            )}
-
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => {
-                const boardObj = boards.find((b) => b.id === item.board_id)
-                navigateToBoard({ id: item.board_id, slug: boardObj?.slug })
-              }}
-              className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground"
-            >
-              <ExternalLink className="h-2.5 w-2.5" />
-              <span className="max-w-[140px] truncate">{item.board_name}</span>
-            </button>
-
-            <ActionItemExternalLink
-              item={item}
-              editDisabled={Boolean(item.superseded_by_id)}
-              disabledReason="Задача перенесена на другую доску — изменения доступны в копии"
-              stopPointerDown
-              onUpdated={(updated) =>
-                setItems((prev) =>
-                  prev.map((i) =>
-                    i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i,
-                  ),
-                )
-              }
-            />
-          </div>
-
-          {kanbanMode && (
-            <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
-              {item.status !== 'open' && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-[10px]"
-                  onClick={() => toggleStatus(item, 'open')}
-                >
-                  Открыть
-                </Button>
-              )}
-              {item.status !== 'in_progress' && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-[10px]"
-                  onClick={() => toggleStatus(item, 'in_progress')}
-                >
-                  В работу
-                </Button>
-              )}
-              {item.status !== 'done' && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-[10px] text-emerald-600 dark:text-emerald-400"
-                  onClick={() => toggleStatus(item, 'done')}
-                >
-                  Готово
-                </Button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+  const handleExternalLinkUpdated = (updated: ActionItem) => {
+    setItems((prev) =>
+      prev.map((i) =>
+        i.id === updated.id ? { ...i, ...updated, board_name: i.board_name } : i,
+      ),
     )
   }
+
+  const handleNavigateBoardById = (targetBoardId: string) => {
+    const boardObj = boards.find((b) => b.id === targetBoardId)
+    navigateToBoard({ id: targetBoardId, slug: boardObj?.slug })
+  }
+
+  const renderListTaskCard = (item: DashboardActionItem) => (
+    <ActionItemCard
+      key={item.id}
+      item={item}
+      onStatusChange={toggleStatus}
+      onSaveTitle={saveTitle}
+      onSaveText={saveDesc}
+      onSaveAssignee={saveAssignee}
+      onDelete={setDeleteTarget}
+      onExternalLinkUpdated={handleExternalLinkUpdated}
+      onNavigateBoard={handleNavigateBoardById}
+    />
+  )
 
   if (needsAuth) {
     return (
@@ -989,7 +835,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-dvh bg-background text-foreground">
       {/* Header: на телефоне подписи кнопок прячутся, чтобы всё уместилось в одну строку */}
       <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-2 px-3 sm:gap-3 sm:px-4 md:px-6">
@@ -1042,7 +888,7 @@ export default function Dashboard() {
               variant="ghost"
               size="icon-sm"
               className="relative"
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onClick={() => setTheme(isDark ? 'light' : 'dark')}
               aria-label="Переключить тему"
             >
               <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
@@ -1112,7 +958,7 @@ export default function Dashboard() {
           </Card>
         ) : (
           <>
-            {/* KPI Summary Grid */}
+            {/* Compact KPI Summary Grid */}
             <div
               className={cn(
                 'grid grid-cols-2 gap-3',
@@ -1125,13 +971,13 @@ export default function Dashboard() {
                 transition={{ duration: 0.24, delay: 0 }}
               >
                 <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
-                  <CardContent className="flex items-center justify-between gap-2 p-4">
+                  <CardContent className="flex items-center justify-between gap-2 p-3">
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Доски команды</p>
-                      <p className="mt-1 font-mono text-2xl font-bold">{kpi.boardsCount}</p>
+                      <p className="mt-0.5 font-mono text-2xl font-bold">{kpi.boardsCount}</p>
                     </div>
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                      <Layers className="h-5 w-5" />
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <Layers className="h-4.5 w-4.5" />
                     </div>
                   </CardContent>
                 </Card>
@@ -1143,10 +989,10 @@ export default function Dashboard() {
                 transition={{ duration: 0.24, delay: 0.05 }}
               >
                 <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
-                  <CardContent className="flex items-center justify-between gap-2 p-4">
+                  <CardContent className="flex items-center justify-between gap-2 p-3">
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Открытых задач</p>
-                      <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5">
+                      <p className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5">
                         <span
                           className="font-mono text-2xl font-bold text-amber-600 dark:text-amber-400"
                           data-testid="kpi-open-tasks"
@@ -1160,8 +1006,8 @@ export default function Dashboard() {
                         )}
                       </p>
                     </div>
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                      <Circle className="h-5 w-5" />
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                      <Circle className="h-4.5 w-4.5" />
                     </div>
                   </CardContent>
                 </Card>
@@ -1174,15 +1020,15 @@ export default function Dashboard() {
                 className={cn(kpi.moodAvg === null && 'col-span-2 lg:col-span-1')}
               >
                 <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
-                  <CardContent className="flex items-center justify-between gap-2 p-4">
+                  <CardContent className="flex items-center justify-between gap-2 p-3">
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Выполнено задач</p>
-                      <p className="mt-1 font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                      <p className="mt-0.5 font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
                         {kpi.done}
                       </p>
                     </div>
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                      <CheckCircle2 className="h-5 w-5" />
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="h-4.5 w-4.5" />
                     </div>
                   </CardContent>
                 </Card>
@@ -1195,17 +1041,17 @@ export default function Dashboard() {
                   transition={{ duration: 0.24, delay: 0.15 }}
                 >
                   <Card className="transition-all hover:-translate-y-0.5 hover:shadow-md">
-                    <CardContent className="flex items-center justify-between gap-2 p-4">
+                    <CardContent className="flex items-center justify-between gap-2 p-3">
                       <div>
                         <p className="text-xs font-medium text-muted-foreground">
                           Индекс настроения
                         </p>
-                        <p className="mt-1 font-mono text-2xl font-bold">
+                        <p className="mt-0.5 font-mono text-2xl font-bold">
                           {kpi.moodAvg.toFixed(1)}/5
                         </p>
                       </div>
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
-                        <HeartPulse className="h-5 w-5" />
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                        <HeartPulse className="h-4.5 w-4.5" />
                       </div>
                     </CardContent>
                   </Card>
@@ -1213,80 +1059,7 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Анализ между спринтами: вывод по доскам и темы команды */}
-            <WorkspaceInsightsCard
-              insights={insights}
-              loading={insightsLoading}
-              onRefresh={handleFetchInsights}
-              aiEnabled={aiEnabled}
-            />
-            <TeamThemesCard
-              themes={themes}
-              error={themesError}
-              onRetry={() => void refetchThemes()}
-              aiEnabled={aiEnabled}
-            />
-
-            {/* Charts */}
-            {(computedTrends.length > 0 || hasMoodChart || boards.length > 0) && (
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                {computedTrends.length > 0 && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-semibold">Динамика задач</CardTitle>
-                      <CardDescription className="text-xs">
-                        Соотношение открытых, активных и завершённых задач по спринтам
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <TrendChart data={computedTrends} />
-                    </CardContent>
-                  </Card>
-                )}
-
-                {hasMoodChart && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-semibold">Настроение команды</CardTitle>
-                      <CardDescription className="text-xs">
-                        Историческая средняя оценка настроения по ретроспективам (от 1 до 5)
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <MoodTrendChart data={moodTrends} />
-                    </CardContent>
-                  </Card>
-                )}
-
-                {boards.length > 0 && (
-                  <Card className="lg:col-span-2" data-testid="health-trends-card">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                        <Activity className="h-4 w-4 text-primary" aria-hidden="true" />
-                        Здоровье команды
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Средний ответ по каждому вопросу от 1 (плохо) до 3 (хорошо) и средняя оценка
-                        встречи от 1 до 5
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      {healthTrends.length > 0 ? (
-                        <HealthTrendsChart questions={healthQuestions} points={healthTrends} />
-                      ) : (
-                        <p className="rounded-xl border border-dashed p-3.5 text-sm text-muted-foreground">
-                          Ответов пока нет. Когда команда пройдёт опрос «Здоровье команды» на
-                          доске — пять вопросов со светофором и оценка встречи, — здесь появится
-                          динамика от спринта к спринту.
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            )}
-
-            {/* Tabs: Задачи vs Доски */}
+            {/* Tabs: Задачи vs Доски — главный рабочий экран команды */}
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'tasks' | 'boards')}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <TabsList>
@@ -1300,18 +1073,20 @@ export default function Dashboard() {
                   </TabsTrigger>
                 </TabsList>
 
-                {boards.length >= 2 && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    onClick={() => setCarryOpen(true)}
-                  >
-                    <Repeat className="h-4 w-4" />
-                    Перенести незакрытые
-                  </Button>
-                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {boards.length >= 2 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => setCarryOpen(true)}
+                    >
+                      <Repeat className="h-4 w-4" />
+                      Перенести незакрытые
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <TabsContent value="tasks" className="space-y-4">
@@ -1360,130 +1135,78 @@ export default function Dashboard() {
                     </Select>
                   </div>
 
-                  <div className="relative isolate flex items-center rounded-lg border bg-muted/50 p-0.5">
-                    <button
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
                       type="button"
-                      onClick={() => setViewMode('list')}
-                      className={cn(
-                        'relative inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                        viewMode === 'list'
-                          ? 'text-foreground'
-                          : 'text-muted-foreground hover:text-foreground',
-                      )}
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5 text-xs"
+                      disabled={boards.length === 0}
+                      onClick={() => setNewTaskOpen(true)}
+                      data-testid="dashboard-new-task-btn"
                     >
-                      {viewMode === 'list' && (
-                        <motion.span
-                          layoutId="dashboard-view-pill"
-                          transition={{ type: 'spring', stiffness: 450, damping: 34 }}
-                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-xs"
-                          aria-hidden="true"
-                        />
-                      )}
-                      <List className="h-3.5 w-3.5" />
-                      Список
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setViewMode('kanban')}
-                      className={cn(
-                        'relative inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                        viewMode === 'kanban'
-                          ? 'text-foreground'
-                          : 'text-muted-foreground hover:text-foreground',
-                      )}
-                    >
-                      {viewMode === 'kanban' && (
-                        <motion.span
-                          layoutId="dashboard-view-pill"
-                          transition={{ type: 'spring', stiffness: 450, damping: 34 }}
-                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-xs"
-                          aria-hidden="true"
-                        />
-                      )}
-                      <Kanban className="h-3.5 w-3.5" />
-                      Канбан
-                    </button>
+                      <Plus className="h-3.5 w-3.5 text-primary" />
+                      Новая задача
+                    </Button>
+
+                    <div className="relative isolate flex items-center rounded-lg border bg-muted/50 p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setViewMode('list')}
+                        className={cn(
+                          'relative inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                          viewMode === 'list'
+                            ? 'text-foreground'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        {viewMode === 'list' && (
+                          <motion.span
+                            layoutId="dashboard-view-pill"
+                            transition={{ type: 'spring', stiffness: 450, damping: 34 }}
+                            className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-xs"
+                            aria-hidden="true"
+                          />
+                        )}
+                        <List className="h-3.5 w-3.5" />
+                        Список
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setViewMode('kanban')}
+                        className={cn(
+                          'relative inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                          viewMode === 'kanban'
+                            ? 'text-foreground'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        {viewMode === 'kanban' && (
+                          <motion.span
+                            layoutId="dashboard-view-pill"
+                            transition={{ type: 'spring', stiffness: 450, damping: 34 }}
+                            className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-background shadow-xs"
+                            aria-hidden="true"
+                          />
+                        )}
+                        <Kanban className="h-3.5 w-3.5" />
+                        Канбан
+                      </button>
+                    </div>
                   </div>
                 </div>
 
                 {viewMode === 'kanban' ? (
-                  <DndContext
-                    sensors={kanbanSensors}
-                    onDragStart={handleKanbanDragStart}
-                    onDragEnd={handleKanbanDragEnd}
-                  >
-                    <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
-                      {(['open', 'in_progress', 'done'] as ActionItemStatus[]).map((st) => {
-                        const colItems = filteredItems.filter((i) => i.status === st)
-                        const meta = STATUS_META[st]
-                        const isCollapsed = collapsedKanbanCols[st]
-                        const isExpanded = expandedKanbanCols[st]
-                        const visibleItems = isExpanded
-                          ? colItems
-                          : colItems.slice(0, KANBAN_VISIBLE_LIMIT)
-                        const hiddenCount = colItems.length - visibleItems.length
-
-                        return (
-                          <KanbanColumnDropzone
-                            key={st}
-                            status={st}
-                            count={colItems.length}
-                            meta={meta}
-                            collapsed={isCollapsed}
-                            onToggleCollapse={() =>
-                              setCollapsedKanbanCols((prev) => ({ ...prev, [st]: !prev[st] }))
-                            }
-                          >
-                            <div className="space-y-2.5">
-                              {colItems.length === 0 ? (
-                                <div className="rounded-xl border border-dashed py-8 text-center text-xs text-muted-foreground">
-                                  Перетащите задачу сюда
-                                </div>
-                              ) : (
-                                <>
-                                  {visibleItems.map((it) => (
-                                    <KanbanDraggableCard
-                                      key={it.id}
-                                      item={it}
-                                      dragDisabled={
-                                        editingTitleId === it.id ||
-                                        editingDescId === it.id ||
-                                        editAssigneeId === it.id
-                                      }
-                                      renderCard={renderTaskCard}
-                                    />
-                                  ))}
-                                  {(hiddenCount > 0 ||
-                                    (isExpanded && colItems.length > KANBAN_VISIBLE_LIMIT)) && (
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-8 w-full text-xs text-muted-foreground hover:text-foreground"
-                                      onClick={() =>
-                                        setExpandedKanbanCols((prev) => ({
-                                          ...prev,
-                                          [st]: !prev[st],
-                                        }))
-                                      }
-                                    >
-                                      {isExpanded
-                                        ? 'Свернуть список'
-                                        : `Показать ещё ${hiddenCount}`}
-                                    </Button>
-                                  )}
-                                </>
-                              )}
-                            </div>
-                          </KanbanColumnDropzone>
-                        )
-                      })}
-                    </div>
-
-                    <DragOverlay>
-                      {activeDragItem ? renderTaskCard(activeDragItem, true, undefined, true) : null}
-                    </DragOverlay>
-                  </DndContext>
+                  <ActionItemsKanban
+                    items={filteredItems}
+                    onStatusChange={toggleStatus}
+                    onSaveTitle={saveTitle}
+                    onSaveText={saveDesc}
+                    onSaveAssignee={saveAssignee}
+                    onDelete={setDeleteTarget}
+                    onExternalLinkUpdated={handleExternalLinkUpdated}
+                    onNavigateBoard={handleNavigateBoardById}
+                  />
                 ) : (
                   <div className="space-y-4">
                     {activeItems.length === 0 && doneItems.length === 0 ? (
@@ -1494,7 +1217,7 @@ export default function Dashboard() {
                       </Card>
                     ) : (
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                        {activeItems.map((it) => renderTaskCard(it))}
+                        {activeItems.map((it) => renderListTaskCard(it))}
                       </div>
                     )}
 
@@ -1511,7 +1234,7 @@ export default function Dashboard() {
                         </button>
                         {!doneCollapsed && (
                           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                            {doneItems.map((it) => renderTaskCard(it))}
+                            {doneItems.map((it) => renderListTaskCard(it))}
                           </div>
                         )}
                       </div>
@@ -1608,9 +1331,111 @@ export default function Dashboard() {
                 )}
               </TabsContent>
             </Tabs>
+
+            {/* Компактная аналитика: вывод по спринтам, темы команды и графики динамики */}
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <WorkspaceInsightsCard
+                  insights={insights}
+                  loading={insightsLoading}
+                  onRefresh={handleFetchInsights}
+                  aiEnabled={aiEnabled}
+                />
+                <TeamThemesCard
+                  themes={themes}
+                  error={themesError}
+                  onRetry={() => void refetchThemes()}
+                  aiEnabled={aiEnabled}
+                />
+              </div>
+
+              {(computedTrends.length > 0 || hasMoodChart || boards.length > 0) && (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  {boards.length > 0 && (
+                    <Card
+                      className={cn(computedTrends.length === 0 && !hasMoodChart && 'lg:col-span-2')}
+                      data-testid="health-trends-card"
+                    >
+                      <CardHeader className="pb-2">
+                        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                          <Activity className="h-4 w-4 text-primary" aria-hidden="true" />
+                          Здоровье команды
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                          Средний ответ по каждому вопросу от 1 (плохо) до 3 (хорошо) и средняя оценка
+                          встречи от 1 до 5
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        {healthTrends.length > 0 ? (
+                          <HealthTrendsChart
+                            questions={healthQuestions}
+                            points={healthTrends}
+                            wide={computedTrends.length === 0 && !hasMoodChart}
+                          />
+                        ) : (
+                          <p className="rounded-xl border border-dashed p-3.5 text-sm text-muted-foreground">
+                            Ответов пока нет. Когда команда пройдёт опрос «Здоровье команды» на
+                            доске — пять вопросов со светофором и оценка встречи, — здесь появится
+                            динамика от спринта к спринту.
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {computedTrends.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Динамика задач</CardTitle>
+                        <CardDescription className="text-xs">
+                          Соотношение открытых, активных и завершённых задач по спринтам
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <TrendChart data={computedTrends} />
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {hasMoodChart && (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Настроение команды</CardTitle>
+                        <CardDescription className="text-xs">
+                          Историческая средняя оценка настроения по ретроспективам (от 1 до 5)
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <MoodTrendChart data={moodTrends} />
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              )}
+            </div>
           </>
         )}
       </main>
+
+      <Dialog open={newTaskOpen} onOpenChange={setNewTaskOpen}>
+        <DialogContent layout="structured" className="max-w-lg" data-testid="new-task-dialog">
+          {newTaskOpening > 0 && (
+            <CreateTaskForm
+              key={newTaskOpening}
+              boards={boards}
+              defaultBoardId={boardFilter !== 'all' ? boardFilter : boards[0]?.id ?? ''}
+              onCancel={() => setNewTaskOpen(false)}
+              onCreated={(created) => {
+                setNewTaskOpen(false)
+                setItems((prev) => [created, ...prev])
+                void queryClient.invalidateQueries({ queryKey: trendsKey })
+                void queryClient.invalidateQueries({ queryKey: boardsKey })
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <CreateBoardDialog
         open={createBoardOpen}

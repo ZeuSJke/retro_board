@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useCallback, useState } from 'react'
-import { useDraggable } from '@dnd-kit/core'
+import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { AnimatePresence, motion } from 'motion/react'
 import {
   Check,
@@ -13,7 +13,7 @@ import {
   Unlink,
   X,
 } from 'lucide-react'
-import { deleteGroup, removeCardFromGroup, updateGroup } from '../api'
+import { bulkUpdateCards, deleteGroup, removeCardFromGroup, updateGroup } from '../api'
 import { sameExceptVoteCount } from '@/lib/memo'
 import { showToast } from '../store/toastStore'
 import { getApiErrorMessage } from '../utils/apiError'
@@ -37,6 +37,8 @@ import { cn } from '@/lib/utils'
 interface CardGroupWidgetProps {
   group: CardGroup
   cards: Card[]
+  /** Полный список ID карточек группы (включая скрытые активным фильтром колонки) для корректного Undo. */
+  allCardIds?: string[]
   collapsed: boolean
   onToggleCollapse: (groupId: string) => void
   /** Идентификатор текущего участника. */
@@ -52,6 +54,7 @@ interface CardGroupWidgetProps {
   onCardUpdated: (card: Card) => void
   onCardPatched?: (cardId: string, patch: (card: Card) => Card) => void
   onCardDeleted: (cardId: string) => void
+  onRequestCardDelete?: (card: Card) => void
   onCardRestored?: (card: Card, error?: unknown) => void
   onCardRejected?: (error: unknown) => void
   groupTargetId: string | null
@@ -78,6 +81,7 @@ const DRAG_DISABLED_FALLBACK = 'Перетаскивание сейчас отк
 function CardGroupWidget({
   group,
   cards,
+  allCardIds,
   collapsed,
   onToggleCollapse,
   currentUserId,
@@ -91,6 +95,7 @@ function CardGroupWidget({
   onCardUpdated,
   onCardPatched,
   onCardDeleted,
+  onRequestCardDelete,
   onCardRestored,
   onCardRejected,
   groupTargetId,
@@ -120,6 +125,18 @@ function CardGroupWidget({
       data: { type: 'group', group },
       disabled: editingTitle || dragDisabled || readOnly,
     })
+  const { setNodeRef: setDropNodeRef, isOver: isDropOver } = useDroppable({
+    id: `group-drop-${group.id}`,
+    data: { type: 'group-drop', group },
+    disabled: editingTitle || dragDisabled || readOnly,
+  })
+  const setCombinedRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setNodeRef(node)
+      setDropNodeRef(node)
+    },
+    [setNodeRef, setDropNodeRef],
+  )
   // Указателем группу тащат за шапку, с клавиатуры — за ручку (у шапки нет роли кнопки:
   // внутри неё свои кнопки)
   const { onKeyDown: keyboardDragListener, ...pointerDragListeners } = (listeners ?? {}) as {
@@ -149,10 +166,37 @@ function CardGroupWidget({
   const handleDissolve = async () => {
     setDissolveOpen(false)
     const removed = group
-    const memberIds = cards.map((card) => card.id)
+    const memberIds = allCardIds && allCardIds.length > 0 ? allCardIds : cards.map((card) => card.id)
     onDeleted(group.id)
     try {
       await deleteGroup(group.id)
+      if (memberIds.length > 0 && onRestored) {
+        showToast('Группа расформирована', 'info', {
+          duration: 5000,
+          action: {
+            label: 'Отменить',
+            onClick: () => {
+              void (async () => {
+                try {
+                  const updated = await bulkUpdateCards({
+                    card_ids: memberIds,
+                    group_title: removed.title,
+                  })
+                  const newGroupId = updated[0]?.group_id
+                  if (newGroupId) {
+                    onRestored({ ...removed, id: newGroupId }, updated.map((c) => c.id))
+                  }
+                } catch (restoreErr) {
+                  showToast(
+                    getApiErrorMessage(restoreErr, 'Не удалось восстановить группу'),
+                    'error',
+                  )
+                }
+              })()
+            },
+          },
+        })
+      }
     } catch (err) {
       // Сервер группу не расформировал: возвращаем её вместе с карточками
       onRestored?.(removed, memberIds, err)
@@ -176,11 +220,12 @@ function CardGroupWidget({
   return (
     <>
       <div
-        ref={setNodeRef}
+        ref={setCombinedRef}
         style={style}
         className={cn(
           'rounded-xl border border-primary/25 bg-primary/4 p-2 transition-all dark:bg-primary/[0.07]',
           isDragging && 'opacity-45',
+          isDropOver && !isDragging && 'border-primary/60 bg-primary/10 ring-2 ring-primary/40',
         )}
       >
         <div
@@ -268,6 +313,7 @@ function CardGroupWidget({
                 variant="ghost"
                 size="icon-sm"
                 className="h-6 w-6 shrink-0"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
                   setTitleDraft(group.title)
                   setEditingTitle(false)
@@ -357,6 +403,7 @@ function CardGroupWidget({
                     onUpdated={onCardUpdated}
                     onPatched={onCardPatched}
                     onDeleted={onCardDeleted}
+                    onRequestDelete={onRequestCardDelete}
                     onRestored={onCardRestored}
                     onRejected={onCardRejected}
                     inGroup

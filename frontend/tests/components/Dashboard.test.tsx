@@ -109,12 +109,36 @@ const mockLogoutWorkspace = vi.fn(() => Promise.resolve())
 const mockGetTeamThemes = vi.fn((): Promise<TeamTheme[]> => Promise.resolve([]))
 const mockGetHealthTrends = vi.fn((): Promise<HealthTrendPoint[]> => Promise.resolve([]))
 
+const mockCreateActionItem = vi.fn(
+  (payload: {
+    board_id?: string
+    title?: string
+    text?: string
+    assignee?: string | null
+    status?: 'open' | 'in_progress' | 'done'
+    external_url?: string | null
+  }) =>
+    Promise.resolve({
+      id: 'i-new',
+      board_id: payload.board_id ?? 'b1',
+      title: payload.title ?? payload.text ?? '',
+      text: payload.text ?? '',
+      assignee: payload.assignee ?? null,
+      status: payload.status ?? 'open',
+      source_card_ids: [],
+      external_url: payload.external_url ?? null,
+      completed_at: null,
+      created_at: '2026-03-01T10:00:00Z',
+    }),
+)
+
 vi.mock('../../api', () => ({
   getBoards: vi.fn(() => Promise.resolve(mockBoards)),
   getAllActionItems: vi.fn(() => Promise.resolve(mockItems)),
   getActionItemTrends: vi.fn(() => Promise.resolve([])),
   getMoodTrends: vi.fn(() => Promise.resolve([])),
   getWorkspaceInsights: () => mockGetWorkspaceInsights(),
+  createActionItem: (payload: Record<string, unknown>) => mockCreateActionItem(payload),
   updateActionItem: vi.fn((id: string, data: Record<string, unknown>) =>
     Promise.resolve({ ...(mockItems.find((i) => i.id === id) ?? mockItems[0]), ...data }),
   ),
@@ -394,6 +418,52 @@ describe('Dashboard — шапка', () => {
     await waitFor(() => expect(mockLogoutWorkspace).toHaveBeenCalledTimes(1))
     expect(await screen.findByRole('button', { name: /войти на доску/i })).toBeInTheDocument()
     expect(useAppStore.getState().workspace).toBeNull()
+  })
+
+  it('кнопка «Новая задача» создаёт задачу через диалог без влияния на фильтры списка', async () => {
+    const user = userEvent.setup()
+    render(<Dashboard />)
+    await screen.findByText('Fix CI')
+
+    await user.click(screen.getByTestId('dashboard-new-task-btn'))
+    const dialog = await screen.findByTestId('new-task-dialog')
+    await user.type(within(dialog).getByTestId('new-task-title-input'), 'Разобрать логи')
+    await user.type(within(dialog).getByTestId('new-task-text-input'), 'Проверить алерты за неделю')
+    await user.click(within(dialog).getByTestId('new-task-submit-btn'))
+
+    await waitFor(() =>
+      expect(mockCreateActionItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          board_id: 'b1',
+          title: 'Разобрать логи',
+          text: 'Проверить алерты за неделю',
+          status: 'open',
+        }),
+      ),
+    )
+    expect(await screen.findByText('Разобрать логи')).toBeInTheDocument()
+  })
+
+  it('удаление задачи показывает 5-секундный тост с кнопкой отмены', async () => {
+    const user = userEvent.setup()
+    render(<Dashboard />)
+    await screen.findByText('Fix CI')
+
+    const card = screen.getByTestId('action-item-card-i1')
+    await user.click(within(card).getByTitle('Удалить'))
+    const alertDialog = await screen.findByRole('alertdialog')
+    await user.click(within(alertDialog).getByRole('button', { name: 'Удалить' }))
+
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        'Задача удалена',
+        'info',
+        expect.objectContaining({
+          duration: 5000,
+          action: expect.objectContaining({ label: 'Отменить' }),
+        }),
+      ),
+    )
   })
 })
 

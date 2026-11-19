@@ -137,6 +137,9 @@ describe('useBoardDragDrop', () => {
         ),
     )
     mockRemoveCardFromGroup.mockResolvedValue({})
+    mockAddCardToGroup.mockImplementation((groupId: string, cardId: string) =>
+      Promise.resolve(makeCard(cardId, 2, { group_id: groupId })),
+    )
     mockMoveGroup.mockResolvedValue({})
   })
 
@@ -501,5 +504,56 @@ describe('useBoardDragDrop', () => {
     expect(dragActive).toEqual([true])
     await drop(result, 'c1', 'c2')
     expect(dragActive).toEqual([true, false])
+  })
+
+  it('перестановка карточек внутри одной группы сохраняет group_id и не убирает из группы', async () => {
+    const cols = makeColumns()
+    cols[0].cards.push(makeCard('c4', 3, { group_id: 'g-1' }))
+    mockMoveCard.mockResolvedValueOnce(makeCard('c3', 3, { group_id: 'g-1' }))
+    const { result } = setupDragDrop(cols)
+
+    start(result, 'c3')
+    await drop(result, 'c3', 'c4')
+
+    expect(mockRemoveCardFromGroup).not.toHaveBeenCalled()
+    expect(mockMoveCard).toHaveBeenCalledWith('c3', { column_id: 'col-1', position: 3 })
+    const c3After = result.current.columns[0].cards.find((c) => c.id === 'c3')
+    expect(c3After?.group_id).toBe('g-1')
+  })
+
+  it('сброс свободной карточки на group-drop-* в той же колонке добавляет её в группу через bulkUpdateCards', async () => {
+    const { result } = setupDragDrop()
+
+    start(result, 'c1')
+    await drop(result, 'c1', 'group-drop-g-1')
+
+    expect(mockMoveCard).not.toHaveBeenCalled()
+    expect(mockAddCardToGroup).not.toHaveBeenCalled()
+    expect(mockBulkUpdateCards).toHaveBeenCalledWith({
+      card_ids: ['c1'],
+      group_id: 'g-1',
+    })
+    const c1After = result.current.columns[0].cards.find((c) => c.id === 'c1')
+    expect(c1After?.group_id).toBe('g-1')
+  })
+
+  it('сброс карточки из другой колонки на group-drop-* переносит её в колонку и группу одним запросом', async () => {
+    mockBulkUpdateCards.mockResolvedValueOnce([
+      makeCard('x1', 3, { column_id: 'col-1', group_id: 'g-1' }),
+    ])
+    const { result } = setupDragDrop()
+
+    start(result, 'x1')
+    await drop(result, 'x1', 'group-drop-g-1')
+
+    expect(mockMoveCard).not.toHaveBeenCalled()
+    expect(mockAddCardToGroup).not.toHaveBeenCalled()
+    expect(mockBulkUpdateCards).toHaveBeenCalledWith({
+      card_ids: ['x1'],
+      column_id: 'col-1',
+      group_id: 'g-1',
+    })
+    const x1After = result.current.columns[0].cards.find((c) => c.id === 'x1')
+    expect(x1After?.group_id).toBe('g-1')
   })
 })

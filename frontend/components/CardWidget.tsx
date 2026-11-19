@@ -95,6 +95,8 @@ interface CardWidgetProps {
   onPatched?: (cardId: string, patch: (card: Card) => Card) => void
   onDeleted?: (id: string) => void
   onDelete?: (id: string) => void
+  /** Внешний диалог подтверждения удаления (например, один на всю колонку). */
+  onRequestDelete?: (card: Card) => void
   /** Сервер карточку не удалил: вернуть её на место. */
   onRestored?: (card: Card, error?: unknown) => void
   /** Сервер отклонил голос или смену цвета; локальная правка уже снята. */
@@ -137,6 +139,7 @@ function CardWidget({
   onPatched,
   onDeleted,
   onDelete,
+  onRequestDelete,
   onRestored,
   onRejected,
   inGroup = false,
@@ -626,10 +629,10 @@ function CardWidget({
                       </p>
                     )}
                     <DropdownMenuSeparator />
-                    <div className="px-2 py-1.5" role="group" aria-label="Цвет стикера">
+                    <div className="px-2 py-1.5" role="group" aria-label="Цвет карточки">
                       <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                         <Palette className="h-3.5 w-3.5" />
-                        <span>Цвет стикера</span>
+                        <span>Цвет карточки</span>
                       </div>
                       <div className="flex items-center justify-between gap-1">
                         {CARD_COLOR_PRESETS.map((c) => {
@@ -698,7 +701,7 @@ function CardWidget({
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuItem
-                      onClick={() => setDeleteOpen(true)}
+                      onClick={() => (onRequestDelete ? onRequestDelete(card) : setDeleteOpen(true))}
                       disabled={!canDelete}
                       data-testid="card-delete-item"
                       className="text-destructive focus:text-destructive"
@@ -768,6 +771,7 @@ function CardWidget({
                   variant="ghost"
                   size="sm"
                   className="h-7 px-2 text-xs"
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setEditing(false)}
                 >
                   <X className="mr-1 h-3.5 w-3.5" />
@@ -814,7 +818,7 @@ function CardWidget({
                 allowMultipleVotes && myVotesOnCard > 0 ? (
                   <div
                     className={cn(
-                      'relative inline-flex h-6 items-center overflow-hidden rounded-full border border-primary/40 bg-primary/15 text-xs font-medium text-primary transition-all',
+                      'relative inline-flex h-6 items-center rounded-full border border-primary/40 bg-primary/15 text-xs font-medium text-primary transition-all',
                       liking && 'opacity-70',
                     )}
                   >
@@ -833,7 +837,7 @@ function CardWidget({
                         title="Убрать голос"
                         disabled={liking}
                         onClick={(e) => handleToggleLike(e, 'remove')}
-                        className="flex h-full items-center px-1.5 hover:bg-primary/20 active:scale-95"
+                        className="flex h-full items-center rounded-l-full px-1.5 hover:bg-primary/20 active:scale-95"
                         aria-label="Убрать один голос"
                       >
                         <Minus className="h-2.5 w-2.5" />
@@ -845,7 +849,8 @@ function CardWidget({
                       disabled={readOnly || liking || limitReached}
                       onClick={(e) => handleToggleLike(e, 'add')}
                       className={cn(
-                        'inline-flex h-full items-center gap-1 px-1.5 hover:bg-primary/20 active:scale-95',
+                        'inline-flex h-full items-center gap-1 rounded-r-full px-1.5 hover:bg-primary/20 active:scale-95',
+                        readOnly && 'rounded-l-full',
                         (readOnly || limitReached) && 'pointer-events-none opacity-60',
                       )}
                     >
@@ -923,25 +928,27 @@ function CardWidget({
         )}
       </div>
 
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Удалить карточку?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Карточка будет удалена с доски для всех участников.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Удалить
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {!onRequestDelete && (
+        <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Удалить карточку?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Карточка будет удалена с доски для всех участников.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Отмена</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleConfirmDelete}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Удалить
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </>
   )
 }

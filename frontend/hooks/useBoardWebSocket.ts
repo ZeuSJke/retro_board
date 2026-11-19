@@ -203,12 +203,32 @@ export function useBoardWebSocket({
   const [reactions, setReactions] = useState<ReactionBubble[]>([])
   const [facilitator, setFacilitator] = useState<FacilitatorInfo>(NO_FACILITATOR)
   const [phase, setPhase] = useState<string | null>(null)
+  const [trackedBoardId, setTrackedBoardId] = useState(boardId)
   const [sessionSynced, setSessionSynced] = useState(false)
   const [actionItems, setActionItems] = useState<ActionItem[]>([])
   // Связь терялась: пока доска не перечитана, пропущенные события не учтены
   const [recovering, setRecovering] = useState(false)
   const [syncFailed, setSyncFailed] = useState(false)
   const [boardGone, setBoardGone] = useState(false)
+  const facilitatorRef = useRef<FacilitatorInfo>(NO_FACILITATOR)
+  const phaseRef = useRef<string | null>(null)
+
+  if (trackedBoardId !== boardId) {
+    setTrackedBoardId(boardId)
+    setSessionSynced(false)
+    setFacilitator(NO_FACILITATOR)
+    setPhase(null)
+    setCollapsedGroups({})
+    setParticipants([])
+    setKnownNames({})
+    setReadyIds([])
+    setSpotlightCardId(null)
+    setTypingUsers([])
+    setReactions([])
+    setRecovering(false)
+    setSyncFailed(false)
+    setBoardGone(false)
+  }
   const cursorTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const reactionTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastCursorRef = useRef<CursorPos | null>(null)
@@ -286,21 +306,12 @@ export function useBoardWebSocket({
 
   useEffect(() => {
     boardIdRef.current = boardId
-    setSessionSynced(false)
-    setFacilitator(NO_FACILITATOR)
-    setPhase(null)
-    setCollapsedGroups({})
-    setParticipants([])
-    setKnownNames({})
-    setReadyIds([])
-    setSpotlightCardId(null)
-    setTypingUsers([])
-    setReactions([])
-    setRecovering(false)
-    setSyncFailed(false)
-    setBoardGone(false)
+    facilitatorRef.current = NO_FACILITATOR
+    phaseRef.current = null
     Object.values(cursorTimeouts.current).forEach(clearTimeout)
     cursorTimeouts.current = {}
+    Object.values(reactionTimeouts.current).forEach(clearTimeout)
+    reactionTimeouts.current = {}
     if (Object.keys(cursorsRef.current).length > 0) {
       cursorsRef.current = {}
       notifyCursorListeners()
@@ -459,13 +470,9 @@ export function useBoardWebSocket({
         const y = typeof data.y === 'number' ? data.y : null
         if (!id || x === null || y === null) return
         const name = typeof data.username === 'string' ? data.username : ''
-        const prevCursor = cursorsRef.current[id]
         cursorsRef.current = { ...cursorsRef.current, [id]: { x, y, name } }
-        // Only trigger a React tree re-render when a peer cursor appears for the first time
-        // (or its label changes); CursorMarker animates x/y directly via requestAnimationFrame.
-        if (!prevCursor || prevCursor.name !== name) {
-          notifyCursorListeners()
-        }
+        // Будим слой курсоров и анимацию перемещения без лишнего перерендера доски.
+        notifyCursorListeners()
         clearTimeout(cursorTimeouts.current[id])
         cursorTimeouts.current[id] = setTimeout(() => removeCursor(id), 6000)
         return
@@ -542,6 +549,8 @@ export function useBoardWebSocket({
             }
           : NO_FACILITATOR
         const p = typeof data.phase === 'string' ? data.phase : null
+        facilitatorRef.current = next
+        phaseRef.current = p
         setFacilitator(next)
         setPhase(p)
         setSessionSynced(true)
@@ -557,6 +566,7 @@ export function useBoardWebSocket({
       if (event === 'phase_update') {
         const p = typeof data.phase === 'string' ? data.phase : null
         if (!p) return
+        phaseRef.current = p
         setPhase(p)
         setReadyIds([])
         setSpotlightCardId(null)
@@ -581,7 +591,12 @@ export function useBoardWebSocket({
             : prev,
         )
         setKnownNames((prev) => (prev[id] === name ? prev : { ...prev, [id]: name }))
-        setFacilitator((prev) => (prev.id === id && prev.name !== name ? { ...prev, name } : prev))
+        if (facilitatorRef.current.id === id && facilitatorRef.current.name !== name) {
+          const updatedFac = { ...facilitatorRef.current, name }
+          facilitatorRef.current = updatedFac
+          setFacilitator(updatedFac)
+          callbacks.onFacilitatorChanged?.(updatedFac, phaseRef.current)
+        }
         setTypingUsers((prev) =>
           prev.some((t) => t.participant_id === id && t.username !== name)
             ? prev.map((t) => (t.participant_id === id ? { ...t, username: name } : t))

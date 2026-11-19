@@ -1,6 +1,7 @@
 'use client'
 
 import { Activity } from 'lucide-react'
+import { useUiStore } from '@/store/uiStore'
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -13,6 +14,7 @@ export const HEALTH_CHECK_OPEN_EVENT = 'retroboard:open-health-check'
 
 /** Открыть окно health check из любого места доски. */
 export function openHealthCheck(): void {
+  useUiStore.getState().openHealthCheck()
   window.dispatchEvent(new Event(HEALTH_CHECK_OPEN_EVENT))
 }
 

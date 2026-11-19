@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { AnimatePresence, motion } from 'motion/react'
 import {
@@ -11,6 +11,7 @@ import {
   Circle,
   Clock,
   CornerUpRight,
+  Focus,
   History,
   ListTodo,
   Loader2,
@@ -30,6 +31,7 @@ import {
   updateActionItem,
 } from '../api'
 import { getUserAvatarGradient, getUserInitials } from '@/lib/board-themes'
+import { restoreDeletedActionItem } from '@/lib/action-items'
 import { parseSafeExternalUrl } from '@/lib/urls'
 import { useAppStore } from '../store'
 import { showToast } from '../store/toastStore'
@@ -69,6 +71,8 @@ interface MasterColumnProps {
   /** Вернуть задачу, которую сервер не удалил. Без него возврат идёт через `onCreated`. */
   onRestored?: (item: ActionItem) => void
   onDeleted: (id: string) => void
+  /** Сфокусироваться/прокрутить к исходной карточке на доске. */
+  onFocusCard?: (cardId: string) => void
   dropDisabled?: boolean
   /**
    * Доска заблокирована: задачи нельзя создавать, править и удалять. Статус при этом
@@ -125,6 +129,7 @@ export default function MasterColumn({
   onUpdated,
   onRestored,
   onDeleted,
+  onFocusCard,
   dropDisabled = false,
   readOnly = false,
   cardsHidden = false,
@@ -147,12 +152,18 @@ export default function MasterColumn({
   const [creating, setCreating] = useState(false)
 
   const [prevOpenExpanded, setPrevOpenExpanded] = useState(false)
-  const [prevItems, setPrevItems] = useState<DashboardActionItem[]>([])
+  const [prevState, setPrevState] = useState<{
+    boardId: string
+    items: DashboardActionItem[]
+    loaded: boolean
+    error: string | null
+  }>({ boardId, items: [], loaded: false, error: null })
   const [loadingPrev, setLoadingPrev] = useState(false)
-  const [prevLoaded, setPrevLoaded] = useState(false)
-  // Ошибка загрузки — отдельное состояние: пустой список означал бы «всё закрыто»
-  const [prevError, setPrevError] = useState<string | null>(null)
   const [pullingPrevId, setPullingPrevId] = useState<string | null>(null)
+
+  const prevItems = prevState.boardId === boardId ? prevState.items : []
+  const prevLoaded = prevState.boardId === boardId ? prevState.loaded : false
+  const prevError = prevState.boardId === boardId ? prevState.error : null
 
   const [suggestDialogOpen, setSuggestDialogOpen] = useState(false)
   const [suggestLoading, setSuggestLoading] = useState(false)
@@ -160,22 +171,30 @@ export default function MasterColumn({
   const [suggestions, setSuggestions] = useState<ActionItemSuggestion[]>([])
   const [suggestFailure, setSuggestFailure] = useState<SuggestFailure | null>(null)
 
-  useEffect(() => {
-    setPrevLoaded(false)
-    setPrevItems([])
-    setPrevError(null)
-  }, [boardId])
-
   const loadPreviousOpenItems = async () => {
     if (loadingPrev) return
+    const requestBoardId = boardId
     setLoadingPrev(true)
-    setPrevError(null)
+    setPrevState((prev) =>
+      prev.boardId === requestBoardId
+        ? { ...prev, error: null }
+        : { boardId: requestBoardId, items: [], loaded: false, error: null },
+    )
     try {
       const all = await getAllActionItems()
-      setPrevItems(selectPreviousOpenItems(all, boardId))
-      setPrevLoaded(true)
+      setPrevState({
+        boardId: requestBoardId,
+        items: selectPreviousOpenItems(all, requestBoardId),
+        loaded: true,
+        error: null,
+      })
     } catch (err) {
-      setPrevError(getApiErrorMessage(err, 'Проверьте соединение и попробуйте ещё раз.'))
+      const message = getApiErrorMessage(err, 'Проверьте соединение и попробуйте ещё раз.')
+      setPrevState((prev) =>
+        prev.boardId === requestBoardId
+          ? { ...prev, error: message }
+          : { boardId: requestBoardId, items: [], loaded: false, error: message },
+      )
     } finally {
       setLoadingPrev(false)
     }
@@ -192,7 +211,10 @@ export default function MasterColumn({
   const handleCompletePrevItem = async (item: DashboardActionItem) => {
     try {
       await updateActionItem(item.id, { status: 'done' })
-      setPrevItems((prev) => prev.filter((x) => x.id !== item.id))
+      setPrevState((prev) => ({
+        ...prev,
+        items: prev.items.filter((x) => x.id !== item.id),
+      }))
       showToast('Прошлая задача отмечена выполненной', 'success')
     } catch (err) {
       showToast(getApiErrorMessage(err, 'Не удалось обновить задачу'), 'error')
@@ -211,7 +233,10 @@ export default function MasterColumn({
         item_ids: [item.id],
       })
       created.forEach((copy) => onCreated?.(copy))
-      setPrevItems((prev) => prev.filter((x) => x.id !== item.id))
+      setPrevState((prev) => ({
+        ...prev,
+        items: prev.items.filter((x) => x.id !== item.id),
+      }))
       showToast(
         created.length > 0
           ? 'Задача перенесена на эту доску'
@@ -252,21 +277,40 @@ export default function MasterColumn({
   ) => {
     if (itemsToCreate.length === 0 || readOnly) return
     setSuggestCreating(true)
+    let createdCount = 0
+    const failedTexts = new Set<string>()
+    let firstError: unknown = null
     try {
       for (const s of itemsToCreate) {
-        const created = await createActionItem({
-          board_id: boardId,
-          title: s.title,
-          text: s.text,
-          assignee: s.assignee || undefined,
-          source_card_ids: s.source_card_ids,
-        })
-        onCreated?.(created)
+        try {
+          const created = await createActionItem({
+            board_id: boardId,
+            title: s.title,
+            text: s.text,
+            assignee: s.assignee || undefined,
+            source_card_ids: s.source_card_ids,
+          })
+          onCreated?.(created)
+          createdCount += 1
+        } catch (err) {
+          failedTexts.add(`${s.title}\u0000${s.text}`)
+          if (firstError === null) firstError = err
+        }
       }
-      showToast(`Добавлено задач: ${itemsToCreate.length}`, 'success')
-      setSuggestDialogOpen(false)
-    } catch (err) {
-      showToast(getApiErrorMessage(err, 'Не удалось создать часть задач'), 'error')
+
+      if (failedTexts.size === 0) {
+        showToast(`Добавлено задач: ${createdCount}`, 'success')
+        setSuggestDialogOpen(false)
+      } else {
+        setSuggestions((prev) =>
+          prev.filter((s) => failedTexts.has(`${s.title}\u0000${s.text}`)),
+        )
+        const baseMsg =
+          createdCount > 0
+            ? `Создано задач: ${createdCount}, не удалось: ${failedTexts.size}`
+            : 'Не удалось создать выбранные задачи'
+        showToast(getApiErrorMessage(firstError, baseMsg), 'error')
+      }
     } finally {
       setSuggestCreating(false)
     }
@@ -345,6 +389,25 @@ export default function MasterColumn({
     onDeleted(target.id)
     try {
       await deleteActionItem(target.id)
+      showToast('Задача удалена', 'info', {
+        duration: 5000,
+        action: {
+          label: 'Отменить',
+          onClick: () => {
+            void (async () => {
+              try {
+                const restored = await restoreDeletedActionItem(target, target.board_id || boardId)
+                ;(onRestored ?? onCreated)?.(restored)
+              } catch (restoreErr) {
+                showToast(
+                  getApiErrorMessage(restoreErr, 'Не удалось восстановить задачу'),
+                  'error',
+                )
+              }
+            })()
+          },
+        },
+      })
     } catch (err) {
       // 404 — задачу уже удалил коллега: возвращать нечего, и это не ошибка для пользователя
       if (getApiErrorStatus(err) === 404) return
@@ -887,6 +950,26 @@ export default function MasterColumn({
                           disabledReason={carriedReason}
                           onUpdated={onUpdated}
                         />
+
+                        {onFocusCard && item.source_card_ids && item.source_card_ids.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1">
+                            {item.source_card_ids.map((cid, idx) => (
+                              <button
+                                key={cid}
+                                type="button"
+                                onClick={() => onFocusCard(cid)}
+                                title="Показать исходную карточку на доске"
+                                data-testid={`action-item-source-chip-${cid}`}
+                                className="inline-flex items-center gap-1 rounded-md border bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                              >
+                                <Focus className="h-2.5 w-2.5 text-primary" />
+                                {item.source_card_ids.length > 1
+                                  ? `Карточка ${idx + 1}`
+                                  : 'Карточка'}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       {!readOnly && (

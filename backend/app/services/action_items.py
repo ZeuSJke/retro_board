@@ -2,6 +2,7 @@
 
 import uuid
 
+import anyio
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -23,25 +24,45 @@ _LOCKED_ACTION_ITEM_FIELDS = frozenset({"title", "text", "assignee"})
 
 def copy_unresolved_action_items(
     db: Session,
-    source_board_id: str,
+    source_board_id: str | None,
     target_board_id: str,
     item_ids: list[str] | None = None,
+    *,
+    workspace_id: str | None = None,
 ) -> tuple[list[schemas.ActionItemOut], list[schemas.ActionItemOut]]:
-    """Перенести нерешённые задачи со старой доски на целевую (без commit).
+    """Перенести нерешённые задачи со старой доски (или списка id команды) на целевую (без commit).
 
     На целевой доске появляется копия, а оригинал помечается перенесённым
     (`superseded_by_id`): он остаётся в истории своей доски, но больше не
     считается открытым — иначе одна задача считалась бы дважды. Уже
     перенесённые задачи повторно не переносятся.
     """
-    query = db.query(models.ActionItem).filter(
-        models.ActionItem.board_id == source_board_id,
-        models.ActionItem.status != "done",
-        models.ActionItem.superseded_by_id.is_(None),
-    )
-    if item_ids is not None:
-        query = query.filter(models.ActionItem.id.in_(item_ids))
-    items = query.order_by(models.ActionItem.created_at).all()
+    if item_ids is not None and len(item_ids) == 0:
+        return [], []
+    if source_board_id is None:
+        if workspace_id is None or item_ids is None:
+            return [], []
+        query = (
+            db.query(models.ActionItem)
+            .join(models.Board, models.ActionItem.board_id == models.Board.id)
+            .filter(
+                models.Board.workspace_id == workspace_id,
+                models.Board.deleted_at.is_(None),
+                models.ActionItem.board_id != target_board_id,
+                models.ActionItem.status != "done",
+                models.ActionItem.superseded_by_id.is_(None),
+                models.ActionItem.id.in_(item_ids),
+            )
+        )
+    else:
+        query = db.query(models.ActionItem).filter(
+            models.ActionItem.board_id == source_board_id,
+            models.ActionItem.status != "done",
+            models.ActionItem.superseded_by_id.is_(None),
+        )
+        if item_ids is not None:
+            query = query.filter(models.ActionItem.id.in_(item_ids))
+    items = query.order_by(models.ActionItem.id).with_for_update(of=models.ActionItem).all()
     created: list[schemas.ActionItemOut] = []
     carried: list[schemas.ActionItemOut] = []
     for src in items:
@@ -156,8 +177,10 @@ def create_action_item_sync(
         valid_cards = (
             db.query(models.Card.id)
             .join(models.Column, models.Card.column_id == models.Column.id)
+            .join(models.Board, models.Column.board_id == models.Board.id)
             .filter(
-                models.Column.board_id == board_id,
+                models.Board.workspace_id == workspace_id,
+                models.Board.deleted_at.is_(None),
                 models.Card.id.in_(card_ids),
             )
             .all()
@@ -207,19 +230,24 @@ async def create_action_item_for_workspace(
     require_unlocked: bool = False,
 ) -> schemas.ActionItemOut:
     """Создать задачу на доске (по ID или slug) и разослать событие по WebSocket."""
-    out, broadcasts = create_action_item_sync(
-        db,
-        workspace_id,
-        board_id_or_slug=board_id_or_slug,
-        title=title,
-        text=text,
-        assignee=assignee,
-        external_url=external_url,
-        source_card_ids=source_card_ids,
-        status=status,
-        require_unlocked=require_unlocked,
-    )
-    release_connection(db)
+
+    def _op():
+        res = create_action_item_sync(
+            db,
+            workspace_id,
+            board_id_or_slug=board_id_or_slug,
+            title=title,
+            text=text,
+            assignee=assignee,
+            external_url=external_url,
+            source_card_ids=source_card_ids,
+            status=status,
+            require_unlocked=require_unlocked,
+        )
+        release_connection(db)
+        return res
+
+    out, broadcasts = await anyio.to_thread.run_sync(_op)
     await dispatch_broadcasts(broadcasts)
     return out
 
@@ -290,18 +318,23 @@ async def update_action_item_for_workspace(
     restrict_locked_fields: bool = False,
 ) -> schemas.ActionItemOut:
     """Обновить задачу и разослать `action_item_updated` по WebSocket."""
-    out, broadcasts = update_action_item_sync(
-        db,
-        workspace_id,
-        item_id=item_id,
-        provided_fields=provided_fields,
-        title=title,
-        text=text,
-        assignee=assignee,
-        external_url=external_url,
-        status=status,
-        restrict_locked_fields=restrict_locked_fields,
-    )
-    release_connection(db)
+
+    def _op():
+        res = update_action_item_sync(
+            db,
+            workspace_id,
+            item_id=item_id,
+            provided_fields=provided_fields,
+            title=title,
+            text=text,
+            assignee=assignee,
+            external_url=external_url,
+            status=status,
+            restrict_locked_fields=restrict_locked_fields,
+        )
+        release_connection(db)
+        return res
+
+    out, broadcasts = await anyio.to_thread.run_sync(_op)
     await dispatch_broadcasts(broadcasts)
     return out

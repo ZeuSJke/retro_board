@@ -17,6 +17,7 @@ import {
 } from '../../components/ui/dropdown-menu'
 import TimerWidget from '../../components/TimerWidget'
 import { TooltipProvider } from '../../components/ui/tooltip'
+import { showToast } from '../../store/toastStore'
 import { runningTimer, stoppedTimer } from '../../lib/timer'
 import type { Card, CardGroup, Column as ColumnType } from '../../types'
 
@@ -78,7 +79,9 @@ const api = vi.hoisted(() => ({
   createCard: vi.fn(),
   autoClusterColumn: vi.fn(),
   deleteGroup: vi.fn(),
+  createGroup: vi.fn(),
   updateGroup: vi.fn(),
+  bulkUpdateCards: vi.fn(),
   removeCardFromGroup: vi.fn(),
 }))
 
@@ -668,6 +671,43 @@ describe('CardGroupWidget', () => {
     await user.click(toggle)
 
     expect(onToggleCollapse).toHaveBeenCalledWith('g-1')
+  })
+
+  it('Undo расформирования восстанавливает все карточки (allCardIds) одним bulkUpdateCards', async () => {
+    const user = userEvent.setup()
+    api.deleteGroup.mockResolvedValueOnce(undefined)
+    api.bulkUpdateCards.mockResolvedValueOnce([
+      makeCard('1', { group_id: 'g-restored' }),
+      makeCard('2', { group_id: 'g-restored', position: 1 }),
+      makeCard('3', { group_id: 'g-restored', position: 2 }),
+    ])
+    const onDeleted = vi.fn()
+    const onRestored = vi.fn()
+    // В видимом `cards` из-за фильтра только 2 карточки, но в `allCardIds` все 3
+    renderGroup({ allCardIds: ['1', '2', '3'], onDeleted, onRestored })
+
+    await user.click(screen.getByRole('button', { name: 'Расформировать группу' }))
+    await user.click(await screen.findByRole('button', { name: 'Расформировать' }))
+
+    await waitFor(() => expect(showToast).toHaveBeenCalled())
+    const toastOpts = vi.mocked(showToast).mock.calls[0]?.[2] as {
+      action?: { onClick: () => void }
+    }
+    toastOpts.action?.onClick()
+
+    await waitFor(() =>
+      expect(api.bulkUpdateCards).toHaveBeenCalledWith({
+        card_ids: ['1', '2', '3'],
+        group_title: 'Процессы',
+      }),
+    )
+    expect(api.createGroup).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(onRestored).toHaveBeenCalledWith(
+        { ...group, id: 'g-restored' },
+        ['1', '2', '3'],
+      ),
+    )
   })
 })
 

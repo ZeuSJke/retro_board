@@ -681,7 +681,10 @@ class TestConnectionReleasedDuringAI:
             seen.append(open_connections["open"])
             return "Заголовок"
 
-        with patch("app.routers.action_items.ai_client.generate", fake_generate):
+        with (
+            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            patch("app.routers.action_items.ai_client.generate", fake_generate),
+        ):
             resp = client.post(
                 "/api/action-items/generate-title", json={"text": "Текст карточки"}, headers=workspace_headers
             )

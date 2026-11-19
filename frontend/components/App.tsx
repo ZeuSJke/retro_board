@@ -79,14 +79,37 @@ export default function App({ boardId }: AppProps) {
     const seq = ++loadSeqRef.current
     const stale = () => seq !== loadSeqRef.current
     try {
-      // Источник правды о сессии — сервер: участник, команда и признак ai_enabled
-      await refreshWorkspaceSession()
-      const freshWorkspaceId = useAppStore.getState().workspace?.workspaceId ?? 'anonymous'
-      const list = await queryClient.fetchQuery({
+      // Источник правды о сессии — сервер: сначала сверяем сессию (иначе 401 вызовет лишние запросы).
+      const me = await refreshWorkspaceSession()
+      if (stale()) return
+      const freshWorkspaceId = me?.id ?? useAppStore.getState().workspace?.workspaceId ?? 'anonymous'
+
+      const fetchTargetBoard = async (refId: string): Promise<Board> => {
+        const isUuid = UUID_RE.test(refId)
+        try {
+          return isUuid ? await getBoard(refId) : await getBoardBySlug(refId)
+        } catch (err) {
+          if (getApiErrorStatus(err) === 404 && !isUuid) {
+            return await getBoard(refId)
+          }
+          throw err
+        }
+      }
+
+      const concreteRef = Boolean(boardId && boardId !== FIRST_BOARD_REF)
+      const listPromise = queryClient.fetchQuery({
         queryKey: queryKeys.boards(freshWorkspaceId),
         queryFn: quietQuery(getBoards),
         staleTime: 0,
       })
+      const targetPromise: Promise<{ data: Board } | { err: unknown }> | null = concreteRef
+        ? fetchTargetBoard(boardId!).then(
+            (data) => ({ data }),
+            (err: unknown) => ({ err }),
+          )
+        : null
+
+      const list = await listPromise
       if (stale()) return
 
       if (list.length === 0) {
@@ -99,7 +122,7 @@ export default function App({ boardId }: AppProps) {
       setEmptyFor(null)
 
       let target: Board
-      if (!boardId || boardId === FIRST_BOARD_REF) {
+      if (!targetPromise) {
         const first = resolveStartBoard(list) ?? list[0]
         if (first.slug !== FIRST_BOARD_REF) {
           // Служебный адрес — только перенаправление на адрес доски. Монтировать доску здесь
@@ -113,17 +136,10 @@ export default function App({ boardId }: AppProps) {
         target = await getBoard(first.id)
         if (stale()) return
       } else {
-        const isUuid = UUID_RE.test(boardId)
-        try {
-          target = isUuid ? await getBoard(boardId) : await getBoardBySlug(boardId)
-        } catch (err) {
-          if (getApiErrorStatus(err) === 404 && !isUuid) {
-            target = await getBoard(boardId)
-          } else {
-            throw err
-          }
-        }
+        const resolved = await targetPromise
         if (stale()) return
+        if ('err' in resolved) throw resolved.err
+        target = resolved.data
       }
 
       setBoard(target)
@@ -146,7 +162,13 @@ export default function App({ boardId }: AppProps) {
 
   useEffect(() => {
     if (!hasHydrated || needsAuth) return
-    void loadWorkspaceBoard()
+    let cancelled = false
+    void Promise.resolve().then(() => {
+      if (!cancelled) void loadWorkspaceBoard()
+    })
+    return () => {
+      cancelled = true
+    }
   }, [hasHydrated, needsAuth, loadWorkspaceBoard])
 
   // Счётчики в списке досок (карточки, открытые задачи) сервер считает сам: перечитываем
@@ -155,14 +177,16 @@ export default function App({ boardId }: AppProps) {
     try {
       const currentWorkspaceId = useAppStore.getState().workspace?.workspaceId ?? 'anonymous'
       const list = await getBoards()
-      if (list.length > 0) {
-        queryClient.setQueryData<BoardListItem[]>(queryKeys.boards(currentWorkspaceId), list)
+      queryClient.setQueryData<BoardListItem[]>(queryKeys.boards(currentWorkspaceId), list)
+      if (list.length === 0 && useAppStore.getState().participant?.id) {
+        setBoard(null)
+        setEmptyFor(useAppStore.getState().participant!.id)
       }
     } catch (err) {
       // Фоновое обновление: старый список остаётся на месте, уведомление не нужно
       markApiErrorReported(err)
     }
-  }, [queryClient])
+  }, [queryClient, setBoard])
 
   useEffect(() => {
     if (needsAuth) return
@@ -177,7 +201,7 @@ export default function App({ boardId }: AppProps) {
 
   if (!hasHydrated) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
+      <div className="flex h-dvh items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     )
@@ -208,7 +232,7 @@ export default function App({ boardId }: AppProps) {
     return (
       <div
         role="alert"
-        className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center"
+        className="flex h-dvh flex-col items-center justify-center gap-4 bg-background px-6 text-center"
       >
         <h2 className="text-lg font-semibold">Не удалось открыть доску</h2>
         <p className="max-w-md text-sm text-muted-foreground">{error}</p>
@@ -251,7 +275,7 @@ export default function App({ boardId }: AppProps) {
       )
     }
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
+      <div className="flex h-dvh flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm">Загрузка доски...</p>
       </div>

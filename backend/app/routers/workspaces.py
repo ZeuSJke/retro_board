@@ -1,7 +1,9 @@
 import logging
 import secrets
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -128,7 +130,14 @@ def get_invite(
     """Токен ссылки-приглашения в команду; создаётся при первом обращении."""
     if not workspace.invite_token:
         workspace.invite_token = new_invite_token()
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            db.refresh(workspace)
+            if not workspace.invite_token:
+                workspace.invite_token = new_invite_token()
+                db.commit()
     return schemas.InviteOut(invite_token=workspace.invite_token)
 
 
@@ -183,28 +192,36 @@ async def rename_participant(
 ):
     """Сменить имя. Карточки, голоса, оценки и роль ведущего остаются за участником."""
     name = body.name
-    participant.name = name
-    # Имя в карточках и оценках — снимок для отображения: обновляем его вместе с участником
-    db.query(models.Card).filter(models.Card.author_id == participant.id).update(
-        {models.Card.author: name}, synchronize_session=False
-    )
-    db.query(models.BoardMood).filter(
-        models.BoardMood.participant_id == participant.id
-    ).update({models.BoardMood.author: name}, synchronize_session=False)
-    db.query(models.Board).filter(
-        models.Board.active_facilitator_id == participant.id
-    ).update({models.Board.active_facilitator: name}, synchronize_session=False)
-    db.commit()
-    db.refresh(participant)
-    out = schemas.ParticipantOut.model_validate(participant)
+    participant_id = participant.id
+    workspace_id = workspace.id
 
-    touched_boards = manager.rename(participant.id, name)
+    def _op():
+        participant.name = name
+        # Имя в карточках и оценках — снимок для отображения: обновляем его вместе с участником
+        db.query(models.Card).filter(models.Card.author_id == participant_id).update(
+            {models.Card.author: name}, synchronize_session=False
+        )
+        db.query(models.BoardMood).filter(
+            models.BoardMood.participant_id == participant_id
+        ).update({models.BoardMood.author: name}, synchronize_session=False)
+        db.query(models.Board).filter(
+            models.Board.active_facilitator_id == participant_id
+        ).update({models.Board.active_facilitator: name}, synchronize_session=False)
+        db.commit()
+        db.refresh(participant)
+        out = schemas.ParticipantOut.model_validate(participant)
+        release_connection(db)
+        return out
+
+    out = await anyio.to_thread.run_sync(_op)
+
+    touched_boards = manager.rename(participant_id, name)
     await manager.broadcast_workspace(
-        workspace.id, "participant_renamed", {"participant_id": participant.id, "name": name}
+        workspace_id, "participant_renamed", {"participant_id": participant_id, "name": name}
     )
     for board_id in touched_boards:
         await manager.broadcast(board_id, "presence_update", manager.presence_payload(board_id))
-        if manager.get_facilitator(board_id) == participant.id:
+        if manager.get_facilitator(board_id) == participant_id:
             await manager.broadcast(
                 board_id, "facilitator_update", manager.facilitator_payload(board_id)
             )

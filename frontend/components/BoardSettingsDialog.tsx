@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { EyeOff, Loader2, Lock, Shield, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { EyeOff, Loader2, Lock, RotateCcw, Shield, Trash2 } from 'lucide-react'
 import { deleteBoard, updateBoard } from '@/api'
 import { markOwnBoardDeletion, unmarkOwnBoardDeletion } from '@/lib/board-list-signals'
+import { useOpeningCount } from '@/lib/use-opening-count'
 import { showToast } from '@/store/toastStore'
 import { getApiErrorMessage } from '@/utils/apiError'
 import { CANNOT_DELETE_BOARD_HINT, PRIVACY_SETTINGS_HINT } from '@/lib/participants'
@@ -49,8 +50,32 @@ export default function BoardSettingsDialog({
   onBoardUpdated,
   onBoardDeleted,
 }: BoardSettingsDialogProps) {
+  // Переинициализируем форму только при открытии диалога или переключении на другую доску,
+  // чтобы живые WS-обновления (board_updated) не сбрасывали текущий ввод.
+  const opening = useOpeningCount(open)
+  return (
+    <BoardSettingsContent
+      key={`${board.id}:${opening}`}
+      open={open}
+      onOpenChange={onOpenChange}
+      board={board}
+      canModerate={canModerate}
+      onBoardUpdated={onBoardUpdated}
+      onBoardDeleted={onBoardDeleted}
+    />
+  )
+}
+
+function BoardSettingsContent({
+  open,
+  onOpenChange,
+  board,
+  canModerate = true,
+  onBoardUpdated,
+  onBoardDeleted,
+}: BoardSettingsDialogProps) {
   const [name, setName] = useState(board.name)
-  const [maxVotes, setMaxVotes] = useState(board.max_votes)
+  const [maxVotesDraft, setMaxVotesDraft] = useState(String(board.max_votes))
   const [isLocked, setIsLocked] = useState(Boolean(board.is_locked))
   const [hideCards, setHideCards] = useState(Boolean(board.hide_cards_until_reveal))
   const [anonymousVotes, setAnonymousVotes] = useState(Boolean(board.anonymous_votes))
@@ -58,27 +83,21 @@ export default function BoardSettingsDialog({
     Boolean(board.allow_multiple_votes_per_card),
   )
   const [saving, setSaving] = useState(false)
+  const [resettingReveal, setResettingReveal] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
 
-  useEffect(() => {
-    if (!open) return
-    setName(board.name)
-    setMaxVotes(board.max_votes)
-    setIsLocked(Boolean(board.is_locked))
-    setHideCards(Boolean(board.hide_cards_until_reveal))
-    setAnonymousVotes(Boolean(board.anonymous_votes))
-    setAllowMultipleVotes(Boolean(board.allow_multiple_votes_per_card))
-  }, [open, board])
+  const parsedVotes = Number.parseInt(maxVotesDraft, 10)
+  const clampedVotes = Number.isFinite(parsedVotes) ? Math.max(1, Math.min(99, parsedVotes)) : 5
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     const trimmed = name.trim()
-    if (!trimmed || saving) return
+    if (!trimmed || saving || resettingReveal) return
     setSaving(true)
     try {
       const updated = await updateBoard(board.id, {
         name: trimmed,
-        max_votes: Math.max(1, Math.min(99, maxVotes)),
+        max_votes: clampedVotes,
         is_locked: isLocked,
         hide_cards_until_reveal: hideCards,
         anonymous_votes: anonymousVotes,
@@ -91,6 +110,21 @@ export default function BoardSettingsDialog({
       showToast(getApiErrorMessage(err, 'Не удалось обновить доску'), 'error')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleStartNewHiddenCollect = async () => {
+    if (!canModerate || saving || resettingReveal) return
+    setResettingReveal(true)
+    try {
+      const updated = await updateBoard(board.id, { reset_cards_revealed: true })
+      onBoardUpdated(updated)
+      showToast('Новый скрытый сбор начат', 'success')
+      onOpenChange(false)
+    } catch (err) {
+      showToast(getApiErrorMessage(err, 'Не удалось начать новый скрытый сбор'), 'error')
+    } finally {
+      setResettingReveal(false)
     }
   }
 
@@ -139,8 +173,9 @@ export default function BoardSettingsDialog({
                   type="number"
                   min={1}
                   max={99}
-                  value={maxVotes}
-                  onChange={(e) => setMaxVotes(Number(e.target.value) || 5)}
+                  value={maxVotesDraft}
+                  onChange={(e) => setMaxVotesDraft(e.target.value)}
+                  onBlur={() => setMaxVotesDraft(String(clampedVotes))}
                 />
               </div>
             </div>
@@ -156,7 +191,14 @@ export default function BoardSettingsDialog({
                     Карточки, колонки и голоса менять нельзя. Статусы задач отмечать можно.
                   </p>
                 </div>
-                <Switch checked={isLocked} onCheckedChange={setIsLocked} />
+                <Switch
+                  checked={isLocked}
+                  onCheckedChange={setIsLocked}
+                  disabled={!canModerate}
+                  title={canModerate ? undefined : PRIVACY_SETTINGS_HINT}
+                  aria-label="Заблокировать доску (архив)"
+                  data-testid="lock-board-switch"
+                />
               </div>
 
               <div className="flex items-center justify-between gap-3">
@@ -170,11 +212,31 @@ export default function BoardSettingsDialog({
                     В сессии ведущего карточки откроет этап «Раскрытие».
                   </p>
                   {hideCards && Boolean(board.hide_cards_until_reveal) && (
-                    <p className="text-xs font-medium text-foreground/80" data-testid="hidden-collect-state">
-                      {board.cards_revealed
-                        ? 'Сейчас: карточки раскрыты. Чтобы начать новый сбор, выключите режим, сохраните и включите снова.'
-                        : 'Сейчас: сбор идёт, чужие карточки скрыты.'}
-                    </p>
+                    <div className="space-y-1.5 pt-0.5">
+                      <p className="text-xs font-medium text-foreground/80" data-testid="hidden-collect-state">
+                        {board.cards_revealed
+                          ? 'Сейчас: карточки раскрыты.'
+                          : 'Сейчас: сбор идёт, чужие карточки скрыты.'}
+                      </p>
+                      {board.cards_revealed && canModerate && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={resettingReveal || saving}
+                          onClick={handleStartNewHiddenCollect}
+                          className="h-7 gap-1.5 px-2.5 text-xs"
+                          data-testid="reset-hidden-collect-btn"
+                        >
+                          {resettingReveal ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-3 w-3" />
+                          )}
+                          Начать новый скрытый сбор
+                        </Button>
+                      )}
+                    </div>
                   )}
                 </div>
                 <Switch

@@ -7,6 +7,7 @@ import {
   CARD_COLOR_PRESETS,
   resolveInitialAccent,
 } from '@/lib/board-themes'
+import { avatarSeed } from '@/lib/participants'
 import { escapeHtml, richTextToHtml } from '@/lib/rich-text'
 import { parseSafeExternalUrl } from '@/lib/urls'
 import { showToast } from '@/store/toastStore'
@@ -54,14 +55,24 @@ const PDF_CARD_BG_MAP: Record<string, { bg: string; border: string; accent: stri
   teal: { bg: '#F0FDFA', border: '#99F6E4', accent: '#14B8A6' },
 }
 
+const SAFE_HEX_RE = /^#[0-9a-f]{6}$/i
+
+function safeHexColor(hex: string | null | undefined, fallback: string): string {
+  const trimmed = (hex || '').trim()
+  return SAFE_HEX_RE.test(trimmed) ? trimmed : fallback
+}
+
 function getActiveAccentHex(): string {
   if (typeof document !== 'undefined') {
     const attr = document.documentElement.dataset.accent
     const found = ACCENT_PRESETS.find((p) => p.id === attr)
-    if (found) return found.swatch
+    if (found) return safeHexColor(found.swatch, '#4F46E5')
   }
   const initial = resolveInitialAccent()
-  return ACCENT_PRESETS.find((p) => p.id === initial)?.swatch || '#4F46E5'
+  return safeHexColor(
+    ACCENT_PRESETS.find((p) => p.id === initial)?.swatch,
+    '#4F46E5',
+  )
 }
 
 function resolveCardPrintStyle(hex?: string | null): { bg: string; border: string; accent: string } {
@@ -73,7 +84,7 @@ function resolveCardPrintStyle(hex?: string | null): { bg: string; border: strin
   if (!hex || clean === '#ffffff' || clean === '#fafafa') {
     return PDF_CARD_BG_MAP.default
   }
-  return { bg: hex, border: '#E2E8F0', accent: '#64748B' }
+  return { bg: safeHexColor(hex, '#FFFFFF'), border: '#E2E8F0', accent: '#64748B' }
 }
 
 function formatDate(dateStr?: string, withTime = false): string {
@@ -100,7 +111,7 @@ function cardHTML(card: Card, anonymousVotes: boolean, accentHex: string): strin
   const isAgent = card.author_kind === 'agent' && !card.masked
   const hideAuthor = anonymousVotes && !isAgent
   const displayAuthor = isAgent ? `${card.author} (агент)` : hideAuthor ? 'Участник' : card.author
-  const avatarBg = hideAuthor ? '#64748B' : userColor(card.author)
+  const avatarBg = hideAuthor ? '#64748B' : userColor(avatarSeed(card.author_id, card.author))
   const avatarText = hideAuthor ? '•' : initials(card.author)
   const likeCount = (card.likes || []).length
 
@@ -123,12 +134,13 @@ function cardHTML(card: Card, anonymousVotes: boolean, accentHex: string): strin
 
 function columnHTML(col: Column, anonymousVotes: boolean, accentHex: string): string {
   if (!col) return ''
-  const colColor = col.color || accentHex
+  const colColor = safeHexColor(col.color, accentHex)
   // Чужие карточки до раскрытия приходят с сервера без текста и автора:
   // в отчёт попадает только их количество
   const visibleCards = col.cards.filter((c) => !c.masked)
   const maskedCount = col.cards.length - visibleCards.length
-  const ungrouped = visibleCards.filter((c) => !c.group_id)
+  const groupIds = new Set((col.groups || []).map((g) => g.id))
+  const ungrouped = visibleCards.filter((c) => !c.group_id || !groupIds.has(c.group_id))
   const groups = (col.groups || [])
     .map((g) => ({
       ...g,

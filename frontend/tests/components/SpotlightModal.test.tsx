@@ -126,4 +126,105 @@ describe('SpotlightModal — окно «В фокусе обсуждения»',
     render(<SpotlightModal {...props({ isFacilitator: true })} />)
     expect(screen.getByRole('dialog')).toHaveTextContent('Закрытие окна снимает фокус у всех')
   })
+
+  it('readOnly отключает голосование, снятие голоса, создание и быстрое добавление задач', () => {
+    const onCreateActionItem = vi.fn()
+    render(
+      <SpotlightModal
+        {...props({
+          readOnly: true,
+          isFacilitator: true,
+          allowMultipleVotes: true,
+          card: { ...first, likes: ['p-me'] },
+          queueCards: [
+            { card: { ...first, likes: ['p-me'] }, columnTitle: 'Хорошо' },
+            { card: second, columnTitle: 'Хорошо' },
+          ],
+          onCreateActionItem,
+          onSelectCard: vi.fn(),
+          onRemoveVote: vi.fn(),
+          onQuickCreateActionItem: vi.fn(),
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('spotlight-unlike-btn')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Создать задачу' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'В задачу и далее' })).toBeDisabled()
+    expect(screen.getByTestId('spotlight-quick-task-input')).toBeDisabled()
+    expect(screen.getByTestId('spotlight-quick-task-submit')).toBeDisabled()
+  })
+
+  it('Dot Voting кнопка «−» снимает голос, а связанные задачи и быстрая форма работают', async () => {
+    const user = userEvent.setup()
+    const onRemoveVote = vi.fn()
+    const onQuickCreateActionItem = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <SpotlightModal
+        {...props({
+          allowMultipleVotes: true,
+          card: { ...first, likes: ['p-me', 'p-me'] },
+          onRemoveVote,
+          onQuickCreateActionItem,
+          actionItems: [
+            {
+              id: 'ai-1',
+              board_id: 'b-1',
+              title: 'Связанная задача',
+              text: 'Детали',
+              assignee: 'Анна',
+              status: 'open',
+              source_card_ids: ['c-1'],
+              completed_at: null,
+              created_at: '2026-03-01T10:00:00Z',
+            },
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('spotlight-tasks-section')).toHaveTextContent('Связанная задача')
+
+    await user.click(screen.getByTestId('spotlight-unlike-btn'))
+    expect(onRemoveVote).toHaveBeenCalledWith('c-1')
+
+    await user.type(screen.getByTestId('spotlight-quick-task-input'), 'Ускорить CI')
+    await user.type(screen.getByTestId('spotlight-quick-task-assignee'), 'Борис')
+    await user.click(screen.getByTestId('spotlight-quick-task-submit'))
+
+    expect(onQuickCreateActionItem).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'c-1' }),
+      'Ускорить CI',
+      'Борис',
+    )
+  })
+
+  it('секция задач вынесена из фиксированного контейнера карточки, чтобы не обрезаться', () => {
+    render(
+      <SpotlightModal
+        {...props({
+          onQuickCreateActionItem: vi.fn(),
+          actionItems: [
+            {
+              id: 'ai-1',
+              board_id: 'b-1',
+              title: 'Отдельная секция задач',
+              text: 'Детали',
+              assignee: null,
+              status: 'open',
+              source_card_ids: ['c-1'],
+              completed_at: null,
+              created_at: '2026-03-01T10:00:00Z',
+            },
+          ],
+        })}
+      />,
+    )
+
+    const cardText = screen.getByText('Первая карточка')
+    const tasksSection = screen.getByTestId('spotlight-tasks-section')
+    expect(cardText.closest('.h-\\[280px\\]')).not.toBeNull()
+    expect(tasksSection.closest('.h-\\[280px\\]')).toBeNull()
+  })
 })

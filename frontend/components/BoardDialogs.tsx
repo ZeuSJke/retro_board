@@ -14,6 +14,7 @@ import type {
   Card,
   Column as ColumnType,
   ReactionBubble,
+  TimerState,
   WsMessage,
 } from '../types'
 import AutoClusterPreviewDialog from './AutoClusterPreviewDialog'
@@ -115,10 +116,16 @@ export interface BoardDialogsProps {
   spotlightQueueMode: 'all' | 'top_votes'
   onSpotlightQueueModeChange: (mode: 'all' | 'top_votes') => void
   onSelectSpotlightCard: (cardId: string) => void
-  onCreateActionItemFromCard: (text: string, sourceCardIds: string[], authorHint?: string | null) => void
+  onCreateActionItemFromCard: (
+    text: string,
+    sourceCardIds: string[],
+    authorHint?: string | null,
+    explicitAssignee?: string | null,
+  ) => Promise<void> | void
   onSpotlightCardUpdated: (card: Card) => void
 
-  // Health Check & WS
+  // Health Check, Timer & WS
+  timer?: TimerState
   health: ReturnType<typeof useHealthCheck>
   sendMessage: (msg: WsMessage) => void
 }
@@ -188,6 +195,7 @@ export default function BoardDialogs({
   onSelectSpotlightCard,
   onCreateActionItemFromCard,
   onSpotlightCardUpdated,
+  timer,
   health,
   sendMessage,
 }: BoardDialogsProps) {
@@ -298,6 +306,10 @@ export default function BoardDialogs({
         loading={summaryLoading}
         error={summaryError}
         onSummaryUpdated={onSummaryUpdated}
+        onOpenRoti={() => {
+          onSummaryOpenChange(false)
+          health.openRoti()
+        }}
       />
 
       <AutoClusterPreviewDialog
@@ -324,6 +336,8 @@ export default function BoardDialogs({
         maxVotes={board.max_votes}
         userTotalVotes={userTotalVotes}
         allowMultipleVotes={Boolean(board.allow_multiple_votes_per_card)}
+        timer={timer}
+        actionItems={actionItems}
         queueCards={spotlightQueue}
         queueMode={spotlightQueueMode}
         onQueueModeChange={onSpotlightQueueModeChange}
@@ -336,6 +350,9 @@ export default function BoardDialogs({
         onCreateActionItem={(card) =>
           onCreateActionItemFromCard(card.text, [card.id], card.author)
         }
+        onQuickCreateActionItem={(card, text, assignee) =>
+          onCreateActionItemFromCard(text, [card.id], card.author, assignee)
+        }
         onLike={() => {
           if (!spotlightData || readOnly) return
           const targetCard = spotlightData.card
@@ -347,6 +364,12 @@ export default function BoardDialogs({
             return
           }
           toggleLike(targetCard.id, allowMulti ? 'add' : 'toggle')
+            .then((updated) => onSpotlightCardUpdated(updated))
+            .catch((err) => showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error'))
+        }}
+        onRemoveVote={(cardId) => {
+          if (!spotlightData || readOnly) return
+          toggleLike(cardId, 'remove')
             .then((updated) => onSpotlightCardUpdated(updated))
             .catch((err) => showToast(getApiErrorMessage(err, 'Не удалось обновить голос'), 'error'))
         }}

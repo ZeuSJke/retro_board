@@ -2,10 +2,10 @@
 
 import json
 import logging
-import re
 from typing import Any
 
 from app.ai.ai_client import AIModelConfig, ai_client
+from app.ai.sanitize import extract_json_value, sanitize_insight_text
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,7 @@ ACTION_ITEM_SUGGESTIONS_CONFIG = AIModelConfig(
 
 
 def _sanitize_text(value: str, limit: int = 240) -> str:
-    cleaned = re.sub(r"[\r\n\t]+", " ", str(value or "")).strip()
-    cleaned = re.sub(r"[<>]", "", cleaned)
-    return cleaned[:limit]
+    return sanitize_insight_text(value, limit)
 
 
 def parse_action_item_suggestions(
@@ -53,14 +51,8 @@ def parse_action_item_suggestions(
     valid_card_ids: set[str],
 ) -> list[dict[str, Any]]:
     """Parse and sanitize AI JSON suggestions against known card IDs."""
-    cleaned = (raw or "").strip()
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
-    cleaned = cleaned.strip()
-
-    try:
-        parsed = json.loads(cleaned)
-    except (json.JSONDecodeError, TypeError):
+    parsed = extract_json_value(raw)
+    if parsed is None:
         return []
 
     raw_items = parsed.get("suggestions") if isinstance(parsed, dict) else parsed

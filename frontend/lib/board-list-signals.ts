@@ -10,12 +10,15 @@
  *   на запрос, и без пометки удаляющий получил бы второй переход и лишнее уведомление.
  */
 
+import { isOwnBoardDeletionInUiStore, useUiStore } from '@/store/uiStore'
+
 type Listener = () => void
 
 const refreshListeners = new Set<Listener>()
 
 /** Попросить владельца списка досок перечитать его с сервера. */
 export function requestBoardsRefresh(): void {
+  useUiStore.getState().requestBoardsRefresh()
   refreshListeners.forEach((listener) => listener())
 }
 
@@ -27,19 +30,17 @@ export function onBoardsRefreshRequested(listener: Listener): () => void {
   }
 }
 
-const ownDeletions = new Set<string>()
-
 /** Отметить доску, которую текущий участник сейчас удаляет сам (до запроса на сервер). */
 export function markOwnBoardDeletion(boardId: string): void {
-  ownDeletions.add(boardId)
+  useUiStore.getState().markOwnBoardDeletion(boardId)
 }
 
 /** Снять отметку: удаление не удалось, доска осталась. */
 export function unmarkOwnBoardDeletion(boardId: string): void {
-  ownDeletions.delete(boardId)
+  useUiStore.getState().unmarkOwnBoardDeletion(boardId)
 }
 
 /** Удаляет ли эту доску сам текущий участник (тогда событие `board_deleted` — не новость). */
 export function isOwnBoardDeletion(boardId: string): boolean {
-  return ownDeletions.has(boardId)
+  return isOwnBoardDeletionInUiStore(boardId)
 }

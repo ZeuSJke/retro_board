@@ -4,11 +4,12 @@
 пути (`/health/questions`, `/health-trends`) не должен перехватить `/{board_id}`.
 """
 
+import anyio
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app import health, models, schemas
-from app.database import get_db
+from app.database import get_db, release_connection
 from app.limiter import TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.utils import get_or_404, require_live_board
 from app.workspace_auth import get_current_participant, get_current_workspace
@@ -20,13 +21,6 @@ router = APIRouter()
 def _live_board(db: Session, board_id: str, workspace_id: str) -> models.Board:
     # Опрос и оценка встречи доступны и на заблокированной доске: встреча уже прошла
     return require_live_board(get_or_404(db, models.Board, board_id, "Доска не найдена"), workspace_id)
-
-
-async def _broadcast_summary(db: Session, board_id: str) -> None:
-    """Разослать сводку без личных ответов: свои ответы клиент знает сам."""
-    summary = health.board_summary(db, board_id, None)
-    summary.pop("mine", None)
-    await manager.broadcast(board_id, "health_updated", summary)
 
 
 @router.get("/health/questions", response_model=list[schemas.HealthQuestion])
@@ -75,11 +69,21 @@ async def answer_board_health(
     participant: models.Participant = Depends(get_current_participant),
 ):
     """Ответить на вопросы health check (можно частично; повторный ответ заменяет прежний)."""
-    board = _live_board(db, board_id, workspace.id)
-    health.save_answers(db, board.id, participant.id, body.answers)
-    db.commit()
-    await _broadcast_summary(db, board.id)
-    return health.board_summary(db, board.id, participant.id)
+    workspace_id = workspace.id
+    participant_id = participant.id
+
+    def _op():
+        board = _live_board(db, board_id, workspace_id)
+        health.save_answers_and_commit(db, board.id, participant_id, body.answers)
+        personal = health.board_summary(db, board.id, participant_id)
+        broadcast_payload = {k: v for k, v in personal.items() if k != "mine"}
+        resolved_id = board.id
+        release_connection(db)
+        return resolved_id, personal, broadcast_payload
+
+    resolved_id, personal, broadcast_payload = await anyio.to_thread.run_sync(_op)
+    await manager.broadcast(resolved_id, "health_updated", broadcast_payload)
+    return personal
 
 
 @router.post("/{board_id}/roti", response_model=schemas.HealthSummaryOut)
@@ -93,8 +97,18 @@ async def rate_meeting(
     participant: models.Participant = Depends(get_current_participant),
 ):
     """Оценить встречу одним числом от 1 до 5."""
-    board = _live_board(db, board_id, workspace.id)
-    health.save_answers(db, board.id, participant.id, {health.ROTI_KEY: body.value})
-    db.commit()
-    await _broadcast_summary(db, board.id)
-    return health.board_summary(db, board.id, participant.id)
+    workspace_id = workspace.id
+    participant_id = participant.id
+
+    def _op():
+        board = _live_board(db, board_id, workspace_id)
+        health.save_answers_and_commit(db, board.id, participant_id, {health.ROTI_KEY: body.value})
+        personal = health.board_summary(db, board.id, participant_id)
+        broadcast_payload = {k: v for k, v in personal.items() if k != "mine"}
+        resolved_id = board.id
+        release_connection(db)
+        return resolved_id, personal, broadcast_payload
+
+    resolved_id, personal, broadcast_payload = await anyio.to_thread.run_sync(_op)
+    await manager.broadcast(resolved_id, "health_updated", broadcast_payload)
+    return personal

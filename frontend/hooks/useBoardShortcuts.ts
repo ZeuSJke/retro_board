@@ -4,8 +4,17 @@ import type { CommandBoardAction, CommandSearchCard } from '../components/Comman
 import { openHealthCheck } from '../components/HealthCheckButton'
 import type { Column as ColumnType } from '../types'
 
-/** Сколько карточка остаётся подсвеченной после перехода к ней из палитры команд. */
+/** Сколько карточка остаётся подсвеченной после перехода к ней из палитры команд или задачи. */
 const CARD_FLASH_MS = 2200
+
+/** Прокрутить доску к карточке и ненадолго подсветить её. */
+export function flashBoardCard(cardId: string): void {
+  const el = document.querySelector<HTMLElement>(`[data-card-id="${cardId}"]`)
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+  el.setAttribute('data-flash', 'true')
+  window.setTimeout(() => el.removeAttribute('data-flash'), CARD_FLASH_MS)
+}
 
 interface UseBoardShortcutsOptions {
   columns: ColumnType[]
@@ -15,8 +24,6 @@ interface UseBoardShortcutsOptions {
   readOnly: boolean
   userTotalVotes: number
   aiEnabled: boolean | null
-  /** В сессии фокус включает ведущий, вне сессии — любой участник. */
-  canControlFocus: boolean
   selectedCount: number
   onFocusSearch: () => void
   onToggleMaster: () => void
@@ -28,7 +35,6 @@ interface UseBoardShortcutsOptions {
   onToggleReactionsPopover: () => void
   onOpenReactionsPopover: () => void
   onClearSelection: () => void
-  onSelectSpotlightCard: (cardId: string) => void
 }
 
 /** Палитра команд доски, поиск карточек и глобальные горячие клавиши доски. */
@@ -40,7 +46,6 @@ export function useBoardShortcuts({
   readOnly,
   userTotalVotes,
   aiEnabled,
-  canControlFocus,
   selectedCount,
   onFocusSearch,
   onToggleMaster,
@@ -52,7 +57,6 @@ export function useBoardShortcuts({
   onToggleReactionsPopover,
   onOpenReactionsPopover,
   onClearSelection,
-  onSelectSpotlightCard,
 }: UseBoardShortcutsOptions) {
   const commandBoardActions = useMemo<CommandBoardAction[]>(() => {
     const list: CommandBoardAction[] = []
@@ -155,11 +159,7 @@ export function useBoardShortcuts({
 
   // Перейти к карточке на своём экране: прокрутить и ненадолго подсветить
   const flashCard = useCallback((cardId: string) => {
-    const el = document.querySelector<HTMLElement>(`[data-card-id="${cardId}"]`)
-    if (!el) return
-    el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
-    el.setAttribute('data-flash', 'true')
-    window.setTimeout(() => el.removeAttribute('data-flash'), CARD_FLASH_MS)
+    flashBoardCard(cardId)
   }, [])
 
   const commandSearchCards = useMemo<CommandSearchCard[]>(() => {
@@ -173,16 +173,14 @@ export function useBoardShortcuts({
           columnTitle: col.title,
           likesCount: (card.likes || []).length,
           onSelect: () => {
+            // Переход по поиску — всегда локальный для себя: чужой экран не перебиваем
             flashCard(card.id)
-            // В сессии поиск у не-ведущего — личное действие; вне сессии фокус,
-            // как и кнопкой карточки, включает любой участник
-            if (canControlFocus) onSelectSpotlightCard(card.id)
           },
         })
       }
     }
     return items
-  }, [columns, flashCard, canControlFocus, onSelectSpotlightCard])
+  }, [columns, flashCard])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {

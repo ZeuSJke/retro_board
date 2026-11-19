@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { motion } from 'motion/react'
 import { ArrowRight, Eye, EyeOff, KeyRound, Loader2, Users } from 'lucide-react'
@@ -31,18 +31,13 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
   const knownWorkspaceSlug = useAppStore((s) => s.workspace?.workspaceSlug ?? '')
   const setSession = useAppStore((s) => s.setSession)
 
-  const [name, setName] = useState(savedName === 'Аноним' ? '' : savedName)
+  const [nameDraft, setNameDraft] = useState<string | null>(null)
+  const name = nameDraft ?? (savedName && savedName !== 'Аноним' ? savedName : '')
   const [workspaceSlug, setWorkspaceSlug] = useState(knownWorkspaceSlug)
   const [accessKey, setAccessKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (savedName && savedName !== 'Аноним') {
-      setName((prev) => prev || savedName)
-    }
-  }, [savedName])
 
   const trimmedName = name.trim()
   const canSubmit = workspaceSlug.trim().length > 0 && accessKey.length > 0
@@ -127,7 +122,7 @@ export default function WelcomeDialog({ onConfirm }: WelcomeDialogProps) {
                 id="welcome-name"
                 placeholder="Ваше имя"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => setNameDraft(e.target.value)}
                 maxLength={60}
                 autoFocus
                 data-testid="welcome-name-input"

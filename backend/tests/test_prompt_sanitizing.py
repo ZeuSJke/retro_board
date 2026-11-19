@@ -35,13 +35,18 @@ class TestSanitizePromptText:
 
 class TestTitlePrompt:
     def _generate(self, client, headers, text: str, answer: str) -> tuple[str, str]:
+        from app.config import settings
+
         prompts = []
 
         def fake_generate(prompt, config=None):
             prompts.append(prompt)
             return answer
 
-        with patch("app.routers.action_items.ai_client.generate", fake_generate):
+        with (
+            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            patch("app.routers.action_items.ai_client.generate", fake_generate),
+        ):
             resp = client.post(
                 "/api/action-items/generate-title", json={"text": text}, headers=headers
             )
@@ -113,3 +118,17 @@ class TestInsightTextForPeople:
             "вернуть предсказуемость релизов."
         )
         assert self._clip(text, MAX_RECOMMENDATION_CHARS) == text
+
+
+class TestExtractJsonObject:
+    def test_skips_bracketed_prefix_before_object(self):
+        from app.ai.sanitize import extract_json_object
+
+        raw = 'Пункт [1] анализ ответа:\n{"title": "Ускорить CI", "ok": true}'
+        assert extract_json_object(raw) == {"title": "Ускорить CI", "ok": True}
+
+    def test_strips_code_fence_and_skips_list_marker(self):
+        from app.ai.sanitize import extract_json_object
+
+        raw = '```json\n[1]\n{"summary": "Готово"}\n```'
+        assert extract_json_object(raw) == {"summary": "Готово"}

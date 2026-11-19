@@ -85,7 +85,7 @@ export function isBoardListItem(d: unknown): d is BoardListItem {
     isRecord(d) &&
     hasId(d) &&
     typeof d.name === 'string' &&
-    typeof d.slug === 'string'
+    (typeof d.slug === 'string' || d.slug === null)
   )
 }
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react'
 import { playTimerChime } from '@/lib/board-themes'
 import {
   IDLE_TIMER,
@@ -14,6 +14,32 @@ import type { TimerState, WsMessage } from '../types'
 const SOUND_MUTE_KEY = 'retro_timer_muted'
 /** Реже этого срок окончания не перепроверяется: в фоновой вкладке таймеры браузера опаздывают. */
 const EXPIRY_RECHECK_MS = 60_000
+
+const muteListeners = new Set<() => void>()
+
+function subscribeSoundMuted(listener: () => void): () => void {
+  muteListeners.add(listener)
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === SOUND_MUTE_KEY) listener()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    muteListeners.delete(listener)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
+function getSoundMutedSnapshot(): boolean {
+  try {
+    return localStorage.getItem(SOUND_MUTE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function getSoundMutedServerSnapshot(): boolean {
+  return false
+}
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
@@ -33,8 +59,11 @@ interface UseTimerOptions {
 export function useTimer(sendWs: (msg: WsMessage) => void, options?: UseTimerOptions) {
   const [timer, setTimer] = useState<TimerState>(IDLE_TIMER)
   const [autoAdvance, setAutoAdvance] = useState(false)
-  const [soundMuted, setSoundMuted] = useState(false)
-  const soundMutedRef = useRef(false)
+  const soundMuted = useSyncExternalStore(
+    subscribeSoundMuted,
+    getSoundMutedSnapshot,
+    getSoundMutedServerSnapshot,
+  )
   const timerRef = useRef(timer)
   const onExpireRef = useRef(options?.onExpire)
 
@@ -43,27 +72,14 @@ export function useTimer(sendWs: (msg: WsMessage) => void, options?: UseTimerOpt
     onExpireRef.current = options?.onExpire
   })
 
-  useEffect(() => {
+  const toggleSoundMuted = useCallback(() => {
+    const next = !getSoundMutedSnapshot()
     try {
-      const saved = localStorage.getItem(SOUND_MUTE_KEY) === 'true'
-      setSoundMuted(saved)
-      soundMutedRef.current = saved
+      localStorage.setItem(SOUND_MUTE_KEY, String(next))
     } catch {
       /* ignore */
     }
-  }, [])
-
-  const toggleSoundMuted = useCallback(() => {
-    setSoundMuted((prev) => {
-      const next = !prev
-      soundMutedRef.current = next
-      try {
-        localStorage.setItem(SOUND_MUTE_KEY, String(next))
-      } catch {
-        /* ignore */
-      }
-      return next
-    })
+    muteListeners.forEach((listener) => listener())
   }, [])
 
   // Окончание: один таймер браузера до момента `endsAt`. Срок перепроверяется, когда
@@ -83,7 +99,7 @@ export function useTimer(sendWs: (msg: WsMessage) => void, options?: UseTimerOpt
       setTimer((prev) =>
         prev.running && prev.endsAt === endsAt ? stoppedTimer(prev.duration, 0) : prev,
       )
-      if (!soundMutedRef.current) playTimerChime()
+      if (!getSoundMutedSnapshot()) playTimerChime()
       onExpireRef.current?.()
     }
 

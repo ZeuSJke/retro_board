@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from app.ai.ai_client import AIModelConfig, ai_client
-from app.ai.sanitize import sanitize_prompt_text
+from app.ai.sanitize import extract_json_object, sanitize_prompt_text
 
 SUMMARY_GENERATION_PROMPT = """Ты ассистент Agile-коуча. Проанализируй данные ретроспективы и сгенерируй структурированное резюме.
 
@@ -46,6 +46,7 @@ SUMMARY_GENERATION_CONFIG = AIModelConfig(
 )
 
 MAX_CARD_TEXT_CHARS = 200
+MAX_CARDS_FOR_SUMMARY = 120
 # Длина короткого id темы в запросе: полный UUID модель чаще искажает
 THEME_REF_CHARS = 6
 
@@ -62,10 +63,23 @@ def format_board_data(board_data: dict[str, Any]) -> str:
         "\nКолонки и карточки:",
     ]
 
-    for column in board_data.get("columns", []):
+    columns = board_data.get("columns", [])
+    total_cards = sum(len(col.get("cards", [])) for col in columns)
+    allowed_card_ids: set[str] | None = None
+    if total_cards > MAX_CARDS_FOR_SUMMARY:
+        ranked = sorted(
+            (card for col in columns for card in col.get("cards", [])),
+            key=lambda c: len(c.get("likes") or []),
+            reverse=True,
+        )[:MAX_CARDS_FOR_SUMMARY]
+        allowed_card_ids = {str(c.get("id") or "") for c in ranked}
+
+    for column in columns:
         column_title = sanitize_prompt_text(column.get("title"), 80) or "Без названия"
         lines.append(f"\n[{column_title}]")
         cards = column.get("cards", [])
+        if allowed_card_ids is not None:
+            cards = [c for c in cards if str(c.get("id") or "") in allowed_card_ids]
         if not cards:
             lines.append("  (нет карточек)")
         for card in cards:
@@ -191,22 +205,8 @@ def generate_summary(board_data: dict[str, Any]) -> dict[str, Any]:
 
     response = ai_client.generate(prompt, SUMMARY_GENERATION_CONFIG)
 
-    # Parse JSON response
-    try:
-        # Clean up response - remove markdown code blocks if present
-        cleaned = response.strip()
-        if cleaned.startswith("```json"):
-            cleaned = cleaned[7:]
-        if cleaned.startswith("```"):
-            cleaned = cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-
-        result = json.loads(cleaned)
-        if not isinstance(result, dict):
-            raise json.JSONDecodeError("not an object", cleaned, 0)
-
+    result = extract_json_object(response)
+    if result is not None:
         # Ответ модели — недоверенный ввод: приводим поля к ожидаемым типам
         summary_text = result.get("summary_text")
         themes = _clean_themes(result.get("themes"), refs)
@@ -221,13 +221,15 @@ def generate_summary(board_data: dict[str, Any]) -> dict[str, Any]:
             "recommendations": _clean_str_list(result.get("recommendations")),
             "themes": themes,
         }
-    except json.JSONDecodeError:
-        # Fallback if AI returns non-JSON
-        return {
-            "summary_text": response[:500]
-            if response
-            else "Не удалось сгенерировать резюме",
-            "key_themes": [],
-            "recommendations": [],
-            "themes": [],
-        }
+
+    cleaned = (response or "").strip()
+    if cleaned.startswith(("{", "```")):
+        fallback_text = "Не удалось разобрать ответ AI. Попробуйте перегенерировать итоги."
+    else:
+        fallback_text = response[:500] if response else "Не удалось сгенерировать резюме"
+    return {
+        "summary_text": fallback_text,
+        "key_themes": [],
+        "recommendations": [],
+        "themes": [],
+    }
