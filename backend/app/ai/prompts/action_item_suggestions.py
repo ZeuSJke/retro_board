@@ -39,6 +39,7 @@ ACTION_ITEM_SUGGESTIONS_CONFIG = AIModelConfig(
     max_tokens=1100,
     timeout=60,
     retries=1,
+    json_mode=True,
 )
 
 

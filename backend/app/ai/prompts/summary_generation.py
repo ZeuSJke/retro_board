@@ -43,6 +43,7 @@ SUMMARY_GENERATION_CONFIG = AIModelConfig(
     max_tokens=1500,
     timeout=90,
     retries=2,
+    json_mode=True,
 )
 
 MAX_CARD_TEXT_CHARS = 200

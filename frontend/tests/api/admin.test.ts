@@ -7,6 +7,7 @@ const { instances } = vi.hoisted(() => {
   interface MockInstance {
     get: ReturnType<typeof vi.fn>
     post: ReturnType<typeof vi.fn>
+    put: ReturnType<typeof vi.fn>
     patch: ReturnType<typeof vi.fn>
     delete: ReturnType<typeof vi.fn>
     onResponseError: ((err: unknown) => Promise<never>) | null
@@ -25,6 +26,7 @@ vi.mock('axios', () => ({
       const instance = {
         get: vi.fn(),
         post: vi.fn(),
+        put: vi.fn(),
         patch: vi.fn(),
         delete: vi.fn(),
         onResponseError: null as ResErrorInterceptor | null,
@@ -51,12 +53,17 @@ import {
   adminLogin,
   adminLogout,
   checkAdminSession,
+  fetchAdminAiModels,
+  getAdminAiSettings,
   getAdminSession,
   getAdminSessionHint,
   getAdminWorkspaceInvite,
+  resetAdminAiSettings,
   rotateAdminWorkspaceInvite,
   setAdminSessionHint,
   subscribeAdminSessionHint,
+  testAdminAiSettings,
+  updateAdminAiSettings,
 } from '../../api/admin'
 import { getApiErrorMessage } from '../../utils/apiError'
 
@@ -236,6 +243,86 @@ describe('api/admin', () => {
 
       await expect(rotateAdminWorkspaceInvite('ws-1')).resolves.toBe('new-token-5678')
       expect(adminApi().post).toHaveBeenCalledWith('/workspaces/ws-1/invite/rotate')
+    })
+  })
+
+  describe('настройки ИИ', () => {
+    it('читает, сохраняет, сбрасывает и тестирует настройки ИИ по путям админского API', async () => {
+      const sample = {
+        enabled: true,
+        base_url: 'https://api.example.com/v1',
+        model: 'model-a',
+        reasoning_effort: 'high' as const,
+        source: 'database' as const,
+        has_api_key: true,
+        api_key_masked: 'sk-••••1234',
+        key_decrypt_error: false,
+        env_configured: false,
+        updated_at: '2026-11-19T12:00:00Z',
+      }
+      adminApi().get.mockResolvedValueOnce({ data: sample })
+      adminApi().put.mockResolvedValueOnce({ data: sample })
+      adminApi().delete.mockResolvedValueOnce({ data: { ...sample, source: 'env' } })
+      adminApi().post
+        .mockResolvedValueOnce({
+          data: {
+            ok: true,
+            latency_ms: 42,
+            reply_preview: 'ОК',
+            error: null,
+            reasoning_used: true,
+          },
+        })
+        .mockResolvedValueOnce({ data: { models: ['model-a', 'model-b'] } })
+
+      await expect(getAdminAiSettings()).resolves.toEqual(sample)
+      expect(adminApi().get).toHaveBeenCalledWith('/ai-settings')
+
+      await expect(
+        updateAdminAiSettings({
+          enabled: true,
+          base_url: 'https://api.example.com/v1',
+          model: 'model-a',
+          reasoning_effort: 'high',
+          api_key: 'sk-test-1234',
+        }),
+      ).resolves.toEqual(sample)
+      expect(adminApi().put).toHaveBeenCalledWith('/ai-settings', {
+        enabled: true,
+        base_url: 'https://api.example.com/v1',
+        model: 'model-a',
+        reasoning_effort: 'high',
+        api_key: 'sk-test-1234',
+      })
+
+      await expect(resetAdminAiSettings()).resolves.toMatchObject({ source: 'env' })
+      expect(adminApi().delete).toHaveBeenCalledWith('/ai-settings')
+
+      await expect(
+        testAdminAiSettings({
+          base_url: 'https://api.example.com/v1',
+          model: 'model-a',
+          reasoning_effort: 'high',
+        }),
+      ).resolves.toMatchObject({ ok: true, latency_ms: 42, reasoning_used: true })
+      expect(adminApi().post).toHaveBeenCalledWith(
+        '/ai-settings/test',
+        {
+          base_url: 'https://api.example.com/v1',
+          model: 'model-a',
+          reasoning_effort: 'high',
+        },
+        { timeout: 45000 },
+      )
+
+      await expect(
+        fetchAdminAiModels({ base_url: 'https://api.example.com/v1' }),
+      ).resolves.toEqual(['model-a', 'model-b'])
+      expect(adminApi().post).toHaveBeenCalledWith(
+        '/ai-settings/models',
+        { base_url: 'https://api.example.com/v1' },
+        { timeout: 15000 },
+      )
     })
   })
 })

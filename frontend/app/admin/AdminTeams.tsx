@@ -74,7 +74,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import AccessKeyField from './AccessKeyField'
+import AdminAiSettings from './AdminAiSettings'
 import InviteLinkDialog from './InviteLinkDialog'
 
 type DialogMode = 'create' | 'rename' | 'key' | 'invite' | 'tokens' | null
@@ -150,6 +152,8 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
       ? 'Не удалось загрузить список команд. Проверьте соединение и повторите.'
       : null
   const [error, setError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'teams' | 'ai'>('teams')
+  const [aiTabVisited, setAiTabVisited] = useState(false)
 
   const [dialogMode, setDialogMode] = useState<DialogMode>(null)
   // Команда, с которой работает открытый диалог; после закрытия остаётся до следующего выбора
@@ -383,16 +387,18 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
             </Button>
 
             {/* Без загруженного списка создавать нечего: новая команда встала бы в пустой список */}
-            <Button
-              size="sm"
-              className="gap-1.5"
-              onClick={openCreate}
-              disabled={workspaces === null}
-              data-testid="admin-create-team"
-            >
-              <Plus className="h-4 w-4" />
-              Создать команду
-            </Button>
+            {activeTab === 'teams' && (
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={openCreate}
+                disabled={workspaces === null}
+                data-testid="admin-create-team"
+              >
+                <Plus className="h-4 w-4" />
+                Создать команду
+              </Button>
+            )}
 
             <Button
               variant="outline"
@@ -408,8 +414,27 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl space-y-6 px-4 py-6 md:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      <main className="mx-auto max-w-6xl px-4 py-6 md:px-6">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => {
+            const next = value === 'ai' ? 'ai' : 'teams'
+            if (next === 'ai') setAiTabVisited(true)
+            setActiveTab(next)
+          }}
+          className="space-y-6"
+        >
+          <TabsList>
+            <TabsTrigger value="teams" data-testid="admin-tab-teams">
+              Команды
+            </TabsTrigger>
+            <TabsTrigger value="ai" data-testid="admin-tab-ai">
+              Настройки ИИ
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="teams" className="space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h1 className="text-xl font-bold tracking-tight">Команды</h1>
             <p className="text-sm text-muted-foreground">
@@ -562,6 +587,12 @@ export default function AdminTeams({ onLogout }: AdminTeamsProps) {
             </div>
           </div>
         )}
+          </TabsContent>
+
+          <TabsContent value="ai" forceMount>
+            {aiTabVisited ? <AdminAiSettings /> : null}
+          </TabsContent>
+        </Tabs>
       </main>
 
       {/* Создание команды */}

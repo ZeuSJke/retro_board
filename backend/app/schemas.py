@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 ActionItemStatus = Literal["open", "in_progress", "done"]
 AgentTokenScope = Literal["read_only", "read_write"]
 AuthorKind = Literal["human", "agent"]
+AIReasoningEffort = Literal["default", "none", "low", "medium", "high", "max"]
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -223,6 +224,86 @@ class AdminSessionOut(BaseModel):
     """Признак действующей сессии администратора; ответ всегда 200."""
 
     authenticated: bool
+
+
+class AdminAiSettingsOut(BaseModel):
+    """Текущие настройки ИИ для `/admin` без раскрытия сырого API-ключа."""
+
+    enabled: bool
+    base_url: str
+    model: str
+    reasoning_effort: AIReasoningEffort
+    source: Literal["database", "env"]
+    has_api_key: bool
+    api_key_masked: Optional[str] = None
+    key_decrypt_error: bool = False
+    env_configured: bool
+    updated_at: Optional[datetime] = None
+
+
+class AdminAiSettingsUpdate(BaseModel):
+    enabled: bool
+    base_url: str = Field(default="", max_length=500)
+    model: str = Field(default="", max_length=200)
+    reasoning_effort: AIReasoningEffort = "default"
+    api_key: Optional[str] = Field(default=None, max_length=500)
+    clear_api_key: bool = False
+
+    @field_validator("base_url", "model")
+    @classmethod
+    def validate_required_utf8(cls, v: str) -> str:
+        return _utf8_encodable(v)
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_optional_utf8(cls, v: str | None) -> str | None:
+        return _utf8_optional(v)
+
+
+class AdminAiSettingsTestRequest(BaseModel):
+    base_url: str = Field(..., min_length=1, max_length=500)
+    model: str = Field(..., min_length=1, max_length=200)
+    reasoning_effort: AIReasoningEffort = "default"
+    api_key: Optional[str] = Field(default=None, max_length=500)
+    clear_api_key: bool = False
+
+    @field_validator("base_url", "model")
+    @classmethod
+    def validate_required_utf8(cls, v: str) -> str:
+        return _utf8_encodable(v)
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_optional_utf8(cls, v: str | None) -> str | None:
+        return _utf8_optional(v)
+
+
+class AdminAiSettingsTestOut(BaseModel):
+    ok: bool
+    latency_ms: int
+    reply_preview: Optional[str] = None
+    error: Optional[str] = None
+    reasoning_used: bool = False
+
+
+class AdminAiModelsRequest(BaseModel):
+    base_url: str = Field(..., min_length=1, max_length=500)
+    api_key: Optional[str] = Field(default=None, max_length=500)
+    clear_api_key: bool = False
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_required_utf8(cls, v: str) -> str:
+        return _utf8_encodable(v)
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_optional_utf8(cls, v: str | None) -> str | None:
+        return _utf8_optional(v)
+
+
+class AdminAiModelsOut(BaseModel):
+    models: list[str]
 
 
 # ── Card ──────────────────────────────────────────────────────────────────────

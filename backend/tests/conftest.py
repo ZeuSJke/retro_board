@@ -176,14 +176,25 @@ def _reset_ws_manager():
     phases/timers/session_ids иначе протекают из теста в тест и дают
     ложные presence/facilitator/timer-состояния.
     """
+    from app.ai import ai_client
     from app.mcp import mcp_rate_limiter
+    from app.services.ai_settings import (
+        invalidate_ai_settings_cache,
+        set_ai_settings_db_session_factory,
+    )
     from app.ws_manager import manager as _ws_manager
 
     _ws_manager.reset()
     mcp_rate_limiter.reset()
+    set_ai_settings_db_session_factory(TestSessionLocal)
+    invalidate_ai_settings_cache()
+    ai_client.reset_shared_client()
     yield
     _ws_manager.reset()
     mcp_rate_limiter.reset()
+    set_ai_settings_db_session_factory(None)
+    invalidate_ai_settings_cache()
+    ai_client.reset_shared_client()
 
 
 @pytest.fixture()

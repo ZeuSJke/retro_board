@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     ai_max_concurrency: int = 4  # env AI_MAX_CONCURRENCY
     ai_queue_timeout_s: float = 15.0  # env AI_QUEUE_TIMEOUT_S
     ai_connect_timeout_s: float = 5.0  # env AI_CONNECT_TIMEOUT_S
+    ai_settings_encryption_key: str = ""  # env AI_SETTINGS_ENCRYPTION_KEY (опционально; иначе HKDF от ADMIN_JWT_SECRET)
 
     # Таймауты PostgreSQL: один зависший запрос не должен останавливать
     # единственный воркер. Для других СУБД (SQLite в тестах) не применяются.
@@ -84,6 +85,15 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_JWT_SECRET must be at least 32 characters")
         return v
 
+    @field_validator("ai_settings_encryption_key")
+    @classmethod
+    def validate_ai_settings_encryption_key(cls, v: str) -> str:
+        if _is_testing() or not v:
+            return v
+        if len(v) < 32:
+            raise ValueError("AI_SETTINGS_ENCRYPTION_KEY must be at least 32 characters")
+        return v
+
     @field_validator("admin_login")
     @classmethod
     def validate_admin_login(cls, v: str) -> str:
@@ -105,10 +115,6 @@ class Settings(BaseSettings):
         if len(v) < 8:
             raise ValueError("ADMIN_PASSWORD must be at least 8 characters")
         return v
-
-    @property
-    def ai_configured(self) -> bool:
-        return bool(self.ai_base_url)
 
     @property
     def sqlalchemy_database_url(self) -> str:

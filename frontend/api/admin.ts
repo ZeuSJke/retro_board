@@ -193,3 +193,77 @@ export const revokeAdminAgentToken = (workspaceId: string, tokenId: string): Pro
   adminApi
     .delete<AgentToken>(`/workspaces/${workspaceId}/agent-tokens/${tokenId}`)
     .then((r) => r.data)
+
+export type AIReasoningEffort = 'default' | 'none' | 'low' | 'medium' | 'high' | 'max'
+
+export interface AdminAiSettings {
+  enabled: boolean
+  base_url: string
+  model: string
+  reasoning_effort: AIReasoningEffort
+  source: 'database' | 'env'
+  has_api_key: boolean
+  api_key_masked: string | null
+  key_decrypt_error: boolean
+  env_configured: boolean
+  updated_at: string | null
+}
+
+export interface AdminAiSettingsUpdate {
+  enabled: boolean
+  base_url: string
+  model: string
+  reasoning_effort: AIReasoningEffort
+  api_key?: string | null
+  clear_api_key?: boolean
+}
+
+export interface AdminAiTestRequest {
+  base_url: string
+  model: string
+  reasoning_effort: AIReasoningEffort
+  api_key?: string | null
+  clear_api_key?: boolean
+}
+
+export interface AdminAiTestResponse {
+  ok: boolean
+  latency_ms: number
+  reply_preview: string | null
+  error: string | null
+  reasoning_used: boolean
+}
+
+export interface AdminAiModelsRequest {
+  base_url: string
+  api_key?: string | null
+  clear_api_key?: boolean
+}
+
+export interface AdminAiModelsResponse {
+  models: string[]
+}
+
+/** Получить текущие настройки OpenAI-совместимого ИИ. */
+export const getAdminAiSettings = (): Promise<AdminAiSettings> =>
+  adminApi.get<AdminAiSettings>('/ai-settings').then((r) => r.data)
+
+/** Сохранить переопределение настроек ИИ в БД без рестарта сервера. */
+export const updateAdminAiSettings = (data: AdminAiSettingsUpdate): Promise<AdminAiSettings> =>
+  adminApi.put<AdminAiSettings>('/ai-settings', data).then((r) => r.data)
+
+/** Удалить переопределение настроек ИИ и вернуться к переменным окружения. */
+export const resetAdminAiSettings = (): Promise<AdminAiSettings> =>
+  adminApi.delete<AdminAiSettings>('/ai-settings').then((r) => r.data)
+
+/** Выполнить пробный запрос /chat/completions с указанными в форме настройками. */
+export const testAdminAiSettings = (data: AdminAiTestRequest): Promise<AdminAiTestResponse> =>
+  adminApi
+    .post<AdminAiTestResponse>('/ai-settings/test', data, { timeout: 45000 })
+    .then((r) => r.data)
+
+/** Загрузить список доступных моделей через GET {base_url}/models. */
+export const fetchAdminAiModels = (data: AdminAiModelsRequest): Promise<string[]> =>
+  adminApi
+    .post<AdminAiModelsResponse>('/ai-settings/models', data, { timeout: 15000 })
+    .then((r) => r.data.models)

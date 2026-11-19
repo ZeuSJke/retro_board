@@ -15,6 +15,7 @@ from app import models
 from app.config import settings
 from app.database import get_db
 from app.observability import record_unhandled_error
+from app.services.ai_settings import is_ai_configured
 from app.services.boards import board_group_ids
 from app.workspace_auth import SESSION_COOKIE, decode_workspace_token, resolve_session
 from app.ws_manager import Peer, manager
@@ -256,7 +257,7 @@ async def _trigger_summary_generation(
     """
     from app.services import boards as boards_service
 
-    if not settings.ai_configured:
+    if not await asyncio.to_thread(is_ai_configured):
         # Без шлюза не занимаем ни поток, ни соединение с БД.
         await manager.broadcast(
             board_id,
