@@ -15,11 +15,11 @@ from app.ai.prompts.title_generation import (
     clean_generated_title,
 )
 from app.board_view import ANON_AUTHOR, require_cards_visible
-from app.config import settings
 from app.database import get_db, release_connection
 from app.limiter import TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.services import action_items as action_items_service
 from app.services.action_items import copy_unresolved_action_items
+from app.services.ai_settings import is_ai_configured
 from app.utils import get_or_404, require_live_board, require_unlocked_board
 from app.workspace_auth import get_current_workspace
 from app.ws_manager import manager
@@ -184,9 +184,13 @@ async def generate_action_item_title(
     workspace: models.Workspace = Depends(get_current_workspace),
 ):
     """Generate action item title from card text using AI."""
-    # Проверка токена уже открыла сессию — на время вызова модели она не нужна
-    release_connection(db)
-    if not settings.ai_configured:
+    def _check_ai() -> bool:
+        try:
+            return is_ai_configured(db=db)
+        finally:
+            release_connection(db)
+
+    if not await anyio.to_thread.run_sync(_check_ai):
         return schemas.GenerateTitleResponse(title=body.text[:50])
     prompt = build_title_prompt(body.text)
     try:
@@ -218,7 +222,7 @@ async def suggest_action_items(
     def _collect() -> tuple[str, list[dict]]:
         board = get_or_404(db, models.Board, body.board_id, "Доска не найдена")
         require_live_board(board, workspace_id)
-        if not settings.ai_configured:
+        if not is_ai_configured(db=db):
             raise HTTPException(503, "AI сервис не настроен")
         # Подбор задач читает тексты всех карточек — до раскрытия он выдал бы скрытое
         require_cards_visible(board)

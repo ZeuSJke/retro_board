@@ -7,7 +7,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.config import settings
 from app.database import get_db, release_connection
 from app.limiter import (
     INVITE_LIMIT,
@@ -18,6 +17,7 @@ from app.limiter import (
 )
 from app.models import now_utc
 from app.services import agent_tokens as agent_token_service
+from app.services.ai_settings import is_ai_configured
 from app.workspace_auth import (
     clear_session_cookie,
     get_current_participant,
@@ -177,7 +177,7 @@ def get_current_workspace_info(
         name=workspace.name,
         created_at=workspace.created_at,
         participant=schemas.ParticipantOut.model_validate(participant),
-        ai_enabled=settings.ai_configured,
+        ai_enabled=is_ai_configured(db=db),
     )
 
 

@@ -71,7 +71,7 @@ class JSONEncodedList(TypeDecorator):
 # Import app AFTER env is set, then patch the likes column type
 # ---------------------------------------------------------------------------
 # Import app but patch lifespan so alembic is not invoked during tests
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 
 from sqlalchemy import ARRAY
 
@@ -176,14 +176,25 @@ def _reset_ws_manager():
     phases/timers/session_ids иначе протекают из теста в тест и дают
     ложные presence/facilitator/timer-состояния.
     """
+    from app.ai import ai_client
     from app.mcp import mcp_rate_limiter
+    from app.services.ai_settings import (
+        invalidate_ai_settings_cache,
+        set_ai_settings_db_session_factory,
+    )
     from app.ws_manager import manager as _ws_manager
 
     _ws_manager.reset()
     mcp_rate_limiter.reset()
+    set_ai_settings_db_session_factory(TestSessionLocal)
+    invalidate_ai_settings_cache()
+    ai_client.reset_shared_client()
     yield
     _ws_manager.reset()
     mcp_rate_limiter.reset()
+    set_ai_settings_db_session_factory(None)
+    invalidate_ai_settings_cache()
+    ai_client.reset_shared_client()
 
 
 @pytest.fixture()
@@ -288,6 +299,69 @@ def db_session():
         yield db
     finally:
         db.close()
+
+
+@contextmanager
+def configure_ai(
+    *,
+    enabled: bool = True,
+    base_url: str = "https://llm.test/v1",
+    model: str = "test-model",
+    api_key: str = "",
+    reasoning_effort: str = "default",
+):
+    """Временно задать настройки ИИ в тестовой БД и сбросить кэш процесса."""
+    from app.models import AISettings, now_utc
+    from app.services.ai_settings import encrypt_api_key, invalidate_ai_settings_cache
+
+    with TestSessionLocal() as db:
+        prev = db.get(AISettings, 1)
+        prev_snapshot = (
+            {
+                "enabled": prev.enabled,
+                "base_url": prev.base_url,
+                "api_key_encrypted": prev.api_key_encrypted,
+                "model": prev.model,
+                "reasoning_effort": prev.reasoning_effort,
+                "updated_at": prev.updated_at,
+            }
+            if prev is not None
+            else None
+        )
+        if not enabled and not base_url:
+            if prev is not None:
+                db.delete(prev)
+                db.commit()
+        else:
+            row = prev or AISettings(id=1)
+            if prev is None:
+                db.add(row)
+            row.enabled = enabled
+            row.base_url = base_url
+            row.api_key_encrypted = encrypt_api_key(api_key) if api_key else None
+            row.model = model
+            row.reasoning_effort = reasoning_effort
+            row.updated_at = now_utc()
+            db.commit()
+
+    invalidate_ai_settings_cache()
+    try:
+        yield
+    finally:
+        with TestSessionLocal() as db:
+            row = db.get(AISettings, 1)
+            if prev_snapshot is None:
+                if row is not None:
+                    db.delete(row)
+                    db.commit()
+            else:
+                if row is None:
+                    row = AISettings(id=1)
+                    db.add(row)
+                for field, value in prev_snapshot.items():
+                    setattr(row, field, value)
+                db.commit()
+        invalidate_ai_settings_cache()
 
 
 # ── Helper fixtures ─────────────────────────────────────────────────────────

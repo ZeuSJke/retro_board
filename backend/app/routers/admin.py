@@ -9,10 +9,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+from app.ai.ai_client import fetch_ai_models, probe_ai_connection
 from app.config import settings
 from app.database import get_db, release_connection
 from app.limiter import entry_limit_key, limiter
 from app.services import agent_tokens as agent_token_service
+from app.services import ai_settings as ai_settings_service
 from app.workspace_auth import (
     create_admin_token,
     get_admin_user,
@@ -348,3 +350,131 @@ def admin_revoke_agent_token(
     if not ws:
         raise HTTPException(status_code=404, detail="Команда не найдена")
     return agent_token_service.revoke_agent_token(db, ws.id, token_id)
+
+
+@router.get("/ai-settings", response_model=schemas.AdminAiSettingsOut)
+@limiter.limit("30/minute")
+def admin_get_ai_settings(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Текущие настройки OpenAI-совместимого ИИ."""
+    response.headers["Cache-Control"] = "no-store"
+    return ai_settings_service.get_admin_ai_settings(db)
+
+
+@router.put("/ai-settings", response_model=schemas.AdminAiSettingsOut)
+@limiter.limit("20/minute")
+def admin_update_ai_settings(
+    request: Request,
+    response: Response,
+    body: schemas.AdminAiSettingsUpdate,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Сохранить настройки ИИ в БД и обновить кэш процесса без рестарта."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return ai_settings_service.save_admin_ai_settings(
+            db,
+            enabled=body.enabled,
+            base_url=body.base_url,
+            model=body.model,
+            reasoning_effort=body.reasoning_effort,
+            api_key=body.api_key,
+            clear_api_key=body.clear_api_key,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from err
+
+
+async def _resolve_probe_creds_async(
+    db: Session,
+    *,
+    base_url: str,
+    api_key: str | None,
+    clear_api_key: bool,
+) -> tuple[str, str]:
+    def _prepare() -> tuple[str, str]:
+        try:
+            return ai_settings_service.resolve_probe_credentials(
+                db,
+                base_url=base_url,
+                api_key=api_key,
+                clear_api_key=clear_api_key,
+            )
+        finally:
+            release_connection(db)
+
+    try:
+        return await anyio.to_thread.run_sync(_prepare)
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from err
+
+
+@router.post("/ai-settings/test", response_model=schemas.AdminAiSettingsTestOut)
+@limiter.limit("10/minute")
+async def admin_test_ai_settings(
+    request: Request,
+    response: Response,
+    body: schemas.AdminAiSettingsTestRequest,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Выполнить пробный запрос `/chat/completions` с переданными настройками."""
+    response.headers["Cache-Control"] = "no-store"
+    model = body.model.strip()
+    if not model:
+        release_connection(db)
+        raise HTTPException(status_code=422, detail="Укажите имя модели")
+    base_url, api_key = await _resolve_probe_creds_async(
+        db,
+        base_url=body.base_url,
+        api_key=body.api_key,
+        clear_api_key=body.clear_api_key,
+    )
+
+    ok, latency_ms, reply_preview, error, reasoning_used = await anyio.to_thread.run_sync(
+        lambda: probe_ai_connection(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            reasoning_effort=body.reasoning_effort,
+        )
+    )
+    return schemas.AdminAiSettingsTestOut(
+        ok=ok,
+        latency_ms=latency_ms,
+        reply_preview=reply_preview,
+        error=error,
+        reasoning_used=reasoning_used,
+    )
+
+
+@router.post("/ai-settings/models", response_model=schemas.AdminAiModelsOut)
+@limiter.limit("20/minute")
+async def admin_list_ai_models(
+    request: Request,
+    response: Response,
+    body: schemas.AdminAiModelsRequest,
+    db: Session = Depends(get_db),
+    _: bool = Depends(get_admin_user),
+):
+    """Загрузить список доступных моделей через `GET {base_url}/models`."""
+    response.headers["Cache-Control"] = "no-store"
+    base_url, api_key = await _resolve_probe_creds_async(
+        db,
+        base_url=body.base_url,
+        api_key=body.api_key,
+        clear_api_key=body.clear_api_key,
+    )
+
+    try:
+        models_list = await anyio.to_thread.run_sync(
+            lambda: fetch_ai_models(base_url=base_url, api_key=api_key)
+        )
+    except RuntimeError as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+    return schemas.AdminAiModelsOut(models=models_list)

@@ -29,6 +29,7 @@ CLUSTERING_CONFIG = AIModelConfig(
     max_tokens=2000,
     timeout=90,
     retries=2,
+    json_mode=True,
 )
 
 

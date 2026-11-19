@@ -35,7 +35,7 @@ class TestSanitizePromptText:
 
 class TestTitlePrompt:
     def _generate(self, client, headers, text: str, answer: str) -> tuple[str, str]:
-        from app.config import settings
+        from tests.conftest import configure_ai
 
         prompts = []
 
@@ -44,7 +44,7 @@ class TestTitlePrompt:
             return answer
 
         with (
-            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            configure_ai(),
             patch("app.routers.action_items.ai_client.generate", fake_generate),
         ):
             resp = client.post(

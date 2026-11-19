@@ -51,10 +51,7 @@ config:
   csrfEnabled: "true"
   # 30 дней: личность участника привязана к сессии и должна переживать двухнедельный спринт
   workspaceJwtExpireHours: "720"
-  # Leave empty if AI_* overrides live in existingSecret (migrated from Dokploy).
-  aiBaseUrl: ""
-  aiModel: ""
-  aiDisableThinking: "true"
+  # Подключение к OpenAI-совместимому ИИ настраивается в /admin (хранится в БД).
   # Необязательные несекретные переменные бэкенда, которым хватает значений по
   # умолчанию: DB_STATEMENT_TIMEOUT_MS, DB_LOCK_TIMEOUT_MS, DB_CONNECT_TIMEOUT_S,
   # DB_POOL_TIMEOUT_S, AI_MAX_CONCURRENCY, AI_QUEUE_TIMEOUT_S, AI_CONNECT_TIMEOUT_S,
@@ -70,7 +67,6 @@ secrets:
   adminPassword: ""
   workspaceJwtSecret: ""
   adminJwtSecret: ""
-  aiApiKey: ""
 
 ingress:
   enabled: true

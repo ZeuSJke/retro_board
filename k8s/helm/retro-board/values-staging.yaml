@@ -34,7 +34,7 @@ config:
 
 secrets:
   # Secret holds POSTGRES_PASSWORD, ADMIN_LOGIN, ADMIN_PASSWORD, WORKSPACE_JWT_SECRET,
-  # ADMIN_JWT_SECRET, and optionally AI_BASE_URL / AI_API_KEY / AI_MODEL from Dokploy.
+  # ADMIN_JWT_SECRET, and optionally AI_SETTINGS_ENCRYPTION_KEY.
   existingSecret: retro-board-secrets
 
 ingress:

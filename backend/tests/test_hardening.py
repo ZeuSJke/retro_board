@@ -21,6 +21,7 @@ from app.limiter import TEAM_WRITE_LIMIT
 from app.workspace_auth import verify_access_key
 from app.ws_payloads import MAX_WS_MESSAGE_CHARS, number_in_range
 from app.ws_schemas import parse_ws_event
+from tests.conftest import configure_ai
 from tests.conftest import engine as test_engine
 
 TEST_ORIGIN = "http://localhost:3000"
@@ -322,7 +323,7 @@ class TestSummaryGenerationGuard:
 
         async def scenario():
             with (
-                patch.object(settings, "ai_base_url", ""),
+                configure_ai(enabled=False, base_url=""),
                 patch.object(ws_router.manager, "broadcast", fake_broadcast),
                 patch.object(boards_service, "generate_summary_internal") as generate,
             ):
@@ -665,7 +666,7 @@ class TestConnectionReleasedDuringAI:
             return []
 
         with (
-            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            configure_ai(),
             patch("app.ai.prompts.action_item_suggestions.suggest_action_items_from_cards", fake_suggest),
         ):
             resp = client.post(
@@ -682,7 +683,7 @@ class TestConnectionReleasedDuringAI:
             return "Заголовок"
 
         with (
-            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            configure_ai(),
             patch("app.routers.action_items.ai_client.generate", fake_generate),
         ):
             resp = client.post(
@@ -714,7 +715,7 @@ class TestConnectionReleasedDuringAI:
             return {"summary_text": "Итог", "key_themes": ["тема"], "recommendations": []}
 
         with (
-            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            configure_ai(),
             patch("app.routers.boards.generate_summary", fake_summary),
         ):
             resp = client.post(
@@ -735,7 +736,7 @@ class TestConnectionReleasedDuringAI:
             return {"summary_text": "Итог", "key_themes": [], "recommendations": []}
 
         with (
-            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            configure_ai(),
             patch("app.routers.boards.generate_summary", fake_summary),
         ):
             resp = client.post(
@@ -761,7 +762,7 @@ class TestConnectionReleasedDuringAI:
             return {"groups": [], "ungrouped": [c["id"] for c in cards]}
 
         with (
-            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            configure_ai(),
             patch("app.routers.groups.cluster_cards", fake_cluster),
         ):
             resp = client.post(
@@ -819,7 +820,7 @@ class TestConnectionReleasedDuringAI:
             return {"groups": [{"title": "Группа", "card_ids": ids}], "ungrouped": []}
 
         with (
-            patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+            configure_ai(),
             patch("app.routers.groups.cluster_cards", fake_cluster),
         ):
             resp = client.post(

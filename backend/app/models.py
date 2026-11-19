@@ -5,6 +5,7 @@ from sqlalchemy import (
     ARRAY,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -449,4 +450,29 @@ class AgentToken(Base):
     )
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
+    )
+
+
+class AISettings(Base):
+    """Настройки OpenAI-совместимого ИИ, задаваемые в админке.
+
+    Таблица-синглтон (`id = 1`). При отсутствии строки функции ИИ не настроены
+    и отключены.
+    """
+
+    __tablename__ = "ai_settings"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_ai_settings_singleton"),)
+
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, default=1, autoincrement=False
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    reasoning_effort: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="default"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=now_utc, onupdate=now_utc
     )

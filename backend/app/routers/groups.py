@@ -17,9 +17,9 @@ from app.board_view import (
     cards_hidden,
     require_cards_visible,
 )
-from app.config import settings
 from app.database import get_db, release_connection
 from app.limiter import TEAM_WRITE_LIMIT, limiter
+from app.services.ai_settings import is_ai_configured
 from app.services.boards import clear_deleted_groups_state
 from app.services.cards import prune_empty_groups
 from app.services.common import BroadcastAction, dispatch_broadcasts
@@ -339,10 +339,9 @@ async def _compute_column_clusters(
     Соединение с БД на время вызова модели возвращается в пул: объекты сессии
     после этого отсоединены, поэтому вызывающий код перечитывает колонку сам.
     """
-    if not settings.ai_configured:
-        raise HTTPException(503, "AI-сервис не настроен")
-
     def _collect() -> list[dict]:
+        if not is_ai_configured(db=db):
+            raise HTTPException(503, "AI-сервис не настроен")
         _col, board = _unlocked_column(db, column_id, workspace_id)
         # Группировка читает тексты всех карточек колонки — до раскрытия она выдала бы скрытое
         require_cards_visible(board)

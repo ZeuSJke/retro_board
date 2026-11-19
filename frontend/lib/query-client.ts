@@ -12,6 +12,7 @@ export const queryKeys = {
   dashboardMoodTrends: (workspaceId: string) => ['dashboard', workspaceId, 'mood-trends'] as const,
   dashboardThemes: (workspaceId: string) => ['dashboard', workspaceId, 'themes'] as const,
   adminWorkspaces: () => ['admin', 'workspaces'] as const,
+  adminAiSettings: () => ['admin', 'ai-settings'] as const,
 }
 
 function shouldRetryQuery(failureCount: number, error: unknown): boolean {

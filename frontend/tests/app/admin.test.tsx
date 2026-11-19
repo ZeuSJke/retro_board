@@ -21,6 +21,10 @@ const api = vi.hoisted(() => ({
   getAdminAgentTokens: vi.fn(),
   createAdminAgentToken: vi.fn(),
   revokeAdminAgentToken: vi.fn(),
+  getAdminAiSettings: vi.fn(),
+  updateAdminAiSettings: vi.fn(),
+  testAdminAiSettings: vi.fn(),
+  fetchAdminAiModels: vi.fn(),
 }))
 
 // Сетевые вызовы подменены, состояние сессии — настоящий модуль api/admin
@@ -40,6 +44,18 @@ beforeAll(() => {
       unobserve() {}
       disconnect() {}
     }
+  }
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = vi.fn()
+  }
+  if (!Element.prototype.hasPointerCapture) {
+    Element.prototype.hasPointerCapture = () => false
+  }
+  if (!Element.prototype.setPointerCapture) {
+    Element.prototype.setPointerCapture = vi.fn()
+  }
+  if (!Element.prototype.releasePointerCapture) {
+    Element.prototype.releasePointerCapture = vi.fn()
   }
 })
 
@@ -554,5 +570,266 @@ describe('токены агентов в админке', () => {
 
     await waitFor(() => expect(api.revokeAdminAgentToken).toHaveBeenCalledWith('ws-1', 'tok-adm-1'))
     expect(within(dialog).getByTestId('agent-token-row-tok-adm-1')).toHaveTextContent('Отозван')
+  })
+})
+
+describe('настройки ИИ в админке', () => {
+  const initialSettings = {
+    enabled: false,
+    base_url: '',
+    model: '',
+    reasoning_effort: 'default' as const,
+    has_api_key: false,
+    api_key_masked: null,
+    key_decrypt_error: false,
+    updated_at: null,
+  }
+
+  const savedSettings = {
+    enabled: true,
+    base_url: 'https://llm-gw.example.com/v1',
+    model: 'saved-model',
+    reasoning_effort: 'none' as const,
+    has_api_key: true,
+    api_key_masked: 'sk-••••1234',
+    key_decrypt_error: false,
+    updated_at: '2026-11-19T12:00:00Z',
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setAdminSessionHint(null)
+    api.checkAdminSession.mockImplementation(() => {
+      setAdminSessionHint(false)
+      return Promise.resolve(false)
+    })
+  })
+
+  it('переключение на вкладку «Настройки ИИ», выбор reasoning_effort, загрузка моделей, проверка и сохранение', async () => {
+    const user = userEvent.setup()
+    api.getAdminAiSettings.mockResolvedValueOnce(initialSettings)
+    api.fetchAdminAiModels.mockResolvedValueOnce(['fast-model', 'smart-model'])
+    api.testAdminAiSettings.mockResolvedValueOnce({
+      ok: true,
+      latency_ms: 87,
+      reply_preview: 'ОК',
+      error: null,
+      reasoning_used: true,
+    })
+    api.updateAdminAiSettings.mockResolvedValueOnce({
+      enabled: true,
+      base_url: 'https://api.provider.example/v1',
+      model: 'smart-model',
+      reasoning_effort: 'high',
+      has_api_key: true,
+      api_key_masked: 'sk-••••9999',
+      key_decrypt_error: false,
+      updated_at: '2026-11-19T12:20:00Z',
+    })
+
+    await renderSignedIn()
+    expect(api.getAdminAiSettings).not.toHaveBeenCalled()
+    expect(screen.getByTestId('admin-create-team')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('admin-tab-ai'))
+
+    expect(await screen.findByRole('heading', { name: 'Настройки ИИ' })).toBeInTheDocument()
+    expect(screen.queryByTestId('admin-create-team')).toBeNull()
+    expect(screen.getByTestId('ai-settings-status-badge')).toHaveTextContent('Не настроен')
+    expect(screen.queryByTestId('ai-reset-btn')).toBeNull()
+    expect(screen.queryByText(/Сбросить на env/)).toBeNull()
+
+    // Редактирование полей и выбор универсального уровня размышлений
+    const urlInput = screen.getByTestId('ai-base-url-input')
+    await user.type(urlInput, 'https://api.provider.example/v1')
+    await user.type(screen.getByTestId('ai-api-key-input'), 'sk-provider-9999')
+
+    await user.click(screen.getByTestId('ai-reasoning-effort-trigger'))
+    await user.click(await screen.findByRole('option', { name: 'Высокий (high)' }))
+
+    // Загрузка списка моделей и выбор из выпадающего списка
+    await user.click(screen.getByTestId('ai-load-models-btn'))
+    await waitFor(() =>
+      expect(api.fetchAdminAiModels).toHaveBeenCalledWith({
+        base_url: 'https://api.provider.example/v1',
+        api_key: 'sk-provider-9999',
+        clear_api_key: undefined,
+      }),
+    )
+    await user.click(screen.getByRole('combobox', { name: 'Выбрать модель из загруженного списка' }))
+    await user.click(await screen.findByRole('option', { name: 'smart-model' }))
+    expect(screen.getByTestId('ai-model-input')).toHaveValue('smart-model')
+
+    // Включаем ИИ, проверяем подключение и сохраняем
+    await user.click(screen.getByTestId('ai-enabled-switch'))
+    await user.click(screen.getByTestId('ai-test-btn'))
+    expect(await screen.findByTestId('ai-test-result')).toHaveTextContent(
+      'Подключение успешно (87 мс · с размышлениями) — ответ: «ОК»',
+    )
+    expect(api.testAdminAiSettings).toHaveBeenCalledWith({
+      base_url: 'https://api.provider.example/v1',
+      model: 'smart-model',
+      reasoning_effort: 'high',
+      api_key: 'sk-provider-9999',
+      clear_api_key: undefined,
+    })
+
+    // Переключение на вкладку «Команды» и обратно не теряет введённые данные
+    await user.click(screen.getByTestId('admin-tab-teams'))
+    expect(screen.getByTestId('admin-create-team')).toBeInTheDocument()
+    await user.click(screen.getByTestId('admin-tab-ai'))
+    expect(screen.getByTestId('ai-base-url-input')).toHaveValue('https://api.provider.example/v1')
+    expect(screen.getByTestId('ai-api-key-input')).toHaveValue('sk-provider-9999')
+
+    // Сохранение
+    await user.click(screen.getByTestId('ai-save-btn'))
+    await waitFor(() =>
+      expect(api.updateAdminAiSettings).toHaveBeenCalledWith({
+        enabled: true,
+        base_url: 'https://api.provider.example/v1',
+        model: 'smart-model',
+        reasoning_effort: 'high',
+        api_key: 'sk-provider-9999',
+        clear_api_key: undefined,
+      }),
+    )
+    expect(await screen.findByTestId('ai-settings-status-badge')).toHaveTextContent('Включён')
+    expect(screen.getByTestId('ai-api-key-input')).toHaveValue('')
+  })
+
+  it('отклоняет http://, позволяет отключить ИИ, сбрасывает модели при смене URL и даёт удалить битый ключ', async () => {
+    const user = userEvent.setup()
+    api.getAdminAiSettings.mockResolvedValueOnce({
+      ...savedSettings,
+      key_decrypt_error: true,
+      api_key_masked: null,
+    })
+    api.fetchAdminAiModels
+      .mockResolvedValueOnce(['m1', 'm2'])
+      .mockRejectedValueOnce(httpError(502, 'Эндпоинт /models не поддерживается'))
+    api.testAdminAiSettings.mockResolvedValueOnce({
+      ok: false,
+      latency_ms: 55,
+      reply_preview: null,
+      error: 'Ошибка авторизации (HTTP 401): проверьте API-ключ',
+      reasoning_used: false,
+    })
+    api.updateAdminAiSettings
+      .mockRejectedValueOnce(httpError(422, 'Нестандартная запись IP-адреса запрещена'))
+      .mockResolvedValueOnce({
+        ...savedSettings,
+        enabled: true,
+        has_api_key: false,
+        api_key_masked: null,
+        key_decrypt_error: false,
+      })
+
+    await renderSignedIn()
+    await user.click(screen.getByTestId('admin-tab-ai'))
+    await screen.findByRole('heading', { name: 'Настройки ИИ' })
+
+    // При key_decrypt_error видны предупреждение и кнопка «Удалить ключ»
+    expect(
+      screen.getByText(/Сохранённый API-ключ не удалось расшифровать/),
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('ai-clear-key-btn')).toBeInTheDocument()
+
+    // Загруженные модели очищаются при ручном изменении URL
+    await user.click(screen.getByTestId('ai-load-models-btn'))
+    expect(
+      await screen.findByRole('combobox', { name: 'Выбрать модель из загруженного списка' }),
+    ).toBeInTheDocument()
+
+    const urlInput = screen.getByTestId('ai-base-url-input')
+    await user.clear(urlInput)
+    await user.type(urlInput, 'https://other.example.com/v1')
+    expect(
+      screen.queryByRole('combobox', { name: 'Выбрать модель из загруженного списка' }),
+    ).toBeNull()
+    expect(
+      screen.getByText(/прежний ключ не будет отправлен на новый адрес/),
+    ).toBeInTheDocument()
+
+    // Ошибка загрузки моделей и ok: false в тесте подключения
+    await user.click(screen.getByTestId('ai-load-models-btn'))
+    expect(await screen.findByText('Эндпоинт /models не поддерживается')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('ai-test-btn'))
+    expect(await screen.findByTestId('ai-test-result')).toHaveTextContent(
+      'Ошибка авторизации (HTTP 401): проверьте API-ключ (55 мс)',
+    )
+
+    // http:// отклоняется на клиенте
+    await user.clear(urlInput)
+    await user.type(urlInput, 'http://insecure.example.com/v1')
+    await user.click(screen.getByTestId('ai-save-btn'))
+    expect(await screen.findByText('Поддерживается только HTTPS (https://...)')).toBeInTheDocument()
+    expect(api.updateAdminAiSettings).not.toHaveBeenCalled()
+
+    // Ошибка 422 от сервера показывается в форме, а повторное сохранение с clear_api_key проходит
+    await user.clear(urlInput)
+    await user.type(urlInput, 'https://llm-gw.example.com/v1')
+    await user.click(screen.getByTestId('ai-clear-key-btn'))
+    await user.click(screen.getByTestId('ai-save-btn'))
+    expect(await screen.findByText('Нестандартная запись IP-адреса запрещена')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('ai-save-btn'))
+    await waitFor(() =>
+      expect(api.updateAdminAiSettings).toHaveBeenLastCalledWith({
+        enabled: true,
+        base_url: 'https://llm-gw.example.com/v1',
+        model: 'saved-model',
+        reasoning_effort: 'none',
+        api_key: undefined,
+        clear_api_key: true,
+      }),
+    )
+    expect(screen.queryByText(/Сохранённый API-ключ не удалось расшифровать/)).toBeNull()
+  })
+
+  it('позволяет отключить ИИ через переключатель и показывает бейдж «Выключен»', async () => {
+    const user = userEvent.setup()
+    api.getAdminAiSettings.mockResolvedValueOnce(savedSettings)
+    api.updateAdminAiSettings.mockResolvedValueOnce({
+      ...savedSettings,
+      enabled: false,
+    })
+
+    await renderSignedIn()
+    await user.click(screen.getByTestId('admin-tab-ai'))
+    await screen.findByRole('heading', { name: 'Настройки ИИ' })
+    expect(screen.getByTestId('ai-settings-status-badge')).toHaveTextContent('Включён')
+
+    await user.click(screen.getByTestId('ai-enabled-switch'))
+    await user.click(screen.getByTestId('ai-save-btn'))
+
+    await waitFor(() =>
+      expect(api.updateAdminAiSettings).toHaveBeenCalledWith({
+        enabled: false,
+        base_url: 'https://llm-gw.example.com/v1',
+        model: 'saved-model',
+        reasoning_effort: 'none',
+        api_key: undefined,
+        clear_api_key: undefined,
+      }),
+    )
+    expect(await screen.findByTestId('ai-settings-status-badge')).toHaveTextContent('Выключен')
+  })
+
+  it('показывает ошибку загрузки настроек и позволяет повторить', async () => {
+    const user = userEvent.setup()
+    api.getAdminAiSettings
+      .mockRejectedValueOnce(httpError(500, 'Сервер недоступен'))
+      .mockResolvedValueOnce(savedSettings)
+
+    await renderSignedIn()
+    await user.click(screen.getByTestId('admin-tab-ai'))
+
+    expect(
+      await screen.findByText(/Не удалось загрузить настройки ИИ/),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Повторить' }))
+    expect(await screen.findByRole('heading', { name: 'Настройки ИИ' })).toBeInTheDocument()
   })
 })

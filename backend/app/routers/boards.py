@@ -23,11 +23,11 @@ from app.board_view import (
     require_cards_visible,
     require_moderator,
 )
-from app.config import settings
 from app.database import get_db, release_connection
 from app.limiter import TEAM_BULK_LIMIT, TEAM_READ_LIMIT, TEAM_WRITE_LIMIT, limiter
 from app.models import now_utc
 from app.services import boards as boards_service
+from app.services.ai_settings import is_ai_configured
 from app.services.boards import BOARD_TEMPLATES
 from app.services.common import dispatch_broadcasts, find_live_board
 from app.utils import get_or_404, require_live_board, require_unlocked_board
@@ -534,7 +534,7 @@ async def regenerate_summary(
 
     def _prepare() -> tuple[str, dict]:
         board = find_live_board(db, board_id, workspace_pk, lookup="id")
-        if not settings.ai_configured:
+        if not is_ai_configured(db=db):
             raise HTTPException(503, "AI сервис не настроен")
         require_cards_visible(board)
         board_data = boards_service.get_board_full_data(db, board.id, workspace_pk)

@@ -87,9 +87,14 @@ def _load_active_sessions_sync() -> list[tuple[str, str | None, str | None, str 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.services.ai_settings import load_ai_settings_cache
     from app.ws_manager import assert_single_worker, manager
 
     assert_single_worker()
+    try:
+        await anyio.to_thread.run_sync(load_ai_settings_cache)
+    except Exception:
+        logger.warning("Failed to preload AI settings on startup", exc_info=True)
     try:
         active_sessions = await anyio.to_thread.run_sync(_load_active_sessions_sync)
         for (

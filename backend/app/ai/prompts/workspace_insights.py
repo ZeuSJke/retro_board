@@ -6,7 +6,7 @@ from typing import Any
 
 from app.ai.ai_client import AIModelConfig, ai_client
 from app.ai.sanitize import extract_json_object, sanitize_insight_text
-from app.config import settings
+from app.services.ai_settings import is_ai_configured
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,7 @@ WORKSPACE_INSIGHTS_CONFIG = AIModelConfig(
     max_tokens=900,
     timeout=60,
     retries=1,
+    json_mode=True,
 )
 
 # Тема считается повторяющейся, если названа в итогах хотя бы двух досок
@@ -266,7 +267,7 @@ def generate_workspace_insights(
             }
         )
 
-    if not sanitized_snapshot or not settings.ai_configured:
+    if not sanitized_snapshot or not is_ai_configured():
         return _build_fallback_insights(sanitized_snapshot, team_themes)
 
     try:

@@ -10,13 +10,6 @@ data:
   SECURE_COOKIES: {{ .Values.config.secureCookies | quote }}
   CSRF_ENABLED: {{ .Values.config.csrfEnabled | quote }}
   WORKSPACE_JWT_EXPIRE_HOURS: {{ .Values.config.workspaceJwtExpireHours | quote }}
-  AI_DISABLE_THINKING: {{ .Values.config.aiDisableThinking | quote }}
-  {{- if .Values.config.aiBaseUrl }}
-  AI_BASE_URL: {{ .Values.config.aiBaseUrl | quote }}
-  {{- end }}
-  {{- if .Values.config.aiModel }}
-  AI_MODEL: {{ .Values.config.aiModel | quote }}
-  {{- end }}
   {{- range $name, $value := .Values.config.extraEnv }}
   {{ $name }}: {{ $value | quote }}
   {{- end }}

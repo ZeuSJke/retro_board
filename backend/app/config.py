@@ -25,15 +25,13 @@ class Settings(BaseSettings):
     # Secure cookies (set SECURE_COOKIES=false for local HTTP dev)
     secure_cookies: bool = True
 
-    # AI — self-hosted LiteLLM gateway (OpenAI-compatible /v1 API)
-    ai_base_url: str = ""  # env AI_BASE_URL, e.g. https://llm-api.kirillbessonov.ru/v1
-    ai_api_key: str = ""  # env AI_API_KEY (может быть пустым, если гейт без авторизации)
-    ai_model: str = "qwen3.6-35b-a3b-mtp-ud-q8_k_xl"  # env AI_MODEL
-    ai_disable_thinking: bool = True  # env AI_DISABLE_THINKING
+    # AI — подключение к OpenAI-совместимому шлюзу задаётся в /admin (БД);
+    # в окружении остаются только лимиты, таймауты и ключ шифрования настроек.
     # Сколько запросов к модели идёт одновременно; остальные ждут ai_queue_timeout_s
     ai_max_concurrency: int = 4  # env AI_MAX_CONCURRENCY
     ai_queue_timeout_s: float = 15.0  # env AI_QUEUE_TIMEOUT_S
     ai_connect_timeout_s: float = 5.0  # env AI_CONNECT_TIMEOUT_S
+    ai_settings_encryption_key: str = ""  # env AI_SETTINGS_ENCRYPTION_KEY (опционально; иначе HKDF от ADMIN_JWT_SECRET)
 
     # Таймауты PostgreSQL: один зависший запрос не должен останавливать
     # единственный воркер. Для других СУБД (SQLite в тестах) не применяются.
@@ -84,6 +82,15 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_JWT_SECRET must be at least 32 characters")
         return v
 
+    @field_validator("ai_settings_encryption_key")
+    @classmethod
+    def validate_ai_settings_encryption_key(cls, v: str) -> str:
+        if _is_testing() or not v:
+            return v
+        if len(v) < 32:
+            raise ValueError("AI_SETTINGS_ENCRYPTION_KEY must be at least 32 characters")
+        return v
+
     @field_validator("admin_login")
     @classmethod
     def validate_admin_login(cls, v: str) -> str:
@@ -105,10 +112,6 @@ class Settings(BaseSettings):
         if len(v) < 8:
             raise ValueError("ADMIN_PASSWORD must be at least 8 characters")
         return v
-
-    @property
-    def ai_configured(self) -> bool:
-        return bool(self.ai_base_url)
 
     @property
     def sqlalchemy_database_url(self) -> str:

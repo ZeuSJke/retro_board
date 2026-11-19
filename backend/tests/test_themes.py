@@ -11,8 +11,7 @@ import pytest
 
 from app import models, themes
 from app.ai.prompts import summary_generation, workspace_insights
-from app.config import settings
-from tests.conftest import TestSessionLocal
+from tests.conftest import TestSessionLocal, configure_ai
 
 REVIEW = "Долгое ревью кода"
 FLAKY = "Нестабильные тесты"
@@ -40,7 +39,7 @@ def model():
     """Шлюз «настроен», вместо модели — FakeModel (клиент общий для всех запросов)."""
     fake = FakeModel()
     with (
-        patch.object(settings, "ai_base_url", "http://llm.test/v1"),
+        configure_ai(),
         patch.object(summary_generation.ai_client, "generate", fake),
     ):
         yield fake
@@ -841,7 +840,7 @@ class TestInsightsUseTeamThemes:
         )
         db_session.commit()
 
-        with patch.object(settings, "ai_base_url", ""):
+        with configure_ai(enabled=False, base_url=""):
             data = client.post("/api/boards/workspace-insights", headers=workspace_headers).json()
 
         assert data["generated_by_ai"] is False
@@ -854,7 +853,7 @@ class TestInsightsUseTeamThemes:
     def test_fallback_reports_themes_from_the_table(self, client, workspace_headers, model):
         self._two_boards_with_review(client, workspace_headers, model)
 
-        with patch.object(settings, "ai_base_url", ""):
+        with configure_ai(enabled=False, base_url=""):
             data = client.post("/api/boards/workspace-insights", headers=workspace_headers).json()
 
         assert data["generated_by_ai"] is False
